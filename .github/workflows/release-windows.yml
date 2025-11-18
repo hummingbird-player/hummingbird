@@ -1,0 +1,51 @@
+name: Windows release (binary)
+
+on:
+  push:
+    branches: ["chore/release-preparation"]
+
+env:
+  CARGO_TERM_COLOR: always
+  LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+  LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, windows-11-arm]
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      ARCH: "${{ endsWith(matrix.os, 'arm') && 'aarch64' || 'x86_64' }}"
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update rust
+        run: rustup update
+      - name: Set ENV
+        run: echo "TARGET_TRIPLE=$((rustc -vV | Select-String 'host:').ToString().Split(' ')[1])" >> $Env:GITHUB_ENV
+      - name: Install cntp build tools
+        run: |
+          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --verbose --profile release-distro
+      - name: Bundle
+        run: |
+          cargo cntp-bundle --no-open --verbose --profile release-distro
+          mv target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird-${{ env.ARCH }}.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hummingbird-${{ env.ARCH }}.exe
+          path: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
+      # - uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
+      #     prerelease: true
+      #     name: latest
+      #     tag_name: latest

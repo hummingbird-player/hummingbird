@@ -1,0 +1,54 @@
+name: Linux release (binary)
+
+on:
+  push:
+    branches: ["chore/release-preparation"]
+
+env:
+  CARGO_TERM_COLOR: always
+  LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+  LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm]
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      ARCH: "${{ endsWith(matrix.os, 'arm') && 'aarch64' || 'x86_64' }}"
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils
+      - name: Update rust
+        run: rustup update
+      - name: Install cntp build tools
+        run: |
+          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
+          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --verbose --profile release-distro
+      - name: Bundle
+        run: |
+          cargo cntp-bundle --no-open --verbose --profile release-distro
+          cargo cntp-deploy --no-open --verbose --output-file "hummingbird-$ARCH.AppImage" --profile release-distro
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hummingbird-${{ env.ARCH }}.AppImage
+          path: hummingbird-${{ env.ARCH }}.AppImage
+      # - uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: hummingbird-${{ env.ARCH }}.AppImage
+      #     prerelease: true
+      #     name: latest
+      #     tag_name: latest
