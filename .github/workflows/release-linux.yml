@@ -1,8 +1,8 @@
 name: Linux release (binary)
 
 on:
-  push:
-    branches: ["chore/release-preparation"]
+  release:
+    types: [published]
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,9 +45,8 @@ jobs:
         with:
           name: hummingbird-${{ env.ARCH }}.AppImage
           path: hummingbird-${{ env.ARCH }}.AppImage
-      # - uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: hummingbird-${{ env.ARCH }}.AppImage
-      #     prerelease: true
-      #     name: latest
-      #     tag_name: latest
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: hummingbird-${{ env.ARCH }}.AppImage
+          name: ${{ github.event.release.name }}
+          tag_name: ${{ github.event.release.tag_name }}

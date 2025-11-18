@@ -1,8 +1,8 @@
 name: Windows release (binary)
 
 on:
-  push:
-    branches: ["chore/release-preparation"]
+  release:
+    types: [published]
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,9 +52,10 @@ jobs:
         with:
           name: HummingbirdSetup_${{ env.ARCH }}.exe
           path: package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
-      # - uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
-      #     prerelease: true
-      #     name: latest
-      #     tag_name: latest
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
+            package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
+          name: ${{ github.event.release.name }}
+          tag_name: ${{ github.event.release.tag_name }}
