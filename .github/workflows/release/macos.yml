@@ -1,4 +1,4 @@
-name: macOS (binary)
+name: macOS release (binary)
 
 on:
   push:
@@ -100,9 +100,9 @@ jobs:
         with:
           name: hummingbird-${{ env.ARCH }}.dmg
           path: hummingbird-${{ env.ARCH }}.dmg
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: hummingbird-${{ env.ARCH }}.dmg
-          prerelease: true
-          name: latest
-          tag_name: latest
+      # - uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: hummingbird-${{ env.ARCH }}.dmg
+      #     prerelease: true
+      #     name: latest
+      #     tag_name: latest
