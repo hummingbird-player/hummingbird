@@ -57,14 +57,11 @@ impl Render for Sidebar {
             .border_r_1()
             .border_color(theme.border_color)
             .child(
-                div()
-                    .flex()
-                    .mb(px(10.0))
-                    .mx(px(-2.0))
-                    .child(nav_button("search", SEARCH).on_click(|_, window, cx| {
+                div().flex().mb(px(10.0)).mx(px(-2.0)).child(
+                    nav_button("search", SEARCH).on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(Search), cx);
-                    }))
-                    .child(nav_button("sidebar-toggle", SIDEBAR_INACTIVE).ml_auto()),
+                    }),
+                ), // .child(nav_button("sidebar-toggle", SIDEBAR_INACTIVE).ml_auto()),
             )
             .child(
                 sidebar_item("albums")
