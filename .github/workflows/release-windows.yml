@@ -25,12 +25,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Install Inno Setup
+        run: choco upgrade innosetup -y
       - name: Update rust
         run: rustup update
       - name: Set ENV
         run: echo "TARGET_TRIPLE=$((rustc -vV | Select-String 'host:').ToString().Split(' ')[1])" >> $Env:GITHUB_ENV
-      - name: Install Inno Setup
-        run: choco install innosetup -y
       - name: Install cntp build tools
         run: |
           cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
