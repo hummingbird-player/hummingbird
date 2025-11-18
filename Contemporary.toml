@@ -18,4 +18,4 @@ disk_image_background = "res/dmg-background.svg"
 icon = "res/macos-icon.svg"
 
 [deployment."x86_64-apple-darwin"]
-icon = "dist/macos-icon.svg"
+icon = "res/macos-icon.svg"

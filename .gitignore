@@ -8,6 +8,7 @@ result
 # bundle artifacts
 **.AppImage
 **.dmg
+package/inno/Output/*.exe
 
 **/.DS_Store
 .env
