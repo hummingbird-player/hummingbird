@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Inno Setup
+      - name: Update Inno Setup
         run: choco upgrade innosetup -y
       - name: Update rust
         run: rustup update
@@ -42,14 +42,16 @@ jobs:
       - name: Build installer
         run: |
           iscc.exe /Q package\inno\Hummingbird_${{ env.ARCH }}.iss
+      - name: Move binary
+        run: mv target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird-${{ env.ARCH }}.exe
       - uses: actions/upload-artifact@v4
         with:
           name: hummingbird-${{ env.ARCH }}.exe
-          path: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
+          path: target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
       - uses: actions/upload-artifact@v4
         with:
           name: HummingbirdSetup_${{ env.ARCH }}.exe
-          path: iscc.exe /Q package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
+          path: package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
       # - uses: softprops/action-gh-release@v2
       #   with:
       #     files: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
