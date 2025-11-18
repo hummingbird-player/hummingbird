@@ -37,11 +37,17 @@ jobs:
       - name: Bundle
         run: |
           cargo cntp-bundle --no-open --verbose --profile release-distro
-          mv target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird-${{ env.ARCH }}.exe
+      - name: Build installer
+        run: |
+          iscc.exe /Q package\inno\Hummingbird_${{ env.ARCH }}.iss
       - uses: actions/upload-artifact@v4
         with:
           name: hummingbird-${{ env.ARCH }}.exe
           path: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HummingbirdSetup_${{ env.ARCH }}.exe
+          path: iscc.exe /Q package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
       # - uses: softprops/action-gh-release@v2
       #   with:
       #     files: target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe

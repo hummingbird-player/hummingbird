@@ -61,7 +61,7 @@ jobs:
 
           # We finally codesign our app bundle, specifying the Hardened runtime option
 
-          /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" --options runtime target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app -v
+          /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" --options runtime target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird.app -v
       - name: "Notarize app bundle"
         env:
           PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
@@ -79,7 +79,7 @@ jobs:
           # notarization service
 
           echo "Creating temp notarization archive"
-          ditto -c -k --keepParent "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app" "notarization.zip"
+          ditto -c -k --keepParent "target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird.app" "notarization.zip"
 
           # Here we send the notarization request to the Apple's Notarization service, waiting for the result.
           # This typically takes a few seconds inside a CI environment, but it might take more depending on the App
@@ -92,7 +92,7 @@ jobs:
           # Finally, we need to "attach the staple" to our executable, which will allow our app to be
           # validated by macOS even when an internet connection is not available.
           echo "Attach staple"
-          xcrun stapler staple "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app"
+          xcrun stapler staple "target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird.app"
       - name: Make DMG
         run: cargo cntp-deploy --no-open --verbose --output-file "hummingbird-$ARCH.dmg" --profile release-distro
       - uses: actions/upload-artifact@v4
