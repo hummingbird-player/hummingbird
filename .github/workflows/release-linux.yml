@@ -35,7 +35,6 @@ jobs:
         run: |
           cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
           cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
-      - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --verbose --profile release-distro
       - name: Bundle
