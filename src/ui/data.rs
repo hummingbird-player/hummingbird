@@ -50,10 +50,10 @@ async fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
         .spawn_blocking(|| {
             // TODO: Switch to a different media provider based on the file
             let mut media_provider = SymphoniaProvider::default();
-            media_provider.open(file, None)?;
-            media_provider.start_playback()?;
+            let mut stream = media_provider.open(file, None)?;
+            stream.start_playback()?;
 
-            let album_art = media_provider
+            let album_art = stream
                 .read_image()
                 .inspect_err(|err| debug!(?err, "No image provided: {err}"))
                 .ok()
@@ -64,7 +64,7 @@ async fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
                     (hasher.finish(), data)
                 });
 
-            let Metadata { name, artist, .. } = media_provider.read_metadata()?;
+            let Metadata { name, artist, .. } = stream.read_metadata()?;
             Ok((
                 QueueItemUIData {
                     name: name.as_ref().map(Into::into),

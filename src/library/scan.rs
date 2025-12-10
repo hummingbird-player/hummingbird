@@ -165,12 +165,12 @@ fn scan_file_with_provider(
     provider: &mut Box<dyn MediaProvider>,
 ) -> Result<FileInformation, ()> {
     let src = std::fs::File::open(path).map_err(|_| ())?;
-    provider.open(src, None).map_err(|_| ())?;
-    provider.start_playback().map_err(|_| ())?;
-    let metadata = provider.read_metadata().cloned().map_err(|_| ())?;
-    let image = provider.read_image().map_err(|_| ())?;
-    let len = provider.duration_secs().map_err(|_| ())?;
-    provider.close().map_err(|_| ())?;
+    let mut stream = provider.open(src, None).map_err(|_| ())?;
+    stream.start_playback().map_err(|_| ())?;
+    let metadata = stream.read_metadata().cloned().map_err(|_| ())?;
+    let image = stream.read_image().map_err(|_| ())?;
+    let len = stream.duration_secs().map_err(|_| ())?;
+    stream.close().map_err(|_| ())?;
     Ok((metadata, len, image))
 }
 

@@ -30,12 +30,14 @@ use crate::{
         },
         metadata::Metadata,
         playback::{PlaybackFrame, Samples},
-        traits::{MediaPlugin, MediaProvider},
+        traits::{MediaPlugin, MediaProvider, MediaStream},
     },
 };
 
 #[derive(Default)]
-pub struct SymphoniaProvider {
+pub struct SymphoniaProvider;
+
+pub struct SymphoniaStream {
     format: Option<Box<dyn FormatReader>>,
     current_metadata: Metadata,
     current_track: u32,
@@ -48,7 +50,7 @@ pub struct SymphoniaProvider {
     last_image: Option<Visual>,
 }
 
-impl SymphoniaProvider {
+impl SymphoniaStream {
     fn break_metadata(&mut self, tags: &[Tag]) {
         let id3_position_in_set_regex = Regex::new(r"(\d+)/(\d+)").unwrap();
 
@@ -195,7 +197,7 @@ impl SymphoniaProvider {
 }
 
 impl MediaProvider for SymphoniaProvider {
-    fn open(&mut self, file: File, ext: Option<&OsStr>) -> Result<(), OpenError> {
+    fn open(&mut self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError> {
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
@@ -216,15 +218,27 @@ impl MediaProvider for SymphoniaProvider {
                 .map_err(|_| OpenError::UnsupportedFormat)?
         };
 
-        self.read_base_metadata(&mut probed);
-        self.current_position = 0;
-        self.current_length = None;
-        self.current_timebase = None;
-        self.format = Some(probed.format);
+        let mut stream = SymphoniaStream {
+            format: None,
+            current_metadata: Metadata::default(),
+            current_track: 0,
+            current_duration: 0,
+            current_length: None,
+            current_position: 0,
+            current_timebase: None,
+            decoder: None,
+            pending_metadata_update: false,
+            last_image: None,
+        };
 
-        Ok(())
+        stream.read_base_metadata(&mut probed);
+        stream.format = Some(probed.format);
+
+        Ok(Box::new(stream))
     }
+}
 
+impl MediaStream for SymphoniaStream {
     fn close(&mut self) -> Result<(), CloseError> {
         self.stop_playback().expect("invalid outcome");
         self.current_metadata = Metadata::default();

@@ -28,7 +28,9 @@ use crate::{
         traits::{Device, DeviceProvider, OutputStream},
     },
     media::{
-        builtin::symphonia::SymphoniaProvider, errors::PlaybackReadError, traits::MediaProvider,
+        builtin::symphonia::SymphoniaProvider,
+        errors::PlaybackReadError,
+        traits::{MediaProvider, MediaStream},
     },
 };
 
@@ -60,6 +62,7 @@ pub struct PlaybackThread {
     /// In the future this will be a hash map of media providers,
     /// allowing for multiple media providers to be used simultaneously.
     media_provider: Option<Box<dyn MediaProvider>>,
+    media_stream: Option<Box<dyn MediaStream>>,
 
     /// The current device provider.
     device_provider: Option<Box<dyn DeviceProvider>>,
@@ -131,6 +134,7 @@ impl PlaybackThread {
                     commands_rx,
                     events_tx,
                     media_provider: None,
+                    media_stream: None,
                     device_provider: None,
                     device: None,
                     stream: None,
@@ -254,15 +258,15 @@ impl PlaybackThread {
 
     /// Check for updated metadata and album art, and broadcast it to the UI.
     pub fn broadcast_events(&mut self) {
-        let Some(provider) = &mut self.media_provider else {
+        let Some(stream) = &mut self.media_stream else {
             return;
         };
-        if !provider.metadata_updated() {
+        if !stream.metadata_updated() {
             return;
         }
         // TODO: proper error handling
         let metadata = Box::new(
-            provider
+            stream
                 .read_metadata()
                 .expect("failed to get metadata")
                 .clone(),
@@ -271,7 +275,7 @@ impl PlaybackThread {
             .send(PlaybackEvent::MetadataUpdate(metadata))
             .expect("unable to send event");
 
-        let image = provider.read_image().expect("failed to decode image");
+        let image = stream.read_image().expect("failed to decode image");
         self.events_tx
             .send(PlaybackEvent::AlbumArtUpdate(image))
             .expect("unable to send event");
@@ -401,6 +405,10 @@ impl PlaybackThread {
     fn open(&mut self, path: &PathBuf) -> Result<(), PlaybackStartError> {
         info!("Opening: {:?}", path);
 
+        if let Some(mut old_stream) = self.media_stream.take() {
+            old_stream.close().ok();
+        }
+
         let mut recreation_required = false;
 
         if self.state == PlaybackState::Paused
@@ -429,16 +437,16 @@ impl PlaybackThread {
         let src = std::fs::File::open(path)
             .map_err(|e| PlaybackStartError::MediaError(format!("Unable to open file: {}", e)))?;
 
-        provider
+        let mut media_stream = provider
             .open(src, None)
             .map_err(|e| PlaybackStartError::MediaError(format!("Unable to open file: {}", e)))?;
 
-        provider.start_playback().map_err(|e| {
+        media_stream.start_playback().map_err(|e| {
             PlaybackStartError::MediaError(format!("Unable to start playback: {}", e))
         })?;
 
         // TODO: handle multiple media providers
-        let channels = provider.channels().map_err(|e| {
+        let channels = media_stream.channels().map_err(|e| {
             PlaybackStartError::MediaError(format!("Unable to get channels: {}", e))
         })?;
 
@@ -467,7 +475,7 @@ impl PlaybackThread {
             .send(PlaybackEvent::SongChanged(path))
             .expect("unable to send event");
 
-        if let Ok(duration) = provider.duration_secs() {
+        if let Ok(duration) = media_stream.duration_secs() {
             self.events_tx
                 .send(PlaybackEvent::DurationChanged(duration))
                 .expect("unable to send event");
@@ -487,6 +495,7 @@ impl PlaybackThread {
             }
         }
 
+        self.media_stream = Some(media_stream);
         self.state = PlaybackState::Playing;
 
         self.update_ts();
@@ -662,8 +671,8 @@ impl PlaybackThread {
 
     /// Emit a PositionChanged event if the timestamp has changed.
     fn update_ts(&mut self) {
-        if let Some(provider) = &self.media_provider
-            && let Ok(timestamp) = provider.position_secs()
+        if let Some(stream) = &self.media_stream
+            && let Ok(timestamp) = stream.position_secs()
         {
             if timestamp == self.last_timestamp {
                 return;
@@ -679,8 +688,8 @@ impl PlaybackThread {
 
     /// Seek to the specified timestamp (in seconds).
     fn seek(&mut self, timestamp: f64) {
-        if let Some(provider) = &mut self.media_provider {
-            provider.seek(timestamp).expect("unable to seek");
+        if let Some(stream) = &mut self.media_stream {
+            stream.seek(timestamp).expect("unable to seek");
             self.pending_reset = true;
             self.update_ts();
         }
@@ -764,9 +773,9 @@ impl PlaybackThread {
 
     /// Stop the current playback.
     fn stop(&mut self) {
-        if let Some(provider) = &mut self.media_provider {
-            provider.stop_playback().expect("unable to stop playback");
-            provider.close().expect("unable to close media");
+        if let Some(mut stream) = self.media_stream.take() {
+            stream.stop_playback().expect("unable to stop playback");
+            stream.close().expect("unable to close media");
         }
         self.state = PlaybackState::Stopped;
 
@@ -953,13 +962,13 @@ impl PlaybackThread {
         let Some(stream) = &mut self.stream else {
             return;
         };
-        let Some(provider) = &mut self.media_provider else {
+        let Some(media_stream) = &mut self.media_stream else {
             return;
         };
         if self.resampler.is_none() {
             // TODO: proper error handling
             // Read the first samples ahead of time to determine the format.
-            let first_samples = match provider.read_samples() {
+            let first_samples = match media_stream.read_samples() {
                 Ok(samples) => samples,
                 Err(e) => match e {
                     PlaybackReadError::NothingOpen => {
@@ -987,7 +996,7 @@ impl PlaybackThread {
             };
 
             // Set up the resampler
-            let duration = provider.frame_duration().expect("can't get duration");
+            let duration = media_stream.frame_duration().expect("can't get duration");
             let device_format = stream.get_current_format().unwrap();
 
             let resampler_sample_rate =
@@ -1033,7 +1042,7 @@ impl PlaybackThread {
             self.update_ts();
         } else {
             // Ditto above but without creating the resampler
-            let samples = match provider.read_samples() {
+            let samples = match media_stream.read_samples() {
                 Ok(samples) => samples,
                 Err(e) => match e {
                     PlaybackReadError::NothingOpen => {

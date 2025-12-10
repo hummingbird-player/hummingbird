@@ -41,24 +41,29 @@ pub trait MediaPlugin: MediaProvider {
 }
 
 /// The MediaProvider trait defines the methods used to interact with a media provider. A media
-/// provider is responsible for opening, closing, and reading samples and metadata from a media
-/// file, but not all Providers are required to support all (or, technically, any) of these
-/// functions. The MediaProvider trait is designed to be flexible, allowing Providers to implement
-/// only Metadata retrieval, decoding, or both. This allows for a decoding Provider to retrieve
+/// provider is a factory for [MediaStream] objects, which are responsible for decoding and
+/// metadata retrieval from a media file.
+///
+/// The MediaProvider trait is designed to be flexible, allowing Providers to implement only
+/// Metadata retrieval, decoding, or both. This allows for a decoding Provider to retrieve
 /// in-codec metadata without opening the file twice.
+pub trait MediaProvider {
+    /// Requests the Provider open the specified file. The file is provided as a File object, and
+    /// the extension is provided as an Option<&OsStr>. If the extension is not provided, the
+    /// Provider attempts to determine the file type based off of the file's contents.
+    fn open(&mut self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError>;
+}
+
+/// The MediaStream trait defines the methods used to interact with an open media stream. A media
+/// stream is responsible for reading samples and metadata from a media file.
 ///
 /// The current playback pipeline is as follows:
-/// Create -> Open -> Start -> Metadata -> Read -> Read -> ... -> Open -> Start -> Metadata -> ...
+/// Create -> Open -> Start -> Metadata -> Read -> Read -> ... -> Close
 ///
 /// Note that if your Provider supports metadata retrieval, it will be asked to open, start, and
 /// read metadata many times in rapid succession during library indexing. This is normal and
 /// expected behavior, and your plugin must be able to handle this.
-pub trait MediaProvider {
-    /// Requests the Provider open the specified file. The file is provided as a File object, and
-    /// theextension is provided as an Option<String>. If the extension is not provided, the
-    /// Provider attempts to determine the extension based off of the file's contents.
-    fn open(&mut self, file: File, ext: Option<&OsStr>) -> Result<(), OpenError>;
-
+pub trait MediaStream {
     /// Informs the Provider that the currently opened file is no longer needed. This function is
     /// not guaranteed to be called before open if a file is already opened.
     fn close(&mut self) -> Result<(), CloseError>;
