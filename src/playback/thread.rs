@@ -971,8 +971,8 @@ impl PlaybackThread {
             let first_samples = match media_stream.read_samples() {
                 Ok(samples) => samples,
                 Err(e) => match e {
-                    PlaybackReadError::NothingOpen => {
-                        panic!("thread state is invalid: no file open")
+                    PlaybackReadError::InvalidState => {
+                        panic!("thread state is invalid: decoder state is invalid")
                     }
                     PlaybackReadError::NeverStarted => {
                         panic!("thread state is invalid: playback never started")
@@ -1045,8 +1045,8 @@ impl PlaybackThread {
             let samples = match media_stream.read_samples() {
                 Ok(samples) => samples,
                 Err(e) => match e {
-                    PlaybackReadError::NothingOpen => {
-                        panic!("thread state is invalid: no file open")
+                    PlaybackReadError::InvalidState => {
+                        panic!("thread state is invalid: decoder state invalid")
                     }
                     PlaybackReadError::NeverStarted => {
                         panic!("thread state is invalid: playback never started")

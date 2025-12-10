@@ -248,7 +248,7 @@ impl MediaStream for SymphoniaStream {
 
     fn start_playback(&mut self) -> Result<(), PlaybackStartError> {
         let Some(format) = &self.format else {
-            return Err(PlaybackStartError::NothingOpen);
+            return Err(PlaybackStartError::InvalidState);
         };
         let track = format
             .tracks()
@@ -309,7 +309,7 @@ impl MediaStream for SymphoniaStream {
 
     fn read_samples(&mut self) -> Result<PlaybackFrame, PlaybackReadError> {
         let Some(format) = &mut self.format else {
-            return Err(PlaybackReadError::NothingOpen);
+            return Err(PlaybackReadError::InvalidState);
         };
         // this has a loop because the next packet may not be from the current track
         loop {
@@ -525,10 +525,8 @@ impl MediaStream for SymphoniaStream {
     }
 
     fn frame_duration(&self) -> Result<u64, FrameDurationError> {
-        if self.decoder.is_none() {
-            Err(FrameDurationError::NothingOpen)
-        } else if self.current_duration == 0 {
-            Err(FrameDurationError::NeverDecoded)
+        if self.decoder.is_none() || self.current_duration == 0 {
+            Err(FrameDurationError::NeverStarted)
         } else {
             Ok(self.current_duration)
         }
@@ -540,7 +538,7 @@ impl MediaStream for SymphoniaStream {
         if self.format.is_some() {
             Ok(&self.current_metadata)
         } else {
-            Err(MetadataError::NothingOpen)
+            Err(MetadataError::InvalidState)
         }
     }
 
@@ -558,14 +556,12 @@ impl MediaStream for SymphoniaStream {
                 Ok(None)
             }
         } else {
-            Err(MetadataError::NothingOpen)
+            Err(MetadataError::InvalidState)
         }
     }
 
     fn duration_secs(&self) -> Result<u64, TrackDurationError> {
-        if self.decoder.is_none() {
-            Err(TrackDurationError::NothingOpen)
-        } else if self.current_length.is_none() {
+        if self.decoder.is_none() || self.current_length.is_none() {
             Err(TrackDurationError::NeverStarted)
         } else {
             Ok(self.current_length.unwrap_or_default())
@@ -573,9 +569,7 @@ impl MediaStream for SymphoniaStream {
     }
 
     fn position_secs(&self) -> Result<u64, TrackDurationError> {
-        if self.decoder.is_none() {
-            Err(TrackDurationError::NothingOpen)
-        } else if self.current_length.is_none() {
+        if self.decoder.is_none() || self.current_length.is_none() {
             Err(TrackDurationError::NeverStarted)
         } else {
             Ok(self.current_position)
@@ -585,7 +579,7 @@ impl MediaStream for SymphoniaStream {
     fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         let timebase = self.current_timebase;
         let Some(format) = &mut self.format else {
-            return Err(SeekError::NothingOpen);
+            return Err(SeekError::InvalidState);
         };
         let seek = format
             .seek(
@@ -609,7 +603,7 @@ impl MediaStream for SymphoniaStream {
 
     fn channels(&self) -> Result<ChannelSpec, ChannelRetrievalError> {
         let Some(format) = &self.format else {
-            return Err(ChannelRetrievalError::NothingOpen);
+            return Err(ChannelRetrievalError::InvalidState);
         };
 
         let track = format

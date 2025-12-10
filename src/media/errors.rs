@@ -20,8 +20,11 @@ pub enum CloseError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum PlaybackStartError {
-    #[error("No media is open")]
-    NothingOpen,
+    /// This error means that, for what ever reason, the decoder's setup failed in a manner which
+    /// should be impossible. Do not use this error for general decoder errors (use Undecodable
+    /// instead), as it will cause the application to crash.
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Media is open but has no audio")]
     NothingToPlay,
     #[error("Media is undecodable")]
@@ -42,16 +45,19 @@ pub enum PlaybackStartError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum PlaybackStopError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum PlaybackReadError {
-    #[error("No media is open")]
-    NothingOpen,
+    /// This error means that, for what ever reason, the decoder's setup failed in a manner which
+    /// should be impossible. Do not use this error for general decoder errors (use DecodeFatal
+    /// instead), as it will cause the application to crash.
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Media is open but was never started")]
     NeverStarted,
     #[error("End of file reached")]
@@ -64,8 +70,8 @@ pub enum PlaybackReadError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum MetadataError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("The selected MediaProvider does not support metadata")]
     OperationUnsupported,
     #[error("Unknown media provider error: `{0}`")]
@@ -74,18 +80,18 @@ pub enum MetadataError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum FrameDurationError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Frame length requested before decoding")]
-    NeverDecoded,
+    NeverStarted,
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum TrackDurationError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Media is open but was never started")]
     NeverStarted,
     #[error("Unknown media provider error: `{0}`")]
@@ -94,8 +100,8 @@ pub enum TrackDurationError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum SeekError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Seek position out of bounds")]
     OutOfBounds,
     #[error("Unknown media provider error: `{0}`")]
@@ -104,8 +110,8 @@ pub enum SeekError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum ChannelRetrievalError {
-    #[error("No media is open")]
-    NothingOpen,
+    #[error("The media file is not valid and cannot be played")]
+    InvalidState,
     #[error("Media is open but has no audio")]
     NothingToPlay,
     #[error("Unknown media provider error: `{0}`")]
