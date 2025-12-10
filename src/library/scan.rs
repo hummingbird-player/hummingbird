@@ -20,11 +20,7 @@ use tracing::{debug, error, info, warn};
 const SCAN_VERSION: u16 = 1;
 
 use crate::{
-    media::{
-        builtin::symphonia::SymphoniaProvider,
-        metadata::Metadata,
-        traits::{MediaPlugin, MediaProvider},
-    },
+    media::{builtin::symphonia::SymphoniaProvider, metadata::Metadata, traits::MediaProvider},
     settings::scan::ScanSettings,
     ui::{app::get_dirs, models::Models},
 };
@@ -124,7 +120,7 @@ pub struct ScanThread {
     discovered: Vec<PathBuf>,
     to_process: Vec<PathBuf>,
     scan_state: ScanState,
-    provider_table: Vec<(&'static [&'static str], Box<dyn MediaProvider>)>,
+    provider_table: Vec<(Vec<String>, Box<dyn MediaProvider>)>,
     scan_record: FxHashMap<PathBuf, u64>,
     scan_record_path: Option<PathBuf>,
     scanned: u64,
@@ -138,18 +134,24 @@ pub struct ScanThread {
     force_encountered_albums: Vec<i64>,
 }
 
-fn build_provider_table() -> Vec<(&'static [&'static str], Box<dyn MediaProvider>)> {
+fn build_provider_table() -> Vec<(Vec<String>, Box<dyn MediaProvider>)> {
     // TODO: dynamic plugin loading
+    let provider = SymphoniaProvider;
     vec![(
-        SymphoniaProvider::SUPPORTED_EXTENSIONS,
-        Box::new(SymphoniaProvider::default()),
+        provider
+            .supported_extensions()
+            .iter()
+            .copied()
+            .map(str::to_string)
+            .collect(),
+        Box::new(provider),
     )]
 }
 
-fn file_is_scannable_with_provider(path: &Path, exts: &&[&str]) -> bool {
+fn file_is_scannable_with_provider(path: &Path, exts: &[String]) -> bool {
     for extension in exts.iter() {
         if let Some(ext) = path.extension()
-            && ext == *extension
+            && *ext == **extension
         {
             return true;
         }

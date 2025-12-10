@@ -1,5 +1,7 @@
 use std::{ffi::OsStr, fs::File};
 
+use bitflags::bitflags;
+
 use crate::devices::format::ChannelSpec;
 
 use super::{
@@ -11,33 +13,35 @@ use super::{
     playback::PlaybackFrame,
 };
 
-/// The MediaPlugin trait defines a set of constants that are used to eneumerate the capabilities
-/// of a hot-loaded media plugin, as well as the name and version information of the plugin.
-pub trait MediaPlugin: MediaProvider {
-    /// The name of the media plugin.
-    const NAME: &'static str;
-    /// The version of the media plugin.
-    const VERSION: &'static str;
-    /// The supported mime-types of the media plugin. Mime-types are retrieved by the `infer`
-    /// crate. If the `infer` crate does not support a mime-type for a supported file extension,
-    /// then the mime-type should be listed as `application/<file extension>`.
-    const SUPPORTED_MIMETYPES: &'static [&'static str];
-
-    /// Whether the plugin provides metadata.
-    const PROVIDES_METADATA: bool;
-    /// Whether the plugin provides decoding.
-    const PROVIDES_DECODING: bool;
-    /// Whether the plugin should be used for metadata regardless of whether or not it is the
-    /// current decoding plugin. This should *always* be true for metadata-only plugins, otherwise
-    /// they will not be used.
-    const ALWAYS_CHECK_METADATA: bool;
-
-    /// What file extensions the plugin supports. This is used to determine if the plugin should be
-    /// used for indexing a given file, and not for decoding (which is determined by the
-    /// mime-type).
-    const SUPPORTED_EXTENSIONS: &'static [&'static str];
-    /// Whether or not the plugin should be used for library indexing.
-    const INDEXING_SUPPORTED: bool;
+bitflags! {
+    #[derive(Debug, Clone, PartialEq)]
+    /// Media provider feature bitflags.
+    ///
+    /// Currently, the Symphonia provider is hardcoded everywhere a provider is used. In the
+    /// future, this will be replaced with a shared global registry, and these bitflags will be
+    /// used to determine when and how a provider should be used.
+    pub struct MediaProviderFeatures: u8 {
+        /// Indicates the provider should be used for retrieving metadata.
+        const PROVIDES_METADATA        = 0b00000001;
+        /// Indicates the provider should be used for decoding media files.
+        const PROVIDES_DECODER         = 0b00000010;
+        /// Indicates the provider should be considered for indexing files while scanning.
+        const ALLOWS_INDEXING          = 0b00000100;
+        /// Indicates the provider should always be used for metadata, even if it isn't being used
+        /// for decoding (and another provider is).
+        const ALWAYS_READ_METADATA     = 0b00001000;
+        /// Indicates that this provider should always be used no matter the file type. This will
+        /// make the provider the lowest priority provider for every file opened, unless
+        /// ALWAYS_READ_METADATA is also set.
+        const ALWAYS_USE_THIS_PROVIDER = 0b00010000;
+        /// Indicates that this Providers's metadata should only be used to fill missing fields.
+        /// Combined with PROVIDES_METADATA, ALWAYS_READ_METADATA and ALWAYS_USE_THIS_PROVIDER,
+        /// this allows you to make metadata-only Providers that will always be used to fill
+        /// in the gaps in a track's metadata. This combination allows you to implement, for
+        /// example, a MusicBrainz-based metadata Provider or a Provider that checks for
+        /// description files next to a given audio file.
+        const FILL_MISSING_METADATA    = 0b00100000;
+    }
 }
 
 /// The MediaProvider trait defines the methods used to interact with a media provider. A media
@@ -52,6 +56,22 @@ pub trait MediaProvider {
     /// the extension is provided as an Option<&OsStr>. If the extension is not provided, the
     /// Provider attempts to determine the file type based off of the file's contents.
     fn open(&mut self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError>;
+
+    /// Returns a list of mime-types that the Provider supports. Files will be checked against
+    /// mime-types *before* being checked against extensions. If the mime-type is not
+    /// recognized by any Provider, then the extensions will be searched.
+    ///
+    /// The `infer` crate is used to determine the mime-type of the file. If the `infer` crate
+    /// doesn't recognize your file, only including an extension is acceptable.
+    fn supported_mime_types(&self) -> &[&str];
+
+    /// Returns a list of file extensions the plugin supports. Files will be checked against
+    /// their extensions *after* being checked against mime-types.
+    fn supported_extensions(&self) -> &[&str];
+
+    /// Returns a list of media provider feature bitflags that the plugin supports.
+    /// See `MediaProviderFeatures` for more information.
+    fn supported_features(&self) -> MediaProviderFeatures;
 }
 
 /// The MediaStream trait defines the methods used to interact with an open media stream. A media

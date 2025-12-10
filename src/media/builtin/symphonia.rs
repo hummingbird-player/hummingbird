@@ -30,7 +30,7 @@ use crate::{
         },
         metadata::Metadata,
         playback::{PlaybackFrame, Samples},
-        traits::{MediaPlugin, MediaProvider, MediaStream},
+        traits::{MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
 
@@ -235,6 +235,28 @@ impl MediaProvider for SymphoniaProvider {
         stream.format = Some(probed.format);
 
         Ok(Box::new(stream))
+    }
+
+    fn supported_mime_types(&self) -> &[&str] {
+        &[
+            "audio/ogg",
+            "audio/aac",
+            "audio/x-flac",
+            "audio/x-wav",
+            "audio/mpeg",
+            "audio/m4a",
+            "audio/x-aiff",
+        ]
+    }
+
+    fn supported_extensions(&self) -> &[&str] {
+        &["ogg", "aac", "flac", "wav", "mp3", "m4a", "aiff", "opus"]
+    }
+
+    fn supported_features(&self) -> MediaProviderFeatures {
+        MediaProviderFeatures::ALLOWS_INDEXING
+            | MediaProviderFeatures::PROVIDES_DECODER
+            | MediaProviderFeatures::PROVIDES_METADATA
     }
 }
 
@@ -624,28 +646,4 @@ impl MediaStream for SymphoniaStream {
                 .unwrap_or(2) as u16,
         ))
     }
-}
-
-impl MediaPlugin for SymphoniaProvider {
-    const NAME: &'static str = "Symphonia";
-
-    const VERSION: &'static str = "0.1.0";
-
-    const SUPPORTED_MIMETYPES: &'static [&'static str] = &[
-        "audio/ogg",
-        "audio/aac",
-        "audio/x-flac",
-        "audio/x-wav",
-        "audio/mpeg",
-        "audio/m4a",
-        "audio/x-aiff",
-    ];
-
-    const PROVIDES_DECODING: bool = true;
-    const PROVIDES_METADATA: bool = true;
-    const ALWAYS_CHECK_METADATA: bool = false;
-
-    const SUPPORTED_EXTENSIONS: &'static [&'static str] =
-        &["ogg", "aac", "flac", "wav", "mp3", "m4a", "aiff"];
-    const INDEXING_SUPPORTED: bool = true;
 }
