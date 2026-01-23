@@ -16,6 +16,10 @@ fn default_queue_width() -> f32 {
     f32::from(DEFAULT_QUEUE_WIDTH)
 }
 
+fn default_volume() -> f64 {
+    1.0
+}
+
 fn default_table_settings() -> HashMap<String, TableSettings> {
     HashMap::new()
 }
@@ -32,6 +36,8 @@ pub struct TableSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageData {
     pub current_track: Option<CurrentTrack>,
+    #[serde(default = "default_volume")]
+    pub volume: f64,
     /// Width of the library sidebar in pixels
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: f32,
@@ -56,6 +62,7 @@ impl Default for StorageData {
     fn default() -> Self {
         Self {
             current_track: None,
+            volume: default_volume(),
             sidebar_width: f32::from(DEFAULT_SIDEBAR_WIDTH),
             queue_width: f32::from(DEFAULT_QUEUE_WIDTH),
             table_settings: HashMap::new(),
@@ -96,9 +103,7 @@ impl Storage {
                         Some(current_track) if !current_track.get_path().exists() => StorageData {
                             current_track: None,
                             // Preserve other settings when invalidating current_track
-                            sidebar_width: data.sidebar_width,
-                            queue_width: data.queue_width,
-                            table_settings: data.table_settings,
+                            ..data
                         },
                         _ => data,
                     })

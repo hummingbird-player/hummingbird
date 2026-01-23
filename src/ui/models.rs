@@ -263,8 +263,6 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
         table_settings,
     });
 
-    const DEFAULT_VOLUME: f64 = 1.0;
-
     let position: Entity<u64> = cx.new(|_| 0);
     let duration: Entity<u64> = cx.new(|_| 0);
     let playback_state: Entity<PlaybackState> = cx.new(|_| PlaybackState::Stopped);
@@ -280,8 +278,8 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
             RepeatState::NotRepeating
         }
     });
-    let volume: Entity<f64> = cx.new(|_| DEFAULT_VOLUME);
-    let prev_volume: Entity<f64> = cx.new(|_| DEFAULT_VOLUME);
+    let volume: Entity<f64> = cx.new(|_| storage_data.volume);
+    let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
 
     cx.set_global(PlaybackInfo {
         position,

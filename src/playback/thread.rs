@@ -127,6 +127,7 @@ impl PlaybackThread {
     pub fn start(
         queue: Arc<RwLock<Vec<QueueItemData>>>,
         settings: PlaybackSettings,
+        last_volume: f64,
     ) -> PlaybackInterface {
         // TODO: use the refresh rate for the bounds
         let (cmd_tx, commands_rx) = unbounded_channel();
@@ -158,7 +159,7 @@ impl PlaybackThread {
                         RepeatState::NotRepeating
                     },
                     playback_settings: settings,
-                    last_volume: 1.0,
+                    last_volume,
                 };
 
                 thread.run();

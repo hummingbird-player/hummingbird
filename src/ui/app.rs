@@ -214,8 +214,10 @@ pub fn run() -> anyhow::Result<()> {
             })
             .detach();
 
+            let last_volume = *cx.global::<PlaybackInfo>().volume.read(cx);
+
             let mut playback_interface: PlaybackInterface =
-                PlaybackThread::start(queue, playback_settings);
+                PlaybackThread::start(queue, playback_settings, last_volume);
             playback_interface.start_broadcast(cx);
 
             if !parse_args_and_prepare(cx, &playback_interface)
@@ -267,11 +269,13 @@ pub fn run() -> anyhow::Result<()> {
                         // Update `StorageData` and save it to file system while quitting the app
                         cx.on_app_quit({
                             let current_track = cx.global::<PlaybackInfo>().current_track.clone();
+                            let volume = cx.global::<PlaybackInfo>().volume.clone();
                             let sidebar_width = cx.global::<Models>().sidebar_width.clone();
                             let queue_width = cx.global::<Models>().queue_width.clone();
                             let table_settings = cx.global::<Models>().table_settings.clone();
                             move |_, cx| {
                                 let current_track = current_track.read(cx).clone();
+                                let volume = *volume.read(cx);
                                 let sidebar_width: f32 = (*sidebar_width.read(cx)).into();
                                 let queue_width: f32 = (*queue_width.read(cx)).into();
                                 let table_settings = table_settings.read(cx).clone();
@@ -279,6 +283,7 @@ pub fn run() -> anyhow::Result<()> {
                                 cx.background_executor().spawn(async move {
                                     storage.save(&StorageData {
                                         current_track,
+                                        volume,
                                         sidebar_width,
                                         queue_width,
                                         table_settings,
