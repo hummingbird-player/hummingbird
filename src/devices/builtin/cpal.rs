@@ -6,7 +6,7 @@ use crate::{
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         traits::{Device, DeviceProvider, OutputStream},
-        util::{Scale, interleave},
+        util::{AtomicF64, Scale, interleave},
     },
     media::playback::{GetInnerSamples, Mute, PlaybackFrame},
     util::make_unknown_error,
@@ -16,6 +16,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
+use std::sync::Arc;
 
 pub struct CpalProvider {
     host: Host,
@@ -99,12 +100,21 @@ fn cpal_config_from_info(format: &FormatInfo) -> Result<cpal::StreamConfig, ()> 
     }
 }
 
-fn create_stream_internal<
-    T: SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute,
->(
+trait CpalSample:
+    SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute + Scale
+{
+}
+
+impl<T> CpalSample for T where
+    T: SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute + Scale
+{
+}
+
+fn create_stream_internal<T: CpalSample>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buffer_size: usize,
+    volume: Arc<AtomicF64>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
     let rb: SpscRb<T> = SpscRb::new(buffer_size);
     let cons = rb.consumer();
@@ -115,6 +125,15 @@ fn create_stream_internal<
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let written = cons.read(data).unwrap_or(0);
 
+            let volume = volume.load(std::sync::atomic::Ordering::Relaxed);
+
+            // don't scale if the volume is close to 1, it could lead to (negligable) quality loss
+            if volume <= 0.98 {
+                for sample in &mut data[..written] {
+                    *sample = sample.scale(volume);
+                }
+            }
+
             data[written..].iter_mut().for_each(|v| *v = T::muted())
         },
         move |_| {},
@@ -124,18 +143,10 @@ fn create_stream_internal<
     Ok((stream, prod))
 }
 
-trait CpalSample: SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute {}
-
-impl<T> CpalSample for T where
-    T: SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute
-{
-}
-
 impl CpalDevice {
     fn create_stream<T>(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError>
     where
         T: CpalSample,
-        Vec<Vec<T>>: Scale,
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
@@ -147,7 +158,10 @@ impl CpalDevice {
 
         let buffer_size = ((200 * config.sample_rate.0 as usize) / 1000) * channels as usize;
 
-        let (stream, prod) = create_stream_internal::<T>(&self.device, &config, buffer_size)?;
+        let volume = Arc::new(AtomicF64::new(1.0));
+
+        let (stream, prod) =
+            create_stream_internal::<T>(&self.device, &config, buffer_size, volume.clone())?;
 
         Ok(Box::new(CpalStream {
             ring_buf: prod,
@@ -156,7 +170,7 @@ impl CpalDevice {
             config,
             buffer_size,
             device: self.device.clone(),
-            volume: 1.0,
+            volume,
         }))
     }
 }
@@ -239,21 +253,15 @@ where
     pub device: cpal::Device,
     pub format: FormatInfo,
     pub buffer_size: usize,
-    pub volume: f64,
+    pub volume: Arc<AtomicF64>,
 }
 
 impl<T> OutputStream for CpalStream<T>
 where
     T: CpalSample,
-    Vec<Vec<T>>: Scale,
 {
     fn submit_frame(&mut self, frame: PlaybackFrame) -> Result<(), SubmissionError> {
-        let samples = if self.volume > 0.98 {
-            // don't scale if the volume is close to 1, it could lead to (negligable) quality loss
-            T::inner(frame.samples)
-        } else {
-            T::inner(frame.samples).scale(self.volume)
-        };
+        let samples = T::inner(frame.samples);
 
         let interleaved = interleave(samples);
         let mut slice: &[T] = &interleaved;
@@ -286,8 +294,12 @@ where
     }
 
     fn reset(&mut self) -> Result<(), ResetError> {
-        let (stream, prod) =
-            create_stream_internal::<T>(&self.device, &self.config, self.buffer_size)?;
+        let (stream, prod) = create_stream_internal::<T>(
+            &self.device,
+            &self.config,
+            self.buffer_size,
+            self.volume.clone(),
+        )?;
 
         self.stream = stream;
         self.ring_buf = prod;
@@ -296,7 +308,8 @@ where
     }
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
-        self.volume = volume;
+        self.volume
+            .store(volume, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

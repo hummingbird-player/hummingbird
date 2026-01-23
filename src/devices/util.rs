@@ -1,4 +1,5 @@
 use intx::{I24, U24};
+use std::sync::atomic::AtomicU64;
 
 use super::resample::{SampleFrom, SampleInto};
 
@@ -59,31 +60,41 @@ pub trait Scale: Sized {
     fn scale(self, factor: f64) -> Self;
 }
 
-impl<T> Scale for Vec<Vec<T>>
+impl<T> Scale for T
 where
     T: SampleInto<f64> + SampleFrom<f64> + Copy,
 {
-    fn scale(self, factor: f64) -> Vec<Vec<T>> {
-        self.iter()
-            .map(|v| {
-                v.iter()
-                    // anything over 1.0 or under -1.0 will be clamped since it's out of bounds
-                    .map(|v| T::sample_from(f64::clamp(v.sample_into() * factor, -1.0, 1.0)))
-                    .collect()
-            })
-            .collect()
+    fn scale(self, factor: f64) -> T {
+        // anything over 1.0 or under -1.0 will be clamped since it's out of bounds
+        T::sample_from(self.sample_into().scale(factor))
     }
 }
 
-impl Scale for Vec<Vec<f64>> {
-    fn scale(self, factor: f64) -> Vec<Vec<f64>> {
-        self.iter()
-            .map(|v| {
-                v.iter()
-                    // anything over 1.0 or under -1.0 will be clamped since it's out of bounds
-                    .map(|v| f64::clamp(v * factor, -1.0, 1.0))
-                    .collect()
-            })
-            .collect()
+impl Scale for f64 {
+    fn scale(self, factor: f64) -> f64 {
+        f64::clamp(self * factor, -1.0, 1.0)
+    }
+}
+
+pub struct AtomicF64 {
+    inner: AtomicU64,
+}
+
+impl AtomicF64 {
+    pub fn new(value: f64) -> Self {
+        let as_u64 = value.to_bits();
+        Self {
+            inner: AtomicU64::new(as_u64),
+        }
+    }
+
+    pub fn store(&self, value: f64, ordering: std::sync::atomic::Ordering) {
+        let as_u64 = value.to_bits();
+        self.inner.store(as_u64, ordering)
+    }
+
+    pub fn load(&self, ordering: std::sync::atomic::Ordering) -> f64 {
+        let as_u64 = self.inner.load(ordering);
+        f64::from_bits(as_u64)
     }
 }
