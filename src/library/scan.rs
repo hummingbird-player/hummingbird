@@ -389,7 +389,13 @@ impl ScanThread {
             return;
         }
 
-        let paths = fs::read_dir(&path).unwrap();
+        let paths = match fs::read_dir(&path) {
+            Ok(paths) => paths,
+            Err(e) => {
+                error!("Failed to read directory {:?}: {:?}", path, e);
+                return;
+            }
+        };
 
         for paths in paths {
             let path = match paths {
