@@ -1,3 +1,5 @@
+mod queue_manager;
+
 use std::{
     env::consts::OS,
     mem::swap,
