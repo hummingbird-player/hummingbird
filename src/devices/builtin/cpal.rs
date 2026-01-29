@@ -5,10 +5,11 @@ use crate::{
             ResetError, StateError, SubmissionError,
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
+        resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, Scale, interleave},
+        util::{AtomicF64, Scale},
     },
-    media::playback::{GetInnerSamples, Mute, PlaybackFrame},
+    media::{pipeline::ChannelConsumers, playback::Mute},
     util::make_unknown_error,
 };
 use cpal::{
@@ -100,15 +101,9 @@ fn cpal_config_from_info(format: &FormatInfo) -> Result<cpal::StreamConfig, ()> 
     }
 }
 
-trait CpalSample:
-    SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute + Scale
-{
-}
+trait CpalSample: SizedSample + Default + Send + Sized + 'static + Mute + Scale {}
 
-impl<T> CpalSample for T where
-    T: SizedSample + GetInnerSamples + Default + Send + Sized + 'static + Mute + Scale
-{
-}
+impl<T> CpalSample for T where T: SizedSample + Default + Send + Sized + 'static + Mute + Scale {}
 
 fn create_stream_internal<T: CpalSample>(
     device: &cpal::Device,
@@ -146,7 +141,7 @@ fn create_stream_internal<T: CpalSample>(
 impl CpalDevice {
     fn create_stream<T>(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError>
     where
-        T: CpalSample,
+        T: CpalSample + SampleFrom<f32>,
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
@@ -171,6 +166,7 @@ impl CpalDevice {
             buffer_size,
             device: self.device.clone(),
             volume,
+            interleave_buffer: Vec::with_capacity(buffer_size),
         }))
     }
 }
@@ -245,7 +241,7 @@ impl Device for CpalDevice {
 
 struct CpalStream<T>
 where
-    T: GetInnerSamples + SizedSample + Default,
+    T: SizedSample + Default,
 {
     pub ring_buf: Producer<T>,
     pub stream: cpal::Stream,
@@ -254,25 +250,13 @@ where
     pub format: FormatInfo,
     pub buffer_size: usize,
     pub volume: Arc<AtomicF64>,
+    pub interleave_buffer: Vec<T>,
 }
 
 impl<T> OutputStream for CpalStream<T>
 where
-    T: CpalSample,
+    T: CpalSample + SampleFrom<f32>,
 {
-    fn submit_frame(&mut self, frame: PlaybackFrame) -> Result<(), SubmissionError> {
-        let samples = T::inner(frame.samples);
-
-        let interleaved = interleave(samples);
-        let mut slice: &[T] = &interleaved;
-
-        while let Some(written) = self.ring_buf.write_blocking(slice) {
-            slice = &slice[written..];
-        }
-
-        Ok(())
-    }
-
     fn close_stream(&mut self) -> Result<(), CloseError> {
         Ok(())
     }
@@ -303,6 +287,7 @@ where
 
         self.stream = stream;
         self.ring_buf = prod;
+        self.interleave_buffer.clear();
 
         Ok(())
     }
@@ -311,6 +296,47 @@ where
         self.volume
             .store(volume, std::sync::atomic::Ordering::Relaxed);
         Ok(())
+    }
+
+    fn consume_from(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Result<usize, SubmissionError> {
+        let available = input.potentially_available();
+        if available == 0 {
+            return Ok(0);
+        }
+
+        let read = input.try_read_to_staging(available);
+        if read == 0 {
+            return Ok(0);
+        }
+
+        let staging = input.staging();
+
+        let channel_count = staging.len();
+
+        // Interleave and convert to target format
+        // Reuse the persistent interleave buffer
+        self.interleave_buffer.clear();
+        self.interleave_buffer.reserve(read * channel_count);
+
+        for i in 0..read {
+            for ch in 0..channel_count {
+                let sample_f32 = staging[ch][i];
+                self.interleave_buffer.push(T::sample_from(sample_f32));
+            }
+        }
+
+        // Write to device ring buffer
+        let mut slice: &[T] = &self.interleave_buffer;
+        while !slice.is_empty() {
+            if let Some(written) = self.ring_buf.write_blocking(slice) {
+                slice = &slice[written..];
+            }
+        }
+
+        Ok(read)
     }
 }
 

@@ -49,6 +49,8 @@ pub struct FormatInfo {
     pub channels: ChannelSpec,
 }
 
+/// TODO: this will be used in the future
+#[allow(dead_code)]
 pub struct SupportedFormat {
     pub originating_provider: &'static str,
     pub sample_type: SampleFormat,
@@ -85,42 +87,5 @@ bitflags! {
 impl Channels {
     pub fn count(self) -> u16 {
         self.bits().count_ones().try_into().expect("infallible")
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Layout {
-    Mono,
-    Stereo,
-    TwoOne,
-    FiveOne,
-    SevenOne,
-}
-
-impl Layout {
-    pub fn channels(self) -> Channels {
-        match self {
-            Layout::Mono => Channels::FRONT_LEFT,
-            Layout::Stereo => Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-            Layout::TwoOne => {
-                Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::LOW_FREQUENCY
-            }
-            Layout::FiveOne => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::BACK_LEFT
-                    | Channels::BACK_RIGHT
-                    | Channels::LOW_FREQUENCY
-            }
-            Layout::SevenOne => {
-                Channels::FRONT_LEFT
-                    | Channels::FRONT_RIGHT
-                    | Channels::SIDE_LEFT
-                    | Channels::SIDE_RIGHT
-                    | Channels::BACK_LEFT
-                    | Channels::BACK_RIGHT
-                    | Channels::LOW_FREQUENCY
-            }
-        }
     }
 }

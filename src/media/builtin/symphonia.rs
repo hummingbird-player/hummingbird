@@ -21,7 +21,7 @@ use symphonia::{
 use symphonia_adapter_libopus::OpusDecoder;
 
 use crate::{
-    devices::format::ChannelSpec,
+    devices::format::{ChannelSpec, SampleFormat},
     media::{
         errors::{
             ChannelRetrievalError, CloseError, FrameDurationError, MetadataError, OpenError,
@@ -29,7 +29,7 @@ use crate::{
             TrackDurationError,
         },
         metadata::Metadata,
-        playback::{PlaybackFrame, Samples},
+        pipeline::{DecodeResult, TypedChannelProducers},
         traits::{MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
@@ -343,223 +343,6 @@ impl MediaStream for SymphoniaStream {
         Ok(())
     }
 
-    fn read_samples(&mut self) -> Result<PlaybackFrame, PlaybackReadError> {
-        let Some(format) = &mut self.format else {
-            return Err(PlaybackReadError::InvalidState);
-        };
-        // this has a loop because the next packet may not be from the current track
-        loop {
-            let packet = match format.next_packet() {
-                Ok(packet) => packet,
-                Err(Error::ResetRequired) => return Err(PlaybackReadError::Eof),
-                Err(_) => {
-                    // TODO: Handle better
-                    return Err(PlaybackReadError::Eof);
-                }
-            };
-
-            while !format.metadata().is_latest() {
-                // TODO: handle metadata updates
-                format.metadata().pop();
-            }
-
-            if packet.track_id() != self.current_track {
-                continue;
-            }
-
-            let Some(decoder) = &mut self.decoder else {
-                return Err(PlaybackReadError::NeverStarted);
-            };
-
-            match decoder.decode(&packet) {
-                Ok(decoded) => {
-                    let rate = decoded.spec().rate;
-                    let channel_count = decoded.spec().channels.count();
-                    self.current_duration = decoded.capacity() as u64;
-
-                    if let Some(tb) = &self.current_timebase {
-                        self.current_position = tb.calc_time(packet.ts()).seconds;
-                    }
-
-                    match decoded {
-                        AudioBufferRef::U8(v) => {
-                            let mut samples: Vec<Vec<u8>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Unsigned8(samples),
-                            });
-                        }
-                        AudioBufferRef::U16(v) => {
-                            let mut samples: Vec<Vec<u16>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Unsigned16(samples),
-                            });
-                        }
-                        AudioBufferRef::U24(v) => {
-                            let mut samples: Vec<Vec<U24>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(
-                                        U24::try_from(sample.0)
-                                            .expect("24bit number is not 24bits long"),
-                                    );
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Unsigned24(samples),
-                            });
-                        }
-                        AudioBufferRef::U32(v) => {
-                            let mut samples: Vec<Vec<u32>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Unsigned32(samples),
-                            });
-                        }
-                        AudioBufferRef::S8(v) => {
-                            let mut samples: Vec<Vec<i8>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Signed8(samples),
-                            });
-                        }
-                        AudioBufferRef::S16(v) => {
-                            let mut samples: Vec<Vec<i16>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Signed16(samples),
-                            });
-                        }
-                        AudioBufferRef::S24(v) => {
-                            let mut samples: Vec<Vec<I24>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(
-                                        I24::try_from(sample.0)
-                                            .expect("24bit number is not 24bits long"),
-                                    );
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Signed24(samples),
-                            });
-                        }
-                        AudioBufferRef::S32(v) => {
-                            let mut samples: Vec<Vec<i32>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Signed32(samples),
-                            });
-                        }
-                        AudioBufferRef::F32(v) => {
-                            let mut samples: Vec<Vec<f32>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Float32(samples),
-                            });
-                        }
-                        AudioBufferRef::F64(v) => {
-                            let mut samples: Vec<Vec<f64>> =
-                                Vec::with_capacity(v.spec().channels.count());
-
-                            for i in 0..channel_count {
-                                samples.push(Vec::with_capacity(v.capacity()));
-                                for sample in v.chan(i) {
-                                    samples[i].push(*sample);
-                                }
-                            }
-
-                            return Ok(PlaybackFrame {
-                                rate,
-                                samples: Samples::Float64(samples),
-                            });
-                        }
-                    }
-                }
-                Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(PlaybackReadError::DecodeFatal(e.to_string()));
-                }
-            }
-        }
-    }
-
     fn frame_duration(&self) -> Result<u64, FrameDurationError> {
         if self.decoder.is_none() || self.current_duration == 0 {
             Err(FrameDurationError::NeverStarted)
@@ -659,5 +442,212 @@ impl MediaStream for SymphoniaStream {
                 .map(Channels::count)
                 .unwrap_or(2) as u16,
         ))
+    }
+
+    fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError> {
+        let Some(decoder) = &self.decoder else {
+            return Err(ChannelRetrievalError::NeverStarted);
+        };
+
+        let codec_params = decoder.codec_params();
+
+        match codec_params.sample_format {
+            Some(symphonia::core::sample::SampleFormat::S8) => Ok(SampleFormat::Signed8),
+            Some(symphonia::core::sample::SampleFormat::S16) => Ok(SampleFormat::Signed16),
+            Some(symphonia::core::sample::SampleFormat::S24) => Ok(SampleFormat::Signed24),
+            Some(symphonia::core::sample::SampleFormat::S32) => Ok(SampleFormat::Signed32),
+            Some(symphonia::core::sample::SampleFormat::U8) => Ok(SampleFormat::Unsigned8),
+            Some(symphonia::core::sample::SampleFormat::U16) => Ok(SampleFormat::Unsigned16),
+            Some(symphonia::core::sample::SampleFormat::U24) => Ok(SampleFormat::Unsigned24),
+            Some(symphonia::core::sample::SampleFormat::U32) => Ok(SampleFormat::Unsigned32),
+            Some(symphonia::core::sample::SampleFormat::F32) => Ok(SampleFormat::Float32),
+            Some(symphonia::core::sample::SampleFormat::F64) => Ok(SampleFormat::Float64),
+            None => match codec_params.bits_per_sample {
+                Some(8) => Ok(SampleFormat::Unsigned8),
+                Some(16) => Ok(SampleFormat::Signed16),
+                Some(24) => Ok(SampleFormat::Signed24),
+                Some(32) => Ok(SampleFormat::Float32), // Could be i32 or f32, prefer f32
+                _ => Ok(SampleFormat::Float32),        // Default for most compressed formats
+            },
+        }
+    }
+
+    fn decode_into(
+        &mut self,
+        output: &TypedChannelProducers,
+    ) -> Result<DecodeResult, PlaybackReadError> {
+        let Some(format) = &mut self.format else {
+            return Err(PlaybackReadError::InvalidState);
+        };
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(Error::ResetRequired) => return Ok(DecodeResult::Eof),
+                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(DecodeResult::Eof);
+                }
+                Err(_) => return Ok(DecodeResult::Eof),
+            };
+
+            while !format.metadata().is_latest() {
+                format.metadata().pop();
+            }
+
+            if packet.track_id() != self.current_track {
+                continue;
+            }
+
+            let Some(decoder) = &mut self.decoder else {
+                return Err(PlaybackReadError::NeverStarted);
+            };
+
+            match decoder.decode(&packet) {
+                Ok(decoded) => {
+                    let rate = decoded.spec().rate;
+                    let channel_count = decoded.spec().channels.count();
+                    self.current_duration = decoded.capacity() as u64;
+
+                    if let Some(tb) = &self.current_timebase {
+                        self.current_position = tb.calc_time(packet.ts()).seconds;
+                    }
+
+                    let frames = match decoded {
+                        AudioBufferRef::U8(v) => {
+                            let TypedChannelProducers::Unsigned8(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected U8 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[u8]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::U16(v) => {
+                            let TypedChannelProducers::Unsigned16(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected U16 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[u16]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::U24(v) => {
+                            let TypedChannelProducers::Unsigned24(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected U24 producers".to_string(),
+                                ));
+                            };
+                            // convert symphonia's u24 to intx U24
+                            let converted: Vec<Vec<U24>> = (0..channel_count)
+                                .map(|ch| {
+                                    v.chan(ch)
+                                        .iter()
+                                        .map(|s| U24::try_from(s.0).expect("u24 overflow"))
+                                        .collect()
+                                })
+                                .collect();
+                            producers.write_vecs(&converted);
+                            v.frames()
+                        }
+                        AudioBufferRef::U32(v) => {
+                            let TypedChannelProducers::Unsigned32(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected U32 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[u32]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::S8(v) => {
+                            let TypedChannelProducers::Signed8(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected S8 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[i8]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::S16(v) => {
+                            let TypedChannelProducers::Signed16(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected S16 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[i16]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::S24(v) => {
+                            let TypedChannelProducers::Signed24(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected S24 producers".to_string(),
+                                ));
+                            };
+                            // convert symphonia's i24 to intx I24
+                            let converted: Vec<Vec<I24>> = (0..channel_count)
+                                .map(|ch| {
+                                    v.chan(ch)
+                                        .iter()
+                                        .map(|s| I24::try_from(s.0).expect("i24 overflow"))
+                                        .collect()
+                                })
+                                .collect();
+                            producers.write_vecs(&converted);
+                            v.frames()
+                        }
+                        AudioBufferRef::S32(v) => {
+                            let TypedChannelProducers::Signed32(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected S32 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[i32]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::F32(v) => {
+                            let TypedChannelProducers::Float32(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected F32 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[f32]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                        AudioBufferRef::F64(v) => {
+                            let TypedChannelProducers::Float64(producers) = output else {
+                                return Err(PlaybackReadError::Unknown(
+                                    "Format mismatch: expected F64 producers".to_string(),
+                                ));
+                            };
+                            let slices: Vec<&[f64]> =
+                                (0..channel_count).map(|ch| v.chan(ch)).collect();
+                            producers.write_slices(&slices);
+                            v.frames()
+                        }
+                    };
+
+                    return Ok(DecodeResult::Decoded { frames, rate });
+                }
+                Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(PlaybackReadError::DecodeFatal(e.to_string()));
+                }
+            }
+        }
     }
 }

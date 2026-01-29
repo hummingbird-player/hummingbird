@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicU64;
 
 use super::resample::{SampleFrom, SampleInto};
 
+#[allow(dead_code)]
 pub fn interleave<T>(samples: Vec<Vec<T>>) -> Vec<T>
 where
     T: Copy + PartialEq,
@@ -56,6 +57,7 @@ impl Packed for [u8] {
     }
 }
 
+#[allow(dead_code)] // this code is not dead
 pub trait Scale: Sized {
     fn scale(self, factor: f64) -> Self;
 }

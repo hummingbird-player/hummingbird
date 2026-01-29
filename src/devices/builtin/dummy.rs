@@ -2,12 +2,16 @@ use std::env;
 
 use tracing::{debug, info, warn};
 
-use crate::devices::{
-    errors::{
-        CloseError, FindError, InfoError, InitializationError, ListError, OpenError, StateError,
+use crate::{
+    devices::{
+        errors::{
+            CloseError, FindError, InfoError, InitializationError, ListError, OpenError,
+            StateError, SubmissionError,
+        },
+        format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
+        traits::{Device, DeviceProvider, OutputStream},
     },
-    format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
-    traits::{Device, DeviceProvider, OutputStream},
+    media::pipeline::ChannelConsumers,
 };
 
 /// The dummy device provider is provided for testing purposes. It does not play any actual audio,
@@ -146,14 +150,6 @@ pub struct DummyStream {
 }
 
 impl OutputStream for DummyStream {
-    fn submit_frame(
-        &mut self,
-        frame: crate::media::playback::PlaybackFrame,
-    ) -> Result<(), crate::devices::errors::SubmissionError> {
-        debug!("Frame received! Sample rate: {}", frame.rate);
-        Ok(())
-    }
-
     fn close_stream(&mut self) -> Result<(), CloseError> {
         debug!("Stream closed.");
         Ok(())
@@ -185,5 +181,20 @@ impl OutputStream for DummyStream {
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
         debug!("Volume set to {}.", volume);
         Ok(())
+    }
+
+    fn consume_from(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Result<usize, SubmissionError> {
+        let available = input.potentially_available();
+        if available == 0 {
+            return Ok(0);
+        }
+
+        // Just drain the samples without doing anything with them
+        let read = input.try_read_to_staging(available);
+        debug!("Consumed {} samples from ring buffer (dummy device)", read);
+        Ok(read)
     }
 }

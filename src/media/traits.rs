@@ -2,7 +2,7 @@ use std::{ffi::OsStr, fs::File};
 
 use bitflags::bitflags;
 
-use crate::devices::format::ChannelSpec;
+use crate::devices::format::{ChannelSpec, SampleFormat};
 
 use super::{
     errors::{
@@ -10,7 +10,7 @@ use super::{
         PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError, TrackDurationError,
     },
     metadata::Metadata,
-    playback::PlaybackFrame,
+    pipeline::{DecodeResult, TypedChannelProducers},
 };
 
 bitflags! {
@@ -98,10 +98,6 @@ pub trait MediaStream {
     /// in seconds. If no file is opened, this function should return an error.
     fn seek(&mut self, time: f64) -> Result<(), SeekError>;
 
-    /// Requests the Provider provide samples for playback. If no file is opened, or the Provider
-    /// is a metadata-only provider, this function should return an error.
-    fn read_samples(&mut self) -> Result<PlaybackFrame, PlaybackReadError>;
-
     /// Returns the normal duration of the PlaybackFrames returned by this provider for the current
     /// open file. If no file is opened, an error should be returned. Note that a PlaybackFrame may
     /// be shorter than this duration, but it should never be longer.
@@ -138,4 +134,15 @@ pub trait MediaStream {
     /// This function is used by the playback thread to determine whether or not the track's
     /// channel count can be handled by the current device, and if it is, change the channel count.
     fn channels(&self) -> Result<ChannelSpec, ChannelRetrievalError>;
+
+    /// Returns the sample format used by the track being decoded. This function should be
+    /// available immediately after playback has started.
+    fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError>;
+
+    /// Decode one packet/frame and write samples directly to the provided ring buffer producers.
+    /// The producers must match the sample format returned by `sample_format()`.
+    fn decode_into(
+        &mut self,
+        output: &TypedChannelProducers,
+    ) -> Result<DecodeResult, PlaybackReadError>;
 }

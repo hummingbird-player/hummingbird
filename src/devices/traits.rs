@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::media::playback::PlaybackFrame;
+use crate::media::pipeline::ChannelConsumers;
 
 use super::{
     errors::{
@@ -47,11 +47,6 @@ pub trait Device {
 }
 
 pub trait OutputStream {
-    /// Submits a playback frame to the device for playback. If Device::requires_matching_format is
-    /// true, the audio *must* be in the same format as the current stream (can be retrieved with
-    /// OutputStream::get_current_format). If requires_matching_format is false, the audio can be
-    /// in any format.
-    fn submit_frame(&mut self, frame: PlaybackFrame) -> Result<(), SubmissionError>;
     /// Closes the stream and releases any resources associated with it.
     fn close_stream(&mut self) -> Result<(), CloseError>;
     /// Returns true if the stream requires input (e.g. the buffer is empty).
@@ -78,4 +73,8 @@ pub trait OutputStream {
     /// control, and will instead use this value to adjust the volume of the audio data before
     /// submitting it to the device.
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError>;
+
+    /// Consume samples from ring buffer consumers and submit them to the device.
+    fn consume_from(&mut self, input: &mut ChannelConsumers<f32>)
+    -> Result<usize, SubmissionError>;
 }

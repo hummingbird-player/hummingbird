@@ -4,39 +4,7 @@ use intx::{I24, U24};
 use rubato::{FftFixedIn, VecResampler};
 use tracing::info;
 
-use crate::media::playback::{PlaybackFrame, Samples};
-
-use super::format::{FormatInfo, SampleFormat};
-
-fn scale<T, U>(target: Vec<Vec<T>>) -> Vec<Vec<U>>
-where
-    T: Copy,
-    U: SampleFrom<T>,
-{
-    target
-        .iter()
-        .map(|v| v.iter().map(|v| U::sample_from(*v)).collect())
-        .collect()
-}
-
-pub fn convert_samples<T>(target_frame: Samples) -> Vec<Vec<T>>
-where
-    T: Copy + SampleInto<f64> + SampleFrom<f64>,
-{
-    match target_frame {
-        Samples::Float64(v) => scale(v),
-        Samples::Float32(v) => scale(v),
-        Samples::Signed32(v) => scale(v),
-        Samples::Unsigned32(v) => scale(v),
-        Samples::Signed24(v) => scale(v),
-        Samples::Unsigned24(v) => scale(v),
-        Samples::Signed16(v) => scale(v),
-        Samples::Unsigned16(v) => scale(v),
-        Samples::Signed8(v) => scale(v),
-        Samples::Unsigned8(v) => scale(v),
-        Samples::Dsd(_) => unimplemented!(),
-    }
-}
+use crate::media::pipeline::{ChannelProducers, TypedChannelConsumers};
 
 pub trait SampleInto<T> {
     fn sample_into(self) -> T;
@@ -60,7 +28,13 @@ impl SampleInto<f64> for f32 {
     }
 }
 
-macro_rules! f64_to {
+impl SampleInto<f64> for f64 {
+    fn sample_into(self) -> f64 {
+        self
+    }
+}
+
+macro_rules! impl_sample_into_f64 {
     ($t:ty, $max_type:ty, $offset:expr) => {
         impl SampleInto<f64> for $t {
             fn sample_into(self) -> f64 {
@@ -70,13 +44,14 @@ macro_rules! f64_to {
     };
 }
 
-f64_to!(u32, i32, -1.0);
-f64_to!(u16, i16, -1.0);
-f64_to!(u8, i8, -1.0);
-f64_to!(i32, i32, 0.0);
-f64_to!(i16, i16, 0.0);
-f64_to!(i8, i8, 0.0);
+impl_sample_into_f64!(u32, i32, -1.0);
+impl_sample_into_f64!(u16, i16, -1.0);
+impl_sample_into_f64!(u8, i8, -1.0);
+impl_sample_into_f64!(i32, i32, 0.0);
+impl_sample_into_f64!(i16, i16, 0.0);
+impl_sample_into_f64!(i8, i8, 0.0);
 
+/// Trait for converting from another sample type.
 pub trait SampleFrom<T> {
     fn sample_from(value: T) -> Self;
 }
@@ -100,7 +75,13 @@ impl SampleFrom<f64> for f32 {
     }
 }
 
-macro_rules! f64_from {
+impl SampleFrom<f64> for f64 {
+    fn sample_from(value: f64) -> Self {
+        value
+    }
+}
+
+macro_rules! impl_sample_from_f64 {
     ($t:ty, $max_type:ty, $offset:expr) => {
         impl SampleFrom<f64> for $t {
             fn sample_from(value: f64) -> $t {
@@ -110,64 +91,85 @@ macro_rules! f64_from {
     };
 }
 
-f64_from!(u32, i32, -1.0);
-f64_from!(u16, i16, -1.0);
-f64_from!(u8, i8, -1.0);
-f64_from!(i32, i32, 0.0);
-f64_from!(i16, i16, 0.0);
-f64_from!(i8, i8, 0.0);
+impl_sample_from_f64!(u32, i32, -1.0);
+impl_sample_from_f64!(u16, i16, -1.0);
+impl_sample_from_f64!(u8, i8, -1.0);
+impl_sample_from_f64!(i32, i32, 0.0);
+impl_sample_from_f64!(i16, i16, 0.0);
+impl_sample_from_f64!(i8, i8, 0.0);
 
-impl<T, U> SampleFrom<T> for U
-where
-    T: SampleInto<f64>,
-    U: SampleFrom<f64>,
-{
-    fn sample_from(value: T) -> Self {
-        let a: f64 = T::sample_into(value);
-        U::sample_from(a)
-    }
-}
-
-impl SampleFrom<f64> for f64 {
-    fn sample_from(value: f64) -> Self {
+// SampleFrom<f32> implementations needed by cpal device
+impl SampleFrom<f32> for f32 {
+    fn sample_from(value: f32) -> Self {
         value
     }
 }
 
-pub fn match_bit_depth(target_frame: PlaybackFrame, target_depth: SampleFormat) -> PlaybackFrame {
-    let rate = target_frame.rate;
+impl SampleFrom<f32> for f64 {
+    fn sample_from(value: f32) -> Self {
+        value as f64
+    }
+}
 
-    let samples = if !target_frame.samples.is_format(target_depth) {
-        match target_depth {
-            SampleFormat::Float64 => todo!(),
-            SampleFormat::Float32 => Samples::Float32(convert_samples(target_frame.samples)),
-            SampleFormat::Signed32 => Samples::Signed32(convert_samples(target_frame.samples)),
-            SampleFormat::Unsigned32 => Samples::Unsigned32(convert_samples(target_frame.samples)),
-            SampleFormat::Signed24 => Samples::Signed24(convert_samples(target_frame.samples)),
-            SampleFormat::Unsigned24 => Samples::Unsigned24(convert_samples(target_frame.samples)),
-            SampleFormat::Signed24Packed => {
-                Samples::Signed24(convert_samples(target_frame.samples))
-            }
-            SampleFormat::Unsigned24Packed => {
-                Samples::Unsigned24(convert_samples(target_frame.samples))
-            }
-            SampleFormat::Signed16 => Samples::Signed16(convert_samples(target_frame.samples)),
-            SampleFormat::Unsigned16 => Samples::Unsigned16(convert_samples(target_frame.samples)),
-            SampleFormat::Signed8 => Samples::Signed8(convert_samples(target_frame.samples)),
-            SampleFormat::Unsigned8 => Samples::Unsigned8(convert_samples(target_frame.samples)),
-            SampleFormat::Dsd => unimplemented!(),
-        }
-    } else {
-        target_frame.samples
-    };
+impl SampleFrom<f32> for i8 {
+    fn sample_from(value: f32) -> Self {
+        (value * i8::MAX as f32) as i8
+    }
+}
 
-    PlaybackFrame { samples, rate }
+impl SampleFrom<f32> for u8 {
+    fn sample_from(value: f32) -> Self {
+        ((value + 1.0) * i8::MAX as f32) as u8
+    }
+}
+
+impl SampleFrom<f32> for i16 {
+    fn sample_from(value: f32) -> Self {
+        (value * i16::MAX as f32) as i16
+    }
+}
+
+impl SampleFrom<f32> for u16 {
+    fn sample_from(value: f32) -> Self {
+        ((value + 1.0) * i16::MAX as f32) as u16
+    }
+}
+
+impl SampleFrom<f32> for i32 {
+    fn sample_from(value: f32) -> Self {
+        (value as f64 * i32::MAX as f64) as i32
+    }
+}
+
+impl SampleFrom<f32> for u32 {
+    fn sample_from(value: f32) -> Self {
+        ((value as f64 + 1.0) * i32::MAX as f64) as u32
+    }
+}
+
+impl SampleFrom<f32> for I24 {
+    fn sample_from(value: f32) -> Self {
+        I24::try_from((value as f64 * f64::from(i32::from(I24::MAX))) as i32)
+            .expect("out of I24 bounds")
+    }
+}
+
+impl SampleFrom<f32> for U24 {
+    fn sample_from(value: f32) -> Self {
+        U24::try_from(((value as f64 + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
+            .expect("out of U24 bounds")
+    }
 }
 
 pub struct Resampler {
     resampler: FftFixedIn<f32>,
     duration: u64,
     input_buffer: Vec<VecDeque<f32>>,
+    output_buffer: Vec<Vec<f32>>,
+    temp_input: Vec<Vec<f32>>,
+    channels: usize,
+    source_rate: u32,
+    target_rate: u32,
     eof: bool,
 }
 
@@ -189,74 +191,137 @@ impl Resampler {
         )
         .unwrap();
 
+        let channels_usize = channels as usize;
+
         Resampler {
             resampler,
             duration,
             input_buffer: (0..channels)
                 .map(|_| VecDeque::with_capacity(duration as usize * 2))
                 .collect(),
+            output_buffer: (0..channels_usize)
+                .map(|_| Vec::with_capacity(duration as usize * 2))
+                .collect(),
+            temp_input: (0..channels_usize)
+                .map(|_| Vec::with_capacity(duration as usize))
+                .collect(),
+            channels: channels_usize,
+            source_rate: orig_rate,
+            target_rate,
             eof: false,
         }
     }
 
-    pub fn convert_formats(
-        &mut self,
-        frame: PlaybackFrame,
-        target_format: &FormatInfo,
-    ) -> PlaybackFrame {
-        if target_format.sample_rate == frame.rate {
-            return match_bit_depth(frame, target_format.sample_type);
+    pub fn needs_resampling(&self) -> bool {
+        self.source_rate != self.target_rate
+    }
+
+    pub fn matches_params(
+        &self,
+        source_rate: u32,
+        target_rate: u32,
+        duration: u64,
+        channels: usize,
+    ) -> bool {
+        self.source_rate == source_rate
+            && self.target_rate == target_rate
+            && self.duration == duration
+            && self.channels == channels
+    }
+
+    fn input_available(&self) -> usize {
+        self.input_buffer.iter().map(|b| b.len()).min().unwrap_or(0)
+    }
+
+    pub fn reset(&mut self) {
+        for buf in &mut self.input_buffer {
+            buf.clear();
         }
-        let source: Vec<Vec<f32>> = convert_samples(frame.samples);
+        for buf in &mut self.output_buffer {
+            buf.clear();
+        }
+        for buf in &mut self.temp_input {
+            buf.clear();
+        }
+        self.eof = false;
+    }
 
-        self.input_buffer
-            .iter_mut()
-            .zip(source.into_iter().map(VecDeque::from))
-            .for_each(|(buffer, mut src)| {
-                buffer.append(&mut src);
-            });
+    pub fn process_ring_buffers(
+        &mut self,
+        input: &mut TypedChannelConsumers,
+        output: &ChannelProducers<f32>,
+        max_input_samples: usize,
+    ) -> usize {
+        let read = input.read_as_f32_into(&mut self.input_buffer, max_input_samples);
 
-        if self.input_buffer[0].len() < self.duration as usize {
-            // if source[0].len() == 0 {
-            //     warn!("Zero length PlaybackFrame presented to convert_formats!");
-            //     warn!("This is a decoding bug: please report it (with logs)");
-            //     Vec::new()
-            // } else {
-            //     self.resampler
-            //         .process_partial(Some(&source), None)
-            //         .expect("resampler error")
-            // }
+        if read == 0 && !self.eof {
+            return 0;
+        }
 
-            match_bit_depth(
-                PlaybackFrame {
-                    samples: Samples::Float32(Vec::with_capacity(0)),
-                    rate: target_format.sample_rate,
-                },
-                target_format.sample_type,
-            )
-        } else {
-            let split = self
-                .input_buffer
-                .iter_mut()
-                .map(|v| v.drain(0..self.duration as usize).collect::<Vec<_>>())
-                .collect::<Vec<_>>();
+        if !self.needs_resampling() {
+            return self.passthrough_to_output(output);
+        }
+
+        let available = self.input_available();
+        if available < self.duration as usize && !self.eof {
+            return 0; // not enough input yet
+        }
+
+        let mut total_output = 0;
+
+        while self.input_available() >= self.duration as usize {
+            for ch in 0..self.channels {
+                self.temp_input[ch].clear();
+                for _ in 0..self.duration as usize {
+                    if let Some(sample) = self.input_buffer[ch].pop_front() {
+                        self.temp_input[ch].push(sample);
+                    }
+                }
+            }
 
             let resampled = self
                 .resampler
-                .process(&split, None)
+                .process(&self.temp_input, None)
                 .expect("resampler error");
 
-            match_bit_depth(
-                PlaybackFrame {
-                    samples: Samples::Float32(resampled),
-                    rate: target_format.sample_rate,
-                },
-                target_format.sample_type,
-            )
+            output.write_vecs(&resampled);
+            total_output += resampled.first().map(|v| v.len()).unwrap_or(0);
         }
+
+        // handle eofs
+        if self.eof && self.input_available() > 0 {
+            for ch in 0..self.channels {
+                self.temp_input[ch].clear();
+                while let Some(sample) = self.input_buffer[ch].pop_front() {
+                    self.temp_input[ch].push(sample);
+                }
+            }
+
+            if let Ok(resampled) = self.resampler.process_partial(Some(&self.temp_input), None) {
+                output.write_vecs(&resampled);
+                total_output += resampled.first().map(|v| v.len()).unwrap_or(0);
+            }
+        }
+
+        total_output
     }
 
-    pub fn eof(&mut self) {
-        self.eof = true;
+    fn passthrough_to_output(&mut self, output: &ChannelProducers<f32>) -> usize {
+        let available = self.input_available();
+        if available == 0 {
+            return 0;
+        }
+
+        for ch in 0..self.channels {
+            self.output_buffer[ch].clear();
+            for _ in 0..available {
+                if let Some(sample) = self.input_buffer[ch].pop_front() {
+                    self.output_buffer[ch].push(sample);
+                }
+            }
+        }
+
+        output.write_vecs(&self.output_buffer);
+        available
     }
 }

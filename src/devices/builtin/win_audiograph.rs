@@ -27,7 +27,7 @@ use crate::{
         traits::{Device, DeviceProvider, OutputStream},
         util::{Packed, interleave},
     },
-    media::playback::{GetInnerSamples, PlaybackFrame},
+    media::pipeline::ChannelConsumers,
     util::make_unknown_error,
 };
 
@@ -250,6 +250,8 @@ impl Device for AudioGraphDevice {
             node: input_node,
             producer: prod,
             format,
+            interleaved_buffer: Vec::with_capacity(buffer_size),
+            packed_buffer: Vec::with_capacity(buffer_size),
         };
 
         Ok(Box::new(stream) as Box<dyn OutputStream>)
@@ -312,23 +314,11 @@ pub struct AudioGraphStream {
     pub node: AudioFrameInputNode,
     pub producer: Producer<u8>,
     pub format: FormatInfo,
+    interleaved_buffer: Vec<f32>,
+    packed_buffer: Vec<u8>,
 }
 
 impl OutputStream for AudioGraphStream {
-    fn submit_frame(&mut self, frame: PlaybackFrame) -> Result<(), SubmissionError> {
-        self.node.Start().expect("couldn't start");
-
-        let samples = f32::inner(frame.samples);
-        let packed = interleave(samples).pack();
-        let mut slice: &[u8] = &packed;
-
-        while let Some(written) = self.producer.write_blocking(slice) {
-            slice = &slice[written..];
-        }
-
-        Ok(())
-    }
-
     fn close_stream(&mut self) -> Result<(), CloseError> {
         self.node.Close().map_err(|e| e.into())
     }
@@ -355,6 +345,48 @@ impl OutputStream for AudioGraphStream {
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
         self.node.SetOutgoingGain(volume).map_err(|e| e.into())
+    }
+
+    fn consume_from(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Result<usize, SubmissionError> {
+        let available = input.potentially_available();
+        if available == 0 {
+            return Ok(0);
+        }
+
+        self.node.Start().expect("couldn't start");
+
+        let read = input.try_read_to_staging(available);
+        if read == 0 {
+            return Ok(0);
+        }
+
+        let staging = input.staging();
+
+        let channel_count = staging.len();
+
+        // Interleave and pack to bytes using persistent buffers
+        self.interleaved_buffer.clear();
+        self.interleaved_buffer.reserve(read * channel_count);
+        for i in 0..read {
+            for ch in 0..channel_count {
+                self.interleaved_buffer.push(staging[ch][i]);
+            }
+        }
+
+        self.packed_buffer.clear();
+        self.packed_buffer.extend(self.interleaved_buffer.pack());
+        let mut slice: &[u8] = &self.packed_buffer;
+
+        while !slice.is_empty() {
+            if let Some(written) = self.producer.write_blocking(slice) {
+                slice = &slice[written..];
+            }
+        }
+
+        Ok(read)
     }
 }
 

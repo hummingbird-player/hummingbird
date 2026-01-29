@@ -1,4 +1,5 @@
 mod queue_manager;
+// mod stream_controller;
 
 use std::{
     env::consts::OS,
@@ -14,7 +15,11 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{debug, error, info, trace_span, warn};
 
 use crate::{
-    devices::builtin::cpal::CpalProvider, media::errors::PlaybackStartError,
+    devices::builtin::cpal::CpalProvider,
+    media::{
+        errors::PlaybackStartError,
+        pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult},
+    },
     playback::events::RepeatState,
 };
 use crate::{devices::builtin::dummy::DummyDeviceProvider, settings::playback::PlaybackSettings};
@@ -91,6 +96,10 @@ pub struct PlaybackThread {
     /// The current format of the media.
     format: Option<FormatInfo>,
 
+    /// The audio pipeline connecting decoder, resampler, and device via ring buffers.
+    /// This is created when a track is opened and holds all the ring buffer connections.
+    pipeline: Option<AudioPipeline>,
+
     /// The current queue. Do not hold an indefinite lock on this queue - it is read by the
     /// UI thread.
     queue: Arc<RwLock<Vec<QueueItemData>>>,
@@ -149,6 +158,7 @@ impl PlaybackThread {
                     state: PlaybackState::Stopped,
                     resampler: None,
                     format: None,
+                    pipeline: None,
                     queue,
                     original_queue: Vec::new(),
                     shuffle: false,
@@ -444,7 +454,14 @@ impl PlaybackThread {
             PlaybackStartError::MediaError("No media provider available".to_owned())
         })?;
 
-        self.resampler = None;
+        self.pipeline = None;
+
+        // reset the resampler's internal buffers if it exists, to clear any
+        // leftover samples from the previous track
+        if let Some(resampler) = &mut self.resampler {
+            resampler.reset();
+        }
+
         let src = std::fs::File::open(path)
             .map_err(|e| PlaybackStartError::MediaError(format!("Unable to open file: {}", e)))?;
 
@@ -1130,6 +1147,11 @@ impl PlaybackThread {
 
     /// Uses the current media provider to decode audio samples and sends them to the current
     /// playback stream.
+    ///
+    /// This method uses the ring buffer-based pipeline for zero-allocation audio streaming:
+    /// 1. Decoder writes to pipeline.decoder_output ring buffers
+    /// 2. Resampler reads from pipeline.resampler_input, writes to pipeline.device_input_producers
+    /// 3. Device reads from pipeline.device_input ring buffers
     fn play_audio(&mut self) {
         let Some(stream) = &mut self.stream else {
             return;
@@ -1137,10 +1159,53 @@ impl PlaybackThread {
         let Some(media_stream) = &mut self.media_stream else {
             return;
         };
-        // TODO: proper error handling
-        // Read the first samples ahead of time to determine the format.
-        let first_samples = match media_stream.read_samples() {
-            Ok(samples) => samples,
+
+        if self.pipeline.is_none() {
+            let sample_format = match media_stream.sample_format() {
+                Ok(fmt) => fmt,
+                Err(e) => {
+                    error!("Failed to get sample format: {:?}", e);
+                    return;
+                }
+            };
+
+            let channel_count = match media_stream.channels() {
+                Ok(ch) => ch.count() as usize,
+                Err(e) => {
+                    error!("Failed to get channel count: {:?}", e);
+                    return;
+                }
+            };
+
+            let device_format = match stream.get_current_format() {
+                Ok(fmt) => *fmt,
+                Err(e) => {
+                    error!("Failed to get device format: {:?}", e);
+                    return;
+                }
+            };
+
+            // source rate is not known until after first decode
+            let source_rate = device_format.sample_rate;
+
+            self.format = Some(device_format);
+
+            let pipeline = AudioPipeline::new(
+                channel_count,
+                sample_format,
+                source_rate,
+                device_format.sample_rate,
+                DEFAULT_BUFFER_FRAMES,
+            );
+
+            self.pipeline = Some(pipeline);
+        }
+
+        let pipeline = self.pipeline.as_mut().unwrap();
+
+        // Step 1: Decode into decoder output ring buffers
+        let decode_result = match media_stream.decode_into(&pipeline.decoder_output) {
+            Ok(result) => result,
             Err(e) => match e {
                 PlaybackReadError::InvalidState => {
                     panic!("thread state is invalid: decoder state is invalid")
@@ -1166,44 +1231,70 @@ impl PlaybackThread {
             },
         };
 
-        // Convert the first samples to the device format
-        let converted = self
-            .resampler
-            .get_or_insert_with(|| {
-                // Set up the resampler
-                let duration = media_stream.frame_duration().expect("can't get duration");
-                let &device_format = stream.get_current_format().unwrap();
-                let count = media_stream
-                    .channels()
-                    .expect("can't get channel count")
-                    .count();
+        // Handle decode result
+        match decode_result {
+            DecodeResult::Eof => {
+                info!("EOF from decode_into, moving to next song");
+                self.next(false);
+                return;
+            }
+            DecodeResult::Decoded { rate, .. } => {
+                // Only recreate resampler if parameters actually changed
+                let duration = media_stream.frame_duration().unwrap_or(1024);
+                let needs_new_resampler = match &self.resampler {
+                    Some(resampler) => !resampler.matches_params(
+                        rate,
+                        pipeline.target_rate,
+                        duration,
+                        pipeline.channel_count,
+                    ),
+                    None => true,
+                };
 
-                self.format.replace(device_format);
+                if needs_new_resampler {
+                    self.resampler = Some(Resampler::new(
+                        rate,
+                        pipeline.target_rate,
+                        duration,
+                        pipeline.channel_count as u16,
+                    ));
+                }
 
-                Resampler::new(
-                    first_samples.rate,
-                    device_format.sample_rate,
-                    duration,
-                    count,
-                )
-            })
-            .convert_formats(first_samples, &self.format.unwrap());
+                // Update pipeline source rate to track current source
+                pipeline.source_rate = rate;
+            }
+        }
 
-        // Submit the converted samples to the stream. FIXME: cloning vec<vec> in hottest fn???
-        let s = trace_span!("submit_frame").entered();
-        if let Err(err) = stream.submit_frame(converted.clone()) {
+        // Step 2: Process through resampler (reads from decoder output, writes to device input)
+        if let Some(resampler) = &mut self.resampler {
+            let _processed = resampler.process_ring_buffers(
+                &mut pipeline.resampler_input,
+                &pipeline.device_input_producers,
+                DEFAULT_BUFFER_FRAMES,
+            );
+        }
+
+        // Step 3: Device consumes from the pipeline
+        let s = trace_span!("consume_from").entered();
+        if let Err(err) = stream.consume_from(&mut pipeline.device_input) {
             // If we get an error, recreate the stream and retry
-            warn!(parent: &s, ?err, "Failed to submit frame: {err}");
+            warn!(parent: &s, ?err, "Failed to consume from pipeline: {err}");
             warn!(parent: &s, "Recreating device and retrying...");
             self.recreate_stream(true, self.format.map(|v| v.channels));
-            if let Err(err) = self.stream.as_mut().unwrap().submit_frame(converted) {
-                error!(parent: &s, ?err, "Failed to submit frame after recreation: {err}");
-                error!(
-                    "This likely indicates a problem with the audio device or driver\n\
-                    (or an underlying issue in the used DeviceProvider)\n\
-                    Please check your audio setup and try again."
-                );
-                panic!("Failed to submit frame after recreation");
+
+            // Re-get the pipeline and stream after recreation
+            if let Some(ref mut pipeline) = self.pipeline {
+                if let Some(ref mut stream) = self.stream {
+                    if let Err(err) = stream.consume_from(&mut pipeline.device_input) {
+                        error!(parent: &s, ?err, "Failed to consume after recreation: {err}");
+                        error!(
+                            "This likely indicates a problem with the audio device or driver\n\
+                            (or an underlying issue in the used DeviceProvider)\n\
+                            Please check your audio setup and try again."
+                        );
+                        panic!("Failed to consume from pipeline after recreation");
+                    }
+                }
             }
         }
 

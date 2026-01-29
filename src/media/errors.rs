@@ -112,6 +112,8 @@ pub enum SeekError {
 pub enum ChannelRetrievalError {
     #[error("The media file is not valid and cannot be played")]
     InvalidState,
+    #[error("Media is open but was never started")]
+    NeverStarted,
     #[error("Media is open but has no audio")]
     NothingToPlay,
     #[error("Unknown media provider error: `{0}`")]
