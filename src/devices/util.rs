@@ -68,13 +68,8 @@ where
 {
     fn scale(self, factor: f64) -> T {
         // anything over 1.0 or under -1.0 will be clamped since it's out of bounds
-        T::sample_from(self.sample_into().scale(factor))
-    }
-}
-
-impl Scale for f64 {
-    fn scale(self, factor: f64) -> f64 {
-        f64::clamp(self * factor, -1.0, 1.0)
+        let scaled = (self.sample_into() * factor).clamp(-1.0, 1.0);
+        T::sample_from(scaled)
     }
 }
 

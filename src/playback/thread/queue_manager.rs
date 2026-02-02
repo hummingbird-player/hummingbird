@@ -296,15 +296,15 @@ impl QueueManager {
             return self.jump(index);
         }
 
-        let original_path = match self.original_queue.get(index) {
-            Some(item) => item.get_path().clone(),
+        let original_item = match self.original_queue.get(index) {
+            Some(item) => item.clone(),
             None => return JumpResult::OutOfBounds,
         };
 
         let queue = self.queue.read().expect("poisoned queue lock");
         let pos = queue
             .iter()
-            .position(|item| item.get_path() == &original_path);
+            .position(|item| item == &original_item);
         drop(queue);
 
         match pos {
@@ -420,7 +420,7 @@ impl QueueManager {
         if self.shuffle {
             self.original_queue
                 .iter()
-                .position(|item| item.get_path() == removed.get_path())
+                .position(|item| item == &removed)
                 .map(|pos| self.original_queue.remove(pos));
         }
 
@@ -530,17 +530,17 @@ impl QueueManager {
 
             ShuffleResult::Shuffled
         } else {
-            let current_path = if self.queue_next > 0 && self.queue_next <= queue.len() {
-                Some(queue[self.queue_next - 1].get_path().clone())
+            let current_item = if self.queue_next > 0 && self.queue_next <= queue.len() {
+                Some(queue[self.queue_next - 1].clone())
             } else {
                 None
             };
 
-            let new_position = current_path
-                .and_then(|path| {
+            let new_position = current_item
+                .and_then(|target_item| {
                     self.original_queue
                         .iter()
-                        .position(|item| item.get_path() == &path)
+                        .position(|item| item == &target_item)
                 })
                 .unwrap_or(0);
 
