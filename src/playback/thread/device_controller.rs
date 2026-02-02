@@ -286,11 +286,23 @@ impl DeviceController {
     /// Consume samples from ring buffer consumers and submit them to the device.
     pub fn consume_from(
         &mut self,
-        input: &mut ChannelConsumers<f32>,
+        input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, DeviceError> {
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
         let count = stream.consume_from(input)?;
         Ok(count)
+    }
+
+    /// Consume f32 samples directly for passthrough mode.
+    /// Returns None if the device doesn't support f32 passthrough.
+    pub fn consume_from_f32(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Option<Result<usize, DeviceError>> {
+        let stream = self.stream.as_mut()?;
+        stream
+            .consume_from_f32(input)
+            .map(|r| r.map_err(DeviceError::from))
     }
 
     /// Set the playback volume (0.0 to 1.0, already scaled).

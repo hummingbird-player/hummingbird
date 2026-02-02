@@ -10,8 +10,14 @@ use super::{
         PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError, TrackDurationError,
     },
     metadata::Metadata,
-    pipeline::{DecodeResult, TypedChannelProducers},
+    pipeline::{ChannelProducers, DecodeResult},
 };
+
+pub enum F32DecodeResult {
+    Decoded(DecodeResult),
+    /// Format is not f32, caller should use f64 decode path
+    NotF32,
+}
 
 bitflags! {
     #[derive(Debug, Clone, PartialEq)]
@@ -139,10 +145,18 @@ pub trait MediaStream {
     /// available immediately after playback has started.
     fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError>;
 
-    /// Decode one packet/frame and write samples directly to the provided ring buffer producers.
-    /// The producers must match the sample format returned by `sample_format()`.
+    /// Decode one packet/frame and write samples as f64 directly to the provided ring buffer producers.
+    /// The decoder is responsible for converting from the native sample format to f64.
     fn decode_into(
         &mut self,
-        output: &TypedChannelProducers,
+        output: &ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError>;
+
+    /// Decode one packet/frame directly as f32 without conversion.
+    /// Returns F32DecodeResult::NotF32 if the source format is not f32.
+    /// This enables passthrough mode when source and device are both f32.
+    fn decode_into_f32(
+        &mut self,
+        output: &ChannelProducers<f32>,
+    ) -> Result<F32DecodeResult, PlaybackReadError>;
 }

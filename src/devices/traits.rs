@@ -51,8 +51,6 @@ pub trait OutputStream {
     fn close_stream(&mut self) -> Result<(), CloseError>;
     /// Returns true if the stream requires input (e.g. the buffer is empty).
     fn needs_input(&self) -> bool;
-    /// Returns the current format of the stream.
-    fn get_current_format(&self) -> Result<&FormatInfo, InfoError>;
     /// Tells the device to start playing audio.
     fn play(&mut self) -> Result<(), StateError>;
     /// Tells the device to stop playing audio. Note that some providers may not actually stop
@@ -75,6 +73,16 @@ pub trait OutputStream {
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError>;
 
     /// Consume samples from ring buffer consumers and submit them to the device.
-    fn consume_from(&mut self, input: &mut ChannelConsumers<f32>)
+    fn consume_from(&mut self, input: &mut ChannelConsumers<f64>)
     -> Result<usize, SubmissionError>;
+
+    /// Consume f32 samples directly for passthrough mode.
+    /// Returns None if the device doesn't support f32 passthrough.
+    /// Default implementation returns None.
+    fn consume_from_f32(
+        &mut self,
+        _input: &mut ChannelConsumers<f32>,
+    ) -> Option<Result<usize, SubmissionError>> {
+        None
+    }
 }

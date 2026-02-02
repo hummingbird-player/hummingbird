@@ -141,7 +141,7 @@ fn create_stream_internal<T: CpalSample>(
 impl CpalDevice {
     fn create_stream<T>(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError>
     where
-        T: CpalSample + SampleFrom<f32>,
+        T: CpalSample + SampleFrom<f64> + SampleFrom<f32>,
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
@@ -255,7 +255,7 @@ where
 
 impl<T> OutputStream for CpalStream<T>
 where
-    T: CpalSample + SampleFrom<f32>,
+    T: CpalSample + SampleFrom<f64> + SampleFrom<f32>,
 {
     fn close_stream(&mut self) -> Result<(), CloseError> {
         Ok(())
@@ -263,10 +263,6 @@ where
 
     fn needs_input(&self) -> bool {
         true // will always be true as long as the submitting thread is not blocked by submit_frame
-    }
-
-    fn get_current_format(&self) -> Result<&FormatInfo, InfoError> {
-        Ok(&self.format)
     }
 
     fn play(&mut self) -> Result<(), StateError> {
@@ -300,7 +296,7 @@ where
 
     fn consume_from(
         &mut self,
-        input: &mut ChannelConsumers<f32>,
+        input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
         let available = input.potentially_available();
         if available == 0 {
@@ -323,8 +319,8 @@ where
 
         for i in 0..read {
             for ch in 0..channel_count {
-                let sample_f32 = staging[ch][i];
-                self.interleave_buffer.push(T::sample_from(sample_f32));
+                let sample_f64 = staging[ch][i];
+                self.interleave_buffer.push(T::sample_from(sample_f64));
             }
         }
 
@@ -337,6 +333,48 @@ where
         }
 
         Ok(read)
+    }
+
+    fn consume_from_f32(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Option<Result<usize, SubmissionError>> {
+        // Only support f32 passthrough if this stream is f32
+        if self.format.sample_type != SampleFormat::Float32 {
+            return None;
+        }
+
+        let available = input.potentially_available();
+        if available == 0 {
+            return Some(Ok(0));
+        }
+
+        let read = input.try_read_to_staging(available);
+        if read == 0 {
+            return Some(Ok(0));
+        }
+
+        let staging = input.staging();
+        let channel_count = staging.len();
+
+        self.interleave_buffer.clear();
+        self.interleave_buffer.reserve(read * channel_count);
+
+        for i in 0..read {
+            for ch in 0..channel_count {
+                self.interleave_buffer
+                    .push(<T as SampleFrom<f32>>::sample_from(staging[ch][i]));
+            }
+        }
+
+        let mut slice: &[T] = &self.interleave_buffer;
+        while !slice.is_empty() {
+            if let Some(written) = self.ring_buf.write_blocking(slice) {
+                slice = &slice[written..];
+            }
+        }
+
+        Some(Ok(read))
     }
 }
 

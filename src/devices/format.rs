@@ -8,8 +8,6 @@ pub enum SampleFormat {
     Unsigned32,
     Signed24,
     Unsigned24,
-    Signed24Packed,
-    Unsigned24Packed,
     Signed16,
     Unsigned16,
     Signed8,

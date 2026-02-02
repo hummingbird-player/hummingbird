@@ -4,13 +4,14 @@ use tracing::{error, info, trace_span, warn};
 
 use crate::{
     devices::{
-        format::{ChannelSpec, FormatInfo},
+        format::{ChannelSpec, FormatInfo, SampleFormat},
         resample::Resampler,
     },
     media::{
         errors::{PlaybackStartError, SeekError},
         metadata::Metadata,
         pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult},
+        traits::F32DecodeResult,
     },
     settings::playback::PlaybackSettings,
 };
@@ -337,7 +338,7 @@ impl AudioEngine {
             }
         }
 
-        // Process decode -> resample
+        // Process decode -> resample (or passthrough)
         let result = match self.process_decode_resample() {
             Ok(result) => result,
             Err(e) => {
@@ -359,28 +360,65 @@ impl AudioEngine {
         }
 
         // Send samples to device
+        self.consume_to_device()
+    }
+
+    /// Consume samples from pipeline to device
+    fn consume_to_device(&mut self) -> EngineCycleResult {
         let s = trace_span!("consume_from").entered();
-        if let Some(pipeline) = &mut self.pipeline {
-            if let Err(err) = self.device.consume_from(&mut pipeline.device_input) {
-                warn!(parent: &s, ?err, "Failed to consume from pipeline: {err}");
-                warn!(parent: &s, "Recreating device and retrying...");
 
-                let channels = self.device.current_format().map(|f| f.channels);
-                if let Err(e) = self.device.recreate_stream(true, channels) {
-                    error!(parent: &s, "Failed to recreate stream: {:?}", e);
-                    return EngineCycleResult::NothingToDo;
-                }
+        let Some(pipeline) = &mut self.pipeline else {
+            return EngineCycleResult::NothingToDo;
+        };
 
-                // Retry after recreation
-                if let Err(err) = self.device.consume_from(&mut pipeline.device_input) {
-                    error!(parent: &s, ?err, "Failed to consume after recreation: {err}");
-                    error!(
-                        "This likely indicates a problem with the audio device or driver\n\
-                        (or an underlying issue in the used DeviceProvider)\n\
-                        Please check your audio setup and try again."
-                    );
-                    panic!("Failed to consume from pipeline after recreation");
+        let consume_result = match pipeline {
+            AudioPipeline::Convert(p) => self.device.consume_from(&mut p.device_input),
+            AudioPipeline::F32Passthrough(p) => {
+                // Try f32 passthrough first
+                match self.device.consume_from_f32(&mut p.device_input) {
+                    Some(result) => result.map_err(|e| e),
+                    None => {
+                        // Device doesn't support f32 passthrough, this shouldn't happen
+                        // if pipeline was set up correctly
+                        error!(
+                            "Device doesn't support f32 passthrough but pipeline is F32Passthrough"
+                        );
+                        return EngineCycleResult::NothingToDo;
+                    }
                 }
+            }
+        };
+
+        if let Err(err) = consume_result {
+            warn!(parent: &s, ?err, "Failed to consume from pipeline: {err}");
+            warn!(parent: &s, "Recreating device and retrying...");
+
+            let channels = self.device.current_format().map(|f| f.channels);
+            if let Err(e) = self.device.recreate_stream(true, channels) {
+                error!(parent: &s, "Failed to recreate stream: {:?}", e);
+                return EngineCycleResult::NothingToDo;
+            }
+
+            let Some(pipeline) = &mut self.pipeline else {
+                return EngineCycleResult::NothingToDo;
+            };
+
+            let retry_result = match pipeline {
+                AudioPipeline::Convert(p) => self.device.consume_from(&mut p.device_input),
+                AudioPipeline::F32Passthrough(p) => self
+                    .device
+                    .consume_from_f32(&mut p.device_input)
+                    .unwrap_or_else(|| Err(super::device_controller::DeviceError::NoStream)),
+            };
+
+            if let Err(err) = retry_result {
+                error!(parent: &s, ?err, "Failed to consume after recreation: {err}");
+                error!(
+                    "This likely indicates a problem with the audio device or driver\n\
+                    (or an underlying issue in the used DeviceProvider)\n\
+                    Please check your audio setup and try again."
+                );
+                panic!("Failed to consume from pipeline after recreation");
             }
         }
 
@@ -393,14 +431,13 @@ impl AudioEngine {
 
     /// Set up the audio pipeline for a new track.
     ///
+    /// This method determines whether to use f32 passthrough or f64 conversion pipeline
+    /// based on the source and device formats.
+    ///
     /// Note: This preserves the existing resampler if one exists. The resampler will be
     /// reused if its parameters match the new track, or recreated in process_decode_resample
     /// when the actual source rate becomes known after the first decode.
     fn setup_pipeline(&mut self, device_format: &FormatInfo) -> Result<(), EngineError> {
-        let sample_format = self.media.sample_format().map_err(|e| {
-            EngineError::MediaError(format!("Failed to get sample format: {:?}", e))
-        })?;
-
         let channels = self
             .media
             .channels()
@@ -408,16 +445,26 @@ impl AudioEngine {
 
         let channel_count = channels.count() as usize;
 
-        // Source rate will be updated after first decode
+        // Get source format to determine if passthrough is possible
+        let source_format = self.media.sample_format().unwrap_or(SampleFormat::Float32); // Default to f32 if unknown
+
+        // Source rate will be updated after first decode, use device rate as initial guess
         let source_rate = device_format.sample_rate;
 
         let pipeline = AudioPipeline::new(
             channel_count,
-            sample_format,
+            source_format,
             source_rate,
+            device_format.sample_type,
             device_format.sample_rate,
             DEFAULT_BUFFER_FRAMES,
         );
+
+        if pipeline.is_passthrough() {
+            info!("Using f32 passthrough pipeline (no conversion needed)");
+        } else {
+            info!("Using f64 conversion pipeline");
+        }
 
         self.pipeline = Some(pipeline);
 
@@ -440,83 +487,120 @@ impl AudioEngine {
 
     /// Process the decode and resample steps.
     fn process_decode_resample(&mut self) -> Result<DecodeStepResult, EngineError> {
-        use crate::media::errors::PlaybackReadError;
-
         let pipeline = self.pipeline.as_mut().ok_or(EngineError::NoPipeline)?;
 
-        let decode_result = match self.media.decode_into(&pipeline.decoder_output) {
-            Ok(result) => result,
-            Err(e) => {
-                return match e {
-                    PlaybackReadError::InvalidState => {
-                        error!("Thread state is invalid: decoder state is invalid");
-                        Err(EngineError::DecodeError(
-                            "Decoder in invalid state".to_string(),
-                        ))
+        match pipeline {
+            AudioPipeline::F32Passthrough(p) => {
+                let decode_result = match self.media.decode_into_f32(&p.decoder_output) {
+                    Ok(F32DecodeResult::Decoded(result)) => result,
+                    Ok(F32DecodeResult::NotF32) => {
+                        // Source is not f32, need to switch to conversion pipeline
+                        warn!("Source format changed from f32, switching to conversion pipeline");
+                        return Err(EngineError::DecodeError(
+                            "Format changed, need pipeline recreation".to_string(),
+                        ));
                     }
-                    PlaybackReadError::NeverStarted => {
-                        error!("Thread state is invalid: playback never started");
-                        Err(EngineError::DecodeError(
-                            "Playback never started".to_string(),
-                        ))
+                    Err(e) => {
+                        return Self::handle_decode_error(e);
                     }
-                    PlaybackReadError::Eof => {
-                        info!("EOF during decode");
+                };
+
+                match decode_result {
+                    DecodeResult::Eof => {
+                        info!("EOF from decode_into_f32");
                         Ok(DecodeStepResult::Eof)
                     }
-                    PlaybackReadError::Unknown(s) => {
-                        error!("Unknown decode error: {}", s);
-                        warn!("Samples may be skipped");
+                    DecodeResult::Decoded { .. } => {
+                        // No resampling needed in passthrough mode
                         Ok(DecodeStepResult::Continue)
                     }
-                    PlaybackReadError::DecodeFatal(s) => {
-                        error!("Fatal decoding error: {}", s);
-                        Ok(DecodeStepResult::FatalError(s))
+                }
+            }
+            AudioPipeline::Convert(p) => {
+                let decode_result = match self.media.decode_into(&p.decoder_output) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        return Self::handle_decode_error(e);
                     }
                 };
-            }
-        };
 
-        match decode_result {
-            DecodeResult::Eof => {
-                info!("EOF from decode_into");
-                return Ok(DecodeStepResult::Eof);
-            }
-            DecodeResult::Decoded { rate, .. } => {
-                // Only recreate resampler if parameters actually changed
-                let duration = self.media.frame_duration().unwrap_or(1024);
-                let needs_new_resampler = match &self.resampler {
-                    Some(resampler) => !resampler.matches_params(
-                        rate,
-                        pipeline.target_rate,
-                        duration,
-                        pipeline.channel_count,
-                    ),
-                    None => true,
-                };
+                match decode_result {
+                    DecodeResult::Eof => {
+                        info!("EOF from decode_into");
+                        return Ok(DecodeStepResult::Eof);
+                    }
+                    DecodeResult::Decoded { rate, .. } => {
+                        // Only recreate resampler if parameters actually changed
+                        let duration = self.media.frame_duration().unwrap_or(1024);
+                        let needs_new_resampler = match &self.resampler {
+                            Some(resampler) => !resampler.matches_params(
+                                rate,
+                                p.target_rate,
+                                duration,
+                                p.channel_count,
+                            ),
+                            None => true,
+                        };
 
-                if needs_new_resampler {
-                    self.resampler = Some(Resampler::new(
-                        rate,
-                        pipeline.target_rate,
-                        duration,
-                        pipeline.channel_count as u16,
-                    ));
+                        if needs_new_resampler {
+                            self.resampler = Some(Resampler::new(
+                                rate,
+                                p.target_rate,
+                                duration,
+                                p.channel_count as u16,
+                            ));
+                        }
+
+                        p.source_rate = rate;
+                    }
                 }
 
-                pipeline.source_rate = rate;
+                if let Some(resampler) = &mut self.resampler {
+                    let _processed = resampler.process_ring_buffers(
+                        &mut p.resampler_input,
+                        &p.device_input_producers,
+                        DEFAULT_BUFFER_FRAMES,
+                    );
+                }
+
+                Ok(DecodeStepResult::Continue)
             }
         }
+    }
 
-        if let Some(resampler) = &mut self.resampler {
-            let _processed = resampler.process_ring_buffers(
-                &mut pipeline.resampler_input,
-                &pipeline.device_input_producers,
-                DEFAULT_BUFFER_FRAMES,
-            );
+    /// Handle decode errors uniformly
+    fn handle_decode_error(
+        e: crate::media::errors::PlaybackReadError,
+    ) -> Result<DecodeStepResult, EngineError> {
+        use crate::media::errors::PlaybackReadError;
+
+        match e {
+            PlaybackReadError::InvalidState => {
+                error!("Thread state is invalid: decoder state is invalid");
+                Err(EngineError::DecodeError(
+                    "Decoder in invalid state".to_string(),
+                ))
+            }
+            PlaybackReadError::NeverStarted => {
+                error!("Thread state is invalid: playback never started");
+                Err(EngineError::DecodeError(
+                    "Playback never started".to_string(),
+                ))
+            }
+            PlaybackReadError::Eof => {
+                info!("EOF during decode");
+                Ok(DecodeStepResult::Eof)
+            }
+            PlaybackReadError::Unknown(s) => {
+                error!("Unknown decode error: {}", s);
+                warn!("Samples may be skipped");
+                Ok(DecodeStepResult::Continue)
+            }
+            PlaybackReadError::DecodeFatal(s) => {
+                error!("Fatal decoding error: {}", s);
+                Ok(DecodeStepResult::FatalError(s))
+            }
         }
-
-        Ok(DecodeStepResult::Continue)
     }
 }
 

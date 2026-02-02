@@ -1,79 +1,8 @@
-use std::collections::VecDeque;
-
-use intx::{I24, U24};
 use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
 
 use crate::devices::format::SampleFormat;
-use crate::devices::resample::SampleInto;
 
 pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
-
-/// Trait for converting samples to f32 for the resampler
-pub trait ToF32Sample {
-    fn to_f32_sample(self) -> f32;
-}
-
-impl ToF32Sample for f64 {
-    fn to_f32_sample(self) -> f32 {
-        self as f32
-    }
-}
-
-impl ToF32Sample for f32 {
-    fn to_f32_sample(self) -> f32 {
-        self
-    }
-}
-
-impl ToF32Sample for i32 {
-    fn to_f32_sample(self) -> f32 {
-        (self as f64 / i32::MAX as f64) as f32
-    }
-}
-
-impl ToF32Sample for u32 {
-    fn to_f32_sample(self) -> f32 {
-        ((self as f64 / i32::MAX as f64) - 1.0) as f32
-    }
-}
-
-impl ToF32Sample for i16 {
-    fn to_f32_sample(self) -> f32 {
-        (self as f32) / (i16::MAX as f32)
-    }
-}
-
-impl ToF32Sample for u16 {
-    fn to_f32_sample(self) -> f32 {
-        ((self as f32) / (i16::MAX as f32)) - 1.0
-    }
-}
-
-impl ToF32Sample for i8 {
-    fn to_f32_sample(self) -> f32 {
-        (self as f32) / (i8::MAX as f32)
-    }
-}
-
-impl ToF32Sample for u8 {
-    fn to_f32_sample(self) -> f32 {
-        ((self as f32) / (i8::MAX as f32)) - 1.0
-    }
-}
-
-impl ToF32Sample for I24 {
-    fn to_f32_sample(self) -> f32 {
-        let val: f64 = self.sample_into();
-        val as f32
-    }
-}
-
-impl ToF32Sample for U24 {
-    fn to_f32_sample(self) -> f32 {
-        let val: f64 = self.sample_into();
-        val as f32
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeResult {
@@ -201,127 +130,34 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
     }
 }
 
-/// Type-erased channel producers that can hold any sample format.
-pub enum TypedChannelProducers {
-    Float64(ChannelProducers<f64>),
-    Float32(ChannelProducers<f32>),
-    Signed32(ChannelProducers<i32>),
-    Unsigned32(ChannelProducers<u32>),
-    Signed24(ChannelProducers<I24>),
-    Unsigned24(ChannelProducers<U24>),
-    Signed16(ChannelProducers<i16>),
-    Unsigned16(ChannelProducers<u16>),
-    Signed8(ChannelProducers<i8>),
-    Unsigned8(ChannelProducers<u8>),
-}
-
-/// Type-erased channel consumers that can hold any sample format.
-pub enum TypedChannelConsumers {
-    Float64(ChannelConsumers<f64>),
-    Float32(ChannelConsumers<f32>),
-    Signed32(ChannelConsumers<i32>),
-    Unsigned32(ChannelConsumers<u32>),
-    Signed24(ChannelConsumers<I24>),
-    Unsigned24(ChannelConsumers<U24>),
-    Signed16(ChannelConsumers<i16>),
-    Unsigned16(ChannelConsumers<u16>),
-    Signed8(ChannelConsumers<i8>),
-    Unsigned8(ChannelConsumers<u8>),
-}
-
-impl TypedChannelConsumers {
-    pub fn read_as_f32_into(&mut self, output: &mut [VecDeque<f32>], max_samples: usize) -> usize {
-        macro_rules! convert_read {
-            ($consumers:expr, $output:expr, $max:expr) => {{
-                let read = $consumers.try_read_to_staging($max);
-                let staging = $consumers.staging();
-                for (ch, channel) in staging.iter().enumerate() {
-                    for &sample in channel.iter().take(read) {
-                        $output[ch].push_back(sample.to_f32_sample());
-                    }
-                }
-                read
-            }};
-        }
-
-        match self {
-            TypedChannelConsumers::Float64(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Float32(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Signed32(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Unsigned32(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Signed24(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Unsigned24(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Signed16(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Unsigned16(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Signed8(c) => convert_read!(c, output, max_samples),
-            TypedChannelConsumers::Unsigned8(c) => convert_read!(c, output, max_samples),
-        }
-    }
-}
-
-pub fn create_typed_buffers(
-    format: SampleFormat,
-    channel_count: usize,
-    buffer_size: usize,
-) -> (TypedChannelProducers, TypedChannelConsumers) {
-    macro_rules! create_for_type {
-        ($t:ty, $prod_variant:ident, $cons_variant:ident) => {{
-            let (prod, cons) = ChannelBuffers::<$t>::new(channel_count, buffer_size).split();
-            (
-                TypedChannelProducers::$prod_variant(prod),
-                TypedChannelConsumers::$cons_variant(cons),
-            )
-        }};
-    }
-
-    match format {
-        SampleFormat::Float64 => create_for_type!(f64, Float64, Float64),
-        SampleFormat::Float32 => create_for_type!(f32, Float32, Float32),
-        SampleFormat::Signed32 => create_for_type!(i32, Signed32, Signed32),
-        SampleFormat::Unsigned32 => create_for_type!(u32, Unsigned32, Unsigned32),
-        SampleFormat::Signed24 | SampleFormat::Signed24Packed => {
-            create_for_type!(I24, Signed24, Signed24)
-        }
-        SampleFormat::Unsigned24 | SampleFormat::Unsigned24Packed => {
-            create_for_type!(U24, Unsigned24, Unsigned24)
-        }
-        SampleFormat::Signed16 => create_for_type!(i16, Signed16, Signed16),
-        SampleFormat::Unsigned16 => create_for_type!(u16, Unsigned16, Unsigned16),
-        SampleFormat::Signed8 => create_for_type!(i8, Signed8, Signed8),
-        SampleFormat::Unsigned8 => create_for_type!(u8, Unsigned8, Unsigned8),
-        SampleFormat::Dsd => unimplemented!(),
-    }
-}
-
-pub struct AudioPipeline {
-    /// Producers for decoder output (decoder writes here)
-    pub decoder_output: TypedChannelProducers,
-    /// Consumers for decoder output (resampler reads from here)
-    pub resampler_input: TypedChannelConsumers,
-    /// Producers for resampler/converter output (always f32)
-    pub device_input_producers: ChannelProducers<f32>,
-    /// Consumers for device input (device reads from here)
-    pub device_input: ChannelConsumers<f32>,
-    /// Source sample rate (from decoder)
+/// Pipeline that converts all audio to f64 for processing (resampling, format conversion)
+///
+/// The idea behind this is that all supported non-f32 formats fit within an f64's mantissa, so
+/// we can convert to f64 without losing any precision, unless the input format is f32 AND
+/// the output device is *also* f32, in which case precision is unnecessarily lost. Thus we use
+/// the f64 pipeline for everything except for pure f32 -> f32 output.
+pub struct ConvertPipeline {
+    pub decoder_output: ChannelProducers<f64>,
+    pub resampler_input: ChannelConsumers<f64>,
+    pub device_input_producers: ChannelProducers<f64>,
+    pub device_input: ChannelConsumers<f64>,
     pub source_rate: u32,
-    /// Target sample rate (for device)
     pub target_rate: u32,
     pub channel_count: usize,
 }
 
-impl AudioPipeline {
+impl ConvertPipeline {
     pub fn new(
         channel_count: usize,
-        source_format: SampleFormat,
         source_rate: u32,
         target_rate: u32,
         buffer_frames: usize,
     ) -> Self {
         let (decoder_output, resampler_input) =
-            create_typed_buffers(source_format, channel_count, buffer_frames);
+            ChannelBuffers::<f64>::new(channel_count, buffer_frames).split();
 
         let (device_input_producers, device_input) =
-            ChannelBuffers::<f32>::new(channel_count, buffer_frames).split();
+            ChannelBuffers::<f64>::new(channel_count, buffer_frames).split();
 
         Self {
             decoder_output,
@@ -332,5 +168,60 @@ impl AudioPipeline {
             target_rate,
             channel_count,
         }
+    }
+}
+
+/// Pipeline for f32 passthrough - no format conversion, no resampling
+/// Used when source is f32, device is f32, and sample rates match
+pub struct F32PassthroughPipeline {
+    pub decoder_output: ChannelProducers<f32>,
+    pub device_input: ChannelConsumers<f32>,
+}
+
+impl F32PassthroughPipeline {
+    pub fn new(channel_count: usize, buffer_frames: usize) -> Self {
+        let (decoder_output, device_input) =
+            ChannelBuffers::<f32>::new(channel_count, buffer_frames).split();
+
+        Self {
+            decoder_output,
+            device_input,
+        }
+    }
+}
+
+/// Audio pipeline that handles both conversion and passthrough modes
+pub enum AudioPipeline {
+    Convert(ConvertPipeline),
+    F32Passthrough(F32PassthroughPipeline),
+}
+
+impl AudioPipeline {
+    /// Create a new pipeline, automatically choosing passthrough if possible
+    pub fn new(
+        channel_count: usize,
+        source_format: SampleFormat,
+        source_rate: u32,
+        device_format: SampleFormat,
+        device_rate: u32,
+        buffer_frames: usize,
+    ) -> Self {
+        if source_format == SampleFormat::Float32
+            && device_format == SampleFormat::Float32
+            && source_rate == device_rate
+        {
+            AudioPipeline::F32Passthrough(F32PassthroughPipeline::new(channel_count, buffer_frames))
+        } else {
+            AudioPipeline::Convert(ConvertPipeline::new(
+                channel_count,
+                source_rate,
+                device_rate,
+                buffer_frames,
+            ))
+        }
+    }
+
+    pub fn is_passthrough(&self) -> bool {
+        matches!(self, AudioPipeline::F32Passthrough(_))
     }
 }

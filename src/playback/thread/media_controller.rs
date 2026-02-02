@@ -11,8 +11,8 @@ use crate::{
             SeekError, TrackDurationError,
         },
         metadata::Metadata,
-        pipeline::{DecodeResult, TypedChannelProducers},
-        traits::{MediaProvider, MediaStream},
+        pipeline::{ChannelProducers, DecodeResult},
+        traits::{F32DecodeResult, MediaProvider, MediaStream},
     },
 };
 
@@ -108,7 +108,7 @@ impl MediaController {
     /// Decode audio samples into the provided ring buffer producers.
     pub fn decode_into(
         &mut self,
-        output: &TypedChannelProducers,
+        output: &ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError> {
         let stream = self
             .media_stream
@@ -116,6 +116,20 @@ impl MediaController {
             .ok_or(PlaybackReadError::NeverStarted)?;
 
         stream.decode_into(output)
+    }
+
+    /// Decode audio samples directly as f32 for passthrough mode.
+    /// Returns F32DecodeResult::NotF32 if the source format is not f32.
+    pub fn decode_into_f32(
+        &mut self,
+        output: &ChannelProducers<f32>,
+    ) -> Result<F32DecodeResult, PlaybackReadError> {
+        let stream = self
+            .media_stream
+            .as_mut()
+            .ok_or(PlaybackReadError::NeverStarted)?;
+
+        stream.decode_into_f32(output)
     }
 
     /// Check for metadata updates and return them if available.

@@ -104,8 +104,8 @@ impl DummyDevice {
 }
 
 impl Device for DummyDevice {
-    fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
-        let device = DummyStream { format };
+    fn open_device(&mut self, _format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+        let device = DummyStream;
         Ok(Box::new(device) as Box<dyn OutputStream>)
     }
 
@@ -145,9 +145,7 @@ impl Device for DummyDevice {
     }
 }
 
-pub struct DummyStream {
-    pub format: FormatInfo,
-}
+pub struct DummyStream;
 
 impl OutputStream for DummyStream {
     fn close_stream(&mut self) -> Result<(), CloseError> {
@@ -157,10 +155,6 @@ impl OutputStream for DummyStream {
 
     fn needs_input(&self) -> bool {
         true
-    }
-
-    fn get_current_format(&self) -> Result<&FormatInfo, InfoError> {
-        Ok(&self.format)
     }
 
     fn play(&mut self) -> Result<(), StateError> {
@@ -185,7 +179,7 @@ impl OutputStream for DummyStream {
 
     fn consume_from(
         &mut self,
-        input: &mut ChannelConsumers<f32>,
+        input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
         let available = input.potentially_available();
         if available == 0 {

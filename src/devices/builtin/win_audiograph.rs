@@ -327,10 +327,6 @@ impl OutputStream for AudioGraphStream {
         true
     }
 
-    fn get_current_format(&self) -> Result<&FormatInfo, InfoError> {
-        Ok(&self.format)
-    }
-
     fn play(&mut self) -> Result<(), StateError> {
         self.node.Start().map_err(|e| e.into())
     }
@@ -349,7 +345,7 @@ impl OutputStream for AudioGraphStream {
 
     fn consume_from(
         &mut self,
-        input: &mut ChannelConsumers<f32>,
+        input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
         let available = input.potentially_available();
         if available == 0 {
@@ -367,12 +363,12 @@ impl OutputStream for AudioGraphStream {
 
         let channel_count = staging.len();
 
-        // Interleave and pack to bytes using persistent buffers
+        // Interleave and convert f64 to f32, then pack to bytes using persistent buffers
         self.interleaved_buffer.clear();
         self.interleaved_buffer.reserve(read * channel_count);
         for i in 0..read {
             for ch in 0..channel_count {
-                self.interleaved_buffer.push(staging[ch][i]);
+                self.interleaved_buffer.push(staging[ch][i] as f32);
             }
         }
 

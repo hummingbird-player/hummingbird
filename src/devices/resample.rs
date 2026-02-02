@@ -4,7 +4,7 @@ use intx::{I24, U24};
 use rubato::{FftFixedIn, VecResampler};
 use tracing::info;
 
-use crate::media::pipeline::{ChannelProducers, TypedChannelConsumers};
+use crate::media::pipeline::{ChannelConsumers, ChannelProducers};
 
 pub trait SampleInto<T> {
     fn sample_into(self) -> T;
@@ -162,11 +162,11 @@ impl SampleFrom<f32> for U24 {
 }
 
 pub struct Resampler {
-    resampler: FftFixedIn<f32>,
+    resampler: FftFixedIn<f64>,
     duration: u64,
-    input_buffer: Vec<VecDeque<f32>>,
-    output_buffer: Vec<Vec<f32>>,
-    temp_input: Vec<Vec<f32>>,
+    input_buffer: Vec<VecDeque<f64>>,
+    output_buffer: Vec<Vec<f64>>,
+    temp_input: Vec<Vec<f64>>,
     channels: usize,
     source_rate: u32,
     target_rate: u32,
@@ -182,7 +182,7 @@ impl Resampler {
             );
         }
 
-        let resampler = FftFixedIn::<f32>::new(
+        let resampler = FftFixedIn::<f64>::new(
             orig_rate as usize,
             target_rate as usize,
             duration as usize,
@@ -248,11 +248,11 @@ impl Resampler {
 
     pub fn process_ring_buffers(
         &mut self,
-        input: &mut TypedChannelConsumers,
-        output: &ChannelProducers<f32>,
+        input: &mut ChannelConsumers<f64>,
+        output: &ChannelProducers<f64>,
         max_input_samples: usize,
     ) -> usize {
-        let read = input.read_as_f32_into(&mut self.input_buffer, max_input_samples);
+        let read = Self::read_into_buffers(input, &mut self.input_buffer, max_input_samples);
 
         if read == 0 && !self.eof {
             return 0;
@@ -306,7 +306,7 @@ impl Resampler {
         total_output
     }
 
-    fn passthrough_to_output(&mut self, output: &ChannelProducers<f32>) -> usize {
+    fn passthrough_to_output(&mut self, output: &ChannelProducers<f64>) -> usize {
         let available = self.input_available();
         if available == 0 {
             return 0;
@@ -323,5 +323,25 @@ impl Resampler {
 
         output.write_vecs(&self.output_buffer);
         available
+    }
+
+    /// Read samples from f64 channel consumers into internal buffers
+    fn read_into_buffers(
+        input: &mut ChannelConsumers<f64>,
+        buffers: &mut [VecDeque<f64>],
+        max_samples: usize,
+    ) -> usize {
+        let read = input.try_read_to_staging(max_samples);
+        if read == 0 {
+            return 0;
+        }
+
+        let staging = input.staging();
+        for (ch, channel) in staging.iter().enumerate() {
+            for &sample in channel.iter().take(read) {
+                buffers[ch].push_back(sample);
+            }
+        }
+        read
     }
 }
