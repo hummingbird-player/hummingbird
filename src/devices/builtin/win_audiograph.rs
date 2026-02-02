@@ -25,7 +25,7 @@ use crate::{
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         traits::{Device, DeviceProvider, OutputStream},
-        util::{Packed, interleave},
+        util::Packed,
     },
     media::pipeline::ChannelConsumers,
     util::make_unknown_error,
@@ -249,9 +249,8 @@ impl Device for AudioGraphDevice {
         let stream = AudioGraphStream {
             node: input_node,
             producer: prod,
-            format,
-            interleaved_buffer: Vec::with_capacity(buffer_size),
-            packed_buffer: Vec::with_capacity(buffer_size),
+            interleaved_buffer: Vec::with_capacity(buffer_size as usize),
+            packed_buffer: Vec::with_capacity(buffer_size as usize),
         };
 
         Ok(Box::new(stream) as Box<dyn OutputStream>)
@@ -313,7 +312,6 @@ impl Device for AudioGraphDevice {
 pub struct AudioGraphStream {
     pub node: AudioFrameInputNode,
     pub producer: Producer<u8>,
-    pub format: FormatInfo,
     interleaved_buffer: Vec<f32>,
     packed_buffer: Vec<u8>,
 }
