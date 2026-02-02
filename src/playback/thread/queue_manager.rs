@@ -1,7 +1,6 @@
 use std::{
     mem::take,
     path::PathBuf,
-    rc::Rc,
     sync::{Arc, RwLock},
 };
 
@@ -12,70 +11,110 @@ use crate::{
     settings::playback::PlaybackSettings,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reshuffled {
     Reshuffled,
     NotReshuffled,
 }
 
-pub enum QueueNextResult {
-    Changed(usize, PathBuf, Reshuffled),
-    Unchanged,
+#[derive(Debug, Clone)]
+pub enum QueueNavigationResult {
+    /// The queue position changed.
+    Changed {
+        index: usize,
+        path: PathBuf,
+        reshuffled: Reshuffled,
+    },
+    /// The current track should repeat (RepeatOne mode).
+    Unchanged { path: PathBuf },
+    /// End of queue reached.
     EndOfQueue,
 }
 
+#[derive(Debug, Clone)]
 pub enum DequeueResult {
-    Removed {
-        index: usize,
-    },
-    /// The current item was removed. If the current item was removed, the next item in the queue
-    /// should be played, if there is one.
+    /// An item was removed, queue position adjusted.
+    Removed { new_position: usize },
+    /// The currently playing item was removed.
     RemovedCurrent {
+        /// The path of the next track to play, if any.
         new_path: Option<PathBuf>,
     },
+    /// Nothing changed (index out of bounds).
     Unchanged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveResult {
     Moved,
-    /// This is returned whenever the current track is moved, whether directly or indirectly.
+    /// Item was moved and current position changed.
     MovedCurrent {
-        current_to: usize,
+        new_position: usize,
     },
+    /// Nothing changed (same position or invalid).
     Unchanged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertResult {
-    Inserted,
-    InsertMovedCurrent { current_to: usize },
+    /// Item(s) inserted, current position unchanged.
+    Inserted { first_index: usize },
+    /// Item(s) inserted and current position shifted.
+    InsertedMovedCurrent {
+        first_index: usize,
+        new_position: usize,
+    },
+    /// Nothing changed (invalid position).
     Unchanged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShuffleResult {
+    /// Shuffle was enabled.
     Shuffled,
-    Unshuffled(usize),
+    /// Shuffle was disabled, with the new position in the unshuffled queue.
+    Unshuffled { new_position: usize },
 }
 
+#[derive(Debug, Clone)]
+pub enum ReplaceResult {
+    /// Queue replaced, contains the first item to play.
+    Replaced { first_item: Option<QueueItemData> },
+    /// Queue is empty after replacement.
+    Empty,
+}
+
+#[derive(Debug, Clone)]
+pub enum JumpResult {
+    Jumped { path: PathBuf },
+    OutOfBounds,
+}
+
+/// Manages the playback queue state.
+///
+/// This component handles all queue operations including navigation, shuffling,
+/// repeat modes, and queue mutations. It does NOT handle side effects like
+/// opening tracks or emitting events - those are the responsibility of the
+/// PlaybackThread.
 pub struct QueueManager {
-    playback_settings: Rc<PlaybackSettings>,
-    /// The current queue. Do not hold an indefinite lock on this queue - it is read by the
-    /// UI thread.
-    // This lock will be said to be poisoned even if it is not poisoned because no other code
-    // should hold a lock on it.
+    playback_settings: PlaybackSettings,
+    /// The current queue. Shared with the UI thread for display.
     queue: Arc<RwLock<Vec<QueueItemData>>>,
-    /// If the queue is shuffled, this is a copy of the original (unshuffled) queue.
+    /// If shuffled, this holds the original (unshuffled) queue order.
     original_queue: Vec<QueueItemData>,
+    /// Whether shuffle mode is enabled.
     shuffle: bool,
-    /// The index after the current item in the queue. This can be out of bounds if the current
-    /// track is the last track in the queue.
+    /// Index of the next track to play.
+    /// If queue_next == 1, we're on track 0.
+    /// If queue_next == queue.len(), we're on the last track.
     queue_next: usize,
-    /// Whether or not the queue should be repeated when the end of the queue is reached.
     repeat: RepeatState,
 }
 
 impl QueueManager {
     pub fn new(
         queue: Arc<RwLock<Vec<QueueItemData>>>,
-        playback_settings: Rc<PlaybackSettings>,
+        playback_settings: PlaybackSettings,
     ) -> Self {
         Self {
             repeat: if playback_settings.always_repeat {
@@ -87,73 +126,197 @@ impl QueueManager {
             queue,
             original_queue: Vec::new(),
             shuffle: false,
-            queue_next: 1,
+            queue_next: 0,
         }
     }
 
-    /// Get the next track in the queue and advance the queue index.
+    /// Get the current queue position (0-indexed).
+    /// Returns None if no track is playing.
+    pub fn current_position(&self) -> Option<usize> {
+        if self.queue_next > 0 {
+            Some(self.queue_next - 1)
+        } else {
+            None
+        }
+    }
+
+    /// Get the current repeat state.
+    pub fn repeat_state(&self) -> RepeatState {
+        self.repeat
+    }
+
+    /// Check if the queue is empty.
+    pub fn is_empty(&self) -> bool {
+        self.queue.read().expect("poisoned queue lock").is_empty()
+    }
+
+    /// Get the queue length.
+    pub fn len(&self) -> usize {
+        self.queue.read().expect("poisoned queue lock").len()
+    }
+
+    /// Get the first item in the queue.
+    pub fn first(&self) -> Option<QueueItemData> {
+        self.queue
+            .read()
+            .expect("poisoned queue lock")
+            .first()
+            .cloned()
+    }
+
+    /// Get the last item in the queue.
+    pub fn last(&self) -> Option<QueueItemData> {
+        self.queue
+            .read()
+            .expect("poisoned queue lock")
+            .last()
+            .cloned()
+    }
+
+    /// Set the queue position directly (used after opening a track).
+    pub fn set_position(&mut self, index: usize) {
+        self.queue_next = index + 1;
+    }
+
+    /// Set the repeat state.
+    pub fn set_repeat(&mut self, state: RepeatState) {
+        self.repeat = if state == RepeatState::NotRepeating && self.playback_settings.always_repeat
+        {
+            RepeatState::Repeating
+        } else {
+            state
+        };
+    }
+
+    /// Update playback settings.
+    pub fn update_settings(&mut self, settings: PlaybackSettings) {
+        self.playback_settings = settings;
+
+        if self.playback_settings.always_repeat && self.repeat == RepeatState::NotRepeating {
+            self.repeat = RepeatState::Repeating;
+        }
+    }
+
+    /// Advance to the next track in the queue.
     ///
-    /// Returns `Changed` when the queue is advanced, `Unchanged` if the current track repeats, and
-    /// `EndOfQueue` if the end of the queue is reached. If `Unchanged` is returned, the current
-    /// track should be played again.
-    pub fn next(&mut self, user_initiated: bool) -> QueueNextResult {
+    /// Returns information about what track to play next, or if playback should stop.
+    pub fn next(&mut self, user_initiated: bool) -> QueueNavigationResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
         if self.repeat == RepeatState::RepeatingOne && !user_initiated {
-            return QueueNextResult::Unchanged;
+            if let Some(path) = queue.get(self.queue_next.saturating_sub(1)) {
+                return QueueNavigationResult::Unchanged {
+                    path: path.get_path().clone(),
+                };
+            }
         }
 
-        if self.queue_next >= queue.len() {
-            if self.repeat == RepeatState::Repeating {
+        if self.queue_next < queue.len() {
+            let index = self.queue_next;
+            self.queue_next += 1;
+            QueueNavigationResult::Changed {
+                index,
+                path: queue[index].get_path().clone(),
+                reshuffled: Reshuffled::NotReshuffled,
+            }
+        } else if self.repeat == RepeatState::Repeating {
+            if self.shuffle {
                 queue.shuffle(&mut rng());
-                self.queue_next = 1;
-                QueueNextResult::Changed(0, queue[0].get_path().clone(), Reshuffled::Reshuffled)
+            }
+            self.queue_next = 1;
+            if queue.is_empty() {
+                QueueNavigationResult::EndOfQueue
             } else {
-                QueueNextResult::EndOfQueue
+                QueueNavigationResult::Changed {
+                    index: 0,
+                    path: queue[0].get_path().clone(),
+                    reshuffled: if self.shuffle {
+                        Reshuffled::Reshuffled
+                    } else {
+                        Reshuffled::NotReshuffled
+                    },
+                }
             }
         } else {
-            self.queue_next += 1;
-            QueueNextResult::Changed(
-                self.queue_next - 1,
-                queue[self.queue_next - 1].get_path().clone(),
-                Reshuffled::NotReshuffled,
-            )
+            QueueNavigationResult::EndOfQueue
         }
     }
 
-    /// Get the previous track in the queue and rewind the queue index.
-    ///
-    /// Returns `Changed` when the queue is rewinded, and `EndOfQueue` when the beginning of the
-    /// queue is reached.
-    pub fn previous(&mut self) -> QueueNextResult {
+    /// Go to the previous track in the queue.
+    pub fn previous(&mut self) -> QueueNavigationResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
-        if self.queue_next == 0 {
-            if self.repeat == RepeatState::Repeating {
+        if self.queue_next > 1 {
+            self.queue_next -= 1;
+            let index = self.queue_next - 1;
+            QueueNavigationResult::Changed {
+                index,
+                path: queue[index].get_path().clone(),
+                reshuffled: Reshuffled::NotReshuffled,
+            }
+        } else if self.queue_next == 1 && self.repeat == RepeatState::Repeating && !queue.is_empty()
+        {
+            if self.shuffle {
                 queue.shuffle(&mut rng());
-                self.queue_next = queue.len() - 1;
-                QueueNextResult::Changed(
-                    self.queue_next - 1,
-                    queue[self.queue_next - 1].get_path().clone(),
-                    Reshuffled::Reshuffled,
-                )
-            } else {
-                QueueNextResult::EndOfQueue
+            }
+            self.queue_next = queue.len();
+            let index = self.queue_next - 1;
+            QueueNavigationResult::Changed {
+                index,
+                path: queue[index].get_path().clone(),
+                reshuffled: if self.shuffle {
+                    Reshuffled::Reshuffled
+                } else {
+                    Reshuffled::NotReshuffled
+                },
             }
         } else {
-            self.queue_next -= 1;
-            QueueNextResult::Changed(
-                self.queue_next - 1,
-                queue[self.queue_next - 1].get_path().clone(),
-                Reshuffled::NotReshuffled,
-            )
+            QueueNavigationResult::EndOfQueue
         }
     }
 
-    /// Add a new queue item to the queue.
+    /// Jump to a specific index in the queue.
+    pub fn jump(&mut self, index: usize) -> JumpResult {
+        let queue = self.queue.read().expect("poisoned queue lock");
+
+        if index < queue.len() {
+            let path = queue[index].get_path().clone();
+            drop(queue);
+            self.queue_next = index + 1;
+            JumpResult::Jumped { path }
+        } else {
+            JumpResult::OutOfBounds
+        }
+    }
+
+    /// Jump to an index in the original (unshuffled) queue.
+    /// If not shuffled, behaves like regular jump.
+    pub fn jump_unshuffled(&mut self, index: usize) -> JumpResult {
+        if !self.shuffle {
+            return self.jump(index);
+        }
+
+        let original_path = match self.original_queue.get(index) {
+            Some(item) => item.get_path().clone(),
+            None => return JumpResult::OutOfBounds,
+        };
+
+        let queue = self.queue.read().expect("poisoned queue lock");
+        let pos = queue
+            .iter()
+            .position(|item| item.get_path() == &original_path);
+        drop(queue);
+
+        match pos {
+            Some(shuffled_index) => self.jump(shuffled_index),
+            None => JumpResult::OutOfBounds,
+        }
+    }
+
+    /// Add a single item to the end of the queue.
     ///
-    /// Returns the index of the newly added item.
-    pub fn queue(&mut self, item: QueueItemData) -> usize {
+    /// Returns the index where the item was added.
+    pub fn queue_item(&mut self, item: QueueItemData) -> usize {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
         if self.shuffle {
@@ -164,148 +327,162 @@ impl QueueManager {
         queue.len() - 1
     }
 
-    /// Add a list of new queue items to the queue.
+    /// Add multiple items to the end of the queue.
     ///
-    /// Returns the index of the first queue item added.
+    /// If shuffle is enabled, the new items are shuffled before being added.
+    /// Returns the index of the first item added.
     pub fn queue_items(&mut self, items: Vec<QueueItemData>) -> usize {
+        if items.is_empty() {
+            return self.len();
+        }
+
+        let mut queue = self.queue.write().expect("poisoned queue lock");
+        let first_index = queue.len();
+
+        if self.shuffle {
+            self.original_queue.extend(items.clone());
+
+            let mut shuffled = items;
+            shuffled.shuffle(&mut rng());
+            queue.extend(shuffled);
+        } else {
+            queue.extend(items);
+        }
+
+        first_index
+    }
+
+    /// Insert a single item at a specific position.
+    pub fn insert_item(&mut self, position: usize, item: QueueItemData) -> InsertResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
-        let pre_len = queue.len();
+        let insert_pos = position.min(queue.len());
+
+        if self.shuffle {
+            self.original_queue.push(item.clone());
+        }
+
+        queue.insert(insert_pos, item);
+
+        if insert_pos < self.queue_next {
+            self.queue_next += 1;
+            InsertResult::InsertedMovedCurrent {
+                first_index: insert_pos,
+                new_position: self.queue_next - 1,
+            }
+        } else {
+            InsertResult::Inserted {
+                first_index: insert_pos,
+            }
+        }
+    }
+
+    /// Insert multiple items at a specific position.
+    pub fn insert_items(&mut self, position: usize, items: Vec<QueueItemData>) -> InsertResult {
+        if items.is_empty() {
+            return InsertResult::Unchanged;
+        }
+
+        let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        let insert_pos = position.min(queue.len());
+        let items_len = items.len();
 
         if self.shuffle {
             self.original_queue.extend(items.clone());
         }
 
-        queue.extend(items);
-        pre_len
+        queue.splice(insert_pos..insert_pos, items);
+
+        if insert_pos < self.queue_next {
+            self.queue_next += items_len;
+            InsertResult::InsertedMovedCurrent {
+                first_index: insert_pos,
+                new_position: self.queue_next - 1,
+            }
+        } else {
+            InsertResult::Inserted {
+                first_index: insert_pos,
+            }
+        }
     }
 
     /// Remove an item from the queue at the specified index.
-    ///
-    /// Returns `RemovedCurrent` if the current item was removed, `Removed` (with the new queue
-    /// position) if an item before the current item was removed, or `Unchanged` if no item was
-    /// removed. If the current item was removed, the next item is returned as the new current
-    /// item.
     pub fn dequeue(&mut self, index: usize) -> DequeueResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        if index >= queue.len() {
+            return DequeueResult::Unchanged;
+        }
 
         let removed = queue.remove(index);
 
         if self.shuffle {
-            self.original_queue.retain(|item| removed != *item);
+            self.original_queue
+                .iter()
+                .position(|item| item.get_path() == removed.get_path())
+                .map(|pos| self.original_queue.remove(pos));
         }
 
-        if index == self.queue_next - 1 {
-            DequeueResult::RemovedCurrent {
-                new_path: queue.get(self.queue_next - 1).map(|v| v.get_path().clone()),
-            }
-        } else if index < self.queue_next - 1 {
+        let current = self.queue_next.saturating_sub(1);
+
+        if index == current {
+            let new_path = queue.get(current).map(|v| v.get_path().clone());
+            DequeueResult::RemovedCurrent { new_path }
+        } else if index < current {
             self.queue_next -= 1;
             DequeueResult::Removed {
-                index: self.queue_next - 1,
+                new_position: self.queue_next - 1,
             }
         } else {
-            DequeueResult::Unchanged
+            DequeueResult::Removed {
+                new_position: current,
+            }
         }
     }
 
-    /// Moves an item from one position to another within the queue.
-    ///
-    /// Returns `MovedCurrent` if the current queue position changed, `Moved` if the item was moved,
-    /// and `Unchanged` if the target and destination are the same.
+    /// Move an item from one position to another.
     pub fn move_item(&mut self, from: usize, to: usize) -> MoveResult {
-        let mut queue = self.queue.write().expect("poisoned queue lock");
-
         if from == to {
             return MoveResult::Unchanged;
         }
 
-        let removed = queue.remove(from);
-        queue.insert(to, removed);
+        let mut queue = self.queue.write().expect("poisoned queue lock");
 
-        let current_playing = if self.queue_next > 0 {
-            self.queue_next - 1
-        } else {
-            0
-        };
+        if from >= queue.len() || to >= queue.len() {
+            return MoveResult::Unchanged;
+        }
 
-        if from == current_playing {
-            self.queue_next += 1;
-            MoveResult::MovedCurrent {
-                current_to: self.queue_next - 1,
-            }
-        } else if from < current_playing && to >= current_playing {
-            self.queue_next += 1;
-            MoveResult::MovedCurrent {
-                current_to: self.queue_next - 1,
-            }
-        } else if from >= current_playing && to < current_playing {
+        let item = queue.remove(from);
+        queue.insert(to, item);
+
+        let current = self.queue_next.saturating_sub(1);
+
+        if from == current {
+            // Moved the current track
+            self.queue_next = to + 1;
+            MoveResult::MovedCurrent { new_position: to }
+        } else if from < current && to >= current {
+            // Moved from before to after current
             self.queue_next -= 1;
             MoveResult::MovedCurrent {
-                current_to: self.queue_next - 1,
+                new_position: self.queue_next - 1,
+            }
+        } else if from > current && to <= current {
+            // Moved from after to before current
+            self.queue_next += 1;
+            MoveResult::MovedCurrent {
+                new_position: self.queue_next - 1,
             }
         } else {
             MoveResult::Moved
         }
     }
 
-    /// Insert a queue item at a specified position in the queue.
+    /// Replace the entire queue with new items.
     ///
-    /// Returns `Inserted` if the item was inserted, `InsertMovedCurrent` if the item was inserted
-    /// and moved the current position, and `Unchanged` if the position is invalid.
-    pub fn insert_item(&mut self, index: usize, item: QueueItemData) -> InsertResult {
-        let mut queue = self.queue.write().expect("poisoned queue lock");
-
-        if index > queue.len() {
-            return InsertResult::Unchanged;
-        }
-
-        if self.shuffle {
-            self.original_queue.push(item.clone());
-        }
-
-        queue.insert(index, item);
-
-        if index <= self.queue_next {
-            self.queue_next += 1;
-            InsertResult::InsertMovedCurrent {
-                current_to: self.queue_next - 1,
-            }
-        } else {
-            InsertResult::Inserted
-        }
-    }
-
-    /// Insert a list of queue items at the specified position in the queue.
-    ///
-    /// Returns `Inserted` if the items were inserted, `InsertMovedCurrent` if the items were inserted
-    /// and moved the current position, and `Unchanged` if the position is invalid.
-    pub fn insert_items(&mut self, index: usize, items: Vec<QueueItemData>) -> InsertResult {
-        let mut queue = self.queue.write().expect("poisoned queue lock");
-
-        let items_len = items.len();
-
-        if index > queue.len() {
-            return InsertResult::Unchanged;
-        }
-
-        queue.splice(index..index, items);
-
-        if index <= self.queue_next {
-            self.queue_next += items_len;
-            InsertResult::InsertMovedCurrent {
-                current_to: self.queue_next - 1,
-            }
-        } else {
-            InsertResult::Inserted
-        }
-    }
-
-    /// Replace the current queue with the given items.
-    ///
-    /// Returns the path to the first item in the new queue, if any. This file should be played
-    /// immediately.
-    pub fn replace_queue(&mut self, items: Vec<QueueItemData>) -> Option<QueueItemData> {
+    /// If shuffle is enabled, the items are shuffled (but original order is preserved).
+    pub fn replace_queue(&mut self, items: Vec<QueueItemData>) -> ReplaceResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
         if self.shuffle {
@@ -313,29 +490,31 @@ impl QueueManager {
             shuffled.shuffle(&mut rng());
 
             self.original_queue = items;
-
-            queue.clear();
-            queue.extend(shuffled);
+            *queue = shuffled;
         } else {
+            self.original_queue.clear();
             *queue = items;
         }
 
         self.queue_next = 0;
 
-        queue.first().cloned()
+        match queue.first().cloned() {
+            Some(first) => ReplaceResult::Replaced {
+                first_item: Some(first),
+            },
+            None => ReplaceResult::Empty,
+        }
     }
 
-    /// Clear the current queue.
-    pub fn clear_queue(&mut self) {
+    /// Clear the queue.
+    pub fn clear(&mut self) {
         let mut queue = self.queue.write().expect("poisoned queue lock");
-
         queue.clear();
+        self.original_queue.clear();
         self.queue_next = 0;
     }
 
     /// Toggle shuffle mode.
-    ///
-    /// Returns the shuffle state and the new current track number, if it changed.
     pub fn toggle_shuffle(&mut self) -> ShuffleResult {
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
@@ -343,22 +522,32 @@ impl QueueManager {
 
         if self.shuffle {
             self.original_queue = queue.clone();
-            let length = queue.len();
-            queue[self.queue_next..length].shuffle(&mut rng());
+
+            let start = self.queue_next.min(queue.len());
+            if start < queue.len() {
+                queue[start..].shuffle(&mut rng());
+            }
+
             ShuffleResult::Shuffled
         } else {
-            // find current track in the shuffled queue and turn it back into the original position
-            let current_track = &queue[self.queue_next - 1];
-            self.queue_next = self
-                .original_queue
-                .iter()
-                .position(|item| item.get_path() == current_track.get_path())
-                .unwrap()
-                + 1;
+            let current_path = if self.queue_next > 0 && self.queue_next <= queue.len() {
+                Some(queue[self.queue_next - 1].get_path().clone())
+            } else {
+                None
+            };
+
+            let new_position = current_path
+                .and_then(|path| {
+                    self.original_queue
+                        .iter()
+                        .position(|item| item.get_path() == &path)
+                })
+                .unwrap_or(0);
 
             *queue = take(&mut self.original_queue);
+            self.queue_next = new_position + 1;
 
-            ShuffleResult::Unshuffled(self.queue_next - 1)
+            ShuffleResult::Unshuffled { new_position }
         }
     }
 }
