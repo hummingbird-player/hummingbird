@@ -448,8 +448,11 @@ impl AudioEngine {
         // Get source format to determine if passthrough is possible
         let source_format = self.media.sample_format().unwrap_or(SampleFormat::Float32); // Default to f32 if unknown
 
-        // Source rate will be updated after first decode, use device rate as initial guess
-        let source_rate = device_format.sample_rate;
+        // Get actual source sample rate from the media file
+        let source_rate = self
+            .media
+            .sample_rate()
+            .unwrap_or(device_format.sample_rate); // Fallback to device rate if unavailable
 
         let pipeline = AudioPipeline::new(
             channel_count,

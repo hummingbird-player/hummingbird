@@ -473,6 +473,23 @@ impl MediaStream for SymphoniaStream {
         }
     }
 
+    fn sample_rate(&self) -> Result<u32, ChannelRetrievalError> {
+        let Some(format) = &self.format else {
+            return Err(ChannelRetrievalError::InvalidState);
+        };
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or(ChannelRetrievalError::NothingToPlay)?;
+
+        track
+            .codec_params
+            .sample_rate
+            .ok_or(ChannelRetrievalError::NothingToPlay)
+    }
+
     fn decode_into(
         &mut self,
         output: &ChannelProducers<f64>,

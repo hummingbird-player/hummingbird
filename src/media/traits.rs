@@ -145,6 +145,14 @@ pub trait MediaStream {
     /// available immediately after playback has started.
     fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError>;
 
+    /// Returns the sample rate (in Hz) of the track being decoded. This function should be
+    /// available immediately after playback has started, and should not require reading any
+    /// samples.
+    ///
+    /// This function is used by the playback thread to determine the correct sample rate for
+    /// resampling when the source rate differs from the device rate.
+    fn sample_rate(&self) -> Result<u32, ChannelRetrievalError>;
+
     /// Decode one packet/frame and write samples as f64 directly to the provided ring buffer producers.
     /// The decoder is responsible for converting from the native sample format to f64.
     fn decode_into(

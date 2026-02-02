@@ -176,6 +176,13 @@ impl MediaController {
             .ok_or(FrameDurationError::NeverStarted)?
             .frame_duration()
     }
+
+    pub fn sample_rate(&self) -> Result<u32, ChannelRetrievalError> {
+        self.media_stream
+            .as_ref()
+            .ok_or(ChannelRetrievalError::NeverStarted)?
+            .sample_rate()
+    }
 }
 
 impl Default for MediaController {
