@@ -79,7 +79,6 @@ impl DummyDevice {
             Ok("U16") => SampleFormat::Unsigned16,
             Ok("S8") => SampleFormat::Signed8,
             Ok("U8") => SampleFormat::Unsigned8,
-            Ok("DSD") => SampleFormat::Dsd,
             Err(std::env::VarError::NotPresent) => SampleFormat::Signed16,
             Ok(_) => Err(InfoError::SampleFmt(var.unwrap()))?,
             Err(std::env::VarError::NotUnicode(os)) => {
