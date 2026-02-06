@@ -110,18 +110,25 @@ impl Render for ScanStatus {
             .text_color(theme.text_secondary)
             .child(match status {
                 ScanEvent::ScanCompleteIdle => SharedString::from(""),
-                ScanEvent::ScanProgress { current, total } => tr!(
-                    "SCAN_PROGRESS_SCANNING",
-                    "Scanning {{percentage}}%",
-                    percentage = (*current as f64 / *total as f64 * 100.0).round()
-                )
-                .into(),
-                ScanEvent::DiscoverProgress(progress) => tr!(
-                    "SCAN_PROGRESS_DISCOVERING",
-                    "Discovering files {{progress}}",
-                    progress = progress
-                )
-                .into(),
+                ScanEvent::ScanProgress { current, total } => {
+                    if *total == u64::MAX {
+                        // Total unknown (discovery still ongoing)
+                        tr!(
+                            "SCAN_PROGRESS_DISCOVERING",
+                            "Scanning {{current}} files...",
+                            current = current
+                        )
+                        .into()
+                    } else {
+                        // Total known (discovery complete)
+                        tr!(
+                            "SCAN_PROGRESS_SCANNING",
+                            "Scanning {{percentage}}%",
+                            percentage = (*current as f64 / *total as f64 * 100.0).round()
+                        )
+                        .into()
+                    }
+                }
                 ScanEvent::Cleaning => SharedString::from(""),
                 ScanEvent::ScanCompleteWatching => {
                     tr!("SCAN_COMPLETE_WATCHING", "Watching for updates").into()

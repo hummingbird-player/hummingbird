@@ -79,7 +79,7 @@
   "SCANNING_SELECT_FOLDER": "Select a folder to scan...",
   "SCANNING_SUBTITLE": "Changes apply on your next scan. Duplicate folders are ignored.",
   "SCAN_COMPLETE_WATCHING": "Watching for updates",
-  "SCAN_PROGRESS_DISCOVERING": "Discovering files {{progress}}",
+  "SCAN_PROGRESS_DISCOVERING": "Scanning {{current}} files...",
   "SCAN_PROGRESS_SCANNING": "Scanning {{percentage}}%",
   "SELECT_M3U": "Select a M3U file...",
   "SETTINGS": "Settings",

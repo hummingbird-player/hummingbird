@@ -13,7 +13,7 @@ use tracing::debug;
 use crate::{
     library::{
         db::create_pool,
-        scan::{ScanInterface, ScanThread},
+        scan::{ScanInterface, start_scanner},
     },
     playback::{interface::PlaybackInterface, queue::QueueItemData, thread::PlaybackThread},
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
@@ -207,7 +207,7 @@ pub fn run() -> anyhow::Result<()> {
 
             let playback_settings = settings.playback.clone();
             let mut scan_interface: ScanInterface =
-                ScanThread::start(pool.clone(), settings.scanning.clone());
+                start_scanner(pool.clone(), settings.scanning.clone());
             scan_interface.scan();
             scan_interface.start_broadcast(cx);
 

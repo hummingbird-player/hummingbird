@@ -7,8 +7,8 @@ use std::{
 
 use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
-use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops::thumbnail};
-use rustc_hash::FxHashMap;
+use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
+use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
@@ -28,7 +28,6 @@ use crate::{
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ScanEvent {
     Cleaning,
-    DiscoverProgress(u64),
     ScanProgress { current: u64, total: u64 },
     ScanCompleteWatching,
     ScanCompleteIdle,
@@ -108,36 +107,7 @@ impl ScanInterface {
 
 impl Global for ScanInterface {}
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum ScanState {
-    Idle,
-    Cleanup,
-    Discovering,
-    Scanning,
-}
-
-pub struct ScanThread {
-    event_tx: UnboundedSender<ScanEvent>,
-    command_rx: Receiver<ScanCommand>,
-    pool: SqlitePool,
-    scan_settings: ScanSettings,
-    visited: Vec<PathBuf>,
-    discovered: Vec<PathBuf>,
-    to_process: Vec<PathBuf>,
-    scan_state: ScanState,
-    provider_table: Vec<(Vec<String>, Box<dyn MediaProvider>)>,
-    scan_record: FxHashMap<PathBuf, u64>,
-    scan_record_path: Option<PathBuf>,
-    scanned: u64,
-    discovered_total: u64,
-    /// Whether or not to force a rescan all files. This is set to true when a force-scan is
-    /// requested, which results in all previous data being ignored.
-    is_force: bool,
-    /// A list of enocuntered albums. When force-scan is enabled, this list will be used to
-    /// determine whether or not an album should be inserted, instead of checking the
-    /// album_title_artist_id_idx index.
-    force_encountered_albums: Vec<i64>,
-}
+type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 
 fn build_provider_table() -> Vec<(Vec<String>, Box<dyn MediaProvider>)> {
     // TODO: dynamic plugin loading
@@ -164,8 +134,6 @@ fn file_is_scannable_with_provider(path: &Path, exts: &[String]) -> bool {
 
     false
 }
-
-type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 
 fn scan_file_with_provider(
     path: &PathBuf,
@@ -202,201 +170,132 @@ fn scan_path_for_album_art(path: &Path) -> Option<Box<[u8]>> {
     None
 }
 
-impl ScanThread {
-    pub fn start(pool: SqlitePool, settings: ScanSettings) -> ScanInterface {
-        let (cmd_tx, commands_rx) = channel(10);
-        let (events_tx, events_rx) = unbounded_channel();
+fn file_is_scannable(
+    path: &Path,
+    scan_record: &mut FxHashMap<PathBuf, u64>,
+    provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
+) -> bool {
+    let timestamp = match fs::metadata(path) {
+        Ok(metadata) => metadata
+            .modified()
+            .unwrap()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        Err(_) => return false,
+    };
 
-        std::thread::Builder::new()
-            .name("scanner".to_string())
-            .spawn(move || {
-                let mut thread = ScanThread {
-                    event_tx: events_tx,
-                    command_rx: commands_rx,
-                    pool,
-                    visited: Vec::new(),
-                    discovered: Vec::new(),
-                    to_process: Vec::new(),
-                    scan_state: ScanState::Idle,
-                    provider_table: build_provider_table(),
-                    scan_settings: settings,
-                    scan_record: FxHashMap::default(),
-                    scan_record_path: None,
-                    scanned: 0,
-                    discovered_total: 0,
-                    is_force: false,
-                    force_encountered_albums: Vec::new(),
-                };
+    for (exts, _) in provider_table.iter() {
+        let x = file_is_scannable_with_provider(path, exts);
 
-                thread.run();
-            })
-            .expect("could not start playback thread");
+        if !x {
+            continue;
+        }
 
-        ScanInterface::new(Some(events_rx), cmd_tx)
+        if let Some(last_scan) = scan_record.get(path)
+            && *last_scan == timestamp
+        {
+            return false;
+        }
+
+        scan_record.insert(path.to_path_buf(), timestamp);
+        return true;
     }
 
-    fn run(&mut self) {
-        let dirs = get_dirs();
-        let directory = dirs.data_dir();
-        if !directory.exists() {
-            fs::create_dir(directory).expect("couldn't create data directory");
-        }
-        let file_path = directory.join("scan_record.json");
+    false
+}
 
-        if file_path.exists() {
-            let file = File::open(&file_path);
-
-            let Ok(file) = file else {
-                return;
-            };
-            let reader = BufReader::new(file);
-
-            match serde_json::from_reader(reader) {
-                Ok(scan_record) => {
-                    self.scan_record = scan_record;
-                }
-                Err(e) => {
-                    error!("could not read scan record: {:?}", e);
-                    error!("scanning will be slow until the scan record is rebuilt");
-                }
+fn read_metadata_for_path(
+    path: &PathBuf,
+    provider_table: &mut Vec<(Vec<String>, Box<dyn MediaProvider>)>,
+) -> Option<FileInformation> {
+    for (exts, provider) in provider_table.iter_mut() {
+        if file_is_scannable_with_provider(path, exts)
+            && let Ok(mut metadata) = scan_file_with_provider(path, provider)
+        {
+            if metadata.2.is_none() {
+                metadata.2 = scan_path_for_album_art(path);
             }
-        }
 
-        self.scan_record_path = Some(file_path);
-
-        loop {
-            self.read_commands();
-
-            // TODO: start file watcher to update db automatically when files are added or removed
-            match self.scan_state {
-                ScanState::Idle => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                ScanState::Cleanup => {
-                    self.cleanup();
-                }
-                ScanState::Discovering => {
-                    self.discover();
-                }
-                ScanState::Scanning => {
-                    self.scan();
-                }
-            }
+            return Some(metadata);
         }
     }
 
-    fn read_commands(&mut self) {
-        while let Ok(command) = self.command_rx.try_recv() {
-            match command {
-                ScanCommand::Scan => {
-                    if self.scan_state == ScanState::Idle {
-                        self.discovered = self.scan_settings.paths.clone();
-                        self.scan_state = ScanState::Cleanup;
-                        self.scanned = 0;
-                        self.discovered_total = 0;
-                        self.discovered = self.scan_settings.paths.clone();
-                        self.visited.clear();
-                        self.to_process.clear();
-                        self.is_force = false;
+    None
+}
 
-                        self.event_tx
-                            .send(ScanEvent::Cleaning)
-                            .expect("could not send scan event");
-                    }
-                }
-                ScanCommand::ForceScan => {
-                    if self.scan_state == ScanState::Idle {
-                        self.discovered = self.scan_settings.paths.clone();
-                        self.scan_state = ScanState::Cleanup;
-                        self.scanned = 0;
-                        self.discovered_total = 0;
-                        self.discovered = self.scan_settings.paths.clone();
-                        self.visited.clear();
-                        self.to_process.clear();
-
-                        self.is_force = true;
-                        self.force_encountered_albums.clear();
-
-                        self.scan_record = FxHashMap::default();
-
-                        self.event_tx
-                            .send(ScanEvent::Cleaning)
-                            .expect("could not send scan event");
-                    }
-                }
-                ScanCommand::UpdateSettings(settings) => {
-                    self.scan_settings = settings;
-                }
-                ScanCommand::Stop => {
-                    self.scan_state = ScanState::Idle;
-                    self.visited.clear();
-                    self.discovered.clear();
-                    self.to_process.clear();
-                }
-            }
-        }
-
-        if self.scan_state == ScanState::Discovering {
-            self.discover();
-        } else if self.scan_state == ScanState::Scanning {
-            self.scan();
-        } else {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+fn load_scan_record(path: &Path) -> FxHashMap<PathBuf, u64> {
+    if !path.exists() {
+        return FxHashMap::default();
     }
 
-    fn file_is_scannable(&mut self, path: &PathBuf) -> bool {
-        let timestamp = match fs::metadata(path) {
-            Ok(metadata) => metadata
-                .modified()
-                .unwrap()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            Err(_) => return false,
-        };
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("could not open scan record: {:?}", e);
+            return FxHashMap::default();
+        }
+    };
+    let reader = BufReader::new(file);
 
-        for (exts, _) in self.provider_table.iter() {
-            let x = file_is_scannable_with_provider(path, exts);
+    match serde_json::from_reader(reader) {
+        Ok(scan_record) => scan_record,
+        Err(e) => {
+            error!("could not read scan record: {:?}", e);
+            error!("scanning will be slow until the scan record is rebuilt");
+            FxHashMap::default()
+        }
+    }
+}
 
-            if !x {
+fn write_scan_record(scan_record: &FxHashMap<PathBuf, u64>, path: &Path) {
+    let mut file = match File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("Could not create scan record file: {:?}", e);
+            error!("Scan record will not be saved, this may cause rescans on restart");
+            return;
+        }
+    };
+    let data = serde_json::to_string(scan_record).unwrap();
+    if let Err(err) = file.write_all(data.as_bytes()) {
+        error!("Could not write scan record: {:?}", err);
+        error!("Scan record will not be saved, this may cause rescans on restart");
+    } else {
+        info!("Scan record written to {:?}", path);
+    }
+}
+
+/// Performs a full recursive directory walk, streaming discovered file paths through `path_tx`
+/// as they are found so that downstream pipeline stages can begin processing immediately.
+///
+/// Returns the (potentially mutated) scan_record and the total number of discovered files once
+/// the walk is complete.
+fn discover(
+    settings: ScanSettings,
+    mut scan_record: FxHashMap<PathBuf, u64>,
+    path_tx: Sender<PathBuf>,
+) -> (FxHashMap<PathBuf, u64>, u64) {
+    let provider_table = build_provider_table();
+    let mut visited: FxHashSet<PathBuf> = FxHashSet::default();
+    let mut stack: Vec<PathBuf> = settings.paths.clone();
+    let mut discovered_total: u64 = 0;
+
+    while let Some(dir) = stack.pop() {
+        if !visited.insert(dir.clone()) {
+            continue;
+        }
+
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Failed to read directory {:?}: {:?}", dir, e);
                 continue;
             }
-            if let Some(last_scan) = self.scan_record.get(path)
-                && *last_scan == timestamp
-            {
-                return false;
-            }
-
-            self.scan_record.insert(path.clone(), timestamp);
-            return true;
-        }
-
-        false
-    }
-
-    fn discover(&mut self) {
-        if self.discovered.is_empty() {
-            self.scan_state = ScanState::Scanning;
-            return;
-        }
-
-        let path = self.discovered.pop().unwrap();
-
-        if self.visited.contains(&path) {
-            return;
-        }
-
-        let paths = match fs::read_dir(&path) {
-            Ok(paths) => paths,
-            Err(e) => {
-                error!("Failed to read directory {:?}: {:?}", path, e);
-                return;
-            }
         };
 
-        for paths in paths {
-            let path = match paths {
+        for entry in entries {
+            let path = match entry {
                 Ok(entry) => match entry.path().canonicalize() {
                     Ok(p) => p,
                     Err(e) => {
@@ -411,354 +310,472 @@ impl ScanThread {
             };
 
             if path.is_dir() {
-                self.discovered.push(path);
-            } else if self.file_is_scannable(&path) {
-                self.to_process.push(path);
+                stack.push(path);
+            } else if file_is_scannable(&path, &mut scan_record, &provider_table) {
+                discovered_total += 1;
 
-                self.discovered_total += 1;
-
-                if self.discovered_total.is_multiple_of(20) {
-                    self.event_tx
-                        .send(ScanEvent::DiscoverProgress(self.discovered_total))
-                        .expect("could not send scan event");
+                // Stream the path to the next pipeline stage. If the receiver
+                // has been dropped (scan cancelled), stop early.
+                if path_tx.blocking_send(path).is_err() {
+                    return (scan_record, discovered_total);
                 }
             }
         }
-
-        self.visited.push(path.clone());
     }
 
-    async fn insert_artist(&self, metadata: &Metadata) -> anyhow::Result<Option<i64>> {
-        let artist = metadata.album_artist.clone().or(metadata.artist.clone());
+    (scan_record, discovered_total)
+}
 
-        let Some(artist) = artist else {
-            return Ok(None);
-        };
+async fn insert_artist(pool: &SqlitePool, metadata: &Metadata) -> anyhow::Result<Option<i64>> {
+    let artist = metadata.album_artist.clone().or(metadata.artist.clone());
 
-        let result: Result<(i64,), sqlx::Error> =
-            sqlx::query_as(include_str!("../../queries/scan/create_artist.sql"))
-                .bind(&artist)
-                .bind(metadata.artist_sort.as_ref().unwrap_or(&artist))
-                .fetch_one(&self.pool)
-                .await;
+    let Some(artist) = artist else {
+        return Ok(None);
+    };
 
-        match result {
-            Ok(v) => Ok(Some(v.0)),
-            Err(sqlx::Error::RowNotFound) => {
-                let result: Result<(i64,), sqlx::Error> =
-                    sqlx::query_as(include_str!("../../queries/scan/get_artist_id.sql"))
-                        .bind(&artist)
-                        .fetch_one(&self.pool)
-                        .await;
+    let result: Result<(i64,), sqlx::Error> =
+        sqlx::query_as(include_str!("../../queries/scan/create_artist.sql"))
+            .bind(&artist)
+            .bind(metadata.artist_sort.as_ref().unwrap_or(&artist))
+            .fetch_one(pool)
+            .await;
 
-                match result {
-                    Ok(v) => Ok(Some(v.0)),
-                    Err(e) => Err(e.into()),
-                }
+    match result {
+        Ok(v) => Ok(Some(v.0)),
+        Err(sqlx::Error::RowNotFound) => {
+            let result: Result<(i64,), sqlx::Error> =
+                sqlx::query_as(include_str!("../../queries/scan/get_artist_id.sql"))
+                    .bind(&artist)
+                    .fetch_one(pool)
+                    .await;
+
+            match result {
+                Ok(v) => Ok(Some(v.0)),
+                Err(e) => Err(e.into()),
             }
-            Err(e) => Err(e.into()),
         }
+        Err(e) => Err(e.into()),
     }
+}
 
-    async fn insert_album(
-        &mut self,
-        metadata: &Metadata,
-        artist_id: Option<i64>,
-        image: &Option<Box<[u8]>>,
-    ) -> anyhow::Result<Option<i64>> {
-        let Some(album) = &metadata.album else {
-            return Ok(None);
-        };
+/// Process album art into a (resized_full_image, thumbnail_bmp) pair.
+///
+/// The thumbnail is always a 70×70 BMP. The full-size image is passed through if both dimensions
+/// are ≤ 1024, otherwise it is downscaled to 1024×1024 and re-encoded as JPEG.
+fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let decoded = image::ImageReader::new(Cursor::new(image))
+        .with_guessed_format()?
+        .decode()?
+        .into_rgb8();
 
-        let mbid = metadata
-            .mbid_album
-            .clone()
-            .unwrap_or_else(|| "none".to_string());
+    // thumbnail
+    let thumb_rgb = imageops::thumbnail(&decoded, 70, 70);
+    let thumb_rgba = DynamicImage::ImageRgb8(thumb_rgb).into_rgba8();
 
-        let result: Result<(i64,), sqlx::Error> =
-            sqlx::query_as(include_str!("../../queries/scan/get_album_id.sql"))
-                .bind(album)
-                .bind(&mbid)
-                .fetch_one(&self.pool)
-                .await;
+    let mut thumb_buf: Vec<u8> = Vec::new();
+    thumb_rgba
+        .write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)
+        .expect("BMP encoding to Vec cannot fail");
 
-        let should_force = if let Ok((id,)) = &result
-            && self.is_force
-        {
-            let result = !self.force_encountered_albums.contains(id) && self.is_force;
+    // full-size image (resized if necessary)
+    let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
+        image.to_vec()
+    } else {
+        let resized_img =
+            imageops::resize(&decoded, 1024, 1024, image::imageops::FilterType::Lanczos3);
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let mut encoder = JpegEncoder::new_with_quality(&mut buf, 70);
 
-            self.force_encountered_albums.push(*id);
+        encoder.encode(
+            resized_img.as_bytes(),
+            resized_img.width(),
+            resized_img.height(),
+            image::ExtendedColorType::Rgb8,
+        )?;
+        drop(encoder);
 
-            result
-        } else {
-            false
-        };
+        buf.into_inner()
+    };
 
-        match (result, should_force) {
-            (Ok(v), false) => Ok(Some(v.0)),
-            (Err(sqlx::Error::RowNotFound), _) | (Ok(_), true) => {
-                let (resized_image, thumb) = match image {
-                    Some(image) => {
-                        // if there is a decode error, just ignore it and pretend there is no image
-                        let mut decoded = image::ImageReader::new(Cursor::new(&image))
-                            .with_guessed_format()?
-                            .decode()?
-                            .into_rgb8();
+    Ok((resized, thumb_buf))
+}
 
-                        // for some reason, thumbnails don't load properly when saved as rgb8
-                        // also, into_rgba8() causes the application to crash on certain images
-                        //
-                        // no, I don't no why, and no I can't fix it upstream
-                        // this will have to do for now
-                        let decoded_rgba = DynamicImage::ImageRgb8(decoded.clone()).into_rgba8();
+async fn insert_album(
+    pool: &SqlitePool,
+    metadata: &Metadata,
+    artist_id: Option<i64>,
+    image: &Option<Box<[u8]>>,
+    is_force: bool,
+    force_encountered_albums: &mut Vec<i64>,
+) -> anyhow::Result<Option<i64>> {
+    let Some(album) = &metadata.album else {
+        return Ok(None);
+    };
 
-                        let thumb = thumbnail(&decoded_rgba, 70, 70);
+    let mbid = metadata
+        .mbid_album
+        .clone()
+        .unwrap_or_else(|| "none".to_string());
 
-                        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+    let result: Result<(i64,), sqlx::Error> =
+        sqlx::query_as(include_str!("../../queries/scan/get_album_id.sql"))
+            .bind(album)
+            .bind(&mbid)
+            .fetch_one(pool)
+            .await;
 
-                        thumb
-                            .write_to(&mut buf, image::ImageFormat::Bmp)
-                            .expect("i don't know how Cursor could fail");
-                        buf.flush().expect("could not flush buffer");
+    let should_force = if let Ok((id,)) = &result
+        && is_force
+    {
+        let result = !force_encountered_albums.contains(id) && is_force;
 
-                        let resized =
-                            if decoded.dimensions().0 <= 1024 || decoded.dimensions().1 <= 1024 {
-                                image.clone().to_vec()
-                            } else {
-                                decoded = image::imageops::resize(
-                                    &decoded,
-                                    1024,
-                                    1024,
-                                    image::imageops::FilterType::Lanczos3,
-                                );
-                                let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-                                let mut encoder = JpegEncoder::new_with_quality(&mut buf, 70);
+        force_encountered_albums.push(*id);
 
-                                encoder.encode(
-                                    decoded.as_bytes(),
-                                    decoded.width(),
-                                    decoded.height(),
-                                    image::ExtendedColorType::Rgb8,
-                                )?;
-                                buf.flush()?;
+        result
+    } else {
+        false
+    };
 
-                                buf.get_mut().clone()
-                            };
-
-                        (Some(resized), Some(buf.get_mut().clone()))
+    match (result, should_force) {
+        (Ok(v), false) => Ok(Some(v.0)),
+        (Err(sqlx::Error::RowNotFound), _) | (Ok(_), true) => {
+            let (resized_image, thumb) = match image {
+                Some(image) => {
+                    match process_album_art(image) {
+                        Ok((resized, thumb)) => (Some(resized), Some(thumb)),
+                        Err(e) => {
+                            // if there is a decode error, just ignore it and pretend there is no image
+                            warn!("Failed to process album art: {:?}", e);
+                            (None, None)
+                        }
                     }
-                    None => (None, None),
-                };
-
-                let result: (i64,) =
-                    sqlx::query_as(include_str!("../../queries/scan/create_album.sql"))
-                        .bind(album)
-                        .bind(metadata.sort_album.as_ref().unwrap_or(album))
-                        .bind(artist_id)
-                        .bind(resized_image)
-                        .bind(thumb)
-                        .bind(metadata.date)
-                        .bind(metadata.year)
-                        .bind(&metadata.label)
-                        .bind(&metadata.catalog)
-                        .bind(&metadata.isrc)
-                        .bind(&mbid)
-                        .bind(metadata.vinyl_numbering)
-                        .fetch_one(&self.pool)
-                        .await?;
-
-                Ok(Some(result.0))
-            }
-            (Err(e), _) => Err(e.into()),
-        }
-    }
-
-    async fn insert_track(
-        &self,
-        metadata: &Metadata,
-        album_id: Option<i64>,
-        path: &Path,
-        length: u64,
-    ) -> anyhow::Result<()> {
-        if album_id.is_none() {
-            return Ok(());
-        }
-
-        let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
-        let find_path: Result<(String,), _> =
-            sqlx::query_as(include_str!("../../queries/scan/get_album_path.sql"))
-                .bind(album_id)
-                .bind(disc_num)
-                .fetch_one(&self.pool)
-                .await;
-
-        let parent = path.parent().unwrap();
-
-        match find_path {
-            Ok(path) => {
-                if path.0.as_str() != parent.as_os_str() {
-                    return Ok(());
                 }
-            }
-            Err(sqlx::Error::RowNotFound) => {
-                sqlx::query(include_str!("../../queries/scan/create_album_path.sql"))
-                    .bind(album_id)
-                    .bind(parent.to_str())
-                    .bind(disc_num)
-                    .execute(&self.pool)
+                None => (None, None),
+            };
+
+            let result: (i64,) =
+                sqlx::query_as(include_str!("../../queries/scan/create_album.sql"))
+                    .bind(album)
+                    .bind(metadata.sort_album.as_ref().unwrap_or(album))
+                    .bind(artist_id)
+                    .bind(resized_image)
+                    .bind(thumb)
+                    .bind(metadata.date)
+                    .bind(metadata.year)
+                    .bind(&metadata.label)
+                    .bind(&metadata.catalog)
+                    .bind(&metadata.isrc)
+                    .bind(&mbid)
+                    .bind(metadata.vinyl_numbering)
+                    .fetch_one(pool)
                     .await?;
-            }
-            Err(e) => return Err(e.into()),
+
+            Ok(Some(result.0))
         }
+        (Err(e), _) => Err(e.into()),
+    }
+}
 
-        let name = metadata
-            .name
-            .clone()
-            .or_else(|| {
-                path.file_name()
-                    .and_then(|x| x.to_str())
-                    .map(|x| x.to_string())
-            })
-            .ok_or_else(|| anyhow::anyhow!("failed to retrieve filename"))?;
+async fn insert_track(
+    pool: &SqlitePool,
+    metadata: &Metadata,
+    album_id: Option<i64>,
+    path: &Path,
+    length: u64,
+) -> anyhow::Result<()> {
+    if album_id.is_none() {
+        return Ok(());
+    }
 
-        let result: Result<(i64,), sqlx::Error> =
-            sqlx::query_as(include_str!("../../queries/scan/create_track.sql"))
-                .bind(&name)
-                .bind(&name)
+    let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
+    let find_path: Result<(String,), _> =
+        sqlx::query_as(include_str!("../../queries/scan/get_album_path.sql"))
+            .bind(album_id)
+            .bind(disc_num)
+            .fetch_one(pool)
+            .await;
+
+    let parent = path.parent().unwrap();
+
+    match find_path {
+        Ok(path) => {
+            if path.0.as_str() != parent.as_os_str() {
+                return Ok(());
+            }
+        }
+        Err(sqlx::Error::RowNotFound) => {
+            sqlx::query(include_str!("../../queries/scan/create_album_path.sql"))
                 .bind(album_id)
-                .bind(metadata.track_current.map(|x| x as i32))
-                .bind(metadata.disc_current.map(|x| x as i32))
-                .bind(length as i32)
-                .bind(path.to_str())
-                .bind(&metadata.genre)
-                .bind(&metadata.artist)
                 .bind(parent.to_str())
-                .fetch_one(&self.pool)
-                .await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(sqlx::Error::RowNotFound) => Ok(()),
-            Err(e) => Err(e.into()),
+                .bind(disc_num)
+                .execute(pool)
+                .await?;
         }
+        Err(e) => return Err(e.into()),
     }
 
-    async fn update_metadata(
-        &mut self,
-        metadata: (Metadata, u64, Option<Box<[u8]>>),
-        path: &Path,
-    ) -> anyhow::Result<()> {
-        debug!(
-            "Adding/updating record for {:?} - {:?}",
-            metadata.0.artist, metadata.0.name
-        );
+    let name = metadata
+        .name
+        .clone()
+        .or_else(|| {
+            path.file_name()
+                .and_then(|x| x.to_str())
+                .map(|x| x.to_string())
+        })
+        .ok_or_else(|| anyhow::anyhow!("failed to retrieve filename"))?;
 
-        let artist_id = self.insert_artist(&metadata.0).await?;
-        let album_id = self
-            .insert_album(&metadata.0, artist_id, &metadata.2)
-            .await?;
-        self.insert_track(&metadata.0, album_id, path, metadata.1)
-            .await?;
+    let result: Result<(i64,), sqlx::Error> =
+        sqlx::query_as(include_str!("../../queries/scan/create_track.sql"))
+            .bind(&name)
+            .bind(&name)
+            .bind(album_id)
+            .bind(metadata.track_current.map(|x| x as i32))
+            .bind(metadata.disc_current.map(|x| x as i32))
+            .bind(length as i32)
+            .bind(path.to_str())
+            .bind(&metadata.genre)
+            .bind(&metadata.artist)
+            .bind(parent.to_str())
+            .fetch_one(pool)
+            .await;
 
-        Ok(())
+    match result {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::RowNotFound) => Ok(()),
+        Err(e) => Err(e.into()),
     }
+}
 
-    fn read_metadata_for_path(&mut self, path: &PathBuf) -> Option<FileInformation> {
-        for (exts, provider) in &mut self.provider_table {
-            if file_is_scannable_with_provider(path, exts)
-                && let Ok(mut metadata) = scan_file_with_provider(path, provider)
-            {
-                if metadata.2.is_none() {
-                    metadata.2 = scan_path_for_album_art(path);
-                }
+async fn update_metadata(
+    pool: &SqlitePool,
+    metadata: &Metadata,
+    path: &Path,
+    length: u64,
+    image: &Option<Box<[u8]>>,
+    is_force: bool,
+    force_encountered_albums: &mut Vec<i64>,
+) -> anyhow::Result<()> {
+    debug!(
+        "Adding/updating record for {:?} - {:?}",
+        metadata.artist, metadata.name
+    );
 
-                return Some(metadata);
-            }
-        }
+    let artist_id = insert_artist(pool, metadata).await?;
+    let album_id = insert_album(
+        pool,
+        metadata,
+        artist_id,
+        image,
+        is_force,
+        force_encountered_albums,
+    )
+    .await?;
+    insert_track(pool, metadata, album_id, path, length).await?;
 
-        None
-    }
+    Ok(())
+}
 
-    fn write_scan_record(&self) {
-        if let Some(path) = self.scan_record_path.as_ref() {
-            let mut file = File::create(path).unwrap();
-            let data = serde_json::to_string(&self.scan_record).unwrap();
-            if let Err(err) = file.write_all(data.as_bytes()) {
-                error!("Could not write scan record: {:?}", err);
-                error!("Scan record will not be saved, this may cause rescans on restart");
-            } else {
-                info!("Scan record written to {:?}", path);
-            }
-        } else {
-            error!("No scan record path set, scan record will not be saved");
-        }
-    }
+/// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
+/// tracks from the database.
+async fn cleanup(pool: &SqlitePool, scan_record: &mut FxHashMap<PathBuf, u64>) {
+    let to_delete: Vec<PathBuf> = scan_record
+        .keys()
+        .filter(|path| !path.exists())
+        .cloned()
+        .collect();
 
-    fn scan(&mut self) {
-        if self.to_process.is_empty() {
-            info!("Scan complete, writing scan record and stopping");
-            self.write_scan_record();
-            self.scan_state = ScanState::Idle;
-            self.event_tx
-                .send(ScanEvent::ScanCompleteIdle)
-                .expect("could not send scan event");
-            return;
-        }
-
-        let path = self.to_process.pop().unwrap();
-        let metadata = self.read_metadata_for_path(&path);
-
-        if let Some(metadata) = metadata {
-            let result = crate::RUNTIME.block_on(self.update_metadata(metadata, &path));
-
-            if let Err(err) = result {
-                error!(
-                    "Failed to update metadata for file: {:?}, error: {}",
-                    path, err
-                );
-            }
-
-            self.scanned += 1;
-
-            if self.scanned.is_multiple_of(5) {
-                self.event_tx
-                    .send(ScanEvent::ScanProgress {
-                        current: self.scanned,
-                        total: self.discovered_total,
-                    })
-                    .expect("could not send scan event");
-            }
-        } else {
-            warn!("Could not read metadata for file: {:?}", path);
-        }
-    }
-
-    async fn delete_track(&mut self, path: &PathBuf) {
+    for path in &to_delete {
         debug!("track deleted or moved: {:?}", path);
         let result = sqlx::query(include_str!("../../queries/scan/delete_track.sql"))
             .bind(path.to_str())
-            .execute(&self.pool)
+            .execute(pool)
             .await;
 
         if let Err(e) = result {
             error!("Database error while deleting track: {:?}", e);
         } else {
-            self.scan_record.remove(path);
+            scan_record.remove(path);
         }
     }
+}
 
-    // This is done in one shot because it's required for data integrity
-    // Cleanup cannot be cancelled
-    fn cleanup(&mut self) {
-        self.scan_record
-            .clone()
-            .iter()
-            .filter(|v| !v.0.exists())
-            .map(|v| v.0)
-            .for_each(|v| {
-                crate::RUNTIME.block_on(self.delete_track(v));
-            });
-
-        self.scan_state = ScanState::Discovering;
+async fn run_scanner(
+    pool: SqlitePool,
+    mut scan_settings: ScanSettings,
+    mut command_rx: Receiver<ScanCommand>,
+    event_tx: UnboundedSender<ScanEvent>,
+) {
+    let dirs = get_dirs();
+    let directory = dirs.data_dir();
+    if !directory.exists() {
+        fs::create_dir(directory).expect("couldn't create data directory");
     }
+    let scan_record_path = directory.join("scan_record.json");
+
+    let mut scan_record: FxHashMap<PathBuf, u64> = load_scan_record(&scan_record_path);
+
+    loop {
+        let is_force = loop {
+            match command_rx.recv().await {
+                Some(ScanCommand::Scan) => break false,
+                Some(ScanCommand::ForceScan) => break true,
+                Some(ScanCommand::UpdateSettings(s)) => {
+                    scan_settings = s;
+                }
+                Some(ScanCommand::Stop) => continue,
+                None => return, // channel closed, shut down
+            }
+        };
+
+        if is_force {
+            scan_record.clear();
+        }
+
+        info!(
+            "Starting scan (force: {}) with settings: {:?}",
+            is_force, scan_settings
+        );
+
+        let time_start = std::time::Instant::now();
+
+        let _ = event_tx.send(ScanEvent::Cleaning);
+        cleanup(&pool, &mut scan_record).await;
+
+        // we run the discovery and metadata reading stages in seperate tasks, that way they can
+        // run concurrently and no step in the scanning process blocks the other
+        let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<PathBuf>(64);
+        let (meta_tx, mut meta_rx) = tokio::sync::mpsc::channel::<(PathBuf, FileInformation)>(16);
+
+        // Discovery
+        let settings_for_discover = scan_settings.clone();
+        let discover_handle = tokio::task::spawn_blocking(move || {
+            discover(settings_for_discover, scan_record, path_tx)
+        });
+
+        // Metadata reading
+        tokio::task::spawn_blocking(move || {
+            let mut provider_table = build_provider_table();
+            while let Some(path) = path_rx.blocking_recv() {
+                if let Some(metadata) = read_metadata_for_path(&path, &mut provider_table) {
+                    if meta_tx.blocking_send((path, metadata)).is_err() {
+                        // Consumer dropped — scan was cancelled.
+                        break;
+                    }
+                } else {
+                    warn!("Could not read metadata for file: {:?}", path);
+                }
+            }
+        });
+
+        // DB writing and event reporting
+        // these don't block, so we do them here. no point in doing more than one SQLite task since
+        // the connection is serialized anyway
+        let mut scanned: u64 = 0;
+        let mut force_encountered_albums: Vec<i64> = Vec::new();
+        let mut cancelled = false;
+        let mut discovery_complete = false;
+        let mut discovered_total: u64 = 0;
+        let mut discovered_scan_record: Option<FxHashMap<PathBuf, u64>> = None;
+
+        let mut discover_handle = discover_handle;
+
+        loop {
+            tokio::select! {
+                // poll discovery until it stops running
+                result = &mut discover_handle, if !discovery_complete => {
+                    let (returned_record, total) = result.expect("discover task panicked");
+                    discovered_scan_record = Some(returned_record);
+                    discovered_total = total;
+                    discovery_complete = true;
+
+                    if discovered_total == 0 {
+                        info!("Nothing new to scan");
+                        // the scanner should exit anyways since there's nothing to scan
+                    }
+                }
+
+                item = meta_rx.recv() => {
+                    let Some((path, (metadata, length, image))) = item else {
+                        break; // pipeline fully drained
+                    };
+
+                    while let Ok(cmd) = command_rx.try_recv() {
+                        match cmd {
+                            ScanCommand::Stop => {
+                                cancelled = true;
+                            }
+                            ScanCommand::UpdateSettings(s) => {
+                                scan_settings = s;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if cancelled {
+                        drop(meta_rx);
+                        break;
+                    }
+
+                    let result = update_metadata(
+                        &pool,
+                        &metadata,
+                        &path,
+                        length,
+                        &image,
+                        is_force,
+                        &mut force_encountered_albums,
+                    )
+                    .await;
+
+                    if let Err(err) = result {
+                        error!(
+                            "Failed to update metadata for file: {:?}, error: {}",
+                            path, err
+                        );
+                    }
+
+                    scanned += 1;
+
+                    if scanned.is_multiple_of(5) {
+                        let total = if discovery_complete {
+                            discovered_total
+                        } else {
+                            u64::MAX // total unknown until discovery completes
+                        };
+                        let _ = event_tx.send(ScanEvent::ScanProgress {
+                            current: scanned,
+                            total,
+                        });
+                    }
+                }
+            }
+        }
+
+        if !discovery_complete {
+            let (returned_record, _) = discover_handle.await.expect("discover task panicked");
+            discovered_scan_record = Some(returned_record);
+        }
+
+        scan_record = discovered_scan_record.expect("scan_record was not returned from discovery");
+
+        let time_end = std::time::Instant::now();
+        let duration = time_end.duration_since(time_start);
+
+        info!(
+            "Scan complete, {} files scanned in {} seconds, writing record.",
+            scanned,
+            duration.as_secs_f32()
+        );
+        write_scan_record(&scan_record, &scan_record_path);
+        let _ = event_tx.send(ScanEvent::ScanCompleteIdle);
+    }
+}
+
+pub fn start_scanner(pool: SqlitePool, settings: ScanSettings) -> ScanInterface {
+    let (cmd_tx, command_rx) = channel(10);
+    let (event_tx, events_rx) = unbounded_channel();
+
+    crate::RUNTIME.spawn(run_scanner(pool, settings, command_rx, event_tx));
+
+    ScanInterface::new(Some(events_rx), cmd_tx)
 }

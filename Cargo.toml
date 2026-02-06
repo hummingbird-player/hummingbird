@@ -52,7 +52,7 @@ sqlx = { version = "0.8", features = ["chrono", "runtime-tokio", "sqlite"] }
 symphonia = { version = "0.5", features = ["all", "opt-simd"] }
 symphonia-adapter-libopus = "0.2"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
