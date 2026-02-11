@@ -38,6 +38,7 @@ moka = { version = "0.12", features = ["sync"] }
 notify = "8"
 nucleo = "0.5"
 open = "5"
+postcard = { version = "1", features = ["use-std"] }
 rand = "0.10"
 raw-window-handle = "0.6"
 rb = "0.4"

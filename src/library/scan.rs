@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, Cursor, Write},
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -9,6 +9,7 @@ use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
@@ -108,6 +109,25 @@ impl ScanInterface {
 impl Global for ScanInterface {}
 
 type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ScanRecord {
+    version: u16,
+    records: FxHashMap<PathBuf, u64>,
+}
+
+impl ScanRecord {
+    fn new_current() -> Self {
+        Self {
+            version: SCAN_VERSION,
+            records: FxHashMap::default(),
+        }
+    }
+
+    fn is_version_mismatch(&self) -> bool {
+        self.version != SCAN_VERSION
+    }
+}
 
 fn build_provider_table() -> Vec<(Vec<String>, Box<dyn MediaProvider>)> {
     // TODO: dynamic plugin loading
@@ -224,31 +244,30 @@ fn read_metadata_for_path(
     None
 }
 
-fn load_scan_record(path: &Path) -> FxHashMap<PathBuf, u64> {
+fn load_scan_record(path: &Path) -> ScanRecord {
     if !path.exists() {
-        return FxHashMap::default();
+        return ScanRecord::new_current();
     }
 
-    let file = match File::open(path) {
-        Ok(f) => f,
+    let data = match fs::read(path) {
+        Ok(data) => data,
         Err(e) => {
             error!("could not open scan record: {:?}", e);
-            return FxHashMap::default();
+            return ScanRecord::new_current();
         }
     };
-    let reader = BufReader::new(file);
 
-    match serde_json::from_reader(reader) {
+    match postcard::from_bytes::<ScanRecord>(&data) {
         Ok(scan_record) => scan_record,
         Err(e) => {
             error!("could not read scan record: {:?}", e);
             error!("scanning will be slow until the scan record is rebuilt");
-            FxHashMap::default()
+            ScanRecord::new_current()
         }
     }
 }
 
-fn write_scan_record(scan_record: &FxHashMap<PathBuf, u64>, path: &Path) {
+fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
     let mut file = match File::create(path) {
         Ok(f) => f,
         Err(e) => {
@@ -257,8 +276,15 @@ fn write_scan_record(scan_record: &FxHashMap<PathBuf, u64>, path: &Path) {
             return;
         }
     };
-    let data = serde_json::to_string(scan_record).unwrap();
-    if let Err(err) = file.write_all(data.as_bytes()) {
+    let data = match postcard::to_stdvec(scan_record) {
+        Ok(data) => data,
+        Err(err) => {
+            error!("Could not serialize scan record: {:?}", err);
+            error!("Scan record will not be saved, this may cause rescans on restart");
+            return;
+        }
+    };
+    if let Err(err) = file.write_all(&data) {
         error!("Could not write scan record: {:?}", err);
         error!("Scan record will not be saved, this may cause rescans on restart");
     } else {
@@ -273,9 +299,9 @@ fn write_scan_record(scan_record: &FxHashMap<PathBuf, u64>, path: &Path) {
 /// the walk is complete.
 fn discover(
     settings: ScanSettings,
-    mut scan_record: FxHashMap<PathBuf, u64>,
+    mut scan_record: ScanRecord,
     path_tx: Sender<PathBuf>,
-) -> (FxHashMap<PathBuf, u64>, u64) {
+) -> (ScanRecord, u64) {
     let provider_table = build_provider_table();
     let mut visited: FxHashSet<PathBuf> = FxHashSet::default();
     let mut stack: Vec<PathBuf> = settings.paths.clone();
@@ -311,7 +337,7 @@ fn discover(
 
             if path.is_dir() {
                 stack.push(path);
-            } else if file_is_scannable(&path, &mut scan_record, &provider_table) {
+            } else if file_is_scannable(&path, &mut scan_record.records, &provider_table) {
                 discovered_total += 1;
 
                 // Stream the path to the next pipeline stage. If the receiver
@@ -577,8 +603,9 @@ async fn update_metadata(
 
 /// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
 /// tracks from the database.
-async fn cleanup(pool: &SqlitePool, scan_record: &mut FxHashMap<PathBuf, u64>) {
+async fn cleanup(pool: &SqlitePool, scan_record: &mut ScanRecord) {
     let to_delete: Vec<PathBuf> = scan_record
+        .records
         .keys()
         .filter(|path| !path.exists())
         .cloned()
@@ -594,7 +621,7 @@ async fn cleanup(pool: &SqlitePool, scan_record: &mut FxHashMap<PathBuf, u64>) {
         if let Err(e) = result {
             error!("Database error while deleting track: {:?}", e);
         } else {
-            scan_record.remove(path);
+            scan_record.records.remove(path);
         }
     }
 }
@@ -610,12 +637,21 @@ async fn run_scanner(
     if !directory.exists() {
         fs::create_dir(directory).expect("couldn't create data directory");
     }
-    let scan_record_path = directory.join("scan_record.json");
+    let scan_record_path = directory.join("scan_record.bin");
+    let legacy_scan_record_path = directory.join("scan_record.json");
+    if legacy_scan_record_path.exists()
+        && let Err(e) = fs::remove_file(&legacy_scan_record_path)
+    {
+        warn!(
+            "Failed to delete legacy scan record at {:?}: {:?}",
+            legacy_scan_record_path, e
+        );
+    }
 
-    let mut scan_record: FxHashMap<PathBuf, u64> = load_scan_record(&scan_record_path);
+    let mut scan_record: ScanRecord = load_scan_record(&scan_record_path);
 
     loop {
-        let is_force = loop {
+        let mut is_force = loop {
             match command_rx.recv().await {
                 Some(ScanCommand::Scan) => break false,
                 Some(ScanCommand::ForceScan) => break true,
@@ -627,9 +663,18 @@ async fn run_scanner(
             }
         };
 
-        if is_force {
-            scan_record.clear();
+        if scan_record.is_version_mismatch() {
+            info!(
+                "Scan record version mismatch (found {}, expected {}), forcing full scan",
+                scan_record.version, SCAN_VERSION
+            );
+            is_force = true;
         }
+
+        if is_force {
+            scan_record.records.clear();
+        }
+        scan_record.version = SCAN_VERSION;
 
         info!(
             "Starting scan (force: {}) with settings: {:?}",
@@ -675,7 +720,7 @@ async fn run_scanner(
         let mut cancelled = false;
         let mut discovery_complete = false;
         let mut discovered_total: u64 = 0;
-        let mut discovered_scan_record: Option<FxHashMap<PathBuf, u64>> = None;
+        let mut discovered_scan_record: Option<ScanRecord> = None;
 
         let mut discover_handle = discover_handle;
 
