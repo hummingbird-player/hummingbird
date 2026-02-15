@@ -126,6 +126,7 @@ type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 struct ScanRecord {
     version: u16,
     records: FxHashMap<PathBuf, u64>,
+    directories: Vec<PathBuf>,
 }
 
 impl ScanRecord {
@@ -133,6 +134,7 @@ impl ScanRecord {
         Self {
             version: SCAN_VERSION,
             records: FxHashMap::default(),
+            directories: Vec::new(),
         }
     }
 
@@ -676,6 +678,69 @@ async fn update_metadata(
     Ok(())
 }
 
+/// Remove tracks from directories that are no longer in the scan configuration.
+async fn cleanup_removed_directories(
+    pool: &SqlitePool,
+    scan_record: &mut ScanRecord,
+    current_directories: &[PathBuf],
+) {
+    let current_set: FxHashSet<PathBuf> = current_directories.iter().cloned().collect();
+    let old_set: FxHashSet<PathBuf> = scan_record.directories.iter().cloned().collect();
+
+    let removed_dirs: Vec<PathBuf> = old_set.difference(&current_set).cloned().collect();
+
+    if removed_dirs.is_empty() {
+        return;
+    }
+
+    info!("Detected {} removed director(ies), cleaning up tracks", removed_dirs.len());
+
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!("Could not begin directory cleanup transaction: {:?}", e);
+            return;
+        }
+    };
+
+    let to_remove: Vec<PathBuf> = scan_record
+        .records
+        .keys()
+        .filter(|path| {
+            removed_dirs.iter().any(|removed_dir| {
+                path.starts_with(removed_dir)
+            })
+        })
+        .cloned()
+        .collect();
+
+    let mut deleted: Vec<PathBuf> = Vec::with_capacity(to_remove.len());
+    for path in &to_remove {
+        debug!("removing track from removed directory: {:?}", path);
+        let result = sqlx::query(include_str!("../../queries/scan/delete_track.sql"))
+            .bind(path.to_str())
+            .execute(&mut *tx)
+            .await;
+
+        if let Err(e) = result {
+            error!("Database error while deleting track: {:?}", e);
+        } else {
+            deleted.push(path.clone());
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        error!("Failed to commit directory cleanup transaction: {:?}", e);
+        return;
+    }
+
+    for path in &deleted {
+        scan_record.records.remove(path);
+    }
+
+    info!("Cleaned up {} track(s) from removed directories", deleted.len());
+}
+
 /// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
 /// tracks from the database.
 async fn cleanup(pool: &SqlitePool, scan_record: &mut ScanRecord) {
@@ -764,9 +829,6 @@ async fn run_scanner(
             is_force = true;
         }
 
-        if is_force {
-            scan_record.records.clear();
-        }
         scan_record.version = SCAN_VERSION;
 
         info!(
@@ -777,7 +839,15 @@ async fn run_scanner(
         let time_start = std::time::Instant::now();
 
         let _ = event_tx.send(ScanEvent::Cleaning);
+        
+        cleanup_removed_directories(&pool, &mut scan_record, &scan_settings.paths).await;
         cleanup(&pool, &mut scan_record).await;
+        
+        scan_record.directories = scan_settings.paths.clone();
+
+        if is_force {
+            scan_record.records.clear();
+        }
 
         // number of metadata readers
         let num_workers = std::thread::available_parallelism()
