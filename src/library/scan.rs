@@ -818,16 +818,45 @@ async fn run_scanner(
     }
     let scan_record_path = directory.join("scan_record.bin");
     let legacy_scan_record_path = directory.join("scan_record.json");
-    if legacy_scan_record_path.exists()
-        && let Err(e) = fs::remove_file(&legacy_scan_record_path)
-    {
-        warn!(
-            "Failed to delete legacy scan record at {:?}: {:?}",
-            legacy_scan_record_path, e
-        );
-    }
+    let mut scan_record: ScanRecord = if legacy_scan_record_path.exists() {
+        // migrate legacy JSON scan record to new format
+        let legacy_record = match fs::read(&legacy_scan_record_path) {
+            Ok(data) => match serde_json::from_slice::<FxHashMap<PathBuf, u64>>(&data) {
+                Ok(records) => {
+                    info!(
+                        "Migrating legacy scan record with {} entries",
+                        records.len()
+                    );
+                    Some(ScanRecord {
+                        // version 0 will trigger version mismatch and force rescan
+                        version: 0,
+                        records,
+                        directories: scan_settings.paths.clone(),
+                    })
+                }
+                Err(e) => {
+                    warn!("Could not parse legacy scan record: {:?}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                warn!("Could not read legacy scan record: {:?}", e);
+                None
+            }
+        };
 
-    let mut scan_record: ScanRecord = load_scan_record(&scan_record_path);
+        // Delete the legacy file after reading
+        if let Err(e) = fs::remove_file(&legacy_scan_record_path) {
+            warn!(
+                "Failed to delete legacy scan record at {:?}: {:?}",
+                legacy_scan_record_path, e
+            );
+        }
+
+        legacy_record.unwrap_or_else(|| load_scan_record(&scan_record_path))
+    } else {
+        load_scan_record(&scan_record_path)
+    };
 
     loop {
         let mut is_force = loop {
