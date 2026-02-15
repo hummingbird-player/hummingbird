@@ -15,6 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::{
+    io,
     sync::mpsc::{
         Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
     },
@@ -222,14 +223,17 @@ fn file_is_scannable(
     scan_record: &mut FxHashMap<PathBuf, u64>,
     provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
 ) -> bool {
-    let timestamp = match fs::metadata(path) {
+    let Ok(timestamp) = (match fs::metadata(path) {
         Ok(metadata) => metadata
             .modified()
-            .unwrap()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+            .and_then(|v| {
+                v.duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|e| io::Error::other(e))
+            })
+            .map(|v| v.as_secs()),
         Err(_) => return false,
+    }) else {
+        return false;
     };
 
     for (exts, _) in provider_table.iter() {
@@ -275,8 +279,18 @@ fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
         image.to_vec()
     } else {
-        let resized_img =
-            imageops::resize(&decoded, 1024, 1024, image::imageops::FilterType::Lanczos3);
+        // preserve aspect ratio
+        let (w, h) = decoded.dimensions();
+        let scale = 1024.0_f32 / (w.max(h) as f32);
+        let new_w = (w as f32 * scale).round().max(1.0) as u32;
+        let new_h = (h as f32 * scale).round().max(1.0) as u32;
+
+        let resized_img = imageops::resize(
+            &decoded,
+            new_w,
+            new_h,
+            image::imageops::FilterType::Lanczos3,
+        );
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let mut encoder = JpegEncoder::new_with_quality(&mut buf, 70);
 
@@ -503,6 +517,7 @@ async fn insert_album(
         sqlx::query_as(include_str!("../../queries/scan/get_album_id.sql"))
             .bind(album)
             .bind(&mbid)
+            .bind(artist_id)
             .fetch_one(&mut *conn)
             .await;
 
@@ -693,7 +708,10 @@ async fn cleanup_removed_directories(
         return;
     }
 
-    info!("Detected {} removed director(ies), cleaning up tracks", removed_dirs.len());
+    info!(
+        "Detected {} removed director(ies), cleaning up tracks",
+        removed_dirs.len()
+    );
 
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
@@ -707,9 +725,9 @@ async fn cleanup_removed_directories(
         .records
         .keys()
         .filter(|path| {
-            removed_dirs.iter().any(|removed_dir| {
-                path.starts_with(removed_dir)
-            })
+            removed_dirs
+                .iter()
+                .any(|removed_dir| path.starts_with(removed_dir))
         })
         .cloned()
         .collect();
@@ -738,7 +756,10 @@ async fn cleanup_removed_directories(
         scan_record.records.remove(path);
     }
 
-    info!("Cleaned up {} track(s) from removed directories", deleted.len());
+    info!(
+        "Cleaned up {} track(s) from removed directories",
+        deleted.len()
+    );
 }
 
 /// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
@@ -839,10 +860,10 @@ async fn run_scanner(
         let time_start = std::time::Instant::now();
 
         let _ = event_tx.send(ScanEvent::Cleaning);
-        
+
         cleanup_removed_directories(&pool, &mut scan_record, &scan_settings.paths).await;
         cleanup(&pool, &mut scan_record).await;
-        
+
         scan_record.directories = scan_settings.paths.clone();
 
         if is_force {
@@ -856,7 +877,7 @@ async fn run_scanner(
             .clamp(2, 8)
             - 1;
 
-        // we run the discovery and metadata reading stages in seperate tasks, that way they can
+        // we run the discovery and metadata reading stages in separate tasks, that way they can
         // run concurrently and no step in the scanning process blocks the other
         let (path_tx, path_rx) = tokio::sync::mpsc::channel::<PathBuf>(64);
         let (meta_tx, mut meta_rx) =

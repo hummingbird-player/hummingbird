@@ -10,7 +10,7 @@ BEGIN
             SELECT 1
             FROM track
             WHERE track.folder = OLD.folder
-              AND track.disc_number IS OLD.disc_number
+              AND IFNULL(track.disc_number, -1) = IFNULL(OLD.disc_number, -1)
               AND track.album_id = OLD.album_id
         );
 
