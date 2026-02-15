@@ -1,7 +1,10 @@
+#![allow(clippy::explicit_auto_deref)]
+
 use std::{
     fs::{self, File},
     io::{Cursor, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::SystemTime,
 };
 
@@ -10,15 +13,21 @@ use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
-use tokio::sync::mpsc::{
-    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+use sqlx::{SqliteConnection, SqlitePool};
+use tokio::{
+    sync::mpsc::{
+        Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+    },
+    task::spawn_blocking,
 };
 use tracing::{debug, error, info, warn};
 
 /// The version of the scanning process. If this version number is incremented, a re-scan of all
 /// files will be forced (see [ScanCommand::ForceScan]).
 const SCAN_VERSION: u16 = 1;
+
+/// Maximum number of items to accumulate before flushing a DB transaction.
+const BATCH_SIZE: usize = 50;
 
 use crate::{
     media::{builtin::symphonia::SymphoniaProvider, metadata::Metadata, traits::MediaProvider},
@@ -108,6 +117,9 @@ impl ScanInterface {
 
 impl Global for ScanInterface {}
 
+/// Information extracted from a media file during the metadata reading stage.
+/// Raw image bytes are passed through the pipeline; image processing (resize + thumbnail) only
+/// happens in `insert_album` when a new album is actually created.
 type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +167,8 @@ fn file_is_scannable_with_provider(path: &Path, exts: &[String]) -> bool {
     false
 }
 
+/// Read metadata, duration, and embedded image from a file using the given provider.
+/// Returns raw (unprocessed) image bytes.
 fn scan_file_with_provider(
     path: &PathBuf,
     provider: &mut Box<dyn MediaProvider>,
@@ -169,24 +183,35 @@ fn scan_file_with_provider(
     Ok((metadata, len, image))
 }
 
-// Returns the first image (cover/front/folder.jpeg/png/jpeg) in the track's containing folder
-// Album art can be named anything, but this pattern is convention and the least likely to return a false positive
-fn scan_path_for_album_art(path: &Path) -> Option<Box<[u8]>> {
-    let glob = GlobWalkerBuilder::from_patterns(
-        path.parent().unwrap(),
-        &["{folder,cover,front}.{jpg,jpeg,png}"],
-    )
-    .case_insensitive(true)
-    .max_depth(1)
-    .build()
-    .expect("Failed to build album art glob")
-    .filter_map(|e| e.ok());
+/// Returns the first image (cover/front/folder.jpeg/png/jpg) in the track's containing folder.
+/// Results are cached per-directory in `art_cache` to avoid redundant glob walks when multiple
+/// tracks share the same folder.
+fn scan_path_for_album_art(
+    path: &Path,
+    art_cache: &mut FxHashMap<PathBuf, Option<Arc<[u8]>>>,
+) -> Option<Arc<[u8]>> {
+    let parent = path.parent()?.to_path_buf();
+
+    if let Some(cached) = art_cache.get(&parent) {
+        return cached.clone();
+    }
+
+    let glob = GlobWalkerBuilder::from_patterns(&parent, &["{folder,cover,front}.{jpg,jpeg,png}"])
+        .case_insensitive(true)
+        .max_depth(1)
+        .build()
+        .expect("Failed to build album art glob")
+        .filter_map(|e| e.ok());
 
     for entry in glob {
         if let Ok(bytes) = fs::read(entry.path()) {
-            return Some(bytes.into_boxed_slice());
+            let arc: Arc<[u8]> = Arc::from(bytes);
+            art_cache.insert(parent, Some(Arc::clone(&arc)));
+            return Some(arc);
         }
     }
+
+    art_cache.insert(parent, None);
     None
 }
 
@@ -225,16 +250,65 @@ fn file_is_scannable(
     false
 }
 
+/// Process album art into a (resized_full_image, thumbnail_bmp) pair.
+///
+/// The thumbnail is always a 70×70 BMP. The full-size image is passed through if both dimensions
+/// are ≤ 1024, otherwise it is downscaled to 1024×1024 and re-encoded as JPEG.
+fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let decoded = image::ImageReader::new(Cursor::new(image))
+        .with_guessed_format()?
+        .decode()?
+        .into_rgb8();
+
+    // thumbnail
+    let thumb_rgb = imageops::thumbnail(&decoded, 70, 70);
+    let thumb_rgba = DynamicImage::ImageRgb8(thumb_rgb).into_rgba8();
+
+    let mut thumb_buf: Vec<u8> = Vec::new();
+    thumb_rgba
+        .write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)
+        .expect("BMP encoding to Vec cannot fail");
+
+    // full-size image (resized if necessary)
+    let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
+        image.to_vec()
+    } else {
+        let resized_img =
+            imageops::resize(&decoded, 1024, 1024, image::imageops::FilterType::Lanczos3);
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let mut encoder = JpegEncoder::new_with_quality(&mut buf, 70);
+
+        encoder.encode(
+            resized_img.as_bytes(),
+            resized_img.width(),
+            resized_img.height(),
+            image::ExtendedColorType::Rgb8,
+        )?;
+        drop(encoder);
+
+        buf.into_inner()
+    };
+
+    Ok((resized, thumb_buf))
+}
+
+/// Read metadata from a file, resolve album art (embedded or from directory).
+///
+/// Each metadata reader thread maintains its own `art_cache` to avoid redundant directory scans
+/// for files in the same folder.
 fn read_metadata_for_path(
     path: &PathBuf,
     provider_table: &mut Vec<(Vec<String>, Box<dyn MediaProvider>)>,
+    art_cache: &mut FxHashMap<PathBuf, Option<Arc<[u8]>>>,
 ) -> Option<FileInformation> {
     for (exts, provider) in provider_table.iter_mut() {
         if file_is_scannable_with_provider(path, exts)
             && let Ok(mut metadata) = scan_file_with_provider(path, provider)
         {
-            if metadata.2.is_none() {
-                metadata.2 = scan_path_for_album_art(path);
+            if metadata.2.is_none()
+                && let Some(art) = scan_path_for_album_art(path, art_cache)
+            {
+                metadata.2 = Some(art.to_vec().into_boxed_slice());
             }
 
             return Some(metadata);
@@ -352,87 +426,61 @@ fn discover(
     (scan_record, discovered_total)
 }
 
-async fn insert_artist(pool: &SqlitePool, metadata: &Metadata) -> anyhow::Result<Option<i64>> {
+async fn insert_artist(
+    conn: &mut SqliteConnection,
+    metadata: &Metadata,
+    artist_cache: &mut FxHashMap<String, i64>,
+) -> anyhow::Result<Option<i64>> {
     let artist = metadata.album_artist.clone().or(metadata.artist.clone());
 
     let Some(artist) = artist else {
         return Ok(None);
     };
 
+    // Check in-memory cache first
+    if let Some(&cached_id) = artist_cache.get(&artist) {
+        return Ok(Some(cached_id));
+    }
+
     let result: Result<(i64,), sqlx::Error> =
         sqlx::query_as(include_str!("../../queries/scan/create_artist.sql"))
             .bind(&artist)
             .bind(metadata.artist_sort.as_ref().unwrap_or(&artist))
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await;
 
-    match result {
-        Ok(v) => Ok(Some(v.0)),
+    let id = match result {
+        Ok(v) => v.0,
         Err(sqlx::Error::RowNotFound) => {
             let result: Result<(i64,), sqlx::Error> =
                 sqlx::query_as(include_str!("../../queries/scan/get_artist_id.sql"))
                     .bind(&artist)
-                    .fetch_one(pool)
+                    .fetch_one(&mut *conn)
                     .await;
 
             match result {
-                Ok(v) => Ok(Some(v.0)),
-                Err(e) => Err(e.into()),
+                Ok(v) => v.0,
+                Err(e) => return Err(e.into()),
             }
         }
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Process album art into a (resized_full_image, thumbnail_bmp) pair.
-///
-/// The thumbnail is always a 70×70 BMP. The full-size image is passed through if both dimensions
-/// are ≤ 1024, otherwise it is downscaled to 1024×1024 and re-encoded as JPEG.
-fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let decoded = image::ImageReader::new(Cursor::new(image))
-        .with_guessed_format()?
-        .decode()?
-        .into_rgb8();
-
-    // thumbnail
-    let thumb_rgb = imageops::thumbnail(&decoded, 70, 70);
-    let thumb_rgba = DynamicImage::ImageRgb8(thumb_rgb).into_rgba8();
-
-    let mut thumb_buf: Vec<u8> = Vec::new();
-    thumb_rgba
-        .write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)
-        .expect("BMP encoding to Vec cannot fail");
-
-    // full-size image (resized if necessary)
-    let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
-        image.to_vec()
-    } else {
-        let resized_img =
-            imageops::resize(&decoded, 1024, 1024, image::imageops::FilterType::Lanczos3);
-        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let mut encoder = JpegEncoder::new_with_quality(&mut buf, 70);
-
-        encoder.encode(
-            resized_img.as_bytes(),
-            resized_img.width(),
-            resized_img.height(),
-            image::ExtendedColorType::Rgb8,
-        )?;
-        drop(encoder);
-
-        buf.into_inner()
+        Err(e) => return Err(e.into()),
     };
 
-    Ok((resized, thumb_buf))
+    artist_cache.insert(artist, id);
+    Ok(Some(id))
 }
 
+/// Album cache key: (title, mbid, artist_id).
+type AlbumCacheKey = (String, String, Option<i64>);
+
 async fn insert_album(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     metadata: &Metadata,
     artist_id: Option<i64>,
     image: &Option<Box<[u8]>>,
     is_force: bool,
-    force_encountered_albums: &mut Vec<i64>,
+    force_encountered_albums: &mut FxHashSet<i64>,
+    album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
 ) -> anyhow::Result<Option<i64>> {
     let Some(album) = &metadata.album else {
         return Ok(None);
@@ -443,27 +491,32 @@ async fn insert_album(
         .clone()
         .unwrap_or_else(|| "none".to_string());
 
+    let cache_key: AlbumCacheKey = (album.clone(), mbid.clone(), artist_id);
+
+    if !is_force && let Some(&cached_id) = album_cache.get(&cache_key) {
+        return Ok(Some(cached_id));
+    }
+
     let result: Result<(i64,), sqlx::Error> =
         sqlx::query_as(include_str!("../../queries/scan/get_album_id.sql"))
             .bind(album)
             .bind(&mbid)
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await;
 
     let should_force = if let Ok((id,)) = &result
         && is_force
     {
-        let result = !force_encountered_albums.contains(id) && is_force;
-
-        force_encountered_albums.push(*id);
-
-        result
+        force_encountered_albums.insert(*id)
     } else {
         false
     };
 
     match (result, should_force) {
-        (Ok(v), false) => Ok(Some(v.0)),
+        (Ok(v), false) => {
+            album_cache.insert(cache_key, v.0);
+            Ok(Some(v.0))
+        }
         (Err(sqlx::Error::RowNotFound), _) | (Ok(_), true) => {
             let (resized_image, thumb) = match image {
                 Some(image) => {
@@ -484,8 +537,8 @@ async fn insert_album(
                     .bind(album)
                     .bind(metadata.sort_album.as_ref().unwrap_or(album))
                     .bind(artist_id)
-                    .bind(resized_image)
-                    .bind(thumb)
+                    .bind(resized_image.as_deref())
+                    .bind(thumb.as_deref())
                     .bind(metadata.date)
                     .bind(metadata.year)
                     .bind(&metadata.label)
@@ -493,51 +546,68 @@ async fn insert_album(
                     .bind(&metadata.isrc)
                     .bind(&mbid)
                     .bind(metadata.vinyl_numbering)
-                    .fetch_one(pool)
+                    .fetch_one(&mut *conn)
                     .await?;
 
+            album_cache.insert(cache_key, result.0);
             Ok(Some(result.0))
         }
         (Err(e), _) => Err(e.into()),
     }
 }
 
+/// Album-path cache key: (album_id, disc_num).
+type AlbumPathCacheKey = (i64, i64);
+
 async fn insert_track(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     metadata: &Metadata,
     album_id: Option<i64>,
     path: &Path,
     length: u64,
+    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, PathBuf>,
 ) -> anyhow::Result<()> {
     if album_id.is_none() {
         return Ok(());
     }
 
+    let album_id_val = album_id.unwrap();
     let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
-    let find_path: Result<(String,), _> =
-        sqlx::query_as(include_str!("../../queries/scan/get_album_path.sql"))
-            .bind(album_id)
-            .bind(disc_num)
-            .fetch_one(pool)
-            .await;
-
     let parent = path.parent().unwrap();
+    let ap_key = (album_id_val, disc_num);
 
-    match find_path {
-        Ok(path) => {
-            if path.0.as_str() != parent.as_os_str() {
-                return Ok(());
-            }
+    // Check album-path cache first to avoid DB round-trips
+    if let Some(cached_path) = album_path_cache.get(&ap_key) {
+        if cached_path.as_path() != parent {
+            return Ok(());
         }
-        Err(sqlx::Error::RowNotFound) => {
-            sqlx::query(include_str!("../../queries/scan/create_album_path.sql"))
+    } else {
+        let find_path: Result<(String,), _> =
+            sqlx::query_as(include_str!("../../queries/scan/get_album_path.sql"))
                 .bind(album_id)
-                .bind(parent.to_str())
                 .bind(disc_num)
-                .execute(pool)
-                .await?;
+                .fetch_one(&mut *conn)
+                .await;
+
+        match find_path {
+            Ok(found) => {
+                let found_path = PathBuf::from(&found.0);
+                album_path_cache.insert(ap_key, found_path.clone());
+                if found_path.as_path() != parent {
+                    return Ok(());
+                }
+            }
+            Err(sqlx::Error::RowNotFound) => {
+                sqlx::query(include_str!("../../queries/scan/create_album_path.sql"))
+                    .bind(album_id)
+                    .bind(parent.to_str())
+                    .bind(disc_num)
+                    .execute(&mut *conn)
+                    .await?;
+                album_path_cache.insert(ap_key, parent.to_path_buf());
+            }
+            Err(e) => return Err(e.into()),
         }
-        Err(e) => return Err(e.into()),
     }
 
     let name = metadata
@@ -562,7 +632,7 @@ async fn insert_track(
             .bind(&metadata.genre)
             .bind(&metadata.artist)
             .bind(parent.to_str())
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await;
 
     match result {
@@ -572,31 +642,36 @@ async fn insert_track(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_metadata(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     metadata: &Metadata,
     path: &Path,
     length: u64,
     image: &Option<Box<[u8]>>,
     is_force: bool,
-    force_encountered_albums: &mut Vec<i64>,
+    force_encountered_albums: &mut FxHashSet<i64>,
+    artist_cache: &mut FxHashMap<String, i64>,
+    album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
+    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, PathBuf>,
 ) -> anyhow::Result<()> {
     debug!(
         "Adding/updating record for {:?} - {:?}",
         metadata.artist, metadata.name
     );
 
-    let artist_id = insert_artist(pool, metadata).await?;
+    let artist_id = insert_artist(conn, metadata, artist_cache).await?;
     let album_id = insert_album(
-        pool,
+        conn,
         metadata,
         artist_id,
         image,
         is_force,
         force_encountered_albums,
+        album_cache,
     )
     .await?;
-    insert_track(pool, metadata, album_id, path, length).await?;
+    insert_track(conn, metadata, album_id, path, length, album_path_cache).await?;
 
     Ok(())
 }
@@ -611,18 +686,36 @@ async fn cleanup(pool: &SqlitePool, scan_record: &mut ScanRecord) {
         .cloned()
         .collect();
 
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!("Could not begin cleanup transaction: {:?}", e);
+            return;
+        }
+    };
+
+    let mut deleted: Vec<PathBuf> = Vec::with_capacity(to_delete.len());
     for path in &to_delete {
         debug!("track deleted or moved: {:?}", path);
         let result = sqlx::query(include_str!("../../queries/scan/delete_track.sql"))
             .bind(path.to_str())
-            .execute(pool)
+            .execute(&mut *tx)
             .await;
 
         if let Err(e) = result {
             error!("Database error while deleting track: {:?}", e);
         } else {
-            scan_record.records.remove(path);
+            deleted.push(path.clone());
         }
+    }
+
+    if let Err(e) = tx.commit().await {
+        error!("Failed to commit cleanup transaction: {:?}", e);
+        return;
+    }
+
+    for path in &deleted {
+        scan_record.records.remove(path);
     }
 }
 
@@ -686,37 +779,67 @@ async fn run_scanner(
         let _ = event_tx.send(ScanEvent::Cleaning);
         cleanup(&pool, &mut scan_record).await;
 
+        // number of metadata readers
+        let num_workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(2, 8)
+            - 1;
+
         // we run the discovery and metadata reading stages in seperate tasks, that way they can
         // run concurrently and no step in the scanning process blocks the other
-        let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<PathBuf>(64);
-        let (meta_tx, mut meta_rx) = tokio::sync::mpsc::channel::<(PathBuf, FileInformation)>(16);
+        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<PathBuf>(64);
+        let (meta_tx, mut meta_rx) =
+            tokio::sync::mpsc::channel::<(PathBuf, FileInformation)>(num_workers * 8);
 
         // Discovery
         let settings_for_discover = scan_settings.clone();
-        let discover_handle = tokio::task::spawn_blocking(move || {
-            discover(settings_for_discover, scan_record, path_tx)
-        });
+        let discover_handle =
+            spawn_blocking(move || discover(settings_for_discover, scan_record, path_tx));
 
-        // Metadata reading
-        tokio::task::spawn_blocking(move || {
-            let mut provider_table = build_provider_table();
-            while let Some(path) = path_rx.blocking_recv() {
-                if let Some(metadata) = read_metadata_for_path(&path, &mut provider_table) {
-                    if meta_tx.blocking_send((path, metadata)).is_err() {
-                        // Consumer dropped — scan was cancelled.
-                        break;
+        let path_rx_shared = Arc::new(Mutex::new(path_rx));
+
+        for _ in 0..num_workers {
+            let path_rx = Arc::clone(&path_rx_shared);
+            let meta_tx = meta_tx.clone();
+            spawn_blocking(move || {
+                let mut provider_table = build_provider_table();
+                let mut art_cache: FxHashMap<PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
+                loop {
+                    let path = {
+                        let mut rx = path_rx.lock().expect("path_rx mutex poisoned");
+                        rx.blocking_recv()
+                    };
+                    let Some(path) = path else {
+                        break; // channel closed, discovery complete
+                    };
+                    if let Some(info) =
+                        read_metadata_for_path(&path, &mut provider_table, &mut art_cache)
+                    {
+                        if meta_tx.blocking_send((path, info)).is_err() {
+                            break;
+                        }
+                    } else {
+                        warn!("Could not read metadata for file: {:?}", path);
                     }
-                } else {
-                    warn!("Could not read metadata for file: {:?}", path);
                 }
-            }
-        });
+            });
+        }
+        // Drop the original sender so the channel closes when all worker clones are dropped.
+        drop(meta_tx);
 
-        // DB writing and event reporting
-        // these don't block, so we do them here. no point in doing more than one SQLite task since
-        // the connection is serialized anyway
+        // DB writing and event reporting — single task since SQLite serializes writes anyway.
+        // We batch multiple inserts into a single transaction for dramatically fewer fsyncs.
         let mut scanned: u64 = 0;
-        let mut force_encountered_albums: Vec<i64> = Vec::new();
+        let mut force_encountered_albums: FxHashSet<i64> = FxHashSet::default();
+        let mut artist_cache: FxHashMap<String, i64> = FxHashMap::default();
+        let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
+        let mut album_path_cache: FxHashMap<AlbumPathCacheKey, PathBuf> = FxHashMap::default();
+        let mut tx = pool
+            .begin()
+            .await
+            .expect("could not begin scan transaction");
+        let mut items_in_tx: usize = 0;
         let mut cancelled = false;
         let mut discovery_complete = false;
         let mut discovered_total: u64 = 0;
@@ -741,9 +864,14 @@ async fn run_scanner(
 
                 item = meta_rx.recv() => {
                     let Some((path, (metadata, length, image))) = item else {
-                        break; // pipeline fully drained
+                        // Pipeline fully drained — commit any remaining items
+                        if items_in_tx > 0 && let Err(e) = tx.commit().await {
+                                error!("Failed to commit final scan transaction: {:?}", e);
+                        }
+                        break;
                     };
 
+                    // Check for cancellation / settings updates
                     while let Ok(cmd) = command_rx.try_recv() {
                         match cmd {
                             ScanCommand::Stop => {
@@ -757,18 +885,25 @@ async fn run_scanner(
                     }
 
                     if cancelled {
+                        // Commit what we have before stopping
+                        if items_in_tx > 0 {
+                            let _ = tx.commit().await;
+                        }
                         drop(meta_rx);
                         break;
                     }
 
                     let result = update_metadata(
-                        &pool,
+                        &mut *tx,
                         &metadata,
                         &path,
                         length,
                         &image,
                         is_force,
                         &mut force_encountered_albums,
+                        &mut artist_cache,
+                        &mut album_cache,
+                        &mut album_path_cache,
                     )
                     .await;
 
@@ -780,6 +915,16 @@ async fn run_scanner(
                     }
 
                     scanned += 1;
+                    items_in_tx += 1;
+
+                    // Commit and reopen transaction every BATCH_SIZE items
+                    if items_in_tx >= BATCH_SIZE {
+                        if let Err(e) = tx.commit().await {
+                            error!("Failed to commit scan batch transaction: {:?}", e);
+                        }
+                        tx = pool.begin().await.expect("could not begin new scan transaction");
+                        items_in_tx = 0;
+                    }
 
                     if scanned.is_multiple_of(5) {
                         let total = if discovery_complete {
