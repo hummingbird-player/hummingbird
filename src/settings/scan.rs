@@ -1,12 +1,13 @@
-use std::{fs::exists, path::PathBuf};
+use std::fs::exists;
 
+use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScanSettings {
     #[serde(default = "retrieve_default_paths")]
-    pub paths: Vec<PathBuf>,
+    pub paths: Vec<Utf8PathBuf>,
 }
 
 impl Default for ScanSettings {
@@ -17,7 +18,7 @@ impl Default for ScanSettings {
     }
 }
 
-fn retrieve_default_paths() -> Vec<PathBuf> {
+fn retrieve_default_paths() -> Vec<Utf8PathBuf> {
     #[cfg(target_os = "windows")]
     {
         use windows::Storage::{KnownLibraryId, StorageLibrary};
@@ -38,7 +39,9 @@ fn retrieve_default_paths() -> Vec<PathBuf> {
         if let Some(user_directories) = directories::UserDirs::new() {
             if let Some(dir) = user_directories.audio_dir() {
                 if exists(dir).unwrap_or(false) {
-                    return vec![dir.into()];
+                    let utf8_path = Utf8PathBuf::from_path_buf(dir.to_path_buf())
+                        .expect("Music directory path is not UTF-8");
+                    return vec![utf8_path];
                 } else {
                     warn!("Music directory doesn't exist: nothing will be scanned by default.");
                 }
@@ -46,7 +49,11 @@ fn retrieve_default_paths() -> Vec<PathBuf> {
                 let dir = user_directories.home_dir().join("Music");
                 warn!("Music directory couldn't be discovered normally, using $HOME/Music.");
                 if exists(&dir).unwrap_or(false) {
-                    return vec![dir];
+                    if let Some(utf8_path) = Utf8PathBuf::from_path_buf(dir).ok() {
+                        return vec![utf8_path];
+                    } else {
+                        warn!("$HOME/Music path is not UTF-8: nothing will be scanned by default.");
+                    }
                 } else {
                     warn!("$HOME/Music doesn't exist: nothing will be scanned by default.");
                 }

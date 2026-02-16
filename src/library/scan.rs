@@ -3,11 +3,12 @@
 use std::{
     fs::{self, File},
     io::{Cursor, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex},
     time::SystemTime,
 };
 
+use camino::{Utf8Path, Utf8PathBuf};
 use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
@@ -126,8 +127,8 @@ type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScanRecord {
     version: u16,
-    records: FxHashMap<PathBuf, u64>,
-    directories: Vec<PathBuf>,
+    records: FxHashMap<Utf8PathBuf, u64>,
+    directories: Vec<Utf8PathBuf>,
 }
 
 impl ScanRecord {
@@ -158,7 +159,7 @@ fn build_provider_table() -> Vec<(Vec<String>, Box<dyn MediaProvider>)> {
     )]
 }
 
-fn file_is_scannable_with_provider(path: &Path, exts: &[String]) -> bool {
+fn file_is_scannable_with_provider(path: &Utf8Path, exts: &[String]) -> bool {
     for extension in exts.iter() {
         if let Some(ext) = path.extension()
             && *ext == **extension
@@ -173,7 +174,7 @@ fn file_is_scannable_with_provider(path: &Path, exts: &[String]) -> bool {
 /// Read metadata, duration, and embedded image from a file using the given provider.
 /// Returns raw (unprocessed) image bytes.
 fn scan_file_with_provider(
-    path: &PathBuf,
+    path: &Utf8Path,
     provider: &mut Box<dyn MediaProvider>,
 ) -> Result<FileInformation, ()> {
     let src = std::fs::File::open(path).map_err(|_| ())?;
@@ -190,8 +191,8 @@ fn scan_file_with_provider(
 /// Results are cached per-directory in `art_cache` to avoid redundant glob walks when multiple
 /// tracks share the same folder.
 fn scan_path_for_album_art(
-    path: &Path,
-    art_cache: &mut FxHashMap<PathBuf, Option<Arc<[u8]>>>,
+    path: &Utf8Path,
+    art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
 ) -> Option<Arc<[u8]>> {
     let parent = path.parent()?.to_path_buf();
 
@@ -219,8 +220,8 @@ fn scan_path_for_album_art(
 }
 
 fn file_is_scannable(
-    path: &Path,
-    scan_record: &mut FxHashMap<PathBuf, u64>,
+    path: &Utf8Path,
+    scan_record: &mut FxHashMap<Utf8PathBuf, u64>,
     provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
 ) -> bool {
     let Ok(timestamp) = (match fs::metadata(path) {
@@ -313,9 +314,9 @@ fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
 /// Each metadata reader thread maintains its own `art_cache` to avoid redundant directory scans
 /// for files in the same folder.
 fn read_metadata_for_path(
-    path: &PathBuf,
+    path: &Utf8Path,
     provider_table: &mut Vec<(Vec<String>, Box<dyn MediaProvider>)>,
-    art_cache: &mut FxHashMap<PathBuf, Option<Arc<[u8]>>>,
+    art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
 ) -> Option<FileInformation> {
     for (exts, provider) in provider_table.iter_mut() {
         if file_is_scannable_with_provider(path, exts)
@@ -390,11 +391,11 @@ fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
 fn discover(
     settings: ScanSettings,
     mut scan_record: ScanRecord,
-    path_tx: Sender<PathBuf>,
+    path_tx: Sender<Utf8PathBuf>,
 ) -> (ScanRecord, u64) {
     let provider_table = build_provider_table();
-    let mut visited: FxHashSet<PathBuf> = FxHashSet::default();
-    let mut stack: Vec<PathBuf> = settings.paths.clone();
+    let mut visited: FxHashSet<Utf8PathBuf> = FxHashSet::default();
+    let mut stack: Vec<Utf8PathBuf> = settings.paths.clone();
     let mut discovered_total: u64 = 0;
 
     while let Some(dir) = stack.pop() {
@@ -413,7 +414,17 @@ fn discover(
         for entry in entries {
             let path = match entry {
                 Ok(entry) => match entry.path().canonicalize() {
-                    Ok(p) => p,
+                    Ok(p) => match Utf8PathBuf::try_from(p) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            error!(
+                                "Failed to convert path {:?} to UTF-8: {:?}",
+                                entry.path(),
+                                e
+                            );
+                            continue;
+                        }
+                    },
                     Err(e) => {
                         error!("Failed to canonicalize path {:?}: {:?}", entry.path(), e);
                         continue;
@@ -580,9 +591,9 @@ async fn insert_track(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
     album_id: Option<i64>,
-    path: &Path,
+    path: &Utf8Path,
     length: u64,
-    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, PathBuf>,
+    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
 ) -> anyhow::Result<()> {
     if album_id.is_none() {
         return Ok(());
@@ -608,7 +619,7 @@ async fn insert_track(
 
         match find_path {
             Ok(found) => {
-                let found_path = PathBuf::from(&found.0);
+                let found_path = Utf8PathBuf::from(&found.0);
                 album_path_cache.insert(ap_key, found_path.clone());
                 if found_path.as_path() != parent {
                     return Ok(());
@@ -617,7 +628,7 @@ async fn insert_track(
             Err(sqlx::Error::RowNotFound) => {
                 sqlx::query(include_str!("../../queries/scan/create_album_path.sql"))
                     .bind(album_id)
-                    .bind(parent.to_str())
+                    .bind(parent.as_str())
                     .bind(disc_num)
                     .execute(&mut *conn)
                     .await?;
@@ -630,11 +641,7 @@ async fn insert_track(
     let name = metadata
         .name
         .clone()
-        .or_else(|| {
-            path.file_name()
-                .and_then(|x| x.to_str())
-                .map(|x| x.to_string())
-        })
+        .or_else(|| path.file_name().map(|v| v.to_string()))
         .ok_or_else(|| anyhow::anyhow!("failed to retrieve filename"))?;
 
     let result: Result<(i64,), sqlx::Error> =
@@ -645,10 +652,10 @@ async fn insert_track(
             .bind(metadata.track_current.map(|x| x as i32))
             .bind(metadata.disc_current.map(|x| x as i32))
             .bind(length as i32)
-            .bind(path.to_str())
+            .bind(path.as_str())
             .bind(&metadata.genre)
             .bind(&metadata.artist)
-            .bind(parent.to_str())
+            .bind(parent.as_str())
             .fetch_one(&mut *conn)
             .await;
 
@@ -663,14 +670,14 @@ async fn insert_track(
 async fn update_metadata(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
-    path: &Path,
+    path: &Utf8Path,
     length: u64,
     image: &Option<Box<[u8]>>,
     is_force: bool,
     force_encountered_albums: &mut FxHashSet<i64>,
     artist_cache: &mut FxHashMap<String, i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
-    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, PathBuf>,
+    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
 ) -> anyhow::Result<()> {
     debug!(
         "Adding/updating record for {:?} - {:?}",
@@ -697,12 +704,12 @@ async fn update_metadata(
 async fn cleanup_removed_directories(
     pool: &SqlitePool,
     scan_record: &mut ScanRecord,
-    current_directories: &[PathBuf],
+    current_directories: &[Utf8PathBuf],
 ) {
-    let current_set: FxHashSet<PathBuf> = current_directories.iter().cloned().collect();
-    let old_set: FxHashSet<PathBuf> = scan_record.directories.iter().cloned().collect();
+    let current_set: FxHashSet<Utf8PathBuf> = current_directories.iter().cloned().collect();
+    let old_set: FxHashSet<Utf8PathBuf> = scan_record.directories.iter().cloned().collect();
 
-    let removed_dirs: Vec<PathBuf> = old_set.difference(&current_set).cloned().collect();
+    let removed_dirs: Vec<Utf8PathBuf> = old_set.difference(&current_set).cloned().collect();
 
     if removed_dirs.is_empty() {
         return;
@@ -721,7 +728,7 @@ async fn cleanup_removed_directories(
         }
     };
 
-    let to_remove: Vec<PathBuf> = scan_record
+    let to_remove: Vec<Utf8PathBuf> = scan_record
         .records
         .keys()
         .filter(|path| {
@@ -732,11 +739,11 @@ async fn cleanup_removed_directories(
         .cloned()
         .collect();
 
-    let mut deleted: Vec<PathBuf> = Vec::with_capacity(to_remove.len());
+    let mut deleted: Vec<Utf8PathBuf> = Vec::with_capacity(to_remove.len());
     for path in &to_remove {
         debug!("removing track from removed directory: {:?}", path);
         let result = sqlx::query(include_str!("../../queries/scan/delete_track.sql"))
-            .bind(path.to_str())
+            .bind(path.as_str())
             .execute(&mut *tx)
             .await;
 
@@ -765,7 +772,7 @@ async fn cleanup_removed_directories(
 /// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
 /// tracks from the database.
 async fn cleanup(pool: &SqlitePool, scan_record: &mut ScanRecord) {
-    let to_delete: Vec<PathBuf> = scan_record
+    let to_delete: Vec<Utf8PathBuf> = scan_record
         .records
         .keys()
         .filter(|path| !path.exists())
@@ -780,11 +787,11 @@ async fn cleanup(pool: &SqlitePool, scan_record: &mut ScanRecord) {
         }
     };
 
-    let mut deleted: Vec<PathBuf> = Vec::with_capacity(to_delete.len());
+    let mut deleted: Vec<Utf8PathBuf> = Vec::with_capacity(to_delete.len());
     for path in &to_delete {
         debug!("track deleted or moved: {:?}", path);
         let result = sqlx::query(include_str!("../../queries/scan/delete_track.sql"))
-            .bind(path.to_str())
+            .bind(path.as_str())
             .execute(&mut *tx)
             .await;
 
@@ -821,7 +828,7 @@ async fn run_scanner(
     let mut scan_record: ScanRecord = if legacy_scan_record_path.exists() {
         // migrate legacy JSON scan record to new format
         let legacy_record = match fs::read(&legacy_scan_record_path) {
-            Ok(data) => match serde_json::from_slice::<FxHashMap<PathBuf, u64>>(&data) {
+            Ok(data) => match serde_json::from_slice::<FxHashMap<Utf8PathBuf, u64>>(&data) {
                 Ok(records) => {
                     info!(
                         "Migrating legacy scan record with {} entries",
@@ -908,9 +915,9 @@ async fn run_scanner(
 
         // we run the discovery and metadata reading stages in separate tasks, that way they can
         // run concurrently and no step in the scanning process blocks the other
-        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<PathBuf>(64);
+        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<Utf8PathBuf>(64);
         let (meta_tx, mut meta_rx) =
-            tokio::sync::mpsc::channel::<(PathBuf, FileInformation)>(num_workers * 8);
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, FileInformation)>(num_workers * 8);
 
         // Discovery
         let settings_for_discover = scan_settings.clone();
@@ -924,7 +931,7 @@ async fn run_scanner(
             let meta_tx = meta_tx.clone();
             spawn_blocking(move || {
                 let mut provider_table = build_provider_table();
-                let mut art_cache: FxHashMap<PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
+                let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
                 loop {
                     let path = {
                         let mut rx = path_rx.lock().expect("path_rx mutex poisoned");
@@ -954,7 +961,7 @@ async fn run_scanner(
         let mut force_encountered_albums: FxHashSet<i64> = FxHashSet::default();
         let mut artist_cache: FxHashMap<String, i64> = FxHashMap::default();
         let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
-        let mut album_path_cache: FxHashMap<AlbumPathCacheKey, PathBuf> = FxHashMap::default();
+        let mut album_path_cache: FxHashMap<AlbumPathCacheKey, Utf8PathBuf> = FxHashMap::default();
         let mut tx = pool
             .begin()
             .await

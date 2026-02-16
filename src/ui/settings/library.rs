@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-
+use camino::{Utf8Path, Utf8PathBuf};
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
@@ -54,25 +53,27 @@ impl LibrarySettings {
             {
                 let path = path.canonicalize().unwrap_or(path);
 
-                settings.update(cx, move |settings, cx| {
-                    let mut updated = false;
+                if let Ok(path) = Utf8PathBuf::try_from(path) {
+                    settings.update(cx, move |settings, cx| {
+                        let mut updated = false;
 
-                    if !settings.scanning.paths.contains(&path) {
-                        settings.scanning.paths.push(path);
-                        updated = true;
-                    }
+                        if !settings.scanning.paths.contains(&path) {
+                            settings.scanning.paths.push(path);
+                            updated = true;
+                        }
 
-                    if updated {
-                        save_settings(cx, settings);
-                        cx.notify();
-                    }
-                });
+                        if updated {
+                            save_settings(cx, settings);
+                            cx.notify();
+                        }
+                    });
+                }
             }
         })
         .detach();
     }
 
-    fn remove_folder(settings: Entity<Settings>, path: PathBuf, cx: &mut App) {
+    fn remove_folder(settings: Entity<Settings>, path: &Utf8Path, cx: &mut App) {
         settings.update(cx, move |settings, cx| {
             let before_len = settings.scanning.paths.len();
             settings.scanning.paths.retain(|p| p != &path);
@@ -104,7 +105,6 @@ impl Render for LibrarySettings {
                 let path_clone = path.clone();
                 let settings = self.settings.clone();
                 let path_text: SharedString = path
-                    .display()
                     .to_string()
                     .trim_start_matches("\\\\?\\")
                     .to_string()
@@ -147,11 +147,7 @@ impl Render for LibrarySettings {
                             .id(format!("library-scan-remove-{idx}"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.scanning_modified = true;
-                                LibrarySettings::remove_folder(
-                                    settings.clone(),
-                                    path_clone.clone(),
-                                    cx,
-                                );
+                                LibrarySettings::remove_folder(settings.clone(), &path_clone, cx);
                                 cx.notify();
                             })),
                     )
