@@ -2,9 +2,9 @@
 
 use std::{
     fs::File,
-    io::{Cursor, ErrorKind, Write},
+    io::{Cursor, ErrorKind},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,14 +13,14 @@ use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
-use postcard::from_io;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::{
-    io,
-    sync::mpsc::{
-        Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+    sync::{
+        Mutex,
+        mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel},
     },
     task::spawn_blocking,
 };
@@ -221,16 +221,19 @@ fn scan_path_for_album_art(
     None
 }
 
+/// Check if a file should be scanned.
+/// Returns `Some(timestamp)` if the file should be scanned (not in scan_record or modified since last scan).
+/// Returns `None` if the file should be skipped or cannot be scanned.
 fn file_is_scannable(
     path: &Utf8Path,
-    scan_record: &mut FxHashMap<Utf8PathBuf, SystemTime>,
+    scan_record: &FxHashMap<Utf8PathBuf, SystemTime>,
     provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
-) -> bool {
+) -> Option<SystemTime> {
     let Ok(timestamp) = (match std::fs::metadata(path) {
         Ok(metadata) => metadata.modified(),
-        Err(_) => return false,
+        Err(_) => return None,
     }) else {
-        return false;
+        return None;
     };
 
     for (exts, _) in provider_table.iter() {
@@ -243,14 +246,13 @@ fn file_is_scannable(
         if let Some(last_scan) = scan_record.get(path)
             && *last_scan == timestamp
         {
-            return false;
+            return None;
         }
 
-        scan_record.insert(path.to_path_buf(), timestamp);
-        return true;
+        return Some(timestamp);
     }
 
-    false
+    None
 }
 
 /// Process album art into a (resized_full_image, thumbnail_bmp) pair.
@@ -377,13 +379,12 @@ fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
 /// Performs a full recursive directory walk, streaming discovered file paths through `path_tx`
 /// as they are found so that downstream pipeline stages can begin processing immediately.
 ///
-/// Returns the (potentially mutated) scan_record and the total number of discovered files once
-/// the walk is complete.
+/// Returns the total number of discovered files once the walk is complete.
 fn discover(
     settings: ScanSettings,
-    mut scan_record: ScanRecord,
-    path_tx: Sender<Utf8PathBuf>,
-) -> (ScanRecord, u64) {
+    scan_record: Arc<Mutex<ScanRecord>>,
+    path_tx: Sender<(Utf8PathBuf, SystemTime)>,
+) -> u64 {
     let provider_table = build_provider_table();
     let mut visited: FxHashSet<Utf8PathBuf> = FxHashSet::default();
     let mut stack: Vec<Utf8PathBuf> = settings.paths.clone();
@@ -429,19 +430,24 @@ fn discover(
 
             if path.is_dir() {
                 stack.push(path);
-            } else if file_is_scannable(&path, &mut scan_record.records, &provider_table) {
-                discovered_total += 1;
+            } else {
+                let timestamp = {
+                    let sr = scan_record.blocking_lock();
+                    file_is_scannable(&path, &sr.records, &provider_table)
+                };
 
-                // Stream the path to the next pipeline stage. If the receiver
-                // has been dropped (scan cancelled), stop early.
-                if path_tx.blocking_send(path).is_err() {
-                    return (scan_record, discovered_total);
+                if let Some(ts) = timestamp {
+                    discovered_total += 1;
+
+                    if path_tx.blocking_send((path, ts)).is_err() {
+                        return discovered_total;
+                    }
                 }
             }
         }
     }
 
-    (scan_record, discovered_total)
+    discovered_total
 }
 
 async fn insert_artist(
@@ -915,6 +921,8 @@ async fn run_scanner(
             scan_record.records.clear();
         }
 
+        let scan_record_shared = Arc::new(Mutex::new(scan_record));
+
         // number of metadata readers
         let num_workers = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -924,45 +932,56 @@ async fn run_scanner(
 
         // we run the discovery and metadata reading stages in separate tasks, that way they can
         // run concurrently and no step in the scanning process blocks the other
-        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<Utf8PathBuf>(64);
+        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
         let (meta_tx, mut meta_rx) =
-            tokio::sync::mpsc::channel::<(Utf8PathBuf, FileInformation)>(num_workers * 8);
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, FileInformation)>(
+                num_workers * 8,
+            );
+        // Channel for files that failed metadata decoding - these should be added to scan_record
+        // immediately since rescanning won't help until the file changes
+        let (decode_fail_tx, mut decode_fail_rx) =
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(num_workers * 8);
 
         // Discovery
         let settings_for_discover = scan_settings.clone();
-        let discover_handle =
-            spawn_blocking(move || discover(settings_for_discover, scan_record, path_tx));
+        let scan_record_for_discover = scan_record_shared.clone();
+        let discover_handle = spawn_blocking(move || {
+            discover(settings_for_discover, scan_record_for_discover, path_tx)
+        });
 
         let path_rx_shared = Arc::new(Mutex::new(path_rx));
 
         for _ in 0..num_workers {
             let path_rx = Arc::clone(&path_rx_shared);
             let meta_tx = meta_tx.clone();
+            let decode_fail_tx = decode_fail_tx.clone();
             spawn_blocking(move || {
                 let mut provider_table = build_provider_table();
                 let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
                 loop {
-                    let path = {
-                        let mut rx = path_rx.lock().expect("path_rx mutex poisoned");
+                    let item = {
+                        let mut rx = path_rx.blocking_lock();
                         rx.blocking_recv()
                     };
-                    let Some(path) = path else {
+                    let Some((path, timestamp)) = item else {
                         break; // channel closed, discovery complete
                     };
                     if let Some(info) =
                         read_metadata_for_path(&path, &mut provider_table, &mut art_cache)
                     {
-                        if meta_tx.blocking_send((path, info)).is_err() {
+                        if meta_tx.blocking_send((path, timestamp, info)).is_err() {
                             break;
                         }
                     } else {
                         warn!("Could not read metadata for file: {:?}", path);
+                        let _ = decode_fail_tx.blocking_send((path, timestamp));
                     }
                 }
             });
         }
-        // Drop the original sender so the channel closes when all worker clones are dropped.
+        // Drop the original senders so the channels close when all worker clones are dropped.
         drop(meta_tx);
+        drop(decode_fail_tx);
 
         // DB writing and event reporting — single task since SQLite serializes writes anyway.
         // We batch multiple inserts into a single transaction for dramatically fewer fsyncs.
@@ -979,7 +998,7 @@ async fn run_scanner(
         let mut cancelled = false;
         let mut discovery_complete = false;
         let mut discovered_total: u64 = 0;
-        let mut discovered_scan_record: Option<ScanRecord> = None;
+        let mut pending_commit: Vec<(Utf8PathBuf, SystemTime)> = Vec::with_capacity(BATCH_SIZE);
 
         let mut discover_handle = discover_handle;
 
@@ -987,8 +1006,7 @@ async fn run_scanner(
             tokio::select! {
                 // poll discovery until it stops running
                 result = &mut discover_handle, if !discovery_complete => {
-                    let (returned_record, total) = result.expect("discover task panicked");
-                    discovered_scan_record = Some(returned_record);
+                    let total = result.expect("discover task panicked");
                     discovered_total = total;
                     discovery_complete = true;
 
@@ -998,11 +1016,24 @@ async fn run_scanner(
                     }
                 }
 
+                // if a decode failed that file still needs to be in the scan record
+                Some((path, timestamp)) = decode_fail_rx.recv() => {
+                    let mut sr = scan_record_shared.lock().await;
+                    sr.records.insert(path, timestamp);
+                }
+
                 item = meta_rx.recv() => {
-                    let Some((path, (metadata, length, image))) = item else {
-                        // Pipeline fully drained — commit any remaining items
-                        if items_in_tx > 0 && let Err(e) = tx.commit().await {
-                            error!("Failed to commit final scan transaction: {:?}", e);
+                    let Some((path, timestamp, (metadata, length, image))) = item else {
+                        if items_in_tx > 0 {
+                            if let Err(e) = tx.commit().await {
+                                error!("Failed to commit final scan transaction: {:?}", e);
+                                pending_commit.clear();
+                            } else {
+                                let mut sr = scan_record_shared.lock().await;
+                                for (p, ts) in pending_commit.drain(..) {
+                                    sr.records.insert(p, ts);
+                                }
+                            }
                         }
                         break;
                     };
@@ -1021,9 +1052,15 @@ async fn run_scanner(
                     }
 
                     if cancelled {
-                        // Commit what we have before stopping
                         if items_in_tx > 0 {
-                            let _ = tx.commit().await;
+                            if tx.commit().await.is_ok() {
+                                let mut sr = scan_record_shared.lock().await;
+                                for (p, ts) in pending_commit.drain(..) {
+                                    sr.records.insert(p, ts);
+                                }
+                            } else {
+                                pending_commit.clear();
+                            }
                         }
                         drop(meta_rx);
                         break;
@@ -1043,20 +1080,29 @@ async fn run_scanner(
                     )
                     .await;
 
-                    if let Err(err) = result {
-                        error!(
-                            "Failed to update metadata for file: {:?}, error: {}",
-                            path, err
-                        );
+                    match result {
+                        Ok(_) => {
+                            pending_commit.push((path, timestamp));
+                            scanned += 1;
+                            items_in_tx += 1;
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to update metadata for file: {:?}, error: {}",
+                                path, err
+                            );
+                        }
                     }
 
-                    scanned += 1;
-                    items_in_tx += 1;
-
-                    // Commit and reopen transaction every BATCH_SIZE items
                     if items_in_tx >= BATCH_SIZE {
                         if let Err(e) = tx.commit().await {
                             error!("Failed to commit scan batch transaction: {:?}", e);
+                            pending_commit.clear();
+                        } else {
+                            let mut sr = scan_record_shared.lock().await;
+                            for (p, ts) in pending_commit.drain(..) {
+                                sr.records.insert(p, ts);
+                            }
                         }
                         tx = pool.begin().await.expect("could not begin new scan transaction");
                         items_in_tx = 0;
@@ -1078,11 +1124,14 @@ async fn run_scanner(
         }
 
         if !discovery_complete {
-            let (returned_record, _) = discover_handle.await.expect("discover task panicked");
-            discovered_scan_record = Some(returned_record);
+            let _ = discover_handle.await.expect("discover task panicked");
         }
 
-        scan_record = discovered_scan_record.expect("scan_record was not returned from discovery");
+        // drain remaning decode failures
+        while let Ok((path, timestamp)) = decode_fail_rx.try_recv() {
+            let mut sr = scan_record_shared.lock().await;
+            sr.records.insert(path, timestamp);
+        }
 
         let time_end = std::time::Instant::now();
         let duration = time_end.duration_since(time_start);
@@ -1092,6 +1141,11 @@ async fn run_scanner(
             scanned,
             duration.as_secs_f32()
         );
+
+        scan_record = Arc::try_unwrap(scan_record_shared)
+            .expect("scan_record Arc still has multiple owners")
+            .into_inner();
+
         write_scan_record(&scan_record, &scan_record_path);
         let _ = event_tx.send(ScanEvent::ScanCompleteIdle);
     }
