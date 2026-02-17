@@ -270,9 +270,7 @@ fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let thumb_rgba = DynamicImage::ImageRgb8(thumb_rgb).into_rgba8();
 
     let mut thumb_buf: Vec<u8> = Vec::new();
-    thumb_rgba
-        .write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)
-        .expect("BMP encoding to Vec cannot fail");
+    thumb_rgba.write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)?;
 
     // full-size image (resized if necessary)
     let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
@@ -713,7 +711,7 @@ async fn cleanup_removed_directories(
     }
 
     info!(
-        "Detected {} removed director(ies), cleaning up tracks",
+        "Detected {} removed directories, cleaning up tracks",
         removed_dirs.len()
     );
 
@@ -1127,7 +1125,7 @@ async fn run_scanner(
             let _ = discover_handle.await.expect("discover task panicked");
         }
 
-        // drain remaning decode failures
+        // drain remaining decode failures
         while let Ok((path, timestamp)) = decode_fail_rx.try_recv() {
             let mut sr = scan_record_shared.lock().await;
             sr.records.insert(path, timestamp);

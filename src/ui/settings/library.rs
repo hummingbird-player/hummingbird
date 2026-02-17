@@ -4,6 +4,7 @@ use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     PathPromptOptions, Render, SharedString, Styled, Window, div, prelude::FluentBuilder, px,
 };
+use tracing::warn;
 
 use crate::{
     library::scan::ScanInterface,
@@ -67,6 +68,8 @@ impl LibrarySettings {
                             cx.notify();
                         }
                     });
+                } else {
+                    warn!("Selected music directory path is not UTF-8: will not be added.");
                 }
             }
         })
