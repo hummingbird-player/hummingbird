@@ -1,7 +1,7 @@
 #![allow(clippy::explicit_auto_deref)]
 
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{Cursor, Write},
     path::Path,
     sync::{Arc, Mutex},
@@ -208,7 +208,7 @@ fn scan_path_for_album_art(
         .filter_map(|e| e.ok());
 
     for entry in glob {
-        if let Ok(bytes) = fs::read(entry.path()) {
+        if let Ok(bytes) = std::fs::read(entry.path()) {
             let arc: Arc<[u8]> = Arc::from(bytes);
             art_cache.insert(parent, Some(Arc::clone(&arc)));
             return Some(arc);
@@ -224,7 +224,7 @@ fn file_is_scannable(
     scan_record: &mut FxHashMap<Utf8PathBuf, u64>,
     provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
 ) -> bool {
-    let Ok(timestamp) = (match fs::metadata(path) {
+    let Ok(timestamp) = (match std::fs::metadata(path) {
         Ok(metadata) => metadata
             .modified()
             .and_then(|v| {
@@ -335,12 +335,12 @@ fn read_metadata_for_path(
     None
 }
 
-fn load_scan_record(path: &Path) -> ScanRecord {
+async fn load_scan_record(path: &Path) -> ScanRecord {
     if !path.exists() {
         return ScanRecord::new_current();
     }
 
-    let data = match fs::read(path) {
+    let data = match tokio::fs::read(path).await {
         Ok(data) => data,
         Err(e) => {
             error!("could not open scan record: {:?}", e);
@@ -403,7 +403,7 @@ fn discover(
             continue;
         }
 
-        let entries = match fs::read_dir(&dir) {
+        let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
             Err(e) => {
                 error!("Failed to read directory {:?}: {:?}", dir, e);
@@ -820,14 +820,19 @@ async fn run_scanner(
 ) {
     let dirs = get_dirs();
     let directory = dirs.data_dir();
-    if !directory.exists() {
-        fs::create_dir(directory).expect("couldn't create data directory");
+    if !tokio::fs::try_exists(directory).await.unwrap_or_default() {
+        tokio::fs::create_dir(directory)
+            .await
+            .expect("couldn't create data directory");
     }
     let scan_record_path = directory.join("scan_record.bin");
     let legacy_scan_record_path = directory.join("scan_record.json");
-    let mut scan_record: ScanRecord = if legacy_scan_record_path.exists() {
+    let mut scan_record: ScanRecord = if tokio::fs::try_exists(&legacy_scan_record_path)
+        .await
+        .unwrap_or_default()
+    {
         // migrate legacy JSON scan record to new format
-        let legacy_record = match fs::read(&legacy_scan_record_path) {
+        let legacy_record = match tokio::fs::read(&legacy_scan_record_path).await {
             Ok(data) => match serde_json::from_slice::<FxHashMap<Utf8PathBuf, u64>>(&data) {
                 Ok(records) => {
                     info!(
@@ -853,16 +858,20 @@ async fn run_scanner(
         };
 
         // Delete the legacy file after reading
-        if let Err(e) = fs::remove_file(&legacy_scan_record_path) {
+        if let Err(e) = tokio::fs::remove_file(&legacy_scan_record_path).await {
             warn!(
                 "Failed to delete legacy scan record at {:?}: {:?}",
                 legacy_scan_record_path, e
             );
         }
 
-        legacy_record.unwrap_or_else(|| load_scan_record(&scan_record_path))
+        if let Some(legacy_record) = legacy_record {
+            legacy_record
+        } else {
+            load_scan_record(&scan_record_path).await
+        }
     } else {
-        load_scan_record(&scan_record_path)
+        load_scan_record(&scan_record_path).await
     };
 
     loop {
@@ -993,7 +1002,7 @@ async fn run_scanner(
                     let Some((path, (metadata, length, image))) = item else {
                         // Pipeline fully drained — commit any remaining items
                         if items_in_tx > 0 && let Err(e) = tx.commit().await {
-                                error!("Failed to commit final scan transaction: {:?}", e);
+                            error!("Failed to commit final scan transaction: {:?}", e);
                         }
                         break;
                     };
