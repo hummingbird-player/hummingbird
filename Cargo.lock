@@ -3172,6 +3172,7 @@ dependencies = [
  "derive_more 2.1.1",
  "directories",
  "dotenvy",
+ "flate2",
  "futures",
  "globwalk",
  "gpui",

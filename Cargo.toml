@@ -27,6 +27,7 @@ cpal = "0.17"
 dateparser = "0.2"
 derive_more = { version = "2", features = ["debug"] }
 directories = "6"
+flate2 = "1"
 futures = "0.3"
 globwalk = "0.9"
 gpui = "0.2.2"

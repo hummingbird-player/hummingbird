@@ -2,16 +2,18 @@
 
 use std::{
     fs::File,
-    io::{Cursor, Write},
+    io::{Cursor, ErrorKind, Write},
     path::Path,
     sync::{Arc, Mutex},
-    time::SystemTime,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
+use postcard::from_io;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
@@ -127,7 +129,7 @@ type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScanRecord {
     version: u16,
-    records: FxHashMap<Utf8PathBuf, u64>,
+    records: FxHashMap<Utf8PathBuf, SystemTime>,
     directories: Vec<Utf8PathBuf>,
 }
 
@@ -221,17 +223,11 @@ fn scan_path_for_album_art(
 
 fn file_is_scannable(
     path: &Utf8Path,
-    scan_record: &mut FxHashMap<Utf8PathBuf, u64>,
+    scan_record: &mut FxHashMap<Utf8PathBuf, SystemTime>,
     provider_table: &[(Vec<String>, Box<dyn MediaProvider>)],
 ) -> bool {
     let Ok(timestamp) = (match std::fs::metadata(path) {
-        Ok(metadata) => metadata
-            .modified()
-            .and_then(|v| {
-                v.duration_since(SystemTime::UNIX_EPOCH)
-                    .map_err(|e| io::Error::other(e))
-            })
-            .map(|v| v.as_secs()),
+        Ok(metadata) => metadata.modified(),
         Err(_) => return false,
     }) else {
         return false;
@@ -335,31 +331,33 @@ fn read_metadata_for_path(
     None
 }
 
-async fn load_scan_record(path: &Path) -> ScanRecord {
-    if !path.exists() {
-        return ScanRecord::new_current();
-    }
-
-    let data = match tokio::fs::read(path).await {
-        Ok(data) => data,
+fn load_scan_record(path: &Path) -> ScanRecord {
+    let file = match File::open(path).map(ZlibDecoder::new) {
+        Ok(f) => f,
         Err(e) => {
-            error!("could not open scan record: {:?}", e);
+            if e.kind() != ErrorKind::NotFound {
+                error!("Could not open scan record: {:?}", e);
+                error!("Scanning will be slow until the scan record is rebuilt");
+            }
+
             return ScanRecord::new_current();
         }
     };
 
-    match postcard::from_bytes::<ScanRecord>(&data) {
-        Ok(scan_record) => scan_record,
+    let mut buf = [0u8; 512];
+
+    match postcard::from_io::<ScanRecord, _>((file, &mut buf)) {
+        Ok(scan_record) => scan_record.0,
         Err(e) => {
-            error!("could not read scan record: {:?}", e);
-            error!("scanning will be slow until the scan record is rebuilt");
+            error!("Could not read scan record: {:?}", e);
+            error!("Scanning will be slow until the scan record is rebuilt");
             ScanRecord::new_current()
         }
     }
 }
 
 fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
-    let mut file = match File::create(path) {
+    let file = match File::create(path).map(|f| ZlibEncoder::new(f, Compression::fast())) {
         Ok(f) => f,
         Err(e) => {
             error!("Could not create scan record file: {:?}", e);
@@ -367,15 +365,8 @@ fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
             return;
         }
     };
-    let data = match postcard::to_stdvec(scan_record) {
-        Ok(data) => data,
-        Err(err) => {
-            error!("Could not serialize scan record: {:?}", err);
-            error!("Scan record will not be saved, this may cause rescans on restart");
-            return;
-        }
-    };
-    if let Err(err) = file.write_all(&data) {
+
+    if let Err(err) = postcard::to_io(scan_record, file) {
         error!("Could not write scan record: {:?}", err);
         error!("Scan record will not be saved, this may cause rescans on restart");
     } else {
@@ -825,7 +816,7 @@ async fn run_scanner(
             .await
             .expect("couldn't create data directory");
     }
-    let scan_record_path = directory.join("scan_record.bin");
+    let scan_record_path = directory.join("scan_record.hsr");
     let legacy_scan_record_path = directory.join("scan_record.json");
     let mut scan_record: ScanRecord = if tokio::fs::try_exists(&legacy_scan_record_path)
         .await
@@ -842,7 +833,10 @@ async fn run_scanner(
                     Some(ScanRecord {
                         // version 0 will trigger version mismatch and force rescan
                         version: 0,
-                        records,
+                        records: records
+                            .into_iter()
+                            .map(|(k, v)| (k, UNIX_EPOCH + Duration::from_secs(v)))
+                            .collect(),
                         directories: scan_settings.paths.clone(),
                     })
                 }
@@ -868,10 +862,16 @@ async fn run_scanner(
         if let Some(legacy_record) = legacy_record {
             legacy_record
         } else {
-            load_scan_record(&scan_record_path).await
+            let scan_record_path = scan_record_path.clone();
+            spawn_blocking(move || load_scan_record(&scan_record_path))
+                .await
+                .expect("Could not join task")
         }
     } else {
-        load_scan_record(&scan_record_path).await
+        let scan_record_path = scan_record_path.clone();
+        spawn_blocking(move || load_scan_record(&scan_record_path))
+            .await
+            .expect("Could not join task")
     };
 
     loop {
