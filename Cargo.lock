@@ -291,6 +291,7 @@ dependencies = [
  "compression-core",
  "futures-io",
  "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -3154,6 +3155,7 @@ name = "hummingbird"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-compression",
  "async-trait",
  "audioadapter-buffers",
  "base64 0.22.1",
@@ -3172,7 +3174,6 @@ dependencies = [
  "derive_more 2.1.1",
  "directories",
  "dotenvy",
- "flate2",
  "futures",
  "globwalk",
  "gpui",

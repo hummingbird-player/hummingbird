@@ -1,15 +1,14 @@
 #![allow(clippy::explicit_auto_deref)]
 
 use std::{
-    fs::File,
     io::{Cursor, ErrorKind},
     path::Path,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use async_compression::tokio::write::{ZlibDecoder, ZlibEncoder};
 use camino::{Utf8Path, Utf8PathBuf};
-use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use globwalk::GlobWalkerBuilder;
 use gpui::{App, Global};
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
@@ -18,6 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     sync::{
         Mutex,
         mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel},
@@ -331,8 +331,8 @@ fn read_metadata_for_path(
     None
 }
 
-fn load_scan_record(path: &Path) -> ScanRecord {
-    let file = match File::open(path).map(ZlibDecoder::new) {
+async fn load_scan_record(path: &Path) -> ScanRecord {
+    let mut file = match tokio::fs::File::open(path).await.map(ZlibDecoder::new) {
         Ok(f) => f,
         Err(e) => {
             if e.kind() != ErrorKind::NotFound {
@@ -344,10 +344,11 @@ fn load_scan_record(path: &Path) -> ScanRecord {
         }
     };
 
-    let mut buf = [0u8; 512];
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await.unwrap_or_default();
 
-    match postcard::from_io::<ScanRecord, _>((file, &mut buf)) {
-        Ok(scan_record) => scan_record.0,
+    match postcard::from_bytes(&bytes) {
+        Ok(scan_record) => scan_record,
         Err(e) => {
             error!("Could not read scan record: {:?}", e);
             error!("Scanning will be slow until the scan record is rebuilt");
@@ -356,9 +357,9 @@ fn load_scan_record(path: &Path) -> ScanRecord {
     }
 }
 
-fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
-    let file = match File::create(path).map(|f| ZlibEncoder::new(f, Compression::fast())) {
-        Ok(f) => f,
+async fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
+    let mut file = match tokio::fs::File::create(path).await.map(ZlibEncoder::new) {
+        Ok(file) => file,
         Err(e) => {
             error!("Could not create scan record file: {:?}", e);
             error!("Scan record will not be saved, this may cause rescans on restart");
@@ -366,11 +367,20 @@ fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
         }
     };
 
-    if let Err(err) = postcard::to_io(scan_record, file) {
-        error!("Could not write scan record: {:?}", err);
-        error!("Scan record will not be saved, this may cause rescans on restart");
-    } else {
-        info!("Scan record written to {:?}", path);
+    match postcard::to_allocvec(&scan_record) {
+        Ok(data) => match file.write_all(&data).await {
+            Ok(_) => {
+                info!("Scan record saved successfully");
+            }
+            Err(e) => {
+                error!("Could not write scan record: {:?}", e);
+                error!("Scan record will not be saved, this may cause rescans on restart");
+            }
+        },
+        Err(e) => {
+            error!("Could not serialize scan record: {:?}", e);
+            error!("Scan record will not be saved, this may cause rescans on restart");
+        }
     }
 }
 
@@ -866,16 +876,11 @@ async fn run_scanner(
         if let Some(legacy_record) = legacy_record {
             legacy_record
         } else {
-            let scan_record_path = scan_record_path.clone();
-            spawn_blocking(move || load_scan_record(&scan_record_path))
-                .await
-                .expect("Could not join task")
+            load_scan_record(&scan_record_path).await
         }
     } else {
         let scan_record_path = scan_record_path.clone();
-        spawn_blocking(move || load_scan_record(&scan_record_path))
-            .await
-            .expect("Could not join task")
+        load_scan_record(&scan_record_path).await
     };
 
     loop {
@@ -1144,7 +1149,7 @@ async fn run_scanner(
             .expect("scan_record Arc still has multiple owners")
             .into_inner();
 
-        write_scan_record(&scan_record, &scan_record_path);
+        write_scan_record(&scan_record, &scan_record_path).await;
         let _ = event_tx.send(ScanEvent::ScanCompleteIdle);
     }
 }

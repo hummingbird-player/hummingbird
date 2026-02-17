@@ -14,6 +14,7 @@ console = ["dep:console-subscriber", "tokio/tracing"]
 [dependencies]
 anyhow = "1"
 audioadapter-buffers = "2"
+async-compression = { version = "0.4", features = ["zlib", "tokio"] }
 async-trait = "0.1"
 base64 = "0.22"
 bitflags = "2"
@@ -27,7 +28,6 @@ cpal = "0.17"
 dateparser = "0.2"
 derive_more = { version = "2", features = ["debug"] }
 directories = "6"
-flate2 = "1"
 futures = "0.3"
 globwalk = "0.9"
 gpui = "0.2.2"
