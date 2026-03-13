@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use cntp_i18n::{I18nString, tr};
 use gpui::{App, SharedString};
 
 use crate::ui::components::{
@@ -27,14 +28,6 @@ pub enum SearchPaletteItem {
 }
 
 impl SearchPaletteItem {
-    pub fn category(&self) -> &'static str {
-        match self {
-            SearchPaletteItem::Artist { .. } => tr!("ARTIST"),
-            SearchPaletteItem::Album { .. } => tr!("ALBUMS"),
-            SearchPaletteItem::Track { .. } => tr!("TRACKS"),
-        }
-    }
-
     fn thumbnail_path(album_id: u32) -> String {
         format!("!db://album/{}/thumb", album_id)
     }
@@ -105,7 +98,11 @@ impl PaletteItem for SearchPaletteItem {
         }
     }
 
-    fn category(&self) -> Option<&'static str> {
-        Some(SearchPaletteItem::category(self))
+    fn category(&self) -> Option<I18nString> {
+        Some(match self {
+            SearchPaletteItem::Artist { .. } => tr!("ARTISTS"),
+            SearchPaletteItem::Album { .. } => tr!("ALBUMS"),
+            SearchPaletteItem::Track { .. } => tr!("TRACKS"),
+        })
     }
 }

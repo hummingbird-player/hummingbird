@@ -1,9 +1,9 @@
-use std::{collections::HashSet, marker::PhantomData, sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
-use cntp_i18n::trn;
+use cntp_i18n::{I18nString, trn};
 use gpui::{
-    App, AppContext, Context, ElementId, Entity, EventEmitter, FontWeight, InteractiveElement,
-    IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
+    AnyElement, App, AppContext, Context, ElementId, Entity, EventEmitter, FontWeight,
+    InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, WeakEntity, Window, div, img, list, prelude::FluentBuilder,
     px,
 };
@@ -26,7 +26,7 @@ pub trait PaletteItem {
     fn is_enabled(&self, _cx: &App) -> bool {
         true
     }
-    fn category(&self) -> Option<&'static str> {
+    fn category(&self) -> Option<I18nString> {
         None
     }
 }
@@ -50,17 +50,17 @@ where
 = Entity<FxHashMap<usize, Entity<FinderItem<T, MatcherFunc, OnAccept>>>>;
 
 pub enum DisplayEntry<T> {
-    Header(&'static str),
+    Header(I18nString),
     Item(Arc<T>),
-    ShowMore(&'static str, usize),
+    ShowMore(I18nString, usize),
 }
 
 impl<T> Clone for DisplayEntry<T> {
     fn clone(&self) -> Self {
         match self {
-            DisplayEntry::Header(h) => DisplayEntry::Header(h),
+            DisplayEntry::Header(h) => DisplayEntry::Header(h.clone()),
             DisplayEntry::Item(i) => DisplayEntry::Item(i.clone()),
-            DisplayEntry::ShowMore(cat, count) => DisplayEntry::ShowMore(cat, *count),
+            DisplayEntry::ShowMore(cat, count) => DisplayEntry::ShowMore(cat.clone(), *count),
         }
     }
 }
@@ -81,7 +81,7 @@ where
     extra_items: Vec<ExtraItem>,
     list_state: ListState,
     current_selection: Entity<usize>,
-    expanded_categories: HashSet<&'static str>,
+    expanded_categories: Vec<I18nString>,
     on_accept: Arc<OnAccept>,
     phantom: PhantomData<MatcherFunc>,
 }
@@ -209,7 +209,7 @@ where
                                     on_accept_clone(item, cx);
                                 }
                                 Some(DisplayEntry::ShowMore(cat, _)) => {
-                                    this.expand_category(cat, cx);
+                                    this.expand_category(cat.clone(), cx);
                                 }
                                 _ => {}
                             }
@@ -249,7 +249,7 @@ where
                 extra_items: Vec::new(),
                 render_counter,
                 current_selection,
-                expanded_categories: HashSet::new(),
+                expanded_categories: Vec::new(),
                 list_state: Self::make_list_state(None),
                 on_accept,
                 phantom: PhantomData,
@@ -265,9 +265,9 @@ where
 
     fn build_display_list(
         matches: &[Arc<T>],
-        expanded_categories: &HashSet<&'static str>,
+        expanded_categories: &Vec<I18nString>,
     ) -> Vec<DisplayEntry<T>> {
-        let mut category_order: Vec<&'static str> = Vec::new();
+        let mut category_order: Vec<I18nString> = Vec::new();
         let mut category_counts: Vec<usize> = Vec::new();
         let mut has_uncategorized = false;
 
@@ -303,10 +303,10 @@ where
             }
         }
 
-        for (cat_idx, &cat) in category_order.iter().enumerate() {
-            display_list.push(DisplayEntry::Header(cat));
+        for (cat_idx, cat) in category_order.iter().enumerate() {
+            display_list.push(DisplayEntry::Header(cat.clone()));
             let total = category_counts[cat_idx];
-            let is_expanded = expanded_categories.contains(cat);
+            let is_expanded = expanded_categories.iter().any(|c| c == cat);
             let limit = if is_expanded || total <= MAX_VISIBLE_PER_CATEGORY {
                 total
             } else {
@@ -315,11 +315,12 @@ where
 
             let mut emitted = 0;
             for item in matches {
-                if item.category() == Some(cat) {
+                if item.category().as_ref() == Some(cat) {
                     if emitted < limit {
                         display_list.push(DisplayEntry::Item(item.clone()));
                     }
                     emitted += 1;
+
                     if emitted >= total {
                         break;
                     }
@@ -327,7 +328,7 @@ where
             }
 
             if !is_expanded && total > MAX_VISIBLE_PER_CATEGORY {
-                display_list.push(DisplayEntry::ShowMore(cat, total));
+                display_list.push(DisplayEntry::ShowMore(cat.clone(), total));
             }
         }
 
@@ -437,8 +438,10 @@ where
         self.list_state.scroll_to(curr_scroll);
     }
 
-    fn expand_category(&mut self, category: &'static str, cx: &mut Context<Self>) {
-        self.expanded_categories.insert(category);
+    fn expand_category(&mut self, category: I18nString, cx: &mut Context<Self>) {
+        if !self.expanded_categories.iter().any(|c| c == &category) {
+            self.expanded_categories.push(category);
+        }
         self.regenerate_list_state(cx);
         cx.notify();
     }
@@ -484,7 +487,6 @@ where
 {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::ui::caching::hummingbird_cache;
-        use crate::ui::util::{create_or_retrieve_view, prune_views};
 
         let display_list = self.display_list.clone();
         let extra_items = self.extra_items.clone();
@@ -504,121 +506,36 @@ where
                 list(self.list_state.clone(), move |idx, _, cx| {
                     let extras_len = extra_items.len();
                     if idx < extras_len {
-                        let extra = &extra_items[idx];
-
-                        prune_views(&views_model, &render_counter, idx, cx);
-
-                        div()
-                            .w_full()
-                            .child(create_or_retrieve_view(
-                                &views_model,
-                                idx,
-                                {
-                                    let current_selection = current_selection.clone();
-                                    let weak_finder = weak_finder.clone();
-                                    let extra = extra.clone();
-
-                                    move |cx| {
-                                        FinderItem::new_extra(
-                                            cx,
-                                            ("finder-extra-item", idx),
-                                            idx,
-                                            &current_selection,
-                                            weak_finder.clone(),
-                                            extra.clone(),
-                                        )
-                                    }
-                                },
-                                cx,
-                            ))
-                            .into_any_element()
+                        render_extra_item(
+                            &extra_items[idx],
+                            idx,
+                            &views_model,
+                            &render_counter,
+                            &current_selection,
+                            &weak_finder,
+                            cx,
+                        )
                     } else {
                         let display_idx = idx - extras_len;
                         match display_list.get(display_idx) {
-                            Some(DisplayEntry::Header(header)) => {
-                                let theme = cx.global::<Theme>();
-                                div()
-                                    .w_full()
-                                    .px(px(10.0))
-                                    .py(px(4.0))
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme.text_secondary)
-                                    .child(SharedString::from(header.to_string()))
-                                    .into_any_element()
-                            }
-                            Some(DisplayEntry::Item(item)) => {
-                                prune_views(&views_model, &render_counter, idx, cx);
-
-                                div()
-                                    .w_full()
-                                    .child(create_or_retrieve_view(
-                                        &views_model,
-                                        idx,
-                                        {
-                                            let current_selection = current_selection.clone();
-                                            let weak_finder = weak_finder.clone();
-                                            let item = item.clone();
-
-                                            move |cx| {
-                                                FinderItem::new(
-                                                    cx,
-                                                    ("finder-item", idx),
-                                                    &item,
-                                                    idx,
-                                                    &current_selection,
-                                                    weak_finder.clone(),
-                                                    item.clone(),
-                                                )
-                                            }
-                                        },
-                                        cx,
-                                    ))
-                                    .into_any_element()
-                            }
-                            Some(DisplayEntry::ShowMore(_, count)) => {
-                                let theme = cx.global::<Theme>();
-                                let remaining = count.saturating_sub(MAX_VISIBLE_PER_CATEGORY);
-                                let current_sel = *current_selection.read(cx);
-                                let is_selected = current_sel == idx;
-                                let weak = weak_finder.clone();
-                                div()
-                                    .w_full()
-                                    .px(px(10.0))
-                                    .py(px(6.0))
-                                    .text_xs()
-                                    .text_color(theme.text_secondary)
-                                    .cursor_pointer()
-                                    .id(("finder-show-more", idx))
-                                    .border_1()
-                                    .hover(|this| {
-                                        this.bg(theme.palette_item_hover)
-                                            .border_color(theme.palette_item_border_hover)
-                                    })
-                                    .when(is_selected, |this| {
-                                        this.bg(theme.palette_item_hover)
-                                            .border_color(theme.palette_item_border_hover)
-                                    })
-                                    .rounded(px(6.0))
-                                    .on_click(move |_, _, cx| {
-                                        weak.update(cx, |finder, cx| {
-                                            let display_idx = idx.saturating_sub(extras_len);
-                                            if let Some(DisplayEntry::ShowMore(cat, _)) =
-                                                finder.display_list.get(display_idx)
-                                            {
-                                                finder.expand_category(cat, cx);
-                                            }
-                                        })
-                                        .expect("finder was rendered without existing")
-                                    })
-                                    .child(trn!(
-                                        "PALETTE_SHOW_MORE",
-                                        "Show {{count}} more...",
-                                        "Show {{count}} more...",
-                                        count = remaining
-                                    ))
-                                    .into_any_element()
-                            }
+                            Some(DisplayEntry::Header(header)) => render_header(header, cx),
+                            Some(DisplayEntry::Item(item)) => render_item(
+                                item,
+                                idx,
+                                &views_model,
+                                &render_counter,
+                                &current_selection,
+                                &weak_finder,
+                                cx,
+                            ),
+                            Some(DisplayEntry::ShowMore(_, count)) => render_show_more(
+                                idx,
+                                *count,
+                                extras_len,
+                                &current_selection,
+                                &weak_finder,
+                                cx,
+                            ),
                             None => div().into_any_element(),
                         }
                     }
@@ -630,6 +547,158 @@ where
                 .h_full(),
             )
     }
+}
+
+fn render_header(header: &I18nString, cx: &mut App) -> AnyElement {
+    let theme = cx.global::<Theme>();
+    div()
+        .w_full()
+        .px(px(10.0))
+        .py(px(4.0))
+        .text_xs()
+        .font_weight(FontWeight::BOLD)
+        .text_color(theme.text_secondary)
+        .child(SharedString::from(header.to_string()))
+        .into_any_element()
+}
+
+fn render_extra_item<T, MatcherFunc, OnAccept>(
+    extra: &ExtraItem,
+    idx: usize,
+    views_model: &ViewsModel<T, MatcherFunc, OnAccept>,
+    render_counter: &Entity<usize>,
+    current_selection: &Entity<usize>,
+    weak_finder: &WeakEntity<Finder<T, MatcherFunc, OnAccept>>,
+    cx: &mut App,
+) -> AnyElement
+where
+    T: Send + Sync + PartialEq + PaletteItem + 'static,
+    MatcherFunc: Fn(&Arc<T>, &mut App) -> Utf32String + 'static,
+    OnAccept: Fn(&Arc<T>, &mut App) + 'static,
+{
+    use crate::ui::util::{create_or_retrieve_view, prune_views};
+
+    prune_views(views_model, render_counter, idx, cx);
+
+    let current_selection = current_selection.clone();
+    let weak_finder = weak_finder.clone();
+    let extra = extra.clone();
+
+    div()
+        .w_full()
+        .child(create_or_retrieve_view(
+            views_model,
+            idx,
+            move |cx| {
+                FinderItem::new_extra(
+                    cx,
+                    ("finder-extra-item", idx),
+                    idx,
+                    &current_selection,
+                    weak_finder.clone(),
+                    extra.clone(),
+                )
+            },
+            cx,
+        ))
+        .into_any_element()
+}
+
+fn render_item<T, MatcherFunc, OnAccept>(
+    item: &Arc<T>,
+    idx: usize,
+    views_model: &ViewsModel<T, MatcherFunc, OnAccept>,
+    render_counter: &Entity<usize>,
+    current_selection: &Entity<usize>,
+    weak_finder: &WeakEntity<Finder<T, MatcherFunc, OnAccept>>,
+    cx: &mut App,
+) -> AnyElement
+where
+    T: Send + Sync + PartialEq + PaletteItem + 'static,
+    MatcherFunc: Fn(&Arc<T>, &mut App) -> Utf32String + 'static,
+    OnAccept: Fn(&Arc<T>, &mut App) + 'static,
+{
+    use crate::ui::util::{create_or_retrieve_view, prune_views};
+
+    prune_views(views_model, render_counter, idx, cx);
+    let item: Arc<T> = item.clone();
+    let current_selection = current_selection.clone();
+    let weak_finder = weak_finder.clone();
+
+    div()
+        .w_full()
+        .child(create_or_retrieve_view(
+            views_model,
+            idx,
+            move |cx| {
+                FinderItem::new(
+                    cx,
+                    ("finder-item", idx),
+                    &item,
+                    idx,
+                    &current_selection,
+                    weak_finder.clone(),
+                    item.clone(),
+                )
+            },
+            cx,
+        ))
+        .into_any_element()
+}
+
+fn render_show_more<T, MatcherFunc, OnAccept>(
+    idx: usize,
+    count: usize,
+    extras_len: usize,
+    current_selection: &Entity<usize>,
+    weak_finder: &WeakEntity<Finder<T, MatcherFunc, OnAccept>>,
+    cx: &mut App,
+) -> AnyElement
+where
+    T: Send + Sync + PartialEq + PaletteItem + 'static,
+    MatcherFunc: Fn(&Arc<T>, &mut App) -> Utf32String + 'static,
+    OnAccept: Fn(&Arc<T>, &mut App) + 'static,
+{
+    let theme = cx.global::<Theme>();
+    let remaining = count.saturating_sub(MAX_VISIBLE_PER_CATEGORY);
+    let current_sel = *current_selection.read(cx);
+    let is_selected = current_sel == idx;
+    let weak = weak_finder.clone();
+
+    div()
+        .w_full()
+        .px(px(10.0))
+        .py(px(6.0))
+        .text_xs()
+        .text_color(theme.text_secondary)
+        .cursor_pointer()
+        .id(("finder-show-more", idx))
+        .border_1()
+        .hover(|this| {
+            this.bg(theme.palette_item_hover)
+                .border_color(theme.palette_item_border_hover)
+        })
+        .when(is_selected, |this| {
+            this.bg(theme.palette_item_hover)
+                .border_color(theme.palette_item_border_hover)
+        })
+        .rounded(px(6.0))
+        .on_click(move |_, _, cx| {
+            weak.update(cx, |finder, cx| {
+                let display_idx = idx.saturating_sub(extras_len);
+                if let Some(DisplayEntry::ShowMore(cat, _)) = finder.display_list.get(display_idx) {
+                    finder.expand_category(cat.clone(), cx);
+                }
+            })
+            .expect("finder was rendered without existing")
+        })
+        .child(trn!(
+            "PALETTE_SHOW_MORE",
+            "Show {{count}} more...",
+            "Show {{count}} more...",
+            count = remaining
+        ))
+        .into_any_element()
 }
 
 type OnAcceptOverride = Option<Arc<dyn Fn(&mut App) + Send + Sync>>;
