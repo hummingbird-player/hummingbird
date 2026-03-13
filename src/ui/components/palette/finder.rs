@@ -1,5 +1,6 @@
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{collections::HashSet, marker::PhantomData, sync::Arc, time::Duration};
 
+use cntp_i18n::trn;
 use gpui::{
     App, AppContext, Context, ElementId, Entity, EventEmitter, FontWeight, InteractiveElement,
     IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
@@ -16,12 +17,17 @@ use tracing::{debug, trace};
 
 use crate::ui::{components::input::EnrichedInputAction, theme::Theme};
 
+const MAX_VISIBLE_PER_CATEGORY: usize = 5;
+
 pub trait PaletteItem {
     fn left_content(&self, cx: &mut App) -> Option<FinderItemLeft>;
     fn middle_content(&self, cx: &mut App) -> SharedString;
     fn right_content(&self, cx: &mut App) -> Option<SharedString>;
     fn is_enabled(&self, _cx: &App) -> bool {
         true
+    }
+    fn category(&self) -> Option<&'static str> {
+        None
     }
 }
 
@@ -43,6 +49,22 @@ where
     OnAccept: Fn(&Arc<T>, &mut App) + 'static,
 = Entity<FxHashMap<usize, Entity<FinderItem<T, MatcherFunc, OnAccept>>>>;
 
+pub enum DisplayEntry<T> {
+    Header(&'static str),
+    Item(Arc<T>),
+    ShowMore(&'static str, usize),
+}
+
+impl<T> Clone for DisplayEntry<T> {
+    fn clone(&self) -> Self {
+        match self {
+            DisplayEntry::Header(h) => DisplayEntry::Header(h),
+            DisplayEntry::Item(i) => DisplayEntry::Item(i.clone()),
+            DisplayEntry::ShowMore(cat, count) => DisplayEntry::ShowMore(cat, *count),
+        }
+    }
+}
+
 pub struct Finder<T, MatcherFunc, OnAccept>
 where
     T: Send + Sync + PartialEq + PaletteItem + 'static,
@@ -54,10 +76,12 @@ where
     views_model: ViewsModel<T, MatcherFunc, OnAccept>,
     render_counter: Entity<usize>,
     last_match: Vec<Arc<T>>,
+    display_list: Vec<DisplayEntry<T>>,
     extra_providers: Vec<ExtraItemProvider>,
     extra_items: Vec<ExtraItem>,
     list_state: ListState,
     current_selection: Entity<usize>,
+    expanded_categories: HashSet<&'static str>,
     on_accept: Arc<OnAccept>,
     phantom: PhantomData<MatcherFunc>,
 }
@@ -179,9 +203,15 @@ where
                                 (extra.on_accept)(cx);
                             }
                         } else {
-                            let match_idx = idx.saturating_sub(this.extra_items.len());
-                            if let Some(item) = this.last_match.get(match_idx) {
-                                on_accept_clone(item, cx);
+                            let display_idx = idx.saturating_sub(this.extra_items.len());
+                            match this.display_list.get(display_idx) {
+                                Some(DisplayEntry::Item(item)) => {
+                                    on_accept_clone(item, cx);
+                                }
+                                Some(DisplayEntry::ShowMore(cat, _)) => {
+                                    this.expand_category(cat, cx);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -214,10 +244,12 @@ where
                 matcher,
                 views_model,
                 last_match: Vec::new(),
+                display_list: Vec::new(),
                 extra_providers: Vec::new(),
                 extra_items: Vec::new(),
                 render_counter,
                 current_selection,
+                expanded_categories: HashSet::new(),
                 list_state: Self::make_list_state(None),
                 on_accept,
                 phantom: PhantomData,
@@ -231,18 +263,92 @@ where
         self.regenerate_list_state(cx);
     }
 
+    fn build_display_list(
+        matches: &[Arc<T>],
+        expanded_categories: &HashSet<&'static str>,
+    ) -> Vec<DisplayEntry<T>> {
+        let mut category_order: Vec<&'static str> = Vec::new();
+        let mut category_counts: Vec<usize> = Vec::new();
+        let mut has_uncategorized = false;
+
+        for item in matches {
+            if let Some(cat) = item.category() {
+                if let Some(pos) = category_order.iter().position(|c| *c == cat) {
+                    category_counts[pos] += 1;
+                } else {
+                    category_order.push(cat);
+                    category_counts.push(1);
+                }
+            } else {
+                has_uncategorized = true;
+            }
+        }
+
+        if category_order.is_empty() {
+            return matches
+                .iter()
+                .map(|item| DisplayEntry::Item(item.clone()))
+                .collect();
+        }
+
+        let mut display_list = Vec::with_capacity(
+            matches.len() + category_order.len() + if has_uncategorized { 0 } else { 0 },
+        );
+
+        if has_uncategorized {
+            for item in matches {
+                if item.category().is_none() {
+                    display_list.push(DisplayEntry::Item(item.clone()));
+                }
+            }
+        }
+
+        for (cat_idx, &cat) in category_order.iter().enumerate() {
+            display_list.push(DisplayEntry::Header(cat));
+            let total = category_counts[cat_idx];
+            let is_expanded = expanded_categories.contains(cat);
+            let limit = if is_expanded || total <= MAX_VISIBLE_PER_CATEGORY {
+                total
+            } else {
+                MAX_VISIBLE_PER_CATEGORY
+            };
+
+            let mut emitted = 0;
+            for item in matches {
+                if item.category() == Some(cat) {
+                    if emitted < limit {
+                        display_list.push(DisplayEntry::Item(item.clone()));
+                    }
+                    emitted += 1;
+                    if emitted >= total {
+                        break;
+                    }
+                }
+            }
+
+            if !is_expanded && total > MAX_VISIBLE_PER_CATEGORY {
+                display_list.push(DisplayEntry::ShowMore(cat, total));
+            }
+        }
+
+        display_list
+    }
+
     fn total_items(&self) -> usize {
-        self.extra_items.len() + self.last_match.len()
+        self.extra_items.len() + self.display_list.len()
     }
 
     fn index_is_enabled(&self, idx: usize, cx: &App) -> bool {
         if idx < self.extra_items.len() {
             true
         } else {
-            let match_idx = idx.saturating_sub(self.extra_items.len());
-            self.last_match
-                .get(match_idx)
-                .is_some_and(|item| item.is_enabled(cx))
+            let display_idx = idx.saturating_sub(self.extra_items.len());
+            match self.display_list.get(display_idx) {
+                Some(DisplayEntry::Header(_)) => false,
+                Some(DisplayEntry::Item(item)) => item.is_enabled(cx),
+                Some(DisplayEntry::ShowMore(_, _)) => true,
+                None => false,
+            }
         }
     }
 
@@ -272,6 +378,7 @@ where
     pub fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
         debug!("Setting query: '{}' (previous: '{}')", query, self.query);
         self.query = query.clone();
+        self.expanded_categories.clear();
 
         self.matcher
             .pattern
@@ -320,12 +427,20 @@ where
         let matches = self.get_matches();
         let curr_scroll = self.list_state.logical_scroll_top();
 
+        self.display_list = Self::build_display_list(&matches, &self.expanded_categories);
+
         self.views_model = cx.new(|_| FxHashMap::default());
         self.render_counter = cx.new(|_| 0);
 
-        let total = matches.len() + self.extra_items.len();
+        let total = self.display_list.len() + self.extra_items.len();
         self.list_state = Self::make_list_state(Some(total));
         self.list_state.scroll_to(curr_scroll);
+    }
+
+    fn expand_category(&mut self, category: &'static str, cx: &mut Context<Self>) {
+        self.expanded_categories.insert(category);
+        self.regenerate_list_state(cx);
+        cx.notify();
     }
 
     fn make_list_state(total_count: Option<usize>) -> ListState {
@@ -371,7 +486,7 @@ where
         use crate::ui::caching::hummingbird_cache;
         use crate::ui::util::{create_or_retrieve_view, prune_views};
 
-        let last_match = self.last_match.clone();
+        let display_list = self.display_list.clone();
         let extra_items = self.extra_items.clone();
         let views_model = self.views_model.clone();
         let render_counter = self.render_counter.clone();
@@ -417,38 +532,95 @@ where
                                 cx,
                             ))
                             .into_any_element()
-                    } else if idx - extras_len < last_match.len() {
-                        let item = &last_match[idx - extras_len];
-
-                        prune_views(&views_model, &render_counter, idx, cx);
-
-                        div()
-                            .w_full()
-                            .child(create_or_retrieve_view(
-                                &views_model,
-                                idx,
-                                {
-                                    let current_selection = current_selection.clone();
-                                    let weak_finder = weak_finder.clone();
-                                    let item = item.clone();
-
-                                    move |cx| {
-                                        FinderItem::new(
-                                            cx,
-                                            ("finder-item", idx),
-                                            &item,
-                                            idx,
-                                            &current_selection,
-                                            weak_finder.clone(),
-                                            item.clone(),
-                                        )
-                                    }
-                                },
-                                cx,
-                            ))
-                            .into_any_element()
                     } else {
-                        div().into_any_element()
+                        let display_idx = idx - extras_len;
+                        match display_list.get(display_idx) {
+                            Some(DisplayEntry::Header(header)) => {
+                                let theme = cx.global::<Theme>();
+                                div()
+                                    .w_full()
+                                    .px(px(10.0))
+                                    .py(px(4.0))
+                                    .text_xs()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme.text_secondary)
+                                    .child(SharedString::from(header.to_string()))
+                                    .into_any_element()
+                            }
+                            Some(DisplayEntry::Item(item)) => {
+                                prune_views(&views_model, &render_counter, idx, cx);
+
+                                div()
+                                    .w_full()
+                                    .child(create_or_retrieve_view(
+                                        &views_model,
+                                        idx,
+                                        {
+                                            let current_selection = current_selection.clone();
+                                            let weak_finder = weak_finder.clone();
+                                            let item = item.clone();
+
+                                            move |cx| {
+                                                FinderItem::new(
+                                                    cx,
+                                                    ("finder-item", idx),
+                                                    &item,
+                                                    idx,
+                                                    &current_selection,
+                                                    weak_finder.clone(),
+                                                    item.clone(),
+                                                )
+                                            }
+                                        },
+                                        cx,
+                                    ))
+                                    .into_any_element()
+                            }
+                            Some(DisplayEntry::ShowMore(_, count)) => {
+                                let theme = cx.global::<Theme>();
+                                let remaining = count.saturating_sub(MAX_VISIBLE_PER_CATEGORY);
+                                let current_sel = *current_selection.read(cx);
+                                let is_selected = current_sel == idx;
+                                let weak = weak_finder.clone();
+                                div()
+                                    .w_full()
+                                    .px(px(10.0))
+                                    .py(px(6.0))
+                                    .text_xs()
+                                    .text_color(theme.text_secondary)
+                                    .cursor_pointer()
+                                    .id(("finder-show-more", idx))
+                                    .border_1()
+                                    .hover(|this| {
+                                        this.bg(theme.palette_item_hover)
+                                            .border_color(theme.palette_item_border_hover)
+                                    })
+                                    .when(is_selected, |this| {
+                                        this.bg(theme.palette_item_hover)
+                                            .border_color(theme.palette_item_border_hover)
+                                    })
+                                    .rounded(px(6.0))
+                                    .on_click(move |_, _, cx| {
+                                        weak.update(cx, |finder, cx| {
+                                            let display_idx = idx.saturating_sub(extras_len);
+                                            if let Some(DisplayEntry::ShowMore(cat, _)) =
+                                                finder.display_list.get(display_idx)
+                                            {
+                                                finder.expand_category(cat, cx);
+                                            }
+                                        })
+                                        .expect("finder was rendered without existing")
+                                    })
+                                    .child(trn!(
+                                        "PALETTE_SHOW_MORE",
+                                        "Show {{count}} more...",
+                                        "Show {{count}} more...",
+                                        count = remaining
+                                    ))
+                                    .into_any_element()
+                            }
+                            None => div().into_any_element(),
+                        }
                     }
                 })
                 .flex()

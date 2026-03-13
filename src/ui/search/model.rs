@@ -14,40 +14,75 @@ use crate::{
     },
 };
 
-use super::album_item::AlbumPaletteItem;
+use super::search_item::SearchPaletteItem;
 
-type MatcherFunc = Box<dyn Fn(&Arc<AlbumPaletteItem>, &mut App) -> Utf32String + 'static>;
-type OnAccept = Box<dyn Fn(&Arc<AlbumPaletteItem>, &mut App) + 'static>;
+type MatcherFunc = Box<dyn Fn(&Arc<SearchPaletteItem>, &mut App) -> Utf32String + 'static>;
+type OnAccept = Box<dyn Fn(&Arc<SearchPaletteItem>, &mut App) + 'static>;
 
 pub struct SearchModel {
-    palette: Entity<Palette<AlbumPaletteItem, MatcherFunc, OnAccept>>,
+    palette: Entity<Palette<SearchPaletteItem, MatcherFunc, OnAccept>>,
+}
+
+fn load_search_items(cx: &mut App) -> Vec<Arc<SearchPaletteItem>> {
+    let albums = match cx.list_albums_search() {
+        Ok(album_data) => album_data
+            .into_iter()
+            .map(|(id, title, artist)| {
+                (id, title, artist, album_has_available_tracks(cx, id as i64))
+            })
+            .collect(),
+        Err(e) => {
+            debug!("Failed to load albums for search: {:?}", e);
+            Vec::new()
+        }
+    };
+
+    let artists = match cx.list_artists_search() {
+        Ok(data) => data,
+        Err(e) => {
+            debug!("Failed to load artists for search: {:?}", e);
+            Vec::new()
+        }
+    };
+
+    let tracks = match cx.list_tracks_search() {
+        Ok(data) => data,
+        Err(e) => {
+            debug!("Failed to load tracks for search: {:?}", e);
+            Vec::new()
+        }
+    };
+
+    SearchPaletteItem::from_search_results(albums, artists, tracks)
 }
 
 impl SearchModel {
     pub fn new(cx: &mut App, show: &Entity<bool>) -> Entity<SearchModel> {
         cx.new(|cx| {
-            let albums = match cx.list_albums_search() {
-                Ok(album_data) => AlbumPaletteItem::from_search_results(
-                    album_data
-                        .into_iter()
-                        .map(|(id, title, artist)| {
-                            (id, title, artist, album_has_available_tracks(cx, id as i64))
-                        })
-                        .collect(),
-                ),
-                Err(e) => {
-                    debug!("Failed to load albums for search: {:?}", e);
-                    Vec::new()
-                }
-            };
+            let items = load_search_items(cx);
 
             let weak_self = cx.weak_entity();
 
-            let matcher: MatcherFunc =
-                Box::new(|album, _| Utf32String::from(format!("{} {}", album.title, album.artist)));
+            let matcher: MatcherFunc = Box::new(|item, _| match item.as_ref() {
+                SearchPaletteItem::Album { title, artist, .. } => {
+                    Utf32String::from(format!("{} {}", title, artist))
+                }
+                SearchPaletteItem::Artist { name, .. } => Utf32String::from(name.as_str()),
+                SearchPaletteItem::Track { title, .. } => Utf32String::from(title.as_str()),
+            });
 
-            let on_accept: OnAccept = Box::new(move |album, cx| {
-                let event = ViewSwitchMessage::Release(album.id as i64);
+            let on_accept: OnAccept = Box::new(move |item, cx| {
+                let event = match item.as_ref() {
+                    SearchPaletteItem::Album { id, .. } => ViewSwitchMessage::Release(*id as i64),
+                    SearchPaletteItem::Artist { id, .. } => ViewSwitchMessage::Artist(*id),
+                    SearchPaletteItem::Track { album_id, .. } => {
+                        if let Some(album_id) = album_id {
+                            ViewSwitchMessage::Release(*album_id)
+                        } else {
+                            return;
+                        }
+                    }
+                };
 
                 if let Some(search_model) = weak_self.upgrade() {
                     search_model.update(cx, |_: &mut SearchModel, cx| {
@@ -56,7 +91,7 @@ impl SearchModel {
                 }
             });
 
-            let palette = Palette::new(cx, albums, matcher, on_accept, show);
+            let palette = Palette::new(cx, items, matcher, on_accept, show);
 
             let search_model = SearchModel { palette };
 
@@ -69,26 +104,13 @@ impl SearchModel {
                 if *state == ScanEvent::ScanCompleteIdle
                     || *state == ScanEvent::ScanCompleteWatching
                 {
-                    debug!("Scan complete, refreshing album list for search");
+                    debug!("Scan complete, refreshing search items");
 
-                    let new_albums = match cx.list_albums_search() {
-                        Ok(album_data) => AlbumPaletteItem::from_search_results(
-                            album_data
-                                .into_iter()
-                                .map(|(id, title, artist)| {
-                                    (id, title, artist, album_has_available_tracks(cx, id as i64))
-                                })
-                                .collect(),
-                        ),
-                        Err(e) => {
-                            debug!("Failed to reload albums after scan: {:?}", e);
-                            return;
-                        }
-                    };
+                    let new_items = load_search_items(cx);
 
                     if let Some(palette) = palette_weak.upgrade() {
                         palette.update(cx, |_, cx| {
-                            cx.emit(new_albums);
+                            cx.emit(new_items);
                         });
                     }
                 }

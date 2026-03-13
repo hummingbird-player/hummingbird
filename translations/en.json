@@ -66,6 +66,10 @@
   "LIBRARY": "Library",
   "LIBRARY_FORCE_RESCAN": "Rescan Entire Library",
   "LIKED_SONGS": "Liked Songs",
+  "PALETTE_SHOW_MORE": {
+    "one": "Show {{count}} more...",
+    "other": "Show {{count}} more..."
+  },
   "PATREON": "Support us on Patreon",
   "PAUSE": "Pause",
   "PLAY": "Play",

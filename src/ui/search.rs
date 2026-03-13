@@ -1,5 +1,5 @@
-pub mod album_item;
 pub mod model;
+pub mod search_item;
 
 use gpui::*;
 use model::SearchModel;
