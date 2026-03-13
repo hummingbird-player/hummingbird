@@ -113,7 +113,9 @@ impl InteractiveElement for SidebarItem {
 }
 
 impl RenderOnce for SidebarItem {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_hovering = window.use_keyed_state(self.group_id.clone(), cx, |_, _| false);
+        let is_hovering_clone = is_hovering.clone();
         let theme = cx.global::<Theme>();
 
         let item = self
@@ -181,11 +183,16 @@ impl RenderOnce for SidebarItem {
         if self.collapsed && self.label.is_some() {
             let label_text = self.label.unwrap();
             let group_name = self.group_id;
-            div()
+
+            let div = div()
                 .relative()
+                .id("with-label")
+                .on_hover(move |hover, _, cx| {
+                    is_hovering_clone.write(cx, *hover);
+                })
                 .group(group_name.clone())
                 .child(item)
-                .child(deferred(
+                .child(
                     div()
                         .absolute()
                         .left_full()
@@ -205,8 +212,13 @@ impl RenderOnce for SidebarItem {
                         .child(label_text)
                         .invisible()
                         .group_hover(group_name, |this| this.visible()),
-                ))
-                .into_any_element()
+                );
+
+            if *is_hovering.read(cx) {
+                deferred(div).into_any_element()
+            } else {
+                div.into_any_element()
+            }
         } else {
             item.into_any_element()
         }
