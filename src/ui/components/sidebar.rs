@@ -181,34 +181,32 @@ impl RenderOnce for SidebarItem {
         if self.collapsed && self.label.is_some() {
             let label_text = self.label.unwrap();
             let group_name = self.group_id;
-            deferred(
-                div()
-                    .relative()
-                    .group(group_name.clone())
-                    .child(item)
-                    .child(
-                        div()
-                            .absolute()
-                            .left_full()
-                            .top_0()
-                            .ml(px(4.0))
-                            .bg(theme.elevated_background)
-                            .border_1()
-                            .border_color(theme.elevated_border_color)
-                            .rounded(px(4.0))
-                            .shadow_sm()
-                            .px(px(12.0))
-                            .pt(px(6.0))
-                            .pb(px(5.0))
-                            .text_sm()
-                            .text_color(theme.text)
-                            .whitespace_nowrap()
-                            .child(label_text)
-                            .invisible()
-                            .group_hover(group_name, |this| this.visible()),
-                    ),
-            )
-            .into_any_element()
+            div()
+                .relative()
+                .group(group_name.clone())
+                .child(item)
+                .child(deferred(
+                    div()
+                        .absolute()
+                        .left_full()
+                        .top_0()
+                        .ml(px(4.0))
+                        .bg(theme.elevated_background)
+                        .border_1()
+                        .border_color(theme.elevated_border_color)
+                        .rounded(px(4.0))
+                        .shadow_sm()
+                        .px(px(12.0))
+                        .pt(px(6.0))
+                        .pb(px(5.0))
+                        .text_sm()
+                        .text_color(theme.text)
+                        .whitespace_nowrap()
+                        .child(label_text)
+                        .invisible()
+                        .group_hover(group_name, |this| this.visible()),
+                ))
+                .into_any_element()
         } else {
             item.into_any_element()
         }
