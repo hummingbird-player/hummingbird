@@ -381,8 +381,6 @@ impl Render for Queue {
                 div()
                     .h_full()
                     .w_full()
-                    .border_l(px(1.0))
-                    .border_color(theme.border_color)
                     .pb(px(0.0))
                     .flex()
                     .flex_col()

@@ -316,6 +316,7 @@ pub fn run() -> anyhow::Result<()> {
                             let volume = cx.global::<PlaybackInfo>().volume.clone();
                             let sidebar_width = cx.global::<Models>().sidebar_width.clone();
                             let queue_width = cx.global::<Models>().queue_width.clone();
+                            let split_width = cx.global::<Models>().split_width.clone();
                             let table_settings = cx.global::<Models>().table_settings.clone();
                             let liked_tracks_sort_method =
                                 cx.global::<Models>().liked_tracks_sort_method.clone();
@@ -324,6 +325,7 @@ pub fn run() -> anyhow::Result<()> {
                                 let volume = *volume.read(cx);
                                 let sidebar_width: f32 = (*sidebar_width.read(cx)).into();
                                 let queue_width: f32 = (*queue_width.read(cx)).into();
+                                let split_width: f32 = (*split_width.read(cx)).into();
                                 let table_settings = table_settings.read(cx).clone();
                                 let liked_tracks_sort_method = *liked_tracks_sort_method.read(cx);
                                 let storage = storage.clone();
@@ -333,6 +335,7 @@ pub fn run() -> anyhow::Result<()> {
                                         volume,
                                         sidebar_width,
                                         queue_width,
+                                        split_width,
                                         table_settings,
                                         liked_tracks_sort_method,
                                     });

@@ -6,6 +6,8 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
+use crate::settings::SettingsGlobal;
+
 use crate::settings::storage::DEFAULT_SIDEBAR_WIDTH;
 
 use crate::ui::components::icons::MENU;
@@ -63,6 +65,29 @@ impl Render for Sidebar {
         let theme = cx.global::<Theme>();
         let stats_minutes = self.track_stats.total_duration / 60;
         let current_view = self.nav_model.read(cx).current();
+        let two_column = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .two_column_library;
+
+        // In two-column mode, the sidebar should reflect the *left* pane, not the
+        // right (detail) pane.  Derive the effective view the same way Library does.
+        let sidebar_view = if two_column && current_view.is_detail_page() {
+            let left_msg = match &current_view {
+                ViewSwitchMessage::Release(_) => self.nav_model.read(cx).last_matching(|msg| {
+                    matches!(msg, ViewSwitchMessage::Artist(_)) || msg.is_key_page()
+                }),
+                _ => self
+                    .nav_model
+                    .read(cx)
+                    .last_matching(ViewSwitchMessage::is_key_page),
+            };
+            left_msg.unwrap_or(current_view)
+        } else {
+            current_view
+        };
         let sidebar_width = cx.global::<Models>().sidebar_width.clone();
 
         resizable_sidebar(
@@ -84,8 +109,6 @@ impl Render for Sidebar {
                 .pb(px(8.0))
                 .pl(px(7.0))
                 .pr(px(7.0))
-                .border_r_1()
-                .border_color(theme.border_color)
                 .overflow_hidden()
                 .flex()
                 .flex_col()
@@ -114,7 +137,7 @@ impl Render for Sidebar {
                         }))
                         .when(
                             matches!(
-                                current_view,
+                                sidebar_view,
                                 ViewSwitchMessage::Albums | ViewSwitchMessage::Release(_)
                             ),
                             |this| this.active(),
@@ -131,7 +154,7 @@ impl Render for Sidebar {
                         }))
                         .when(
                             matches!(
-                                current_view,
+                                sidebar_view,
                                 ViewSwitchMessage::Artists | ViewSwitchMessage::Artist(_)
                             ),
                             |this| this.active(),
@@ -146,7 +169,7 @@ impl Render for Sidebar {
                                 cx.emit(ViewSwitchMessage::Tracks);
                             });
                         }))
-                        .when(matches!(current_view, ViewSwitchMessage::Tracks), |this| {
+                        .when(matches!(sidebar_view, ViewSwitchMessage::Tracks), |this| {
                             this.active()
                         }),
                 )

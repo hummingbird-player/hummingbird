@@ -121,7 +121,7 @@ impl Render for TrackView {
             .global::<crate::settings::SettingsGlobal>()
             .model
             .read(cx);
-        let full_width = settings.interface.full_width_library;
+        let full_width = settings.interface.effective_full_width();
 
         div()
             .flex()

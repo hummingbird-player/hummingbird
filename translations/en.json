@@ -60,6 +60,8 @@
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": "Allows the library to take up the full width of the screen.",
   "INTERFACE_GRID_MIN_ITEM_WIDTH": "Grid item width",
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": "Adjusts the minimum width of items in grid view.",
+  "INTERFACE_TWO_COLUMN_LIBRARY": "Two-column library",
+  "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": "Show navigation pages (like Artists) and content pages (like an album) side by side.",
   "LANGUAGE": "Language",
   "LANGUAGE_SUBTEXT": "Select your preferred language for the application. Changes to the language will take effect after restarting the application.",
   "LANGUAGE_SYSTEM_DEFAULT": "System Default",

@@ -303,7 +303,7 @@ impl Render for ArtistDetailView {
             .global::<crate::settings::SettingsGlobal>()
             .model
             .read(cx);
-        let full_width = settings.interface.full_width_library;
+        let full_width = settings.interface.effective_full_width();
         let grid_min_item_width = crate::settings::interface::clamp_grid_min_item_width(
             settings.interface.grid_min_item_width,
         );

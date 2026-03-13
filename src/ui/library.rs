@@ -15,13 +15,19 @@ struct ScrollStateStorage {
     artist_view_scroll: Option<f32>,
 }
 
-use crate::ui::{
-    command_palette::{Command, CommandManager},
-    components::table::table_data::TABLE_MAX_WIDTH,
-    library::{
-        playlist_view::{Import, PlaylistView},
-        sidebar::Sidebar,
-        update_playlist::UpdatePlaylist,
+use crate::{
+    settings::storage::DEFAULT_SPLIT_WIDTH,
+    ui::{
+        command_palette::{Command, CommandManager},
+        components::{
+            resizable_sidebar::{ResizeSide, resizable_sidebar},
+            table::table_data::TABLE_MAX_WIDTH,
+        },
+        library::{
+            playlist_view::{Import, PlaylistView},
+            sidebar::Sidebar,
+            update_playlist::UpdatePlaylist,
+        },
     },
 };
 
@@ -112,6 +118,18 @@ impl NavigationHistory {
         self.cursor = self.history.len() - 1;
     }
 
+    /// Finds the most recent history entry (before the cursor) that matches a predicate.
+    pub fn last_matching(
+        &self,
+        pred: impl Fn(&ViewSwitchMessage) -> bool,
+    ) -> Option<ViewSwitchMessage> {
+        self.history[..self.cursor]
+            .iter()
+            .rev()
+            .find(|m| pred(m))
+            .copied()
+    }
+
     /// Removes history entries that do not satisfy `f`, adjusting the cursor so that it continues
     /// to point at the same entry if it survives, or backs up to the nearest preceding survivor
     /// otherwise. History is guaranteed to never become empty (falls back to `Albums`).
@@ -161,6 +179,8 @@ enum LibraryView {
 
 pub struct Library {
     view: LibraryView,
+    left_view: Option<LibraryView>,
+    right_view: Option<LibraryView>,
     navigation_view: Entity<NavigationView>,
     sidebar: Entity<Sidebar>,
     show_update_playlist: Entity<bool>,
@@ -168,6 +188,8 @@ pub struct Library {
     focus_handle: FocusHandle,
     scroll_state: ScrollStateStorage,
     reclaim_focus: bool,
+    effective_split_width: Entity<Pixels>,
+    last_rendered_split: Pixels,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,10 +205,37 @@ pub enum ViewSwitchMessage {
     Refresh,
 }
 
+impl ViewSwitchMessage {
+    pub fn is_detail_page(&self) -> bool {
+        matches!(
+            self,
+            ViewSwitchMessage::Release(_) | ViewSwitchMessage::Artist(_)
+        )
+    }
+
+    pub fn is_key_page(&self) -> bool {
+        !self.is_detail_page()
+            && !matches!(
+                self,
+                ViewSwitchMessage::Back | ViewSwitchMessage::Forward | ViewSwitchMessage::Refresh
+            )
+    }
+
+    fn library_view_matches(&self, lv: &LibraryView) -> bool {
+        matches!(
+            (lv, self),
+            (LibraryView::Album(_), ViewSwitchMessage::Albums)
+                | (LibraryView::Tracks(_), ViewSwitchMessage::Tracks)
+                // ArtistDetail: don't cache – we can't verify the id matches without extra storage
+                | (LibraryView::Artists(_), ViewSwitchMessage::Artists)
+        )
+    }
+}
+
 fn make_view(
     message: &ViewSwitchMessage,
     cx: &mut App,
-    model: Entity<NavigationHistory>,
+    model: &Entity<NavigationHistory>,
     scroll_state: &ScrollStateStorage,
 ) -> LibraryView {
     match message {
@@ -259,7 +308,7 @@ impl Library {
 
                             if let Some(dest) = destination {
                                 debug!("back → {:?}", dest);
-                                make_view(&dest, cx, m, &this.scroll_state)
+                                make_view(&dest, cx, &m, &this.scroll_state)
                             } else {
                                 this.view.clone()
                             }
@@ -275,7 +324,7 @@ impl Library {
 
                             if let Some(dest) = destination {
                                 debug!("forward → {:?}", dest);
-                                make_view(&dest, cx, m, &this.scroll_state)
+                                make_view(&dest, cx, &m, &this.scroll_state)
                             } else {
                                 this.view.clone()
                             }
@@ -283,7 +332,7 @@ impl Library {
 
                         ViewSwitchMessage::Refresh => {
                             let current = m.read(cx).current();
-                            make_view(&current, cx, m, &this.scroll_state)
+                            make_view(&current, cx, &m, &this.scroll_state)
                         }
 
                         _ => {
@@ -292,9 +341,57 @@ impl Library {
                                 cx.notify();
                             });
 
-                            make_view(message, cx, m, &this.scroll_state)
+                            make_view(message, cx, &m, &this.scroll_state)
                         }
                     };
+
+                    // Two-column routing
+                    let two_column = cx
+                        .global::<crate::settings::SettingsGlobal>()
+                        .model
+                        .read(cx)
+                        .interface
+                        .two_column_library;
+
+                    if two_column {
+                        let current_msg = m.read(cx).current();
+                        if current_msg.is_detail_page() {
+                            this.right_view = Some(this.view.clone());
+
+                            // Derive the left pane context from navigation history.
+                            // For Release: prefer the nearest ArtistDetail in history as
+                            // context (so Artist → Release shows ArtistDetail on left),
+                            // falling back to the last key page.
+                            // For other detail pages (Artist, Playlist): find last key page.
+                            let left_msg = match &current_msg {
+                                ViewSwitchMessage::Release(_) => m.read(cx).last_matching(|msg| {
+                                    matches!(msg, ViewSwitchMessage::Artist(_)) || msg.is_key_page()
+                                }),
+                                _ => m.read(cx).last_matching(ViewSwitchMessage::is_key_page),
+                            };
+
+                            // Only recreate left view when the target message type changed.
+                            let needs_new_left = match (&this.left_view, &left_msg) {
+                                (None, Some(_)) | (Some(_), None) => true,
+
+                                (Some(lv), Some(msg)) => !msg.library_view_matches(lv),
+                                (None, None) => false,
+                            };
+
+                            if needs_new_left {
+                                this.left_view = left_msg
+                                    .as_ref()
+                                    .map(|lm| make_view(lm, cx, &m, &this.scroll_state));
+                            }
+                        } else {
+                            // Key page: show full-width in left pane, clear right
+                            this.left_view = Some(this.view.clone());
+                            this.right_view = None;
+                        }
+                    } else {
+                        this.left_view = None;
+                        this.right_view = None;
+                    }
 
                     cx.notify();
                 },
@@ -323,15 +420,24 @@ impl Library {
             let settings = cx.global::<crate::settings::SettingsGlobal>().model.clone();
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
 
+            let initial_split = *cx.global::<Models>().split_width.read(cx);
+            let effective_split_width: Entity<Pixels> = cx.new(|_| initial_split);
+            cx.observe(&effective_split_width, |_, _, cx| cx.notify())
+                .detach();
+
             Library {
                 navigation_view: NavigationView::new(cx, switcher_model.clone()),
                 sidebar: Sidebar::new(cx, switcher_model.clone()),
                 view,
+                left_view: None,
+                right_view: None,
                 update_playlist: UpdatePlaylist::new(cx, show_update_playlist.clone()),
                 show_update_playlist,
                 focus_handle,
                 scroll_state,
                 reclaim_focus: false,
+                effective_split_width,
+                last_rendered_split: initial_split,
             }
         })
     }
@@ -348,7 +454,116 @@ impl Render for Library {
             .global::<crate::settings::SettingsGlobal>()
             .model
             .read(cx);
-        let full_width = settings.interface.full_width_library;
+        let full_width = settings.interface.effective_full_width();
+        let two_column = settings.interface.two_column_library;
+
+        fn render_library_view(view: &LibraryView) -> AnyElement {
+            match view {
+                LibraryView::Album(v) => v.clone().into_any_element(),
+                LibraryView::Tracks(v) => v.clone().into_any_element(),
+                LibraryView::Release(v) => v.clone().into_any_element(),
+                LibraryView::Playlist(v) => v.clone().into_any_element(),
+                LibraryView::Artists(v) => v.clone().into_any_element(),
+                LibraryView::ArtistDetail(v) => v.clone().into_any_element(),
+            }
+        }
+
+        let content = if two_column && self.left_view.is_some() && self.right_view.is_some() {
+            // two column
+            let split_width_model = cx.global::<Models>().split_width.clone();
+            let mut desired_split = *split_width_model.read(cx);
+            let left = self.left_view.as_ref().unwrap();
+            let right = self.right_view.as_ref().unwrap();
+
+            // handle drag changes
+            let current_effective = *self.effective_split_width.read(cx);
+            if current_effective != self.last_rendered_split {
+                desired_split = current_effective;
+                split_width_model.update(cx, |w, cx| {
+                    *w = desired_split;
+                    cx.notify();
+                });
+            }
+
+            // get the minimum availible width for the content area
+            // doesn't handle queue/sidebar oollapses but this is fine
+            let viewport_width = window.viewport_size().width;
+            let models = cx.global::<Models>();
+            let sidebar_width = *models.sidebar_width.read(cx);
+            let queue_width = *models.queue_width.read(cx);
+            let available_width = viewport_width - sidebar_width - queue_width;
+
+            let min_right_pane_width = px(200.0);
+            let dynamic_max = (available_width - min_right_pane_width).max(px(250.0));
+
+            let effective = desired_split.min(dynamic_max);
+            let effective_entity = self.effective_split_width.clone();
+            self.last_rendered_split = effective;
+            if *effective_entity.read(cx) != effective {
+                effective_entity.update(cx, |w, cx| {
+                    *w = effective;
+                    cx.notify();
+                });
+            }
+
+            div()
+                .w_full()
+                .h_full()
+                .flex()
+                .flex_shrink()
+                .mr_auto()
+                .overflow_hidden()
+                .child(
+                    resizable_sidebar("split-resizable", effective_entity, ResizeSide::Right)
+                        .min_width(px(250.0))
+                        .max_width(dynamic_max)
+                        .default_width(DEFAULT_SPLIT_WIDTH)
+                        .h_full()
+                        .child(
+                            div()
+                                .w_full()
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .overflow_hidden()
+                                .child(self.navigation_view.clone())
+                                .child(render_library_view(left)),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .flex_shrink()
+                        .overflow_hidden()
+                        // based on navigation bar height (10px pt + 28px button)
+                        .child(div().h(px(38.0)).flex_shrink_0())
+                        .child(render_library_view(right)),
+                )
+                .into_any_element()
+        } else {
+            // single column
+            let active_view = if two_column {
+                self.left_view.as_ref().unwrap_or(&self.view)
+            } else {
+                &self.view
+            };
+
+            div()
+                .w_full()
+                .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
+                .h_full()
+                .flex()
+                .flex_col()
+                .flex_shrink()
+                .mr_auto()
+                .overflow_hidden()
+                .child(self.navigation_view.clone())
+                .child(render_library_view(active_view))
+                .into_any_element()
+        };
 
         div()
             .id("library")
@@ -404,32 +619,7 @@ impl Render for Library {
                     .flex_shrink_0()
                     .child(self.sidebar.clone()),
             )
-            .child(
-                div()
-                    .w_full()
-                    .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .flex_shrink()
-                    .mr_auto()
-                    .overflow_hidden()
-                    .child(self.navigation_view.clone())
-                    .child(match &self.view {
-                        LibraryView::Album(album_view) => album_view.clone().into_any_element(),
-                        LibraryView::Tracks(track_view) => track_view.clone().into_any_element(),
-                        LibraryView::Release(release_view) => {
-                            release_view.clone().into_any_element()
-                        }
-                        LibraryView::Playlist(playlist_view) => {
-                            playlist_view.clone().into_any_element()
-                        }
-                        LibraryView::Artists(artist_view) => artist_view.clone().into_any_element(),
-                        LibraryView::ArtistDetail(artist_detail_view) => {
-                            artist_detail_view.clone().into_any_element()
-                        }
-                    }),
-            )
+            .child(content)
             .child(self.update_playlist.clone())
     }
 }

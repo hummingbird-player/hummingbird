@@ -12,6 +12,7 @@ use crate::{
         db::LibraryAccess,
         types::{PlaylistType, PlaylistWithCount},
     },
+    settings::SettingsGlobal,
     ui::{
         components::{
             context::context,
@@ -77,6 +78,28 @@ impl Render for PlaylistList {
 
         let current_view = self.nav_model.read(cx).current();
 
+        let two_column = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .two_column_library;
+
+        let sidebar_view = if two_column && current_view.is_detail_page() {
+            let left_msg = match &current_view {
+                ViewSwitchMessage::Release(_) => self.nav_model.read(cx).last_matching(|msg| {
+                    matches!(msg, ViewSwitchMessage::Artist(_)) || msg.is_key_page()
+                }),
+                _ => self
+                    .nav_model
+                    .read(cx)
+                    .last_matching(ViewSwitchMessage::is_key_page),
+            };
+            left_msg.unwrap_or(current_view)
+        } else {
+            current_view
+        };
+
         for playlist in &*self.playlists {
             let pl_id = playlist.id;
 
@@ -128,7 +151,7 @@ impl Render for PlaylistList {
                     });
                 }))
                 .when(
-                    current_view == ViewSwitchMessage::Playlist(playlist.id),
+                    sidebar_view == ViewSwitchMessage::Playlist(playlist.id),
                     |this| this.active(),
                 );
 

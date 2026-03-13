@@ -121,7 +121,7 @@ impl Render for ReleaseView {
             .global::<crate::settings::SettingsGlobal>()
             .model
             .read(cx);
-        let full_width = settings.interface.full_width_library;
+        let full_width = settings.interface.effective_full_width();
 
         div()
             .image_cache(hummingbird_cache(("release", self.album.id as u64), 1))

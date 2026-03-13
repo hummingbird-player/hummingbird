@@ -144,8 +144,8 @@ impl Render for InterfaceSettings {
                     .w_full()
                     .child(self.language_dropdown.clone()),
             )
-            .child(
-                label(
+            .child({
+                let full_width_label = label(
                     "interface-full-width-library",
                     tr!("INTERFACE_FULL_WIDTH_LIBRARY", "Full-width library"),
                 )
@@ -156,14 +156,41 @@ impl Render for InterfaceSettings {
                 .cursor_pointer()
                 .w_full()
                 .has_checkbox()
+                .child(checkbox(
+                    "interface-full-width-library-check",
+                    interface.full_width_library || interface.two_column_library,
+                ));
+
+                if interface.two_column_library {
+                    full_width_label.opacity(0.5)
+                } else {
+                    full_width_label.on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_interface(cx, |interface| {
+                            interface.full_width_library = !interface.full_width_library;
+                        });
+                    }))
+                }
+            })
+            .child(
+                label(
+                    "interface-two-column-library",
+                    tr!("INTERFACE_TWO_COLUMN_LIBRARY", "Two-column library"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT",
+                    "Show navigation pages (like Artists) and content pages (like an album) side by side."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_interface(cx, |interface| {
-                        interface.full_width_library = !interface.full_width_library;
+                        interface.two_column_library = !interface.two_column_library;
                     });
                 }))
                 .child(checkbox(
-                    "interface-full-width-library-check",
-                    interface.full_width_library,
+                    "interface-two-column-library-check",
+                    interface.two_column_library,
                 )),
             )
             .child(

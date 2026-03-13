@@ -7,6 +7,7 @@ use crate::{library::db::LikedTrackSortMethod, ui::models::CurrentTrack};
 
 pub const DEFAULT_SIDEBAR_WIDTH: Pixels = px(225.0);
 pub const DEFAULT_QUEUE_WIDTH: Pixels = px(275.0);
+pub const DEFAULT_SPLIT_WIDTH: Pixels = px(400.0);
 
 fn default_sidebar_width() -> f32 {
     f32::from(DEFAULT_SIDEBAR_WIDTH)
@@ -14,6 +15,10 @@ fn default_sidebar_width() -> f32 {
 
 fn default_queue_width() -> f32 {
     f32::from(DEFAULT_QUEUE_WIDTH)
+}
+
+fn default_split_width() -> f32 {
+    f32::from(DEFAULT_SPLIT_WIDTH)
 }
 
 fn default_volume() -> f64 {
@@ -62,6 +67,9 @@ pub struct StorageData {
     /// Width of the queue panel in pixels
     #[serde(default = "default_queue_width")]
     pub queue_width: f32,
+    /// Width of the two-column split pane in pixels
+    #[serde(default = "default_split_width")]
+    pub split_width: f32,
     #[serde(default = "default_table_settings")]
     pub table_settings: HashMap<String, TableSettings>,
     #[serde(default = "default_liked_tracks_sort_method")]
@@ -76,6 +84,10 @@ impl StorageData {
     pub fn queue_width(&self) -> Pixels {
         px(self.queue_width)
     }
+
+    pub fn split_width(&self) -> Pixels {
+        px(self.split_width)
+    }
 }
 
 impl Default for StorageData {
@@ -85,6 +97,7 @@ impl Default for StorageData {
             volume: default_volume(),
             sidebar_width: f32::from(DEFAULT_SIDEBAR_WIDTH),
             queue_width: f32::from(DEFAULT_QUEUE_WIDTH),
+            split_width: f32::from(DEFAULT_SPLIT_WIDTH),
             table_settings: HashMap::new(),
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
         }

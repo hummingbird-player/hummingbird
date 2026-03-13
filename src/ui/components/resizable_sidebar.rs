@@ -186,29 +186,6 @@ impl Element for ResizableSidebar {
 
         window.set_cursor_style(CursorStyle::ResizeLeftRight, handle_hitbox);
 
-        let handle_line_bounds = match self.side {
-            ResizeSide::Left => Bounds {
-                origin: Point {
-                    x: bounds.origin.x + px(1.0),
-                    y: bounds.origin.y,
-                },
-                size: Size {
-                    width: px(1.0),
-                    height: bounds.size.height,
-                },
-            },
-            ResizeSide::Right => Bounds {
-                origin: Point {
-                    x: bounds.origin.x + bounds.size.width - px(2.0),
-                    y: bounds.origin.y,
-                },
-                size: Size {
-                    width: px(1.0),
-                    height: bounds.size.height,
-                },
-            },
-        };
-
         let width_entity = self.width.clone();
         let min_width = self.min_width;
         let max_width = self.max_width;
@@ -224,17 +201,37 @@ impl Element for ResizableSidebar {
 
                 let is_dragging = state.borrow().is_dragging;
 
-                // Paint handle highlight when dragging
-                if is_dragging {
-                    cx.paint_quad(quad(
-                        handle_line_bounds,
-                        Corners::default(),
-                        border_color,
-                        Edges::default(),
-                        transparent_black(),
-                        BorderStyle::Solid,
-                    ));
-                }
+                let line_width = if is_dragging { px(2.0) } else { px(1.0) };
+                let line_bounds = match side {
+                    ResizeSide::Left => Bounds {
+                        origin: Point {
+                            x: bounds.origin.x,
+                            y: bounds.origin.y,
+                        },
+                        size: Size {
+                            width: line_width,
+                            height: bounds.size.height,
+                        },
+                    },
+                    ResizeSide::Right => Bounds {
+                        origin: Point {
+                            x: bounds.origin.x + bounds.size.width - line_width,
+                            y: bounds.origin.y,
+                        },
+                        size: Size {
+                            width: line_width,
+                            height: bounds.size.height,
+                        },
+                    },
+                };
+                cx.paint_quad(quad(
+                    line_bounds,
+                    Corners::default(),
+                    border_color,
+                    Edges::default(),
+                    transparent_black(),
+                    BorderStyle::Solid,
+                ));
 
                 // Handle mouse down on the resize handle
                 let state_down = state.clone();
