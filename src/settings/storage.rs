@@ -74,6 +74,8 @@ pub struct StorageData {
     pub table_settings: HashMap<String, TableSettings>,
     #[serde(default = "default_liked_tracks_sort_method")]
     pub liked_tracks_sort_method: LikedTrackSortMethod,
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 impl StorageData {
@@ -100,6 +102,7 @@ impl Default for StorageData {
             split_width: f32::from(DEFAULT_SPLIT_WIDTH),
             table_settings: HashMap::new(),
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
+            sidebar_collapsed: false,
         }
     }
 }

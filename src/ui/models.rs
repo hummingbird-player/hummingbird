@@ -66,6 +66,7 @@ pub struct Models {
     pub split_width: Entity<Pixels>,
     pub table_settings: Entity<std::collections::HashMap<String, TableSettings>>,
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
+    pub sidebar_collapsed: Entity<bool>,
 }
 
 impl Global for Models {}
@@ -264,6 +265,7 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
 
     let table_settings = cx.new(|_| storage_data.table_settings.clone());
     let liked_tracks_sort_method = cx.new(|_| storage_data.liked_tracks_sort_method);
+    let sidebar_collapsed: Entity<bool> = cx.new(|_| storage_data.sidebar_collapsed);
 
     cx.set_global(Models {
         metadata,
@@ -281,6 +283,7 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
         split_width,
         table_settings,
         liked_tracks_sort_method,
+        sidebar_collapsed,
     });
 
     let position: Entity<u64> = cx.new(|_| 0);

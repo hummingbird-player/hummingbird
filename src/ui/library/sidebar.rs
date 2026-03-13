@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use cntp_i18n::{tr, trn};
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Pixels, Render,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
@@ -10,7 +10,9 @@ use crate::settings::SettingsGlobal;
 
 use crate::settings::storage::DEFAULT_SIDEBAR_WIDTH;
 
-use crate::ui::components::icons::MENU;
+const COLLAPSED_SIDEBAR_WIDTH: Pixels = px(52.0);
+
+use crate::ui::components::icons::{MENU, SIDEBAR, SIDEBAR_INACTIVE};
 use crate::{
     library::{db::LibraryAccess, types::TrackStats},
     ui::{
@@ -42,6 +44,10 @@ impl Sidebar {
 
             let sidebar_width = cx.global::<Models>().sidebar_width.clone();
             cx.observe(&sidebar_width, |_, _, cx| cx.notify()).detach();
+
+            let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
+            cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
+                .detach();
 
             let scan_state = cx.global::<Models>().scan_state.clone();
 
@@ -89,93 +95,118 @@ impl Render for Sidebar {
             current_view
         };
         let sidebar_width = cx.global::<Models>().sidebar_width.clone();
+        let sidebar_collapsed_entity = cx.global::<Models>().sidebar_collapsed.clone();
+        let collapsed = *sidebar_collapsed_entity.read(cx);
 
-        resizable_sidebar(
-            "main-sidebar-resizable",
-            sidebar_width.clone(),
-            ResizeSide::Right,
-        )
-        .min_width(px(175.0))
-        .max_width(px(350.0))
-        .default_width(DEFAULT_SIDEBAR_WIDTH)
-        .h_full()
-        .child(
-            sidebar()
-                .width(*sidebar_width.read(cx))
-                .id("main-sidebar")
-                .h_full()
-                .max_h_full()
-                .pt(px(8.0))
-                .pb(px(8.0))
-                .pl(px(7.0))
-                .pr(px(7.0))
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .mt(px(2.0))
-                        .mb(px(4.0))
-                        .pb(px(10.0))
-                        .border_b_1()
-                        .border_color(theme.border_color)
-                        .child(nav_button("search", SEARCH).w(px(38.0)).on_click(
-                            |_, window, cx| {
-                                window.dispatch_action(Box::new(Search), cx);
-                            },
-                        )), // .child(nav_button("sidebar-toggle", SIDEBAR_INACTIVE).ml_auto()),
-                )
-                .child(
-                    sidebar_item("albums")
-                        .icon(DISC)
-                        .child(tr!("ALBUMS", "Albums"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.nav_model.update(cx, |_, cx| {
-                                cx.emit(ViewSwitchMessage::Albums);
-                            });
-                        }))
-                        .when(
-                            matches!(
-                                sidebar_view,
-                                ViewSwitchMessage::Albums | ViewSwitchMessage::Release(_)
-                            ),
-                            |this| this.active(),
+        let toggle_icon = if collapsed { SIDEBAR_INACTIVE } else { SIDEBAR };
+
+        let search_and_toggle = div()
+            .flex()
+            .when(collapsed, |this| {
+                this.flex_col().items_center().gap(px(4.0))
+            })
+            .mt(px(2.0))
+            .mb(px(4.0))
+            .pb(px(10.0))
+            .border_b_1()
+            .border_color(theme.border_color)
+            .child(
+                nav_button("search", SEARCH)
+                    .w(px(38.0))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(Search), cx);
+                    }),
+            )
+            .child(
+                nav_button("sidebar-toggle", toggle_icon)
+                    .when(!collapsed, |this| this.ml_auto())
+                    .w(px(38.0))
+                    .on_click(move |_, _, cx| {
+                        sidebar_collapsed_entity.update(cx, |v, cx| {
+                            *v = !*v;
+                            cx.notify();
+                        });
+                    }),
+            );
+
+        let sidebar_content = sidebar()
+            .width(if collapsed {
+                COLLAPSED_SIDEBAR_WIDTH
+            } else {
+                *sidebar_width.read(cx)
+            })
+            .id("main-sidebar")
+            .h_full()
+            .max_h_full()
+            .pt(px(8.0))
+            .pb(px(8.0))
+            .pl(px(7.0))
+            .pr(px(8.0))
+            .when(!collapsed, |this| this.overflow_hidden())
+            .flex()
+            .flex_col()
+            .when(collapsed, |this| this.items_center())
+            .child(search_and_toggle)
+            .child(
+                sidebar_item("albums")
+                    .icon(DISC)
+                    .when(!collapsed, |this| this.child(tr!("ALBUMS", "Albums")))
+                    .when(collapsed, |this| {
+                        this.collapsed().collapsed_label(tr!("ALBUMS", "Albums"))
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav_model.update(cx, |_, cx| {
+                            cx.emit(ViewSwitchMessage::Albums);
+                        });
+                    }))
+                    .when(
+                        matches!(
+                            sidebar_view,
+                            ViewSwitchMessage::Albums | ViewSwitchMessage::Release(_)
                         ),
-                )
-                .child(
-                    sidebar_item("artists")
-                        .icon(USERS)
-                        .child(tr!("ARTISTS", "Artists"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.nav_model.update(cx, |_, cx| {
-                                cx.emit(ViewSwitchMessage::Artists);
-                            });
-                        }))
-                        .when(
-                            matches!(
-                                sidebar_view,
-                                ViewSwitchMessage::Artists | ViewSwitchMessage::Artist(_)
-                            ),
-                            |this| this.active(),
+                        |this| this.active(),
+                    ),
+            )
+            .child(
+                sidebar_item("artists")
+                    .icon(USERS)
+                    .when(!collapsed, |this| this.child(tr!("ARTISTS", "Artists")))
+                    .when(collapsed, |this| {
+                        this.collapsed().collapsed_label(tr!("ARTISTS", "Artists"))
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav_model.update(cx, |_, cx| {
+                            cx.emit(ViewSwitchMessage::Artists);
+                        });
+                    }))
+                    .when(
+                        matches!(
+                            sidebar_view,
+                            ViewSwitchMessage::Artists | ViewSwitchMessage::Artist(_)
                         ),
-                )
-                .child(
-                    sidebar_item("tracks")
-                        .icon(MENU)
-                        .child(tr!("TRACKS", "Tracks"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.nav_model.update(cx, |_, cx| {
-                                cx.emit(ViewSwitchMessage::Tracks);
-                            });
-                        }))
-                        .when(matches!(sidebar_view, ViewSwitchMessage::Tracks), |this| {
-                            this.active()
-                        }),
-                )
-                .child(sidebar_separator())
-                .child(self.playlists.clone())
-                .child(
+                        |this| this.active(),
+                    ),
+            )
+            .child(
+                sidebar_item("tracks")
+                    .icon(MENU)
+                    .when(!collapsed, |this| this.child(tr!("TRACKS", "Tracks")))
+                    .when(collapsed, |this| {
+                        this.collapsed().collapsed_label(tr!("TRACKS", "Tracks"))
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav_model.update(cx, |_, cx| {
+                            cx.emit(ViewSwitchMessage::Tracks);
+                        });
+                    }))
+                    .when(matches!(sidebar_view, ViewSwitchMessage::Tracks), |this| {
+                        this.active()
+                    }),
+            )
+            .child(sidebar_separator())
+            .child(self.playlists.clone())
+            .when(!collapsed, |this| {
+                this.child(
                     div()
                         .flex()
                         .flex_col()
@@ -195,7 +226,30 @@ impl Render for Sidebar {
                             "{{count}} minutes",
                             count = stats_minutes
                         )),
-                ),
-        )
+                )
+            });
+
+        if collapsed {
+            div()
+                .w(COLLAPSED_SIDEBAR_WIDTH)
+                .h_full()
+                .flex_shrink_0()
+                .border_r_1()
+                .border_color(theme.border_color)
+                .child(sidebar_content)
+                .into_any_element()
+        } else {
+            resizable_sidebar(
+                "main-sidebar-resizable",
+                sidebar_width.clone(),
+                ResizeSide::Right,
+            )
+            .min_width(px(175.0))
+            .max_width(px(350.0))
+            .default_width(DEFAULT_SIDEBAR_WIDTH)
+            .h_full()
+            .child(sidebar_content)
+            .into_any_element()
+        }
     }
 }

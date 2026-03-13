@@ -1,7 +1,7 @@
 use gpui::{
     App, Div, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels,
-    RenderOnce, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    RenderOnce, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, deferred, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -66,6 +66,9 @@ pub struct SidebarItem {
     children_div: Div,
     icon: Option<&'static str>,
     active: bool,
+    collapsed: bool,
+    label: Option<SharedString>,
+    group_id: SharedString,
 }
 
 impl SidebarItem {
@@ -76,6 +79,16 @@ impl SidebarItem {
 
     pub fn active(mut self) -> Self {
         self.active = true;
+        self
+    }
+
+    pub fn collapsed(mut self) -> Self {
+        self.collapsed = true;
+        self
+    }
+
+    pub fn collapsed_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
         self
     }
 }
@@ -103,10 +116,17 @@ impl RenderOnce for SidebarItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
 
-        self.parent_div
+        let item = self
+            .parent_div
             .flex()
             .overflow_x_hidden()
-            .w_full()
+            .when(!self.collapsed, |this| this.w_full())
+            .when(self.collapsed, |this| {
+                this.size(px(36.0))
+                    .items_center()
+                    .justify_center()
+                    .flex_shrink_0()
+            })
             .bg(theme.background_primary)
             .text_sm()
             .border_1()
@@ -122,7 +142,7 @@ impl RenderOnce for SidebarItem {
                     .border_color(theme.nav_button_pressed_border)
             })
             .rounded(px(4.0))
-            .px(px(9.0))
+            .when(!self.collapsed, |this| this.px(px(9.0)))
             .py(px(7.0))
             .line_height(px(18.0))
             .gap(px(6.0))
@@ -146,24 +166,66 @@ impl RenderOnce for SidebarItem {
                         .min_w(px(18.0)),
                 )
             })
-            .child(
-                self.children_div
-                    .flex_shrink()
-                    .flex_col()
-                    .flex()
-                    .text_ellipsis()
-                    .overflow_x_hidden()
-                    .w_full(),
+            .when(!self.collapsed, |this| {
+                this.child(
+                    self.children_div
+                        .flex_shrink()
+                        .flex_col()
+                        .flex()
+                        .text_ellipsis()
+                        .overflow_x_hidden()
+                        .w_full(),
+                )
+            });
+
+        if self.collapsed && self.label.is_some() {
+            let label_text = self.label.unwrap();
+            let group_name = self.group_id;
+            deferred(
+                div()
+                    .relative()
+                    .group(group_name.clone())
+                    .child(item)
+                    .child(
+                        div()
+                            .absolute()
+                            .left_full()
+                            .top_0()
+                            .ml(px(4.0))
+                            .bg(theme.elevated_background)
+                            .border_1()
+                            .border_color(theme.elevated_border_color)
+                            .rounded(px(4.0))
+                            .shadow_sm()
+                            .px(px(12.0))
+                            .pt(px(6.0))
+                            .pb(px(5.0))
+                            .text_sm()
+                            .text_color(theme.text)
+                            .whitespace_nowrap()
+                            .child(label_text)
+                            .invisible()
+                            .group_hover(group_name, |this| this.visible()),
+                    ),
             )
+            .into_any_element()
+        } else {
+            item.into_any_element()
+        }
     }
 }
 
 pub fn sidebar_item(id: impl Into<ElementId>) -> SidebarItem {
+    let element_id = id.into();
+    let group_id = SharedString::from(format!("sb-hover-{element_id:?}"));
     SidebarItem {
-        parent_div: div().id(id),
+        parent_div: div().id(element_id),
         children_div: div(),
         icon: None,
         active: false,
+        collapsed: false,
+        label: None,
+        group_id,
     }
 }
 

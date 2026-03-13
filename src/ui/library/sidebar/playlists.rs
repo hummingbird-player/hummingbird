@@ -38,6 +38,10 @@ impl PlaylistList {
         let playlists = cx.get_all_playlists().expect("could not get playlists");
 
         cx.new(|cx| {
+            let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
+            cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
+                .detach();
+
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
             cx.subscribe(
@@ -67,6 +71,7 @@ impl PlaylistList {
 impl Render for PlaylistList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
+        let collapsed = *cx.global::<Models>().sidebar_collapsed.read(cx);
         let scroll_handle = self.scroll_handle.clone();
         let mut main = div()
             .pt(px(6.0))
@@ -103,48 +108,54 @@ impl Render for PlaylistList {
         for playlist in &*self.playlists {
             let pl_id = playlist.id;
 
-            let item = sidebar_item(("main-sidebar-pl", playlist.id as u64))
-                .icon(if playlist.playlist_type == PlaylistType::System {
+            let playlist_label: String = if playlist.playlist_type == PlaylistType::System
+                && playlist.name.0.as_str() == "Liked Songs"
+            {
+                tr!("LIKED_SONGS", "Liked Songs").to_string()
+            } else {
+                playlist.name.to_string()
+            };
+
+            let mut item = sidebar_item(("main-sidebar-pl", playlist.id as u64)).icon(
+                if playlist.playlist_type == PlaylistType::System {
                     STAR
                 } else {
                     PLAYLIST
-                })
-                .child(
-                    if playlist.playlist_type == PlaylistType::System
-                        && playlist.name.0.as_str() == "Liked Songs"
-                    {
+                },
+            );
+
+            if collapsed {
+                item = item.collapsed().collapsed_label(playlist_label);
+            } else {
+                item = item
+                    .child(
                         div()
-                            .child(tr!("LIKED_SONGS", "Liked Songs"))
+                            .child(playlist_label.clone())
                             .text_ellipsis()
                             .flex_shrink()
                             .overflow_x_hidden()
-                            .w_full()
-                    } else {
+                            .w_full(),
+                    )
+                    .child(
                         div()
-                            .child(playlist.name.clone())
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(theme.text_secondary)
+                            .text_xs()
                             .text_ellipsis()
                             .flex_shrink()
-                            .overflow_x_hidden()
                             .w_full()
-                    },
-                )
-                .child(
-                    div()
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(theme.text_secondary)
-                        .text_xs()
-                        .text_ellipsis()
-                        .flex_shrink()
-                        .w_full()
-                        .overflow_x_hidden()
-                        .mt(px(2.0))
-                        .child(trn!(
-                            "PLAYLIST_TRACK_COUNT",
-                            "{{count}} track",
-                            "{{count}} tracks",
-                            count = playlist.track_count
-                        )),
-                )
+                            .overflow_x_hidden()
+                            .mt(px(2.0))
+                            .child(trn!(
+                                "PLAYLIST_TRACK_COUNT",
+                                "{{count}} track",
+                                "{{count}} tracks",
+                                count = playlist.track_count
+                            )),
+                    );
+            }
+
+            let item = item
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.nav_model.update(cx, move |_, cx| {
                         cx.emit(ViewSwitchMessage::Playlist(pl_id));
