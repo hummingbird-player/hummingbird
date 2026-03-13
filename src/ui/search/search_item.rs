@@ -29,9 +29,9 @@ pub enum SearchPaletteItem {
 impl SearchPaletteItem {
     pub fn category(&self) -> &'static str {
         match self {
-            SearchPaletteItem::Artist { .. } => "Artists",
-            SearchPaletteItem::Album { .. } => "Albums",
-            SearchPaletteItem::Track { .. } => "Tracks",
+            SearchPaletteItem::Artist { .. } => tr!("ARTIST"),
+            SearchPaletteItem::Album { .. } => tr!("ALBUMS"),
+            SearchPaletteItem::Track { .. } => tr!("TRACKS"),
         }
     }
 
