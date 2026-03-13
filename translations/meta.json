@@ -157,7 +157,7 @@
   },
   "ALBUMS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:155",
+    "definedIn": "src/ui/library/sidebar.rs:147",
     "plural": false,
     "description": null
   },
@@ -169,7 +169,7 @@
   },
   "ARTISTS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:175",
+    "definedIn": "src/ui/library/sidebar.rs:167",
     "plural": false,
     "description": null
   },
@@ -277,7 +277,7 @@
   },
   "DELETE_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:177",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:171",
     "plural": false,
     "description": null
   },
@@ -409,7 +409,7 @@
   },
   "LIKED_SONGS": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:114",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:108",
     "plural": false,
     "description": null
   },
@@ -457,7 +457,7 @@
   },
   "PLAYLIST_TRACK_COUNT": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:150",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:144",
     "plural": true,
     "description": null
   },
@@ -739,13 +739,13 @@
   },
   "STATS_TOTAL_LENGTH": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:224",
+    "definedIn": "src/ui/library/sidebar.rs:218",
     "plural": true,
     "description": null
   },
   "STATS_TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:218",
+    "definedIn": "src/ui/library/sidebar.rs:212",
     "plural": true,
     "description": null
   },
@@ -769,7 +769,7 @@
   },
   "TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:195",
+    "definedIn": "src/ui/library/sidebar.rs:187",
     "plural": false,
     "description": null
   },

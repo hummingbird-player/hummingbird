@@ -81,16 +81,10 @@ impl Render for Sidebar {
         // In two-column mode, the sidebar should reflect the *left* pane, not the
         // right (detail) pane.  Derive the effective view the same way Library does.
         let sidebar_view = if two_column && current_view.is_detail_page() {
-            let left_msg = match &current_view {
-                ViewSwitchMessage::Release(_) => self.nav_model.read(cx).last_matching(|msg| {
-                    matches!(msg, ViewSwitchMessage::Artist(_)) || msg.is_key_page()
-                }),
-                _ => self
-                    .nav_model
-                    .read(cx)
-                    .last_matching(ViewSwitchMessage::is_key_page),
-            };
-            left_msg.unwrap_or(current_view)
+            self.nav_model
+                .read(cx)
+                .last_matching(ViewSwitchMessage::is_key_page)
+                .unwrap_or(current_view)
         } else {
             current_view
         };
@@ -152,7 +146,7 @@ impl Render for Sidebar {
                     .icon(DISC)
                     .when(!collapsed, |this| this.child(tr!("ALBUMS", "Albums")))
                     .when(collapsed, |this| {
-                        this.collapsed().collapsed_label(tr!("ALBUMS", "Albums"))
+                        this.collapsed().collapsed_label(tr!("ALBUMS"))
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.nav_model.update(cx, |_, cx| {
@@ -172,7 +166,7 @@ impl Render for Sidebar {
                     .icon(USERS)
                     .when(!collapsed, |this| this.child(tr!("ARTISTS", "Artists")))
                     .when(collapsed, |this| {
-                        this.collapsed().collapsed_label(tr!("ARTISTS", "Artists"))
+                        this.collapsed().collapsed_label(tr!("ARTISTS"))
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.nav_model.update(cx, |_, cx| {
@@ -192,7 +186,7 @@ impl Render for Sidebar {
                     .icon(MENU)
                     .when(!collapsed, |this| this.child(tr!("TRACKS", "Tracks")))
                     .when(collapsed, |this| {
-                        this.collapsed().collapsed_label(tr!("TRACKS", "Tracks"))
+                        this.collapsed().collapsed_label(tr!("TRACKS"))
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.nav_model.update(cx, |_, cx| {
