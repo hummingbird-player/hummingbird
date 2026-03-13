@@ -279,7 +279,6 @@ impl Library {
             cx.subscribe(
                 &switcher_model,
                 move |this: &mut Library, m, message, cx| {
-                    // Save current scroll position before switching away.
                     if let LibraryView::Album(album_view) = &this.view {
                         let scroll_pos = album_view.read(cx).get_scroll_offset(cx);
                         this.scroll_state.album_view_scroll = Some(scroll_pos);
@@ -345,7 +344,6 @@ impl Library {
                         }
                     };
 
-                    // Two-column routing
                     let two_column = cx
                         .global::<crate::settings::SettingsGlobal>()
                         .model
@@ -358,19 +356,8 @@ impl Library {
                         if current_msg.is_detail_page() {
                             this.right_view = Some(this.view.clone());
 
-                            // Derive the left pane context from navigation history.
-                            // For Release: prefer the nearest ArtistDetail in history as
-                            // context (so Artist → Release shows ArtistDetail on left),
-                            // falling back to the last key page.
-                            // For other detail pages (Artist, Playlist): find last key page.
-                            let left_msg = match &current_msg {
-                                ViewSwitchMessage::Release(_) => m.read(cx).last_matching(|msg| {
-                                    matches!(msg, ViewSwitchMessage::Artist(_)) || msg.is_key_page()
-                                }),
-                                _ => m.read(cx).last_matching(ViewSwitchMessage::is_key_page),
-                            };
+                            let left_msg = m.read(cx).last_matching(ViewSwitchMessage::is_key_page);
 
-                            // Only recreate left view when the target message type changed.
                             let needs_new_left = match (&this.left_view, &left_msg) {
                                 (None, Some(_)) | (Some(_), None) => true,
 
@@ -525,8 +512,8 @@ impl Render for Library {
                                 .h_full()
                                 .flex()
                                 .flex_col()
-                                .overflow_hidden()
-                                .child(self.navigation_view.clone())
+                                .overflow_hidden() // based on navigation bar height (10px pt + 28px button)
+                                .child(div().h(px(38.0)).flex_shrink_0())
                                 .child(render_library_view(left)),
                         ),
                 )
@@ -538,8 +525,7 @@ impl Render for Library {
                         .flex_col()
                         .flex_shrink()
                         .overflow_hidden()
-                        // based on navigation bar height (10px pt + 28px button)
-                        .child(div().h(px(38.0)).flex_shrink_0())
+                        .child(self.navigation_view.clone())
                         .child(render_library_view(right)),
                 )
                 .into_any_element()
