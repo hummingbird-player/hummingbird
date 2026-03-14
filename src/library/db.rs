@@ -385,6 +385,18 @@ pub async fn get_track_by_id(pool: &SqlitePool, track_id: i64) -> sqlx::Result<A
     Ok(track)
 }
 
+pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
+    let query = include_str!("../../queries/library/find_track_by_path.sql");
+
+    let track = sqlx::query_as(query)
+        .bind(path.to_string_lossy().as_ref())
+        .fetch_optional(pool)
+        .await?
+        .map(Arc::new);
+
+    Ok(track)
+}
+
 /// Lists all albums for searching. Returns a vector of tuples containing the id, name, and artist
 /// name.
 pub async fn list_albums_search(pool: &SqlitePool) -> sqlx::Result<Vec<(u32, String, String)>> {
@@ -606,6 +618,7 @@ pub trait LibraryAccess {
     fn get_artist_name_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<String>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
+    fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
     fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, String)>>;
     #[allow(clippy::type_complexity)]
     fn list_tracks_search(&self) -> sqlx::Result<Vec<(i64, String, Option<i64>)>>;
@@ -669,6 +682,11 @@ impl LibraryAccess for App {
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_track_by_id(&pool.0, track_id))
+    }
+
+    fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(get_track_by_path(&pool.0, path))
     }
 
     /// Lists all albums for searching. Returns a vector of tuples containing the id, name, and artist

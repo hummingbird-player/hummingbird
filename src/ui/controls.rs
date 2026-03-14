@@ -1,4 +1,5 @@
 use crate::{
+    library::types::Track,
     playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
@@ -10,12 +11,15 @@ use crate::{
             },
             menu::{menu, menu_item},
         },
+        library::context_menus::{InfoSectionContextMenu, resolve_library_track_by_path},
+        models::CurrentTrack,
         util::drop_image_from_app,
     },
 };
 use cntp_i18n::tr;
 use gpui::{Corner, *};
 use prelude::FluentBuilder;
+use std::{path::PathBuf, rc::Rc};
 
 use super::{
     components::slider::slider,
@@ -78,6 +82,8 @@ pub struct InfoSection {
     albumart_original: Option<ImageSource>,
     playback_info: PlaybackInfo,
     is_hovering_art: bool,
+    current_track_path: Option<PathBuf>,
+    current_library_track: Option<Rc<Track>>,
 }
 
 impl InfoSection {
@@ -87,6 +93,7 @@ impl InfoSection {
             let albumart_model = cx.global::<Models>().albumart.clone();
             let albumart_original_model = cx.global::<Models>().albumart_original.clone();
             let playback_info = cx.global::<PlaybackInfo>().clone();
+            let current_track_model = playback_info.current_track.clone();
 
             cx.observe(&playback_info.playback_state, |_, _, cx| {
                 cx.notify();
@@ -129,6 +136,18 @@ impl InfoSection {
             })
             .detach();
 
+            cx.observe(
+                &current_track_model,
+                |this: &mut Self, current_track, cx| {
+                    let current_track = current_track.read(cx).clone();
+                    update_current_track_state(this, current_track.as_ref(), cx);
+                    cx.notify();
+                },
+            )
+            .detach();
+
+            let initial_current_track = current_track_model.read(cx).clone();
+
             Self {
                 artist_name: None,
                 track_name: None,
@@ -136,6 +155,12 @@ impl InfoSection {
                 albumart_original: None,
                 playback_info,
                 is_hovering_art: false,
+                current_track_path: initial_current_track
+                    .as_ref()
+                    .map(|track| track.get_path().clone()),
+                current_library_track: initial_current_track
+                    .as_ref()
+                    .and_then(|track| resolve_library_track_by_path(cx, track.get_path())),
             }
         })
     }
@@ -145,8 +170,7 @@ impl Render for InfoSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
-
-        div()
+        let content = div()
             .id("info-section")
             .flex()
             .w(px(275.0))
@@ -257,8 +281,34 @@ impl Render for InfoSection {
                                 ),
                         )
                     }),
-            )
+            );
+
+        if self.current_track_path.is_some() || self.current_library_track.is_some() {
+            context("info-section-context")
+                .with(content)
+                .child(
+                    div()
+                        .bg(theme.elevated_background)
+                        .child(InfoSectionContextMenu::new(
+                            self.current_track_path.clone(),
+                            self.current_library_track.clone(),
+                        )),
+                )
+                .into_any_element()
+        } else {
+            content.into_any_element()
+        }
     }
+}
+
+fn update_current_track_state(
+    this: &mut InfoSection,
+    current_track: Option<&CurrentTrack>,
+    cx: &App,
+) {
+    this.current_track_path = current_track.map(|track| track.get_path().clone());
+    this.current_library_track =
+        current_track.and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
 }
 
 pub struct PlaybackSection {

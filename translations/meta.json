@@ -139,13 +139,13 @@
   },
   "ADD_TO_PLAYLIST": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:200",
+    "definedIn": "src/ui/library/context_menus.rs:210",
     "plural": false,
     "description": null
   },
   "ADD_TO_QUEUE": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:147",
+    "definedIn": "src/ui/library/context_menus.rs:157",
     "plural": false,
     "description": null
   },
@@ -163,7 +163,7 @@
   },
   "APP_NAME": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:223",
+    "definedIn": "src/ui/controls.rs:247",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -469,13 +469,13 @@
   },
   "PLAY_FROM_HERE": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:137",
+    "definedIn": "src/ui/library/context_menus.rs:147",
     "plural": false,
     "description": null
   },
   "PLAY_NEXT": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:124",
+    "definedIn": "src/ui/library/context_menus.rs:134",
     "plural": false,
     "description": null
   },
@@ -505,7 +505,7 @@
   },
   "REMOVE_FROM_PLAYLIST": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:213",
+    "definedIn": "src/ui/library/context_menus.rs:223",
     "plural": false,
     "description": null
   },
@@ -523,19 +523,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:479",
+    "definedIn": "src/ui/controls.rs:529",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:469",
+    "definedIn": "src/ui/controls.rs:519",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:488",
+    "definedIn": "src/ui/controls.rs:538",
     "plural": false,
     "description": null
   },
@@ -709,19 +709,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:397",
+    "definedIn": "src/ui/library/context_menus.rs:509",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:399",
+    "definedIn": "src/ui/library/context_menus.rs:511",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:395",
+    "definedIn": "src/ui/library/context_menus.rs:507",
     "plural": false,
     "description": null
   },
@@ -817,13 +817,13 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:255",
+    "definedIn": "src/ui/controls.rs:279",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:245",
+    "definedIn": "src/ui/controls.rs:269",
     "plural": false,
     "description": null
   },
