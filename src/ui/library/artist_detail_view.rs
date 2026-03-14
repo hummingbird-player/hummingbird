@@ -529,7 +529,9 @@ impl Render for ArtistDetailView {
                                                     cx,
                                                     item_id,
                                                     handler.clone(),
-                                                    AlbumContextMenuContext,
+                                                    AlbumContextMenuContext {
+                                                        show_go_to_artist: false,
+                                                    },
                                                     GridContext::Standalone,
                                                 )
                                                 .unwrap()

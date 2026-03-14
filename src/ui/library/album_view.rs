@@ -44,7 +44,7 @@ impl AlbumView {
             let table = Table::new(
                 cx,
                 Some(handler),
-                AlbumContextMenuContext,
+                AlbumContextMenuContext::default(),
                 initial_scroll_offset,
                 initial_settings.as_ref(),
             );

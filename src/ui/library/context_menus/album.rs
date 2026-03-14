@@ -22,11 +22,12 @@ use super::{
 #[derive(IntoElement)]
 pub struct AlbumContextMenu {
     album: Rc<Album>,
+    context: AlbumContextMenuContext,
 }
 
 impl AlbumContextMenu {
-    pub fn new(album: Rc<Album>, _context: AlbumContextMenuContext) -> Self {
-        Self { album }
+    pub fn new(album: Rc<Album>, context: AlbumContextMenuContext) -> Self {
+        Self { album, context }
     }
 }
 
@@ -37,16 +38,15 @@ impl RenderOnce for AlbumContextMenu {
         let album_for_shuffle = self.album.clone();
         let album_for_queue = self.album.clone();
         let album_for_artist = self.album.clone();
+        let show_go_to_artist = self.context.show_go_to_artist;
         let is_available = album_has_available_tracks(cx, album.id);
-        menu()
-            .item(menu_item(
-                "album_play",
-                Some(PLAY),
-                tr!("PLAY"),
-                move |_, _, cx| {
+        let menu = menu()
+            .item(
+                menu_item("album_play", Some(PLAY), tr!("PLAY"), move |_, _, cx| {
                     play_album_now(cx, &album);
-                },
-            ))
+                })
+                .disabled(!is_available),
+            )
             .item(
                 menu_item(
                     "album_play_next",
@@ -79,18 +79,19 @@ impl RenderOnce for AlbumContextMenu {
                     },
                 )
                 .disabled(!is_available),
-            )
-            .item(menu_separator())
-            .item(
-                menu_item(
-                    "album_go_to_artist",
-                    Some(USERS),
-                    tr!("GO_TO_ARTIST"),
-                    move |_, _, cx| {
-                        navigate_to_artist(cx, album_for_artist.artist_id);
-                    },
-                )
-                .disabled(!is_available),
-            )
+            );
+
+        if show_go_to_artist {
+            menu.item(menu_separator()).item(menu_item(
+                "album_go_to_artist",
+                Some(USERS),
+                tr!("GO_TO_ARTIST"),
+                move |_, _, cx| {
+                    navigate_to_artist(cx, album_for_artist.artist_id);
+                },
+            ))
+        } else {
+            menu
+        }
     }
 }

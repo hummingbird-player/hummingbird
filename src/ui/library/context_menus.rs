@@ -42,8 +42,18 @@ pub struct TrackContextMenuContext {
     pub play_from_here: Option<TrackPlayFromHereHandler>,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct AlbumContextMenuContext;
+#[derive(Clone, Copy)]
+pub struct AlbumContextMenuContext {
+    pub show_go_to_artist: bool,
+}
+
+impl Default for AlbumContextMenuContext {
+    fn default() -> Self {
+        Self {
+            show_go_to_artist: true,
+        }
+    }
+}
 
 struct TrackMenuState {
     show_add_to: Entity<bool>,

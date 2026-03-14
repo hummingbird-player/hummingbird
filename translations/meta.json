@@ -709,19 +709,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:148",
+    "definedIn": "src/ui/library/context_menus.rs:158",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:150",
+    "definedIn": "src/ui/library/context_menus.rs:160",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:146",
+    "definedIn": "src/ui/library/context_menus.rs:156",
     "plural": false,
     "description": null
   },
