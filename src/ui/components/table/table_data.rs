@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash, sync::Arc};
 
-use gpui::{App, ElementId, SharedString};
+use gpui::{AnyElement, App, ElementId, SharedString};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
@@ -68,6 +68,7 @@ where
     C: Column,
 {
     type Identifier: Clone + Debug;
+    type ContextMenuContext: Clone;
 
     /// Retrieves the name of the table.
     fn get_table_name() -> SharedString;
@@ -119,6 +120,16 @@ where
     /// Returns drag data for this row, if dragging is supported. If None is returned, dragging is
     /// not supported. Default implementation returns None.
     fn get_drag_data(&self) -> Option<TableDragData> {
+        None
+    }
+
+    /// Returns the context menu for this row in the current display context.
+    fn get_context_menu(
+        &self,
+        _cx: &mut App,
+        _context: &Self::ContextMenuContext,
+        _grid_context: GridContext,
+    ) -> Option<AnyElement> {
         None
     }
 

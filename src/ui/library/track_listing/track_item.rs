@@ -4,31 +4,22 @@ use gpui::{
     App, AsyncApp, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun,
     Window, div, img, px,
 };
-use std::path::Path;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::ui::components::drag_drop::{DragPreview, TrackDragData};
-use crate::ui::components::icons::{
-    PLAY, PLAYLIST_ADD, PLAYLIST_REMOVE, PLUS, STAR, STAR_FILLED, icon,
-};
-use crate::ui::components::menu::menu_separator;
-use crate::ui::library::add_to_playlist::AddToPlaylist;
+use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
 use crate::ui::models::PlaylistEvent;
 use crate::{
     library::{
         db::{self, LibraryAccess},
         types::Track,
     },
-    playback::{
-        interface::{PlaybackInterface, replace_queue},
-        queue::QueueItemData,
-    },
     ui::{
         app::Pool,
         availability::is_track_available,
-        components::{
-            context::context,
-            menu::{menu, menu_item},
+        components::context::context,
+        library::context_menus::{
+            PlaylistMenuInfo, TrackContextMenu, TrackContextMenuContext, play_from_track_listing,
         },
         models::{Models, PlaybackInfo},
         theme::Theme,
@@ -37,10 +28,7 @@ use crate::{
 
 use super::ArtistNameVisibility;
 
-pub struct TrackPlaylistInfo {
-    pub id: i64,
-    pub item_id: i64,
-}
+pub type TrackPlaylistInfo = PlaylistMenuInfo;
 
 pub struct TrackItem {
     pub track: Track,
@@ -51,12 +39,12 @@ pub struct TrackItem {
     left_field: TrackItemLeftField,
     album_art: Option<SharedString>,
     pl_info: Option<TrackPlaylistInfo>,
-    add_to: Entity<AddToPlaylist>,
-    show_add_to: Entity<bool>,
     vinyl_numbering: bool,
     max_track_num_str: Option<SharedString>,
     is_available: bool,
     queue_context: Option<Arc<Vec<Track>>>,
+    show_go_to_album: bool,
+    show_go_to_artist: bool,
 }
 
 #[derive(Eq, PartialEq)]
@@ -97,10 +85,10 @@ impl TrackItem {
         vinyl_numbering: bool,
         max_track_num_str: Option<SharedString>,
         queue_context: Option<Arc<Vec<Track>>>,
+        show_go_to_album: bool,
+        show_go_to_artist: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let show_add_to = cx.new(|_| false);
-            let add_to = AddToPlaylist::new(cx, show_add_to.clone(), track.id);
             let track_id = track.id;
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
@@ -119,8 +107,6 @@ impl TrackItem {
                 album_art: track
                     .album_id
                     .map(|v| format!("!db://album/{v}/thumb").into()),
-                add_to,
-                show_add_to,
                 is_available: is_track_available(&track),
                 track,
                 is_start,
@@ -130,6 +116,8 @@ impl TrackItem {
                 vinyl_numbering,
                 max_track_num_str,
                 queue_context,
+                show_go_to_album,
+                show_go_to_artist,
             }
         })
     }
@@ -147,9 +135,6 @@ impl Render for TrackItem {
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
 
-        let track_location = self.track.location.clone();
-        let track_location_2 = self.track.location.clone();
-        let track_location_3 = self.track.location.clone();
         let track_location_for_drag = self.track.location.clone();
         let track_id = self.track.id;
         let album_id = self.track.album_id;
@@ -159,9 +144,15 @@ impl Render for TrackItem {
             && self.artist_name_visibility
                 != ArtistNameVisibility::OnlyIfDifferent(self.track.artist_names.clone());
 
-        let track = self.track.clone();
-
-        let show_clone = self.show_add_to.clone();
+        let track_menu_context = TrackContextMenuContext {
+            show_go_to_album: self.show_go_to_album,
+            show_go_to_artist: self.show_go_to_artist,
+            play_from_here: Some(Arc::new({
+                let plid = self.pl_info.as_ref().map(|pl| pl.id);
+                let queue_context = self.queue_context.clone();
+                move |cx, track| play_from_track_listing(cx, track, plid, queue_context.clone())
+            })),
+        };
 
         context(("context", self.track.id as usize))
             .with(
@@ -175,11 +166,12 @@ impl Render for TrackItem {
                             let track = self.track.clone();
                             let plid = self.pl_info.as_ref().map(|pl| pl.id);
                             let queue_context = self.queue_context.clone();
-                            move |_, _, cx| play_from_track(cx, &track, plid, queue_context.clone())
+                            move |_, _, cx| {
+                                play_from_track_listing(cx, &track, plid, queue_context.clone())
+                            }
                         })
                     })
                     .when(!is_available, |this| this.cursor_default().opacity(0.5))
-                    .child(self.add_to.clone())
                     .when(self.is_start, |this| {
                         this.child(
                             div()
@@ -350,118 +342,14 @@ impl Render for TrackItem {
                     ),
             )
             .child(
-                div().bg(theme.elevated_background).child(
-                    menu()
-                        .item(
-                            menu_item("track_play", Some(PLAY), tr!("PLAY"), move |_, _, cx| {
-                                let data = QueueItemData::new(
-                                    cx,
-                                    track_location.clone(),
-                                    Some(track_id),
-                                    album_id,
-                                );
-                                let playback_interface = cx.global::<PlaybackInterface>();
-                                let queue_length = cx
-                                    .global::<Models>()
-                                    .queue
-                                    .read(cx)
-                                    .data
-                                    .read()
-                                    .expect("couldn't get queue")
-                                    .len();
-                                playback_interface.queue(data);
-                                playback_interface.jump(queue_length);
-                            })
-                            .disabled(!is_available),
-                        )
-                        .item(
-                            menu_item(
-                                "track_play_next",
-                                None::<SharedString>,
-                                tr!("PLAY_NEXT", "Play next"),
-                                move |_, _, cx| {
-                                    let data = QueueItemData::new(
-                                        cx,
-                                        track_location_3.clone(),
-                                        Some(track_id),
-                                        album_id,
-                                    );
-                                    let queue_position =
-                                        cx.global::<Models>().queue.read(cx).position;
-                                    let playback_interface = cx.global::<PlaybackInterface>();
-                                    playback_interface.insert_at(data, queue_position + 1);
-                                },
-                            )
-                            .disabled(!is_available),
-                        )
-                        .item(
-                            menu_item(
-                                "track_play_from_here",
-                                None::<&str>,
-                                tr!("PLAY_FROM_HERE", "Play from here"),
-                                {
-                                    let plid = self.pl_info.as_ref().map(|pl| pl.id);
-                                    let queue_context = self.queue_context.clone();
-                                    move |_, _, cx| {
-                                        play_from_track(cx, &track, plid, queue_context.clone())
-                                    }
-                                },
-                            )
-                            .disabled(!is_available),
-                        )
-                        .item(
-                            menu_item(
-                                "track_add_to_queue",
-                                Some(PLUS),
-                                tr!("ADD_TO_QUEUE", "Add to queue"),
-                                move |_, _, cx| {
-                                    let data = QueueItemData::new(
-                                        cx,
-                                        track_location_2.clone(),
-                                        Some(track_id),
-                                        album_id,
-                                    );
-                                    let playback_interface = cx.global::<PlaybackInterface>();
-                                    playback_interface.queue(data);
-                                },
-                            )
-                            .disabled(!is_available),
-                        )
-                        .item(menu_separator())
-                        .item(
-                            menu_item(
-                                "track_add_to_playlist",
-                                Some(PLAYLIST_ADD),
-                                tr!("ADD_TO_PLAYLIST", "Add to playlist"),
-                                move |_, _, cx| show_clone.write(cx, true),
-                            )
-                            .disabled(!is_available),
-                        )
-                        .when_some(self.pl_info.as_ref(), |menu, info| {
-                            let playlist_id = info.id;
-                            let item_id = info.item_id;
-                            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-                            let pool = cx.global::<Pool>().0.clone();
-
-                            menu.item(
-                                menu_item(
-                                    "track_remove_from_playlist",
-                                    Some(PLAYLIST_REMOVE),
-                                    tr!("REMOVE_FROM_PLAYLIST", "Remove from playlist"),
-                                    move |_, _, cx| {
-                                        remove_from_playlist(
-                                            item_id,
-                                            playlist_id,
-                                            pool.clone(),
-                                            playlist_tracker.clone(),
-                                            cx,
-                                        );
-                                    },
-                                )
-                                .disabled(!is_available),
-                            )
-                        }),
-                ),
+                div()
+                    .bg(theme.elevated_background)
+                    .child(TrackContextMenu::new(
+                        Rc::new(self.track.clone()),
+                        is_available,
+                        track_menu_context,
+                        self.pl_info,
+                    )),
             )
     }
 }
@@ -550,100 +438,4 @@ async fn like_track(
     playlist_tracker.update(cx, |_, cx| {
         cx.emit(PlaylistEvent::PlaylistUpdated(1));
     });
-}
-
-fn remove_from_playlist(
-    item_id: i64,
-    playlist_id: i64,
-    pool: sqlx::SqlitePool,
-    playlist_tracker: Entity<crate::ui::models::PlaylistInfoTransfer>,
-    cx: &mut App,
-) {
-    cx.spawn(async move |cx| {
-        let task =
-            crate::RUNTIME.spawn(async move { db::remove_playlist_item(&pool, item_id).await });
-
-        match task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                tracing::error!("could not remove track from playlist: {err:?}");
-                return;
-            }
-            Err(err) => {
-                tracing::error!("remove-from-playlist task panicked: {err:?}");
-                return;
-            }
-        }
-
-        playlist_tracker.update(cx, |_, cx| {
-            cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
-        });
-    })
-    .detach();
-}
-
-pub fn play_from_track(
-    cx: &mut App,
-    track: &Track,
-    pl_id: Option<i64>,
-    queue_context: Option<Arc<Vec<Track>>>,
-) {
-    if !is_track_available(track) {
-        return;
-    }
-
-    let queue_items = if let Some(tracks) = queue_context {
-        tracks
-            .iter()
-            .filter(|t| is_track_available(t))
-            .map(|t| QueueItemData::new(cx, t.location.clone(), Some(t.id), t.album_id))
-            .collect()
-    } else if let Some(pl_id) = pl_id {
-        let ids = cx
-            .get_playlist_tracks(pl_id)
-            .expect("failed to retrieve playlist track info");
-        let paths = cx
-            .get_playlist_track_files(pl_id)
-            .expect("failed to retrieve playlist track paths");
-
-        ids.iter()
-            .zip(paths.iter())
-            .filter(|(_, path)| Path::new(path).exists())
-            .map(|((_, track, album), path)| {
-                QueueItemData::new(cx, path.into(), Some(*track), Some(*album))
-            })
-            .collect()
-    } else if let Some(album_id) = track.album_id {
-        cx.list_tracks_in_album(album_id)
-            .expect("Failed to retrieve tracks")
-            .iter()
-            .filter(|track| is_track_available(track))
-            .map(|track| {
-                QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id)
-            })
-            .collect()
-    } else {
-        Vec::from([QueueItemData::new(
-            cx,
-            track.location.clone(),
-            Some(track.id),
-            track.album_id,
-        )])
-    };
-
-    if queue_items.is_empty() {
-        return;
-    }
-
-    replace_queue(queue_items.clone(), cx);
-
-    let playback_interface = cx.global::<PlaybackInterface>();
-    if let Some(index) = queue_items
-        .iter()
-        .position(|t| t.get_path() == &track.location)
-    {
-        playback_interface.jump_unshuffled(index)
-    } else if !queue_items.is_empty() {
-        playback_interface.jump_unshuffled(0);
-    }
 }

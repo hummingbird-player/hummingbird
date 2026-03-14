@@ -11,7 +11,7 @@ mod controls;
 pub mod data;
 mod global_actions;
 mod header;
-mod library;
+pub mod library;
 pub mod models;
 mod queue;
 mod search;

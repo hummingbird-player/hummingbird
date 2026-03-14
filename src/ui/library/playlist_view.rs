@@ -490,6 +490,8 @@ impl Render for PlaylistView {
                                                     false, // vinyl_numbering - not applicable for playlists
                                                     None, // max_track_num - not needed for Art left field
                                                     None, // queue_context - playlist uses pl_id instead
+                                                    true, // show_go_to_album
+                                                    true, // show_go_to_artist
                                                 );
 
                                                 PlaylistTrackItem::new(

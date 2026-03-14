@@ -37,6 +37,7 @@ pub mod add_to_playlist;
 mod album_view;
 mod artist_detail_view;
 mod artist_view;
+pub mod context_menus;
 pub mod missing_folder_dialog;
 mod navigation;
 mod playlist_view;

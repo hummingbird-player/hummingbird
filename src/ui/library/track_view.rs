@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use gpui::{prelude::FluentBuilder, *};
@@ -15,6 +16,7 @@ use crate::{
     ui::{
         availability::is_track_path_available,
         components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
+        library::context_menus::{TrackContextMenuContext, play_from_track},
         models::Models,
     },
 };
@@ -80,9 +82,37 @@ impl TrackView {
                 },
             );
 
+            let context_menu_context = TrackContextMenuContext {
+                show_go_to_album: true,
+                show_go_to_artist: true,
+                play_from_here: Some(Arc::new({
+                    let table_ref = table_ref.clone();
+                    move |cx, track| {
+                        let table_ref_read = table_ref.borrow();
+                        let Some(table) = table_ref_read.as_ref() else {
+                            return;
+                        };
+                        let Some(items) = table.read(cx).get_items() else {
+                            return;
+                        };
+
+                        let queue_items = items
+                            .iter()
+                            .filter(|(_, _, _, path)| is_track_path_available(Path::new(path)))
+                            .map(|(id, _, album_id, path)| {
+                                QueueItemData::new(cx, PathBuf::from(path), Some(*id), *album_id)
+                            })
+                            .collect::<Vec<_>>();
+
+                        play_from_track(cx, track, queue_items);
+                    }
+                })),
+            };
+
             let table = Table::new(
                 cx,
                 Some(handler),
+                context_menu_context,
                 initial_scroll_offset,
                 initial_settings.as_ref(),
             );

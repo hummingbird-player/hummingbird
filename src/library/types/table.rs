@@ -15,6 +15,10 @@ use crate::{
         drag_drop::{AlbumDragData, TrackDragData},
         table::table_data::{Column, GridContext, TableData, TableDragData, TableSort},
     },
+    ui::library::context_menus::{
+        AlbumContextMenuContext, TrackContextMenuContext, album_menu_for_table,
+        track_menu_for_table,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -54,6 +58,7 @@ impl Column for AlbumColumn {
 
 impl TableData<AlbumColumn> for Album {
     type Identifier = (u32, String);
+    type ContextMenuContext = AlbumContextMenuContext;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ALBUMS", "Albums").into()
@@ -181,6 +186,15 @@ impl TableData<AlbumColumn> for Album {
         )))
     }
 
+    fn get_context_menu(
+        &self,
+        _cx: &mut App,
+        context: &Self::ContextMenuContext,
+        _grid_context: GridContext,
+    ) -> Option<gpui::AnyElement> {
+        Some(album_menu_for_table(self, context))
+    }
+
     fn supports_grid_view() -> bool {
         true
     }
@@ -266,6 +280,7 @@ impl Column for TrackColumn {
 
 impl TableData<TrackColumn> for Track {
     type Identifier = (i64, String, Option<i64>, String);
+    type ContextMenuContext = TrackContextMenuContext;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_TRACKS", "Tracks").into()
@@ -433,6 +448,19 @@ impl TableData<TrackColumn> for Track {
     fn is_available(&self, _cx: &mut App) -> bool {
         is_track_available(self)
     }
+
+    fn get_context_menu(
+        &self,
+        _cx: &mut App,
+        context: &Self::ContextMenuContext,
+        _grid_context: GridContext,
+    ) -> Option<gpui::AnyElement> {
+        Some(track_menu_for_table(
+            self,
+            is_track_available(self),
+            context,
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -466,6 +494,7 @@ impl Column for ArtistColumn {
 
 impl TableData<ArtistColumn> for ArtistWithCounts {
     type Identifier = i64;
+    type ContextMenuContext = ();
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ARTISTS", "Artists").into()

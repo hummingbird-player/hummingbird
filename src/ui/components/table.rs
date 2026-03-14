@@ -54,6 +54,7 @@ where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
+    context_menu_context: T::ContextMenuContext,
     columns: Entity<Arc<IndexMap<C, f32, FxBuildHasher>>>,
     // preserves hidden column widths, even if not shown
     hidden_column_widths: Entity<FxHashMap<C, f32>>,
@@ -90,6 +91,7 @@ where
     pub fn new(
         cx: &mut App,
         on_select: Option<OnSelectHandler<T, C>>,
+        context_menu_context: T::ContextMenuContext,
         initial_scroll_offset: Option<f32>,
         initial_settings: Option<&TableSettings>,
     ) -> Entity<Self> {
@@ -194,6 +196,7 @@ where
             .detach();
 
             Self {
+                context_menu_context,
                 columns,
                 hidden_column_widths,
                 views,
@@ -370,6 +373,7 @@ where
         };
 
         let columns = self.columns.clone();
+        let context_menu_context = self.context_menu_context.clone();
         let handler = self.on_select.clone();
         let scroll_handle = self.scroll_handle.clone();
 
@@ -597,6 +601,7 @@ where
                                                         item.clone(),
                                                         &columns,
                                                         handler.clone(),
+                                                        context_menu_context.clone(),
                                                     )
                                                 },
                                                 cx,
@@ -650,6 +655,7 @@ where
                                                     cx,
                                                     item_id,
                                                     handler.clone(),
+                                                    context_menu_context.clone(),
                                                     GridContext::Table,
                                                 )
                                                 .unwrap()

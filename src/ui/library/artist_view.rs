@@ -42,6 +42,7 @@ impl ArtistView {
             let table = Table::new(
                 cx,
                 Some(handler),
+                (),
                 initial_scroll_offset,
                 initial_settings.as_ref(),
             );

@@ -6,9 +6,10 @@ use rustc_hash::FxBuildHasher;
 
 use super::{
     OnSelectHandler,
-    table_data::{Column, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData},
+    table_data::{Column, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData},
 };
 use crate::ui::{
+    components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
     theme::Theme,
 };
@@ -19,6 +20,7 @@ where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
+    context_menu_context: T::ContextMenuContext,
     data: Option<Vec<Option<SharedString>>>,
     columns: Arc<IndexMap<C, f32, FxBuildHasher>>,
     on_select: Option<OnSelectHandler<T, C>>,
@@ -38,6 +40,7 @@ where
         id: T::Identifier,
         columns: &Entity<Arc<IndexMap<C, f32, FxBuildHasher>>>,
         on_select: Option<OnSelectHandler<T, C>>,
+        context_menu_context: T::ContextMenuContext,
     ) -> Entity<Self> {
         let row = T::get_row(cx, id).ok().flatten();
 
@@ -53,7 +56,6 @@ where
 
         let image_path = row.as_ref().and_then(|row| row.get_image_path());
         let is_available = row.as_ref().is_some_and(|row| row.is_available(cx));
-
         cx.new(|cx| {
             cx.observe(columns, |this: &mut TableItem<T, C>, m, cx| {
                 this.columns = m.read(cx).clone();
@@ -69,6 +71,7 @@ where
             .detach();
 
             Self {
+                context_menu_context,
                 data,
                 image_path,
                 columns: columns_read,
@@ -87,9 +90,12 @@ where
     C: Column + 'static,
 {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
         let row_data = self.row.clone();
         let is_available = self.is_available;
+        let context_menu = self.row.as_ref().and_then(|row| {
+            row.get_context_menu(cx, &self.context_menu_context, GridContext::Table)
+        });
+        let theme = cx.global::<Theme>();
         let drag_data = if is_available {
             self.row.as_ref().and_then(|row| row.get_drag_data())
         } else {
@@ -194,6 +200,13 @@ where
             }
         }
 
-        row
+        if let Some(menu) = context_menu {
+            context(self.id.clone().unwrap_or("bad-context".into()))
+                .with(row)
+                .child(div().bg(theme.elevated_background).child(menu))
+                .into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
 }

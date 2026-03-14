@@ -32,6 +32,8 @@ impl TrackListing {
         overdraw: Pixels,
         artist_name_visibility: ArtistNameVisibility,
         vinyl_numbering: bool,
+        show_go_to_album: bool,
+        show_go_to_artist: bool,
     ) -> Self {
         let state = ListState::new(tracks.len(), ListAlignment::Top, overdraw);
 
@@ -58,6 +60,8 @@ impl TrackListing {
                             vinyl_numbering,
                             max_track_num_str.clone(),
                             None,
+                            show_go_to_album,
+                            show_go_to_artist,
                         )
                     })
                     .collect(),

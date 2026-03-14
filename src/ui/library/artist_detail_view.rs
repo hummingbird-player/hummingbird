@@ -26,6 +26,7 @@ use crate::{
             },
             uniform_grid::uniform_grid,
         },
+        library::context_menus::AlbumContextMenuContext,
         library::track_listing::{
             ArtistNameVisibility,
             track_item::{TrackItem, TrackItemLeftField},
@@ -90,6 +91,8 @@ impl ArtistDetailView {
                         false,
                         None,
                         Some(liked_tracks.clone()),
+                        false,
+                        false,
                     )
                 })
                 .collect();
@@ -201,6 +204,8 @@ impl ArtistDetailView {
                     false,
                     None,
                     Some(self.liked_tracks.clone()),
+                    false,
+                    false,
                 )
             })
             .collect();
@@ -524,6 +529,7 @@ impl Render for ArtistDetailView {
                                                     cx,
                                                     item_id,
                                                     handler.clone(),
+                                                    AlbumContextMenuContext,
                                                     GridContext::Standalone,
                                                 )
                                                 .unwrap()

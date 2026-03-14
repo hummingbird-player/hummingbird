@@ -9,6 +9,7 @@ use crate::{
     },
     ui::{
         components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
+        library::context_menus::AlbumContextMenuContext,
         models::Models,
     },
 };
@@ -43,6 +44,7 @@ impl AlbumView {
             let table = Table::new(
                 cx,
                 Some(handler),
+                AlbumContextMenuContext,
                 initial_scroll_offset,
                 initial_settings.as_ref(),
             );

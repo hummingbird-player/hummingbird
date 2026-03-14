@@ -7,6 +7,7 @@ use super::{
     table_data::{Column, GridContext, TableData, TableDragData},
 };
 use crate::ui::{
+    components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
     theme::Theme,
 };
@@ -17,6 +18,8 @@ where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
+    context_menu_context: T::ContextMenuContext,
+    grid_context: GridContext,
     row: Arc<T>,
     id: ElementId,
     image_path: Option<SharedString>,
@@ -35,6 +38,7 @@ where
         cx: &mut App,
         id: T::Identifier,
         on_select: Option<OnSelectHandler<T, C>>,
+        context_menu_context: T::ContextMenuContext,
         context: GridContext,
     ) -> Option<Entity<Self>> {
         let row = T::get_row(cx, id.clone()).ok().flatten()?;
@@ -42,11 +46,12 @@ where
         let element_id = row.get_element_id().into();
         let image_path = row.get_full_image_path().or_else(|| row.get_image_path());
         let is_available = row.is_available(cx);
-
         let grid_content = row.get_grid_content_for(cx, context);
         let (primary_text, secondary_text) = grid_content.unwrap_or(("".into(), None));
 
         Some(cx.new(|_| Self {
+            context_menu_context,
+            grid_context: context,
             row,
             id: element_id,
             image_path,
@@ -64,9 +69,12 @@ where
     C: Column + 'static,
 {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
         let row_data = self.row.clone();
         let is_available = self.is_available;
+        let context_menu =
+            self.row
+                .get_context_menu(cx, &self.context_menu_context, self.grid_context);
+        let theme = cx.global::<Theme>();
 
         let drag_data = if is_available {
             self.row.get_drag_data()
@@ -136,7 +144,7 @@ where
             );
         }
 
-        container
+        let content = container
             .child(img_container)
             .child(
                 div()
@@ -159,6 +167,15 @@ where
                         .overflow_hidden()
                         .child(secondary),
                 )
-            })
+            });
+
+        if let Some(menu) = context_menu {
+            context(self.id.clone())
+                .with(content)
+                .child(div().bg(theme.elevated_background).child(menu))
+                .into_any_element()
+        } else {
+            content.into_any_element()
+        }
     }
 }
