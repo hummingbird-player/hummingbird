@@ -11,7 +11,9 @@ use crate::{
             },
             menu::{menu, menu_item},
         },
-        library::context_menus::{InfoSectionContextMenu, resolve_library_track_by_path},
+        library::context_menus::{
+            info_section::InfoSectionContextMenu, resolve_library_track_by_path,
+        },
         models::CurrentTrack,
         util::drop_image_from_app,
     },
