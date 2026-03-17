@@ -19,11 +19,15 @@
       systems = inputs.nixpkgs.lib.systems.flakeExposed;
       perSystem = {
         lib,
-        pkgs,
         self',
+        system,
         ...
       }: let
         inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux;
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          config.allowDeprecatedx86_64Darwin = true;
+        };
 
         rust-bin = inputs.rust-overlay.lib.mkRustBin {} pkgs;
         toolchain = rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
