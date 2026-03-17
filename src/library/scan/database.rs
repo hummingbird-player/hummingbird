@@ -222,6 +222,10 @@ async fn insert_track(
             .bind(&metadata.genre)
             .bind(&metadata.artist)
             .bind(parent.as_str())
+            .bind(metadata.replaygain_track_gain)
+            .bind(metadata.replaygain_track_peak)
+            .bind(metadata.replaygain_album_gain)
+            .bind(metadata.replaygain_album_peak)
             .fetch_one(&mut *conn)
             .await;
 

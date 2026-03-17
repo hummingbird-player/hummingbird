@@ -172,6 +172,7 @@ impl CpalDevice {
             buffer_size,
             device: self.device.clone(),
             volume,
+            replaygain: 1.0,
             interleave_buffer: Vec::with_capacity(buffer_size),
         }))
     }
@@ -262,6 +263,7 @@ where
     pub format: FormatInfo,
     pub buffer_size: usize,
     pub volume: Arc<AtomicF64>,
+    pub replaygain: f64,
     pub interleave_buffer: Vec<T>,
 }
 
@@ -306,6 +308,11 @@ where
         Ok(())
     }
 
+    fn set_replaygain(&mut self, gain: f64) -> Result<(), StateError> {
+        self.replaygain = gain;
+        Ok(())
+    }
+
     #[allow(clippy::needless_range_loop)]
     fn consume_from(
         &mut self,
@@ -324,13 +331,14 @@ where
         let staging = input.staging();
 
         let channel_count = staging.len();
+        let rg = self.replaygain;
 
         self.interleave_buffer.clear();
         self.interleave_buffer.reserve(read * channel_count);
 
         for i in 0..read {
             for ch in 0..channel_count {
-                let sample_f64 = staging[ch][i];
+                let sample_f64 = staging[ch][i] * rg;
                 self.interleave_buffer.push(T::sample_from(sample_f64));
             }
         }
@@ -368,6 +376,7 @@ where
 
         let staging = input.staging();
         let channel_count = staging.len();
+        let rg = self.replaygain as f32;
 
         self.interleave_buffer.clear();
         self.interleave_buffer.reserve(read * channel_count);
@@ -375,7 +384,7 @@ where
         for i in 0..read {
             for ch in 0..channel_count {
                 self.interleave_buffer
-                    .push(<T as SampleFrom<f32>>::sample_from(staging[ch][i]));
+                    .push(<T as SampleFrom<f32>>::sample_from(staging[ch][i] * rg));
             }
         }
 

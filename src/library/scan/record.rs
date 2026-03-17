@@ -10,7 +10,7 @@ use tracing::{error, info};
 
 /// The version of the scanning process. If this version number is incremented, a re-scan of all
 /// files will be forced (see [ScanCommand::ForceScan]).
-pub const SCAN_VERSION: u16 = 1;
+pub const SCAN_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanRecord {

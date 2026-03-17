@@ -90,6 +90,7 @@ pub struct DeviceController {
     stream: Option<Box<dyn OutputStream>>,
     current_format: Option<FormatInfo>,
     last_volume: f64,
+    last_replaygain: f64,
 }
 
 impl DeviceController {
@@ -100,6 +101,7 @@ impl DeviceController {
             stream: None,
             current_format: None,
             last_volume: 1.0,
+            last_replaygain: 1.0,
         }
     }
 
@@ -208,6 +210,7 @@ impl DeviceController {
 
         if let Some(stream) = &mut self.stream {
             stream.set_volume(self.last_volume).ok();
+            stream.set_replaygain(self.last_replaygain).ok();
         }
 
         info!(
@@ -320,6 +323,17 @@ impl DeviceController {
 
         if let Some(stream) = &mut self.stream {
             stream.set_volume(volume_scaled)?;
+        }
+
+        Ok(())
+    }
+
+    /// Set the ReplayGain multiplier (linear).
+    pub fn set_replaygain(&mut self, gain: f64) -> Result<(), DeviceError> {
+        self.last_replaygain = gain;
+
+        if let Some(stream) = &mut self.stream {
+            stream.set_replaygain(gain)?;
         }
 
         Ok(())

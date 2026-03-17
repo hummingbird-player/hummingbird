@@ -286,6 +286,13 @@ impl AudioEngine {
             .map_err(|e| EngineError::DeviceError(format!("Failed to set volume: {:?}", e)))
     }
 
+    /// Set the ReplayGain multiplier (linear).
+    pub fn set_replaygain(&mut self, gain: f64) -> Result<(), EngineError> {
+        self.device
+            .set_replaygain(gain)
+            .map_err(|e| EngineError::DeviceError(format!("Failed to set RG: {:?}", e)))
+    }
+
     /// Get the current playback position in seconds.
     pub fn position_secs(&self) -> Option<u64> {
         self.media.position_secs().ok()

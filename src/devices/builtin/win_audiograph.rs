@@ -251,6 +251,8 @@ impl Device for AudioGraphDevice {
             producer: prod,
             interleaved_buffer: Vec::with_capacity(buffer_size as usize),
             packed_buffer: Vec::with_capacity(buffer_size as usize),
+            last_volume: 1.0,
+            last_replaygain: 1.0,
         };
 
         Ok(Box::new(stream) as Box<dyn OutputStream>)
@@ -314,6 +316,8 @@ pub struct AudioGraphStream {
     pub producer: Producer<u8>,
     interleaved_buffer: Vec<f32>,
     packed_buffer: Vec<u8>,
+    last_volume: f64,
+    last_replaygain: f64,
 }
 
 impl OutputStream for AudioGraphStream {
@@ -338,7 +342,13 @@ impl OutputStream for AudioGraphStream {
     }
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
+        self.last_volume = volume;
         self.node.SetOutgoingGain(volume).map_err(|e| e.into())
+    }
+
+    fn set_replaygain(&mut self, gain: f64) -> Result<(), StateError> {
+        self.last_replaygain = gain;
+        Ok(())
     }
 
     #[allow(clippy::needless_range_loop)]
@@ -361,13 +371,14 @@ impl OutputStream for AudioGraphStream {
         let staging = input.staging();
 
         let channel_count = staging.len();
+        let rg = self.last_replaygain;
 
         // Interleave and convert f64 to f32, then pack to bytes using persistent buffers
         self.interleaved_buffer.clear();
         self.interleaved_buffer.reserve(read * channel_count);
         for i in 0..read {
             for ch in 0..channel_count {
-                self.interleaved_buffer.push(staging[ch][i] as f32);
+                self.interleaved_buffer.push((staging[ch][i] * rg) as f32);
             }
         }
 
@@ -404,13 +415,14 @@ impl OutputStream for AudioGraphStream {
         let staging = input.staging();
 
         let channel_count = staging.len();
+        let rg = self.last_replaygain as f32;
 
         // Interleave f32 samples, then pack to bytes
         self.interleaved_buffer.clear();
         self.interleaved_buffer.reserve(read * channel_count);
         for i in 0..read {
             for ch in 0..channel_count {
-                self.interleaved_buffer.push(staging[ch][i]);
+                self.interleaved_buffer.push(staging[ch][i] * rg);
             }
         }
 

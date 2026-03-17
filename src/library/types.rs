@@ -236,6 +236,14 @@ pub struct Track {
     #[sqlx(try_from = "String")]
     pub location: PathBuf,
     pub artist_names: Option<DBString>,
+    #[sqlx(default)]
+    pub rg_track_gain: Option<f64>,
+    #[sqlx(default)]
+    pub rg_track_peak: Option<f64>,
+    #[sqlx(default)]
+    pub rg_album_gain: Option<f64>,
+    #[sqlx(default)]
+    pub rg_album_peak: Option<f64>,
 }
 
 #[derive(sqlx::Type, Clone, Copy, Debug, PartialEq)]

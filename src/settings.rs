@@ -1,5 +1,6 @@
 pub mod interface;
 pub mod playback;
+pub mod replaygain;
 pub mod scan;
 pub mod storage;
 

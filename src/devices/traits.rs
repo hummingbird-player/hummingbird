@@ -72,6 +72,11 @@ pub trait OutputStream {
     /// submitting it to the device.
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError>;
 
+    /// Sets the ReplayGain multiplier. Applied on top of volume.
+    fn set_replaygain(&mut self, _gain: f64) -> Result<(), StateError> {
+        Ok(())
+    }
+
     /// Consume samples from ring buffer consumers and submit them to the device.
     fn consume_from(&mut self, input: &mut ChannelConsumers<f64>)
     -> Result<usize, SubmissionError>;

@@ -1,5 +1,5 @@
-INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration, location, genres, artist_names, folder)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration, location, genres, artist_names, folder, rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     ON CONFLICT (location) DO UPDATE SET
         title = EXCLUDED.title,
         title_sortable = EXCLUDED.title_sortable,
@@ -10,5 +10,9 @@ INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, d
         location = EXCLUDED.location,
         genres = EXCLUDED.genres,
         artist_names = EXCLUDED.artist_names,
-        folder = EXCLUDED.folder
+        folder = EXCLUDED.folder,
+        rg_track_gain = EXCLUDED.rg_track_gain,
+        rg_track_peak = EXCLUDED.rg_track_peak,
+        rg_album_gain = EXCLUDED.rg_album_gain,
+        rg_album_peak = EXCLUDED.rg_album_peak
     RETURNING id;

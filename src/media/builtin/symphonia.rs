@@ -51,6 +51,46 @@ use crate::{
     },
 };
 
+/// Parse a ReplayGain float value from a tag value.
+fn parse_rg_float(value: &Value) -> Option<f64> {
+    match value {
+        Value::Float(v) => Some(*v),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Parse a ReplayGain gain value from a tag value.
+/// Handles strings like "-3.21 dB" or "-3.21", and float values.
+fn parse_rg_gain(value: &Value) -> Option<f64> {
+    match value {
+        Value::String(s) => {
+            let s = s.trim();
+            // Strip " dB" suffix (case-insensitive) before parsing
+            let s = if s.len() >= 2 && s[s.len() - 2..].eq_ignore_ascii_case("db") {
+                s[..s.len() - 2].trim()
+            } else {
+                s
+            };
+            s.parse().ok()
+        }
+        _ => parse_rg_float(value),
+    }
+}
+
+/// Parse an R128 gain value (Q7.8 integer stored as string) to dB.
+fn parse_r128_gain(value: &Value) -> Option<f64> {
+    match value {
+        Value::SignedInt(v) => Some(*v as f64 / 256.0),
+        Value::UnsignedInt(v) => Some(*v as i16 as f64 / 256.0),
+        Value::String(s) => {
+            let v: i16 = s.trim().parse().ok()?;
+            Some(v as f64 / 256.0)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
@@ -202,7 +242,51 @@ impl SymphoniaStream {
                 Some(StandardTagKey::MusicBrainzAlbumId) => {
                     self.current_metadata.mbid_album = Some(tag.value.to_string())
                 }
-                _ => (),
+                Some(StandardTagKey::ReplayGainTrackGain) => {
+                    self.current_metadata.replaygain_track_gain = parse_rg_gain(&tag.value);
+                }
+                Some(StandardTagKey::ReplayGainTrackPeak) => {
+                    self.current_metadata.replaygain_track_peak = parse_rg_float(&tag.value);
+                }
+                Some(StandardTagKey::ReplayGainAlbumGain) => {
+                    self.current_metadata.replaygain_album_gain = parse_rg_gain(&tag.value);
+                }
+                Some(StandardTagKey::ReplayGainAlbumPeak) => {
+                    self.current_metadata.replaygain_album_peak = parse_rg_float(&tag.value);
+                }
+                _ => {
+                    // Handle non-standard ReplayGain tag keys and R128 tags
+                    let key = tag.key.as_str();
+                    if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_GAIN") {
+                        if self.current_metadata.replaygain_track_gain.is_none() {
+                            self.current_metadata.replaygain_track_gain = parse_rg_gain(&tag.value);
+                        }
+                    } else if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_PEAK") {
+                        if self.current_metadata.replaygain_track_peak.is_none() {
+                            self.current_metadata.replaygain_track_peak =
+                                parse_rg_float(&tag.value);
+                        }
+                    } else if key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_GAIN") {
+                        if self.current_metadata.replaygain_album_gain.is_none() {
+                            self.current_metadata.replaygain_album_gain = parse_rg_gain(&tag.value);
+                        }
+                    } else if key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_PEAK") {
+                        if self.current_metadata.replaygain_album_peak.is_none() {
+                            self.current_metadata.replaygain_album_peak =
+                                parse_rg_float(&tag.value);
+                        }
+                    } else if key.eq_ignore_ascii_case("R128_TRACK_GAIN") {
+                        if self.current_metadata.replaygain_track_gain.is_none() {
+                            self.current_metadata.replaygain_track_gain =
+                                parse_r128_gain(&tag.value);
+                        }
+                    } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN") {
+                        if self.current_metadata.replaygain_album_gain.is_none() {
+                            self.current_metadata.replaygain_album_gain =
+                                parse_r128_gain(&tag.value);
+                        }
+                    }
+                }
             }
         }
     }

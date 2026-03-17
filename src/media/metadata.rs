@@ -31,4 +31,9 @@ pub struct Metadata {
     pub isrc: Option<String>,
 
     pub mbid_album: Option<String>,
+
+    pub replaygain_track_gain: Option<f64>,
+    pub replaygain_track_peak: Option<f64>,
+    pub replaygain_album_gain: Option<f64>,
+    pub replaygain_album_peak: Option<f64>,
 }

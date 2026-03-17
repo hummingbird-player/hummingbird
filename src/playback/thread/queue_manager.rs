@@ -176,6 +176,23 @@ impl QueueManager {
         self.queue.read().expect("poisoned queue lock").len()
     }
 
+    /// Returns true when shuffle mode is enabled.
+    pub fn is_shuffle_enabled(&self) -> bool {
+        self.shuffle
+    }
+
+    /// Returns true if every queued item belongs to the same known album.
+    pub fn all_items_same_album(&self) -> bool {
+        let queue = self.queue.read().expect("poisoned queue lock");
+        let Some(first_album) = queue.first().and_then(QueueItemData::get_db_album_id) else {
+            return false;
+        };
+
+        queue
+            .iter()
+            .all(|item| item.get_db_album_id() == Some(first_album))
+    }
+
     /// Get the first playable item in the queue along with its index.
     pub fn first_with_index(&self) -> Option<(QueueItemData, usize)> {
         self.queue
