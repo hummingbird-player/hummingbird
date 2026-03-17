@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "contemporary-rs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1769306269,
+        "narHash": "sha256-da+7CKVmkj9WG+PRTShxhLnc0Tnz7hz6nt3G7bAgssc=",
+        "owner": "vicr123",
+        "repo": "contemporary-rs",
+        "rev": "0025e12336f45823fe84b5599ddba27dce98868f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vicr123",
+        "ref": "v0.1.0",
+        "repo": "contemporary-rs",
+        "type": "github"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1773189535,
@@ -66,6 +83,7 @@
     },
     "root": {
       "inputs": {
+        "contemporary-rs": "contemporary-rs",
         "crane": "crane",
         "flake-parts": "flake-parts",
         "nixpkgs": "nixpkgs",

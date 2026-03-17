@@ -7,6 +7,10 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    contemporary-rs = {
+      url = "github:vicr123/contemporary-rs/v0.1.0";
+      flake = false;
+    };
   };
 
   outputs = inputs:
@@ -32,7 +36,10 @@
               fileset = lib.fileset.unions [
                 (craneLib.fileset.commonCargoSources root)
                 (lib.fileset.fileFilter (file: file.hasExt "sql") root)
-                (lib.fileset.maybeMissing ./assets)
+                ./Contemporary.toml
+                ./assets
+                ./res
+                ./translations
               ];
             };
             nativeBuildInputs = [pkgs.cmake pkgs.pkg-config];
@@ -63,11 +70,37 @@
           CARGO_PROFILE = "release-distro";
           nativeBuildInputs =
             prev.nativeBuildInputs
+            ++ [
+              (craneLib.buildPackage rec {
+                src = inputs.contemporary-rs;
+                inherit (craneLib.crateNameFromCargoToml {cargoToml = src + /deploy_tool/cargo_cntp_bundle/Cargo.toml;}) pname version;
+                nativeBuildInputs = [pkgs.perl];
+                cargoExtraArgs = "-p cargo-cntp-bundle";
+              })
+            ]
+            ++ lib.optionals isDarwin [
+              (pkgs.runCommandLocal "iconutil-shim" {nativeBuildInputs = [pkgs.makeWrapper];} ''
+                makeWrapper ${lib.getExe' pkgs.libicns "icnsutil"} "$out/bin/iconutil"
+              '')
+            ]
             ++ lib.optionals isLinux [pkgs.autoPatchelfHook];
           runtimeDependencies = lib.optionals isLinux [
             pkgs.wayland
             pkgs.vulkan-loader
           ];
+          installPhaseCommand =
+            ''
+              cargo cntp-bundle --no-open --profile "$CARGO_PROFILE"
+            ''
+            + lib.optionalString isLinux ''
+              cp -a "''${CARGO_TARGET_DIR:-target}"/bundle/*/"$CARGO_PROFILE"/appdir/usr/. "$out"
+            ''
+            + lib.optionalString isDarwin ''
+              mkdir -p "$out/Applications"
+              cp -a "''${CARGO_TARGET_DIR:-target}"/bundle/*/"$CARGO_PROFILE"/Hummingbird.app "$out/Applications"
+              mkdir -p "$out/bin"
+              ln -s "$out/Applications/Hummingbird.app/Contents/MacOS/hummingbird" "$out/bin/hummingbird"
+            '';
         }));
 
         checks = lib.mergeAttrs self'.packages {
