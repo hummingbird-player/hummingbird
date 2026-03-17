@@ -1,3 +1,5 @@
+mod replaygain;
+
 use crate::{
     library::types::Track,
     playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
@@ -23,6 +25,7 @@ use gpui::{Corner, *};
 use prelude::FluentBuilder;
 use std::{path::PathBuf, rc::Rc};
 
+use self::replaygain::ReplayGainButton;
 use super::{
     components::slider::slider,
     constants::APP_ROUNDING,
@@ -665,6 +668,7 @@ impl Render for Scrubber {
 pub struct SecondaryControls {
     info: PlaybackInfo,
     show_queue: Entity<bool>,
+    replaygain_button: Entity<ReplayGainButton>,
 }
 
 impl SecondaryControls {
@@ -678,7 +682,11 @@ impl SecondaryControls {
             })
             .detach();
 
-            Self { info, show_queue }
+            Self {
+                info,
+                show_queue,
+                replaygain_button: ReplayGainButton::new(cx),
+            }
         })
     }
 }
@@ -695,11 +703,10 @@ impl Render for SecondaryControls {
                 .flex()
                 .my_auto()
                 .pb(px(2.0))
-                .gap(px(8.0))
                 .child(
                     div()
                         .rounded(px(3.0))
-                        .w(px(28.0))
+                        .w(px(25.0))
                         .h(px(25.0))
                         .mt(px(2.0))
                         .flex()
@@ -726,6 +733,7 @@ impl Render for SecondaryControls {
                 )
                 .child(
                     div()
+                        .mx(px(4.0))
                         .child(
                             slider()
                                 .w(px(80.0))
@@ -750,12 +758,14 @@ impl Render for SecondaryControls {
                             ));
                         }),
                 )
+                .child(self.replaygain_button.clone())
                 .child(
                     div()
                         .rounded(px(3.0))
-                        .w(px(28.0))
+                        .w(px(25.0))
                         .h(px(25.0))
                         .mt(px(2.0))
+                        .ml(px(3.0))
                         .flex()
                         .items_center()
                         .justify_center()

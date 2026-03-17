@@ -280,11 +280,10 @@ impl SymphoniaStream {
                             self.current_metadata.replaygain_track_gain =
                                 parse_r128_gain(&tag.value);
                         }
-                    } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN") {
-                        if self.current_metadata.replaygain_album_gain.is_none() {
-                            self.current_metadata.replaygain_album_gain =
-                                parse_r128_gain(&tag.value);
-                        }
+                    } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN")
+                        && self.current_metadata.replaygain_album_gain.is_none()
+                    {
+                        self.current_metadata.replaygain_album_gain = parse_r128_gain(&tag.value);
                     }
                 }
             }

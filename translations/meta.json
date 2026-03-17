@@ -169,7 +169,7 @@
   },
   "APP_NAME": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:259",
+    "definedIn": "src/ui/controls.rs:262",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -475,19 +475,31 @@
   },
   "PLAYBACK_ALWAYS_REPEAT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:51",
+    "definedIn": "src/ui/settings/playback.rs:55",
     "plural": false,
     "description": null
   },
   "PLAYBACK_ALWAYS_REPEAT_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:54",
+    "definedIn": "src/ui/settings/playback.rs:58",
     "plural": false,
     "description": null
   },
   "PLAYBACK_PREVIOUS_JUMPS": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:74",
+    "definedIn": "src/ui/settings/playback.rs:78",
+    "plural": false,
+    "description": null
+  },
+  "PLAYBACK_RG_FALLBACK_PREAMP": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:100",
+    "plural": false,
+    "description": null
+  },
+  "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:103",
     "plural": false,
     "description": null
   },
@@ -553,19 +565,55 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:541",
+    "definedIn": "src/ui/controls.rs:544",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:531",
+    "definedIn": "src/ui/controls.rs:534",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:550",
+    "definedIn": "src/ui/controls.rs:553",
+    "plural": false,
+    "description": null
+  },
+  "RG_ALBUM": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:131",
+    "plural": false,
+    "description": null
+  },
+  "RG_AUTO": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:123",
+    "plural": false,
+    "description": null
+  },
+  "RG_MODE_LABEL": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:114",
+    "plural": false,
+    "description": null
+  },
+  "RG_OFF": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:120",
+    "plural": false,
+    "description": null
+  },
+  "RG_PREAMP_LABEL": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:154",
+    "plural": false,
+    "description": null
+  },
+  "RG_TRACK": {
+    "context": "replaygain.rs",
+    "definedIn": "src/ui/controls/replaygain.rs:127",
     "plural": false,
     "description": null
   },
@@ -847,13 +895,13 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:285",
+    "definedIn": "src/ui/controls.rs:288",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:280",
+    "definedIn": "src/ui/controls.rs:283",
     "plural": false,
     "description": null
   },

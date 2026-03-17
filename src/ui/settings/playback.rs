@@ -1,11 +1,15 @@
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window, div, px,
 };
 
 use crate::{
     settings::{Settings, SettingsGlobal, save_settings},
-    ui::components::{checkbox::checkbox, label::label, section_header::section_header},
+    ui::components::{
+        checkbox::checkbox, label::label, labeled_slider::labeled_slider,
+        section_header::section_header,
+    },
 };
 
 pub struct PlaybackSettings {
@@ -89,5 +93,34 @@ impl Render for PlaybackSettings {
                     playback.prev_track_jump_first,
                 )),
             )
+            .child({
+                let settings = self.settings.clone();
+                label(
+                    "playback-rg-fallback-preamp",
+                    tr!("PLAYBACK_RG_FALLBACK_PREAMP", "ReplayGain fallback pre-amp"),
+                )
+                .subtext(tr!(
+                    "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT",
+                    "Applied when tracks have no ReplayGain data."
+                ))
+                .w_full()
+                .child(
+                    labeled_slider("rg-fallback-preamp")
+                        .slider_id("rg-fallback-preamp-track")
+                        .w(px(250.0))
+                        .min(-6.0)
+                        .max(6.0)
+                        .value(playback.replaygain.fallback_preamp_db as f32)
+                        .default_value(0.0)
+                        .format_value(|v| -> SharedString { format!("{:+.1} dB", v).into() })
+                        .on_change(move |v, _, cx| {
+                            settings.update(cx, |settings, cx| {
+                                settings.playback.replaygain.fallback_preamp_db = v as f64;
+                                save_settings(cx, settings);
+                                cx.notify();
+                            });
+                        }),
+                )
+            })
     }
 }

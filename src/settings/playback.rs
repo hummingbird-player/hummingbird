@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::replaygain::ReplayGainSettings;
+
 /// User-set playback settings, to be passed to the playback thread.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaybackSettings {
@@ -28,6 +30,10 @@ pub struct PlaybackSettings {
     /// prefer this behavior)
     #[serde(default)]
     pub prev_track_jump_first: bool,
+
+    /// ReplayGain settings.
+    #[serde(default)]
+    pub replaygain: ReplayGainSettings,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -36,6 +42,7 @@ impl Default for PlaybackSettings {
         Self {
             always_repeat: false,
             prev_track_jump_first: false,
+            replaygain: ReplayGainSettings::default(),
         }
     }
 }

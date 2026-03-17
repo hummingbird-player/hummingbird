@@ -1,5 +1,8 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReplayGainMode {
+    #[default]
     Off,
     Track,
     Album,
@@ -13,39 +16,13 @@ pub enum ReplayGainAutoHint {
     PreferAlbum,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct ReplayGainSettings {
     pub mode: ReplayGainMode,
     /// Pre-amp in dB, applied on top of RG gain. Range: -6.0 to +6.0
     pub preamp_db: f64,
     /// Fallback pre-amp in dB, applied when track has no RG data. Range: -6.0 to +6.0
     pub fallback_preamp_db: f64,
-}
-
-impl ReplayGainSettings {
-    pub fn from_env() -> Self {
-        let mode = match std::env::var("HUMMINGBIRD_RG_MODE").as_deref() {
-            Ok("track") => ReplayGainMode::Track,
-            Ok("album") => ReplayGainMode::Album,
-            Ok("auto") => ReplayGainMode::Auto,
-            _ => ReplayGainMode::Off,
-        };
-        let preamp_db = std::env::var("HUMMINGBIRD_RG_PREAMP")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0_f64)
-            .clamp(-6.0, 6.0);
-        let fallback_preamp_db = std::env::var("HUMMINGBIRD_RG_FALLBACK_PREAMP")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0_f64)
-            .clamp(-6.0, 6.0);
-        Self {
-            mode,
-            preamp_db,
-            fallback_preamp_db,
-        }
-    }
 }
 
 /// Calculate the linear gain multiplier for a track. Returns the multiplier to apply to audio samples.

@@ -18,7 +18,7 @@ use crate::{
     playback::{events::RepeatState, queue_storage::QueueStorageEvent},
     settings::{
         playback::PlaybackSettings,
-        replaygain::{ReplayGainAutoHint, ReplayGainSettings, calculate_gain},
+        replaygain::{ReplayGainAutoHint, calculate_gain},
     },
 };
 
@@ -66,10 +66,12 @@ pub struct PlaybackThread {
     queue: QueueManager,
     /// The volume to apply on startup (restored from persisted settings).
     initial_volume: f64,
-    /// ReplayGain settings, read from env vars at startup.
-    rg_settings: ReplayGainSettings,
     /// Current auto-mode hint for ReplayGain.
     rg_auto_hint: ReplayGainAutoHint,
+    /// Cached track gain from last metadata update.
+    last_track_gain: Option<f64>,
+    /// Cached album gain from last metadata update.
+    last_album_gain: Option<f64>,
 }
 
 impl PlaybackThread {
@@ -96,8 +98,9 @@ impl PlaybackThread {
                     engine: AudioEngine::new(),
                     queue: queue_manager,
                     initial_volume: last_volume,
-                    rg_settings: ReplayGainSettings::from_env(),
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
+                    last_track_gain: None,
+                    last_album_gain: None,
                 };
 
                 thread.run();
@@ -231,6 +234,9 @@ impl PlaybackThread {
     fn open(&mut self, path: &Path) -> Result<(), PlaybackStartError> {
         info!("Opening track '{}'", path.display());
 
+        self.last_track_gain = None;
+        self.last_album_gain = None;
+
         let info = self.engine.open(path)?;
         self.process_metadata_update();
 
@@ -249,28 +255,47 @@ impl PlaybackThread {
 
     fn process_metadata_update(&mut self) {
         if let Some(metadata) = self.engine.check_metadata_update() {
-            let gain = calculate_gain(
-                &self.rg_settings,
-                self.rg_auto_hint,
-                metadata.metadata.replaygain_track_gain,
-                metadata.metadata.replaygain_album_gain,
-            );
-            if let Err(e) = self.engine.set_replaygain(gain) {
-                warn!("Failed to set ReplayGain: {:?}", e);
-            }
+            self.last_track_gain = metadata.metadata.replaygain_track_gain;
+            self.last_album_gain = metadata.metadata.replaygain_album_gain;
+
+            self.reapply_replaygain();
 
             self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));
             self.send_event(PlaybackEvent::AlbumArtUpdate(metadata.album_art));
         }
     }
 
-    fn recompute_rg_auto_hint(&mut self) {
-        self.rg_auto_hint = if !self.queue.is_shuffle_enabled() && self.queue.all_items_same_album()
-        {
+    fn reapply_replaygain(&mut self) {
+        let gain = calculate_gain(
+            &self.playback_settings.replaygain,
+            self.rg_auto_hint,
+            self.last_track_gain,
+            self.last_album_gain,
+        );
+        if let Err(e) = self.engine.set_replaygain(gain) {
+            warn!("Failed to set ReplayGain: {:?}", e);
+        }
+    }
+
+    fn recompute_rg_auto_hint(&mut self) -> bool {
+        let next_hint = if !self.queue.is_shuffle_enabled() && self.queue.all_items_same_album() {
             ReplayGainAutoHint::PreferAlbum
         } else {
             ReplayGainAutoHint::PreferTrack
         };
+
+        let changed = self.rg_auto_hint != next_hint;
+        self.rg_auto_hint = next_hint;
+        changed
+    }
+
+    fn refresh_rg_auto_hint(&mut self) {
+        if self.recompute_rg_auto_hint()
+            && self.playback_settings.replaygain.mode
+                == crate::settings::replaygain::ReplayGainMode::Auto
+        {
+            self.reapply_replaygain();
+        }
     }
 
     /// Skip to the next track in the queue.
@@ -363,6 +388,7 @@ impl PlaybackThread {
         info!("Adding file to queue: {}", item);
 
         let index = self.queue.queue_item(item.clone());
+        self.refresh_rg_auto_hint();
 
         if self.state() == PlaybackState::Stopped {
             if !item.get_path().exists() {
@@ -397,6 +423,7 @@ impl PlaybackThread {
             .find(|(_, item)| item.get_path().exists())
             .map(|(idx, item)| (idx, item.clone()));
         let first_index = self.queue.queue_items(items);
+        self.refresh_rg_auto_hint();
 
         // If stopped, start playing the first item
         if self.state() == PlaybackState::Stopped
@@ -433,6 +460,7 @@ impl PlaybackThread {
     fn remove(&mut self, idx: usize) {
         match self.queue.dequeue(idx) {
             DequeueResult::Removed { new_position } => {
+                self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
 
                 // If position changed, notify
@@ -443,6 +471,7 @@ impl PlaybackThread {
                 }
             }
             DequeueResult::RemovedCurrent { new_path } => {
+                self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
 
                 // Play the next track if there is one
@@ -468,6 +497,7 @@ impl PlaybackThread {
 
         match self.queue.insert_item(position, item.clone()) {
             InsertResult::Inserted { first_index } => {
+                self.refresh_rg_auto_hint();
                 // If stopped, start playing the inserted item
                 if self.state() == PlaybackState::Stopped {
                     if !item.get_path().exists() {
@@ -488,6 +518,7 @@ impl PlaybackThread {
                 first_index,
                 new_position,
             } => {
+                self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
 
                 // If stopped, start playing the inserted item
@@ -533,6 +564,7 @@ impl PlaybackThread {
 
         match self.queue.insert_items(position, items) {
             InsertResult::Inserted { first_index } => {
+                self.refresh_rg_auto_hint();
                 // If stopped, start playing the first inserted item
                 if self.state() == PlaybackState::Stopped
                     && let Some((relative_idx, first)) = first
@@ -551,6 +583,7 @@ impl PlaybackThread {
                 first_index,
                 new_position,
             } => {
+                self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
 
                 // If stopped, start playing the first inserted item
@@ -635,7 +668,7 @@ impl PlaybackThread {
 
         match self.queue.replace_queue(paths) {
             ReplaceResult::Replaced { first_item } => {
-                self.recompute_rg_auto_hint();
+                self.refresh_rg_auto_hint();
                 if first_item.is_some()
                     && let Some((_, first_index)) = self.queue.first_with_index()
                 {
@@ -643,7 +676,7 @@ impl PlaybackThread {
                 }
             }
             ReplaceResult::Empty => {
-                self.recompute_rg_auto_hint();
+                self.refresh_rg_auto_hint();
                 self.stop();
             }
         }
@@ -654,7 +687,7 @@ impl PlaybackThread {
     /// Clear the current queue.
     fn clear_queue(&mut self) {
         self.queue.clear();
-        self.recompute_rg_auto_hint();
+        self.refresh_rg_auto_hint();
 
         self.send_event(PlaybackEvent::QueuePositionChanged(0));
         self.send_event(PlaybackEvent::QueueUpdated);
@@ -663,6 +696,8 @@ impl PlaybackThread {
     /// Stop the current playback.
     fn stop(&mut self) {
         self.engine.stop();
+        self.last_track_gain = None;
+        self.last_album_gain = None;
 
         self.send_event(PlaybackEvent::StateChanged(PlaybackState::Stopped));
     }
@@ -671,14 +706,14 @@ impl PlaybackThread {
     fn toggle_shuffle(&mut self) {
         match self.queue.toggle_shuffle() {
             ShuffleResult::Shuffled => {
-                self.recompute_rg_auto_hint();
+                self.refresh_rg_auto_hint();
                 let position = self.queue.current_position().unwrap_or(0);
 
                 self.send_event(PlaybackEvent::ShuffleToggled(true, position));
                 self.send_event(PlaybackEvent::QueueUpdated);
             }
             ShuffleResult::Unshuffled { new_position } => {
-                self.recompute_rg_auto_hint();
+                self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::ShuffleToggled(false, new_position));
                 self.send_event(PlaybackEvent::QueueUpdated);
 
@@ -719,6 +754,7 @@ impl PlaybackThread {
         self.engine.update_settings(&settings);
         self.queue.update_settings(settings.clone());
         self.playback_settings = settings;
+        self.reapply_replaygain();
     }
 
     /// Process audio samples through the engine and send to device.

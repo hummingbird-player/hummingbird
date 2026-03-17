@@ -84,6 +84,8 @@
   "PLAYBACK_ALWAYS_REPEAT": "Always repeat",
   "PLAYBACK_ALWAYS_REPEAT_SUBTEXT": "Disables the \"Off\" repeat mode.",
   "PLAYBACK_PREVIOUS_JUMPS": "Previous button jumps to the beginning of the track if more than 5 seconds has elapsed",
+  "PLAYBACK_RG_FALLBACK_PREAMP": "ReplayGain fallback pre-amp",
+  "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": "Applied when tracks have no ReplayGain data.",
   "PLAYLIST_TRACK_COUNT": {
     "one": "{{count}} track",
     "other": "{{count}} tracks"
@@ -100,6 +102,12 @@
   "REPEAT": "Repeat",
   "REPEAT_OFF": "Off",
   "REPEAT_ONE": "Repeat One",
+  "RG_ALBUM": "Album",
+  "RG_AUTO": "Auto",
+  "RG_MODE_LABEL": "ReplayGain Mode",
+  "RG_OFF": "Off",
+  "RG_PREAMP_LABEL": "Pre-amp",
+  "RG_TRACK": "Track",
   "SCAN": "Scan",
   "SCANNING": "Scanning",
   "SCANNING_ADD_FOLDER": "Add Folder",
