@@ -262,6 +262,12 @@ pub struct Playlist {
     pub playlist_type: PlaylistType,
 }
 
+impl Playlist {
+    pub fn is_liked_songs(&self) -> bool {
+        self.playlist_type == PlaylistType::System && self.name.0.as_str() == "Liked Songs"
+    }
+}
+
 #[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
 pub struct PlaylistWithCount {
     pub id: i64,
@@ -270,6 +276,12 @@ pub struct PlaylistWithCount {
     #[sqlx(rename = "type")]
     pub playlist_type: PlaylistType,
     pub track_count: i64,
+}
+
+impl PlaylistWithCount {
+    pub fn is_liked_songs(&self) -> bool {
+        self.playlist_type == PlaylistType::System && self.name.0.as_str() == "Liked Songs"
+    }
 }
 
 #[derive(sqlx::FromRow, Clone, Debug, PartialEq)]

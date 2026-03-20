@@ -61,14 +61,16 @@ pub fn bind_actions(cx: &mut App) {
 /// The navigation history + a cursor noting what the current message is.
 #[derive(Debug)]
 pub struct NavigationHistory {
+    startup_view: ViewSwitchMessage,
     history: Vec<ViewSwitchMessage>,
     cursor: usize,
 }
 
 impl NavigationHistory {
-    pub fn new() -> Self {
+    pub fn new(startup_view: ViewSwitchMessage) -> Self {
         Self {
-            history: vec![ViewSwitchMessage::Albums],
+            startup_view,
+            history: vec![startup_view],
             cursor: 0,
         }
     }
@@ -151,7 +153,7 @@ impl NavigationHistory {
 
     /// Removes history entries that do not satisfy `f`, adjusting the cursor so that it continues
     /// to point at the same entry if it survives, or backs up to the nearest preceding survivor
-    /// otherwise. History is guaranteed to never become empty (falls back to `Albums`).
+    /// otherwise. History is guaranteed to never become empty (falls back to the startup view).
     ///
     /// Used to remove entries that are no longer valid.
     pub fn retain<F>(&mut self, f: F)
@@ -167,7 +169,7 @@ impl NavigationHistory {
         self.history.retain(f);
 
         if self.history.is_empty() {
-            self.history.push(ViewSwitchMessage::Albums);
+            self.history.push(self.startup_view);
             self.cursor = 0;
         } else {
             self.cursor = self
@@ -180,7 +182,7 @@ impl NavigationHistory {
 
 impl Default for NavigationHistory {
     fn default() -> Self {
-        Self::new()
+        Self::new(ViewSwitchMessage::Albums)
     }
 }
 
@@ -289,11 +291,8 @@ impl Library {
         cx.new(|cx| {
             let switcher_model = cx.global::<Models>().switcher_model.clone();
             let scroll_state = ScrollStateStorage::default();
-            let view = LibraryView::Album(AlbumView::new(
-                cx,
-                switcher_model.clone(),
-                scroll_state.album_view_scroll,
-            ));
+            let initial_message = switcher_model.read(cx).current();
+            let view = make_view(&initial_message, cx, &switcher_model, &scroll_state);
 
             cx.subscribe(
                 &switcher_model,

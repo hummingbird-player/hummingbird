@@ -12,7 +12,10 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 
 use crate::{
-    library::{db::LikedTrackSortMethod, scan::ScanEvent},
+    library::{
+        db::{LibraryAccess, LikedTrackSortMethod},
+        scan::ScanEvent,
+    },
     media::metadata::Metadata,
     playback::{
         events::RepeatState,
@@ -25,12 +28,13 @@ use crate::{
     },
     settings::{
         SettingsGlobal,
+        interface::StartupLibraryView,
         storage::{
             DEFAULT_LYRICS_HEIGHT, DEFAULT_QUEUE_WIDTH, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_WIDTH,
             StorageData, TableSettings,
         },
     },
-    ui::{app::get_dirs, data::Decode},
+    ui::{app::get_dirs, data::Decode, library::ViewSwitchMessage},
 };
 
 // yes this looks a little silly
@@ -142,6 +146,33 @@ pub enum PlaylistEvent {
 
 impl EventEmitter<PlaylistEvent> for PlaylistInfoTransfer {}
 
+fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitchMessage {
+    match startup_view {
+        StartupLibraryView::Albums => ViewSwitchMessage::Albums,
+        StartupLibraryView::Artists => ViewSwitchMessage::Artists,
+        StartupLibraryView::Tracks => ViewSwitchMessage::Tracks,
+        StartupLibraryView::LikedSongs => match cx.get_all_playlists() {
+            Ok(playlists) => playlists
+                .iter()
+                .find(|playlist| playlist.is_liked_songs())
+                .map(|playlist| ViewSwitchMessage::Playlist(playlist.id))
+                .unwrap_or_else(|| {
+                    warn!(
+                        "Liked Songs startup view selected but playlist was not found, defaulting to Albums"
+                    );
+                    ViewSwitchMessage::Albums
+                }),
+            Err(error) => {
+                warn!(
+                    ?error,
+                    "Liked Songs startup view selected but playlists could not be loaded, defaulting to Albums"
+                );
+                ViewSwitchMessage::Albums
+            }
+        },
+    }
+}
+
 pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
     debug!("Building models");
     let metadata: Entity<Metadata> = cx.new(|_| Metadata::default());
@@ -240,7 +271,16 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
     })
     .detach();
 
-    let switcher_model = cx.new(|_| NavigationHistory::new());
+    let startup_view = resolve_startup_view(
+        cx,
+        cx.global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .startup_library_view,
+    );
+
+    let switcher_model = cx.new(|_| NavigationHistory::new(startup_view));
 
     let sidebar_width: Entity<Pixels> = cx.new(|_| {
         if storage_data.sidebar_width > 0.0 {

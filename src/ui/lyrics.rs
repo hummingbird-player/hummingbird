@@ -168,7 +168,8 @@ impl Render for Lyrics {
                         let emphasis = self.line_emphasis_for(idx);
                         let is_active = emphasis > 0.0 || Some(idx) == active_line;
                         let text_color = lerp_color(muted, normal, emphasis);
-                        let font_size = lerp(LYRICS_BASE_TEXT_SIZE, LYRICS_ACTIVE_TEXT_SIZE, emphasis);
+                        let font_size =
+                            lerp(LYRICS_BASE_TEXT_SIZE, LYRICS_ACTIVE_TEXT_SIZE, emphasis);
                         let width_fraction = font_size / LYRICS_ACTIVE_TEXT_SIZE;
                         div()
                             .id(("lyric", idx))

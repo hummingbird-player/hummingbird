@@ -216,6 +216,7 @@ pub fn run() -> anyhow::Result<()> {
 
             setup_theme(cx, data_dir.join("theme.json"));
             setup_settings(cx, data_dir.join("settings.json"));
+            cx.set_global(Pool(pool.clone()));
 
             build_models(
                 cx,
@@ -246,7 +247,6 @@ pub fn run() -> anyhow::Result<()> {
             scan_interface.start_broadcast(cx);
 
             cx.set_global(scan_interface);
-            cx.set_global(Pool(pool));
 
             register_actions(cx);
 

@@ -141,9 +141,7 @@ impl Render for PlaylistList {
         for playlist in &*self.playlists {
             let pl_id = playlist.id;
 
-            let playlist_label: String = if playlist.playlist_type == PlaylistType::System
-                && playlist.name.0.as_str() == "Liked Songs"
-            {
+            let playlist_label: String = if playlist.is_liked_songs() {
                 tr!("LIKED_SONGS", "Liked Songs").to_string()
             } else {
                 playlist.name.to_string()

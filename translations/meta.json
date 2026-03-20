@@ -85,7 +85,7 @@
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:412",
+    "definedIn": "src/ui/library.rs:411",
     "plural": false,
     "description": null
   },
@@ -97,7 +97,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:413",
+    "definedIn": "src/ui/library.rs:412",
     "plural": false,
     "description": null
   },
@@ -193,7 +193,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:295",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:293",
     "plural": false,
     "description": null
   },
@@ -283,7 +283,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:304",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:302",
     "plural": false,
     "description": null
   },
@@ -295,7 +295,7 @@
   },
   "DELETE_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:210",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:208",
     "plural": false,
     "description": null
   },
@@ -361,49 +361,61 @@
   },
   "INTERFACE_FULL_WIDTH_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:150",
+    "definedIn": "src/ui/settings/interface.rs:201",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:153",
+    "definedIn": "src/ui/settings/interface.rs:204",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:199",
+    "definedIn": "src/ui/settings/interface.rs:250",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:202",
+    "definedIn": "src/ui/settings/interface.rs:253",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_STARTUP_LIBRARY_VIEW": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:189",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:192",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:177",
+    "definedIn": "src/ui/settings/interface.rs:228",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:180",
+    "definedIn": "src/ui/settings/interface.rs:231",
     "plural": false,
     "description": null
   },
   "LANGUAGE": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:138",
+    "definedIn": "src/ui/settings/interface.rs:177",
     "plural": false,
     "description": null
   },
   "LANGUAGE_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:140",
+    "definedIn": "src/ui/settings/interface.rs:179",
     "plural": false,
     "description": null
   },
@@ -439,13 +451,13 @@
   },
   "LIKED_SONGS": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:147",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:145",
     "plural": false,
     "description": null
   },
   "NEW_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:253",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:251",
     "plural": false,
     "description": null
   },
@@ -517,7 +529,7 @@
   },
   "PLAYLIST_TRACK_COUNT": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:183",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:181",
     "plural": true,
     "description": null
   },

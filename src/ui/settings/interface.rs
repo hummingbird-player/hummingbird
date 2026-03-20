@@ -9,7 +9,7 @@ use crate::{
         SettingsGlobal,
         interface::{
             DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
-            clamp_grid_min_item_width,
+            StartupLibraryView, clamp_grid_min_item_width,
         },
         save_settings,
     },
@@ -58,9 +58,19 @@ fn get_available_languages() -> Vec<LanguageOption> {
     ]
 }
 
+fn startup_library_view_options() -> Vec<DropdownOption> {
+    vec![
+        DropdownOption::new("albums", tr!("ALBUMS")),
+        DropdownOption::new("artists", tr!("ARTISTS")),
+        DropdownOption::new("tracks", tr!("TRACKS")),
+        DropdownOption::new("liked_songs", tr!("LIKED_SONGS")),
+    ]
+}
+
 pub struct InterfaceSettings {
     settings: Entity<crate::settings::Settings>,
     language_dropdown: Entity<DropdownState>,
+    startup_library_view_dropdown: Entity<DropdownState>,
 }
 
 impl InterfaceSettings {
@@ -79,10 +89,27 @@ impl InterfaceSettings {
             .position(|l| l.code == interface.language)
             .unwrap_or(0);
 
+        let startup_view_options = startup_library_view_options();
+        let startup_view_selected_index = startup_view_options
+            .iter()
+            .position(|option| option.id.as_ref() == interface.startup_library_view.as_str())
+            .unwrap_or(0);
+
         let focus_handle = cx.focus_handle();
         let language_dropdown = dropdown(cx, dropdown_options, selected_index, focus_handle);
+        let startup_view_focus_handle = cx.focus_handle();
+        let startup_library_view_dropdown = dropdown(
+            cx,
+            startup_view_options,
+            startup_view_selected_index,
+            startup_view_focus_handle,
+        );
 
         language_dropdown.update(cx, |state, _| {
+            state.set_width(px(250.0));
+        });
+
+        startup_library_view_dropdown.update(cx, |state, _| {
             state.set_width(px(250.0));
         });
 
@@ -98,11 +125,23 @@ impl InterfaceSettings {
             });
         });
 
+        let settings_for_handler = settings.clone();
+        startup_library_view_dropdown.update(cx, |state, _| {
+            state.set_on_change(move |_idx, option, _window, cx| {
+                settings_for_handler.update(cx, |settings, cx| {
+                    settings.interface.startup_library_view =
+                        StartupLibraryView::from_str(option.id.as_ref());
+                    save_settings(cx, settings);
+                });
+            });
+        });
+
         cx.new(|cx| {
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
             Self {
                 settings,
                 language_dropdown,
+                startup_library_view_dropdown,
             }
         })
     }
@@ -143,6 +182,18 @@ impl Render for InterfaceSettings {
                     ))
                     .w_full()
                     .child(self.language_dropdown.clone()),
+            )
+            .child(
+                label(
+                    "startup-library-view-selector",
+                    tr!("INTERFACE_STARTUP_LIBRARY_VIEW", "Default startup view"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT",
+                    "Choose which library page opens when Hummingbird launches."
+                ))
+                .w_full()
+                .child(self.startup_library_view_dropdown.clone()),
             )
             .child({
                 let full_width_label = label(

@@ -4,6 +4,36 @@ pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 192.0;
 pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 128.0;
 pub const MAX_GRID_MIN_ITEM_WIDTH: f32 = 384.0;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupLibraryView {
+    #[default]
+    Albums,
+    Artists,
+    Tracks,
+    LikedSongs,
+}
+
+impl StartupLibraryView {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Albums => "albums",
+            Self::Artists => "artists",
+            Self::Tracks => "tracks",
+            Self::LikedSongs => "liked_songs",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "artists" => Self::Artists,
+            "tracks" => Self::Tracks,
+            "liked_songs" => Self::LikedSongs,
+            _ => Self::Albums,
+        }
+    }
+}
+
 fn default_grid_min_item_width() -> f32 {
     DEFAULT_GRID_MIN_ITEM_WIDTH
 }
@@ -24,6 +54,8 @@ pub struct InterfaceSettings {
     pub full_width_library: bool,
     #[serde(default)]
     pub two_column_library: bool,
+    #[serde(default)]
+    pub startup_library_view: StartupLibraryView,
     #[serde(default = "default_grid_min_item_width")]
     pub grid_min_item_width: f32,
 }
@@ -44,6 +76,7 @@ impl Default for InterfaceSettings {
             language: String::new(),
             full_width_library: false,
             two_column_library: false,
+            startup_library_view: StartupLibraryView::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
         }
     }

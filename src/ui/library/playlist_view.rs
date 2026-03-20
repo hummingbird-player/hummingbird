@@ -322,15 +322,11 @@ impl Render for PlaylistView {
                                     .pb(px(10.0))
                                     .w_full()
                                     .text_ellipsis()
-                                    .child(
-                                        if self.playlist.playlist_type == PlaylistType::System
-                                            && self.playlist.name.0.as_str() == "Liked Songs"
-                                        {
-                                            div().child(tr!("LIKED_SONGS"))
-                                        } else {
-                                            div().child(self.playlist.name.clone())
-                                        },
-                                    ),
+                                    .child(if self.playlist.is_liked_songs() {
+                                        div().child(tr!("LIKED_SONGS"))
+                                    } else {
+                                        div().child(self.playlist.name.clone())
+                                    }),
                             )
                             .child(playback_controls(
                                 "playlist",
