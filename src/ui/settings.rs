@@ -88,24 +88,9 @@ impl Render for SettingsWindow {
         let scroll_handle = self.scroll_handle.clone();
 
         let content = match active {
-            SettingsSection::Interface(interface) => div()
-                .flex()
-                .flex_col()
-                .gap(px(12.0))
-                .child(interface.clone())
-                .into_any_element(),
-            SettingsSection::Library(library) => div()
-                .flex()
-                .flex_col()
-                .gap(px(12.0))
-                .child(library.clone())
-                .into_any_element(),
-            SettingsSection::Playback(playback) => div()
-                .flex()
-                .flex_col()
-                .gap(px(12.0))
-                .child(playback.clone())
-                .into_any_element(),
+            SettingsSection::Interface(interface) => interface.clone().into_any_element(),
+            SettingsSection::Library(library) => library.clone().into_any_element(),
+            SettingsSection::Playback(playback) => playback.clone().into_any_element(),
         };
 
         window_chrome(

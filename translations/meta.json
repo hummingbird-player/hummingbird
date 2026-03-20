@@ -355,7 +355,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:136",
+    "definedIn": "src/ui/settings.rs:121",
     "plural": false,
     "description": null
   },
@@ -415,7 +415,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:150",
+    "definedIn": "src/ui/settings.rs:135",
     "plural": false,
     "description": null
   },
@@ -481,7 +481,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:163",
+    "definedIn": "src/ui/settings.rs:148",
     "plural": false,
     "description": null
   },
