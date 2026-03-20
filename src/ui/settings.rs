@@ -119,10 +119,15 @@ impl Render for SettingsWindow {
                                 sidebar_item("interface")
                                     .icon(WORLD)
                                     .child(tr!("INTERFACE", "Interface"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.active =
-                                            SettingsSection::Interface(InterfaceSettings::new(cx));
-                                        cx.notify();
+                                    .on_click(cx.listener({
+                                        let scroll_handle = self.scroll_handle.clone();
+                                        move |this, _, _, cx| {
+                                            this.active = SettingsSection::Interface(
+                                                InterfaceSettings::new(cx),
+                                            );
+                                            scroll_handle.scroll_to_top_of_item(0);
+                                            cx.notify();
+                                        }
                                     }))
                                     .when(
                                         matches!(active, SettingsSection::Interface(_)),
@@ -133,11 +138,15 @@ impl Render for SettingsWindow {
                                 sidebar_item("library")
                                     .icon(BOOKS)
                                     .child(tr!("LIBRARY", "Library"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.active =
-                                            SettingsSection::Library(LibrarySettings::new(cx));
-                                        cx.notify();
-                                    }))
+                                    .on_click({
+                                        let scroll_handle = self.scroll_handle.clone();
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.active =
+                                                SettingsSection::Library(LibrarySettings::new(cx));
+                                            scroll_handle.scroll_to_top_of_item(0);
+                                            cx.notify();
+                                        })
+                                    })
                                     .when(matches!(active, SettingsSection::Library(_)), |this| {
                                         this.active()
                                     }),
@@ -146,11 +155,16 @@ impl Render for SettingsWindow {
                                 sidebar_item("playback")
                                     .icon(PLAY)
                                     .child(tr!("PLAYBACK", "Playback"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.active =
-                                            SettingsSection::Playback(PlaybackSettings::new(cx));
-                                        cx.notify();
-                                    }))
+                                    .on_click({
+                                        let scroll_handle = self.scroll_handle.clone();
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.active = SettingsSection::Playback(
+                                                PlaybackSettings::new(cx),
+                                            );
+                                            scroll_handle.scroll_to_top_of_item(0);
+                                            cx.notify();
+                                        })
+                                    })
                                     .when(matches!(active, SettingsSection::Playback(_)), |this| {
                                         this.active()
                                     }),
