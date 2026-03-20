@@ -90,10 +90,7 @@ impl InterfaceSettings {
             .unwrap_or(0);
 
         let startup_view_options = startup_library_view_options();
-        let startup_view_selected_index = startup_view_options
-            .iter()
-            .position(|option| option.id.as_ref() == interface.startup_library_view.as_str())
-            .unwrap_or(0);
+        let startup_view_selected_index = interface.startup_library_view.index();
 
         let focus_handle = cx.focus_handle();
         let language_dropdown = dropdown(cx, dropdown_options, selected_index, focus_handle);
@@ -127,10 +124,9 @@ impl InterfaceSettings {
 
         let settings_for_handler = settings.clone();
         startup_library_view_dropdown.update(cx, |state, _| {
-            state.set_on_change(move |_idx, option, _window, cx| {
+            state.set_on_change(move |idx, _option, _window, cx| {
                 settings_for_handler.update(cx, |settings, cx| {
-                    settings.interface.startup_library_view =
-                        StartupLibraryView::from_str(option.id.as_ref());
+                    settings.interface.startup_library_view = StartupLibraryView::from_index(idx);
                     save_settings(cx, settings);
                 });
             });

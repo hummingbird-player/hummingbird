@@ -15,22 +15,19 @@ pub enum StartupLibraryView {
 }
 
 impl StartupLibraryView {
-    pub fn as_str(self) -> &'static str {
+    pub const ALL: [Self; 4] = [Self::Albums, Self::Artists, Self::Tracks, Self::LikedSongs];
+
+    pub fn index(self) -> usize {
         match self {
-            Self::Albums => "albums",
-            Self::Artists => "artists",
-            Self::Tracks => "tracks",
-            Self::LikedSongs => "liked_songs",
+            Self::Albums => 0,
+            Self::Artists => 1,
+            Self::Tracks => 2,
+            Self::LikedSongs => 3,
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
-        match value {
-            "artists" => Self::Artists,
-            "tracks" => Self::Tracks,
-            "liked_songs" => Self::LikedSongs,
-            _ => Self::Albums,
-        }
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
     }
 }
 
