@@ -4,9 +4,10 @@ mod playback;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowDecorations, WindowKind, WindowOptions, div, prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions, div,
+    prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -14,6 +15,7 @@ use crate::{
     ui::{
         components::{
             icons::{BOOKS, PLAY, WORLD},
+            scrollbar::{RightPad, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
             window_header::header,
@@ -66,6 +68,7 @@ enum SettingsSection {
 
 struct SettingsWindow {
     active: SettingsSection,
+    scroll_handle: ScrollHandle,
 }
 
 impl SettingsWindow {
@@ -73,6 +76,7 @@ impl SettingsWindow {
         let interface = interface::InterfaceSettings::new(cx);
         cx.new(|_| Self {
             active: SettingsSection::Interface(interface),
+            scroll_handle: ScrollHandle::new(),
         })
     }
 }
@@ -81,6 +85,7 @@ impl Render for SettingsWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let active = &self.active;
+        let scroll_handle = self.scroll_handle.clone();
 
         let content = match active {
             SettingsSection::Interface(interface) => div()
@@ -108,8 +113,9 @@ impl Render for SettingsWindow {
                 div()
                     .flex()
                     .flex_row()
-                    .flex_shrink_0()
+                    .flex_shrink()
                     .flex_grow()
+                    .min_h(px(0.0))
                     .child(
                         sidebar()
                             .width(DEFAULT_SIDEBAR_WIDTH)
@@ -167,13 +173,27 @@ impl Render for SettingsWindow {
                     )
                     .child(
                         div()
+                            .relative()
                             .flex()
-                            .flex_col()
                             .flex_grow()
                             .flex_shrink()
+                            .min_h(px(0.0))
                             .overflow_hidden()
-                            .p(px(16.0))
-                            .child(content),
+                            .child(
+                                div()
+                                    .id("settings-content-scroll")
+                                    .w_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&scroll_handle)
+                                    .flex_shrink()
+                                    .overflow_x_hidden()
+                                    .child(div().w_full().p(px(16.0)).child(content)),
+                            )
+                            .child(floating_scrollbar(
+                                "settings-scrollbar",
+                                scroll_handle,
+                                RightPad::Pad,
+                            )),
                     ),
             ),
         )
