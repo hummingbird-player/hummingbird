@@ -1,6 +1,6 @@
 use cntp_i18n::tr;
-use gpui::{App, KeyBinding, actions};
-use tracing::{debug, info};
+use gpui::{App, AppContext, KeyBinding, actions};
+use tracing::{debug, info, warn};
 
 use crate::{
     library::{db::LibraryAccess, scan::ScanInterface},
@@ -14,7 +14,7 @@ use crate::{
 
 use super::models::{Models, PlaybackInfo};
 
-actions!(hummingbird, [Quit, About, Search, Settings]);
+actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
 actions!(player, [PlayPause, Next, Previous, ShuffleAll]);
 actions!(scan, [ForceScan, Scan]);
 actions!(hummingbird, [HideSelf, HideOthers, ShowAll]);
@@ -23,6 +23,7 @@ actions!(help, [Discord, Patreon, Issues]);
 pub fn register_actions(cx: &mut App) {
     debug!("registering actions");
     cx.on_action(quit);
+    cx.on_action(close_window);
     cx.on_action(play_pause);
     cx.on_action(next);
     cx.on_action(previous);
@@ -56,6 +57,11 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-f", Search, None)]);
     cx.bind_keys([KeyBinding::new("secondary-shift-p", OpenPalette, None)]);
     cx.bind_keys([KeyBinding::new("secondary-,", Settings, None)]);
+    cx.bind_keys([KeyBinding::new(
+        "escape",
+        CloseWindow,
+        Some("SettingsWindow && !TextInput"),
+    )]);
 
     cx.bind_keys([KeyBinding::new("alt-shift-s", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("shift-s", Scan, Some("!TextInput"))]);
@@ -141,6 +147,18 @@ pub fn register_actions(cx: &mut App) {
 fn quit(_: &Quit, cx: &mut App) {
     info!("Quitting...");
     cx.quit();
+}
+
+fn close_window(_: &CloseWindow, cx: &mut App) {
+    cx.defer(|cx| {
+        let Some(window_id) = cx.active_window() else {
+            warn!("No active window to close");
+            return;
+        };
+        _ = cx.update_window(window_id, |_, window, _| {
+            window.remove_window();
+        })
+    });
 }
 
 fn play_pause(_: &PlayPause, cx: &mut App) {
