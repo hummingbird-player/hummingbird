@@ -56,6 +56,7 @@ struct WindowShadow {
     pub show_queue: Entity<bool>,
     pub show_lyrics: Entity<bool>,
     pub show_about: Entity<bool>,
+    pub about_focus: FocusHandle,
     pub missing_folder_dialog: Entity<MissingFolderDialog>,
     pub palette: Entity<CommandPalette>,
     pub image_cache: Entity<HummingbirdImageCache>,
@@ -113,7 +114,7 @@ impl Render for WindowShadow {
                     .child(self.search.clone())
                     .child(self.palette.clone())
                     .when(show_about, |this| {
-                        this.child(about_dialog(&|_, cx| {
+                        this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
                             let show_about = cx.global::<Models>().show_about.clone();
                             show_about.write(cx, false);
                         }))
@@ -364,6 +365,7 @@ pub fn run() -> anyhow::Result<()> {
                         let show_queue = cx.new(|_| true);
                         let show_lyrics = cx.new(|_| false);
                         let show_about = cx.global::<Models>().show_about.clone();
+                        let about_focus = cx.focus_handle();
 
                         cx.observe(&show_about, |_, _, cx| {
                             cx.notify();
@@ -383,6 +385,7 @@ pub fn run() -> anyhow::Result<()> {
                             show_queue,
                             show_lyrics,
                             show_about,
+                            about_focus,
                             missing_folder_dialog: MissingFolderDialog::new(cx),
                             palette,
                             // use a really small global image cache

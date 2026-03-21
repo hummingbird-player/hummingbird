@@ -7,55 +7,55 @@
   },
   "ABOUT_COPYRIGHT": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:110",
+    "definedIn": "src/ui/about.rs:113",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_AFTER_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:138",
+    "definedIn": "src/ui/about.rs:141",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_BEFORE_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:118",
+    "definedIn": "src/ui/about.rs:121",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:134",
+    "definedIn": "src/ui/about.rs:137",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_BUG": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:87",
+    "definedIn": "src/ui/about.rs:90",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_CODE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:103",
+    "definedIn": "src/ui/about.rs:106",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_END": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:107",
+    "definedIn": "src/ui/about.rs:110",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_MIDDLE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:89",
+    "definedIn": "src/ui/about.rs:92",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_START": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:67",
+    "definedIn": "src/ui/about.rs:70",
     "plural": false,
     "description": "Because the UI framework we use doesn't support inline elements, we have to use a seperate string for each part of this text. Use a zero-width space (U+200B) if a part isn't needed."
   },

@@ -1,6 +1,6 @@
 use cntp_i18n::tr;
 use gpui::{
-    FontWeight, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    FocusHandle, FontWeight, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     StatefulInteractiveElement, Styled, div, img, px,
 };
 
@@ -16,14 +16,17 @@ const LICENSE_URL: &str = "https://choosealicense.com/licenses/apache-2.0/";
 #[derive(IntoElement)]
 pub struct AboutDialog {
     on_exit: &'static OnExitHandler,
+    focus_handle: FocusHandle,
 }
 
 impl RenderOnce for AboutDialog {
-    fn render(self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        self.focus_handle.focus(window, cx);
         let theme = cx.global::<Theme>();
 
         modal().on_exit(self.on_exit).child(
             div()
+                .track_focus(&self.focus_handle)
                 .p(px(20.0))
                 .pb(px(18.0))
                 .flex()
@@ -144,6 +147,9 @@ impl RenderOnce for AboutDialog {
     }
 }
 
-pub fn about_dialog(on_exit: &'static OnExitHandler) -> AboutDialog {
-    AboutDialog { on_exit }
+pub fn about_dialog(focus_handle: FocusHandle, on_exit: &'static OnExitHandler) -> AboutDialog {
+    AboutDialog {
+        on_exit,
+        focus_handle,
+    }
 }
