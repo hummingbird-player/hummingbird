@@ -16,7 +16,10 @@ use crate::{
         db::create_pool,
         scan::{ScanEvent, ScanInterface, start_scanner},
     },
-    playback::{interface::PlaybackInterface, queue::QueueItemData, thread::PlaybackThread},
+    playback::{
+        interface::PlaybackInterface, queue::QueueItemData,
+        queue_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
+    },
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
         SettingsGlobal, setup_settings,
@@ -40,7 +43,7 @@ use super::{
     global_actions::register_actions,
     header::Header,
     library::Library,
-    models::{self, Models, PlaybackInfo, build_models},
+    models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     right_sidebar::RightSidebar,
     search::SearchView,
     theme::setup_theme,
@@ -193,32 +196,38 @@ pub fn run() -> anyhow::Result<()> {
             find_fonts(cx).expect("unable to load fonts");
 
             let storage = Storage::new(data_dir.join("app_data.json"));
-
-            let queue_file = data_dir.join("queue.jsonl");
-            let initial_queue =
-                crate::playback::queue_storage::QueueStorageWorker::load(&queue_file);
             let storage_data = storage.load_or_default();
 
-            let mut initial_position = None;
-            if let Some(track) = storage_data.current_track.as_ref()
-                && let Some(pos) = initial_queue
-                    .iter()
-                    .position(|item| item.get_path() == track.get_path())
-            {
-                initial_position = Some(pos);
-            }
+            let session_file = data_dir.join("playback_session.json");
+            let playback_session = PlaybackSessionStorageWorker::load(&session_file);
+            let initial_position = playback_session
+                .queue_position
+                .filter(|position| *position < playback_session.queue.len());
+            let initial_track = initial_position
+                .and_then(|position| playback_session.queue.get(position))
+                .map(|item| CurrentTrack::new(item.get_path().clone()));
 
-            let queue: Arc<RwLock<Vec<QueueItemData>>> = Arc::new(RwLock::new(initial_queue));
+            let queue: Arc<RwLock<Vec<QueueItemData>>> =
+                Arc::new(RwLock::new(playback_session.queue.clone()));
 
             let (queue_tx, queue_rx) = tokio::sync::mpsc::unbounded_channel();
-            crate::RUNTIME.spawn(
-                crate::playback::queue_storage::QueueStorageWorker::new(queue_file, queue_rx).run(),
-            );
+            crate::RUNTIME.spawn(PlaybackSessionStorageWorker::new(session_file, queue_rx).run());
 
             setup_theme(cx, data_dir.join("theme.json"));
             setup_settings(cx, data_dir.join("settings.json"));
             cx.set_global(Pool(pool.clone()));
 
+            let settings = cx.global::<SettingsGlobal>().model.read(cx);
+            let language = settings.interface.language.clone();
+            let playback_settings = settings.playback.clone();
+            let scanning_settings = settings.scanning.clone();
+            let initial_repeat = if playback_settings.always_repeat
+                && playback_session.repeat == crate::playback::events::RepeatState::NotRepeating
+            {
+                crate::playback::events::RepeatState::Repeating
+            } else {
+                playback_session.repeat
+            };
             build_models(
                 cx,
                 models::Queue {
@@ -226,6 +235,9 @@ pub fn run() -> anyhow::Result<()> {
                     position: initial_position.unwrap_or(0),
                 },
                 &storage_data,
+                initial_track,
+                playback_session.shuffle,
+                initial_repeat,
             );
 
             input::bind_actions(cx);
@@ -234,16 +246,11 @@ pub fn run() -> anyhow::Result<()> {
             dropdown::bind_actions(cx);
             popover::bind_actions(cx);
 
-            let settings = cx.global::<SettingsGlobal>().model.read(cx);
-
-            if !settings.interface.language.is_empty() {
-                I18N_MANAGER.write().unwrap().locale =
-                    Locale::new_from_locale_identifier(settings.interface.language.clone());
+            if !language.is_empty() {
+                I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
             }
 
-            let playback_settings = settings.playback.clone();
-            let mut scan_interface: ScanInterface =
-                start_scanner(pool.clone(), settings.scanning.clone());
+            let mut scan_interface: ScanInterface = start_scanner(pool.clone(), scanning_settings);
             scan_interface.scan();
             scan_interface.start_broadcast(cx);
 
@@ -262,21 +269,20 @@ pub fn run() -> anyhow::Result<()> {
 
             let last_volume = *cx.global::<PlaybackInfo>().volume.read(cx);
 
-            let mut playback_interface: PlaybackInterface =
-                PlaybackThread::start(queue.clone(), playback_settings, last_volume, queue_tx);
+            let mut playback_interface: PlaybackInterface = PlaybackThread::start(
+                queue.clone(),
+                playback_settings,
+                last_volume,
+                playback_session,
+                queue_tx,
+            );
             playback_interface.start_broadcast(cx);
 
-            if !parse_args_and_prepare(cx, &playback_interface) {
-                if let Some(pos) = initial_position {
-                    playback_interface.jump_unshuffled(pos);
-                    playback_interface.pause();
-                } else if let Some(track) = storage_data.current_track.as_ref() {
-                    playback_interface.open(track.get_path().clone());
-                    playback_interface.pause();
-                } else if !queue.read().unwrap().is_empty() {
-                    playback_interface.jump_unshuffled(0);
-                    playback_interface.pause();
-                }
+            if !parse_args_and_prepare(cx, &playback_interface)
+                && let Some(pos) = initial_position
+            {
+                playback_interface.jump(pos);
+                playback_interface.pause();
             }
             cx.set_global(playback_interface);
 

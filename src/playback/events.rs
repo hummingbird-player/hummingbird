@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
+
 use crate::{media::metadata::Metadata, settings::playback::PlaybackSettings};
 
 use super::{queue::QueueItemData, thread::PlaybackState};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize)]
 pub enum RepeatState {
     NotRepeating,
     Repeating,

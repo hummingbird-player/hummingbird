@@ -173,7 +173,14 @@ fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitc
     }
 }
 
-pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
+pub fn build_models(
+    cx: &mut App,
+    queue: Queue,
+    storage_data: &StorageData,
+    initial_track: Option<CurrentTrack>,
+    initial_shuffle: bool,
+    initial_repeat: RepeatState,
+) {
     debug!("Building models");
     let metadata: Entity<Metadata> = cx.new(|_| Metadata::default());
     let albumart: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
@@ -338,18 +345,9 @@ pub fn build_models(cx: &mut App, queue: Queue, storage_data: &StorageData) {
     let position: Entity<u64> = cx.new(|_| 0);
     let duration: Entity<u64> = cx.new(|_| 0);
     let playback_state: Entity<PlaybackState> = cx.new(|_| PlaybackState::Stopped);
-    let current_track: Entity<Option<CurrentTrack>> =
-        cx.new(|_| storage_data.current_track.clone());
-    let shuffling: Entity<bool> = cx.new(|_| false);
-    let repeating: Entity<RepeatState> = cx.new(|cx| {
-        let settings = cx.global::<SettingsGlobal>().model.read(cx);
-
-        if settings.playback.always_repeat {
-            RepeatState::Repeating
-        } else {
-            RepeatState::NotRepeating
-        }
-    });
+    let current_track: Entity<Option<CurrentTrack>> = cx.new(|_| initial_track);
+    let shuffling: Entity<bool> = cx.new(|_| initial_shuffle);
+    let repeating: Entity<RepeatState> = cx.new(|_| initial_repeat);
     let volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
 
