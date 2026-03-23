@@ -275,17 +275,24 @@ pub struct ThemeOptionsGlobal {
 impl Global for ThemeOptionsGlobal {}
 
 pub fn create_theme(path: &Path) -> Theme {
-    if let Ok(file) = File::open(path) {
-        let reader = BufReader::new(file);
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) => {
+            warn!("Theme file could not be opened, using default: {:?}", e);
+            return Theme::default();
+        }
+    };
 
-        if let Ok(theme) = serde_json::from_reader(reader) {
-            theme
-        } else {
-            warn!("Theme file exists but it could not be loaded, using default");
+    let reader = BufReader::new(file);
+    match serde_json::from_reader(reader) {
+        Ok(theme) => theme,
+        Err(e) => {
+            warn!(
+                "Theme file exists but it could not be loaded, using default: {:?}",
+                e
+            );
             Theme::default()
         }
-    } else {
-        Theme::default()
     }
 }
 
@@ -513,7 +520,7 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
                                     notify::EventKind::Create(_)
                                     | notify::EventKind::Modify(_)
                                     | notify::EventKind::Remove(_) => {
-                                        info!("Theme changed, updating");
+                                        info!("Theme changed, updating...");
                                         let theme = load_selected_theme(
                                             &data_dir,
                                             selected_theme.as_deref(),

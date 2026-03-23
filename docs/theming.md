@@ -51,7 +51,8 @@ If something goes wrong:
 - Broken theme files use the built-in default
 - Missing theme files use the built-in default
 
-If your colors do not appear to change, check that your theme file is valid JSON.
+If your colors do not appear to change, check that your theme file is valid JSON. 
+In cases where it is not, a warning with an error will be printed to the console.
 
 Colors are specified as CSS-style hex codes (`#ABCDEF`). If a color is not
 specified, the color from the default theme is used.
