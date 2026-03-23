@@ -68,6 +68,15 @@ impl ScrollableHandle {
             }
         }
     }
+
+    /// Returns true if the scrollbar should be visible given current content/viewport sizes.
+    /// This checks if content height exceeds viewport height.
+    pub fn should_draw_scrollbar(&self) -> bool {
+        let viewport_height: f32 = self.bounds().size.height.into();
+        let total_content_height = self.total_content_height();
+        let max_offset = self.max_offset().y;
+        viewport_height > 0.0 && total_content_height > viewport_height && max_offset > px(0.0)
+    }
 }
 
 impl From<ScrollHandle> for ScrollableHandle {
@@ -205,11 +214,6 @@ impl Element for Scrollbar {
             return;
         };
 
-        let viewport_height = handle.bounds().size.height.into();
-        if viewport_height <= 0.0 {
-            return;
-        }
-
         // current offset is negative
         let raw_offset = handle.offset().y;
         let scroll_position = -raw_offset;
@@ -221,10 +225,8 @@ impl Element for Scrollbar {
             px(0.0)
         };
 
-        let total_content_height = handle.total_content_height();
-
         // dont show if there's nothing to scroll
-        if total_content_height <= viewport_height || max_offset <= px(0.0) {
+        if !handle.should_draw_scrollbar() {
             return;
         }
 
@@ -237,6 +239,8 @@ impl Element for Scrollbar {
         let inner_bounds = bounds.extend(pixel_edges);
 
         // calculate thumb position
+        let viewport_height: f32 = handle.bounds().size.height.into();
+        let total_content_height = handle.total_content_height();
         let thumb_ratio = viewport_height / total_content_height;
         let min_thumb_height = px(20.0);
         let thumb_height = (inner_bounds.size.height * thumb_ratio).max(min_thumb_height);
@@ -261,10 +265,7 @@ impl Element for Scrollbar {
             },
         };
 
-        // Handle mouse interactions and visibility state
-        let Some(scroll_handle) = self.scroll_handle.as_ref() else {
-            return;
-        };
+        // Handle mouse interactions and visibility state;
         let on_interaction = self.on_interaction.clone();
 
         let hitbox_for_events = hitbox;
@@ -292,8 +293,8 @@ impl Element for Scrollbar {
                 let on_interaction_up = on_interaction.clone();
                 let on_interaction_scroll = on_interaction.clone();
 
-                let scroll_handle_down = scroll_handle.clone();
-                let scroll_handle_move = scroll_handle.clone();
+                let scroll_handle_down = handle.clone();
+                let scroll_handle_move = handle.clone();
 
                 let inner_bounds_down = inner_bounds;
                 let inner_bounds_move = inner_bounds;

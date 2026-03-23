@@ -4,6 +4,7 @@ use crate::{
         interface::PlaybackInterface,
         queue::{DataSource, QueueItemData},
     },
+    settings::SettingsGlobal,
     ui::{
         availability::is_track_path_available,
         components::{
@@ -48,6 +49,7 @@ pub struct QueueItem {
     current: usize,
     idx: usize,
     drag_drop_manager: Entity<DragDropListManager>,
+    scroll_handle: UniformListScrollHandle,
     add_to: Option<Entity<AddToPlaylist>>,
     show_add_to: Entity<bool>,
 }
@@ -58,6 +60,7 @@ impl QueueItem {
         item: Option<QueueItemData>,
         idx: usize,
         drag_drop_manager: Entity<DragDropListManager>,
+        scroll_handle: UniformListScrollHandle,
     ) -> Entity<Self> {
         cx.new(move |cx| {
             cx.on_release(|m: &mut QueueItem, cx| {
@@ -74,7 +77,6 @@ impl QueueItem {
             .detach();
 
             let queue = cx.global::<Models>().queue.clone();
-
             cx.observe(&queue, |this: &mut QueueItem, queue, cx| {
                 this.current = queue.read(cx).position;
                 cx.notify();
@@ -105,6 +107,7 @@ impl QueueItem {
                 idx,
                 current: queue.read(cx).position,
                 drag_drop_manager,
+                scroll_handle,
                 add_to,
                 show_add_to,
             }
@@ -125,6 +128,13 @@ impl Render for QueueItem {
             .is_some_and(|queue_item| is_track_path_available(queue_item.get_path()));
 
         if let Some(item) = ui_data.as_ref() {
+            let scrollbar_always_visible = {
+                let settings = cx.global::<SettingsGlobal>();
+                let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+
+                settings.model.read(cx).interface.always_show_scrollbars
+                    && scroll_handle.should_draw_scrollbar()
+            };
             let is_current = self.current == self.idx;
             let album_art = item.image.as_ref().cloned();
             let idx = self.idx;
@@ -148,6 +158,9 @@ impl Render for QueueItem {
                         .gap(px(11.0))
                         .h(px(QUEUE_ITEM_HEIGHT))
                         .p(px(11.0))
+                        // add extra padding when the scrollbar is always drawn
+                        // 11px queue item pad + 4px scrollbar + 10px buffer
+                        .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
                         .when(is_available, |div| div.cursor_pointer())
                         .when(!is_available, |div| div.cursor_default().opacity(0.5))
                         .relative()
@@ -413,6 +426,7 @@ impl Render for Queue {
         let views_model = self.views_model.clone();
         let render_counter = self.render_counter.clone();
         let scroll_handle = self.scroll_handle.clone();
+        let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
         let is_dragging = self.drag_drop_manager.read(cx).state.is_dragging;
 
@@ -799,6 +813,7 @@ impl Render for Queue {
                                         }
 
                                         let drag_drop_manager = drag_drop_manager.clone();
+                                        let scroll_handle = item_scroll_handle.clone();
 
                                         div().child(create_or_retrieve_view(
                                             &views_model,
@@ -809,6 +824,7 @@ impl Render for Queue {
                                                     Some(item),
                                                     idx,
                                                     drag_drop_manager,
+                                                    scroll_handle,
                                                 )
                                             },
                                             cx,
