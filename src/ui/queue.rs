@@ -350,6 +350,8 @@ impl Queue {
             let render_counter = cx.new(|_| 0);
             let items = cx.global::<Models>().queue.clone();
             let initial_queue_position = items.read(cx).position;
+            let initial_has_current_track =
+                cx.global::<PlaybackInfo>().current_track.read(cx).is_some();
 
             let config = DragDropListConfig::new(QUEUE_LIST_ID, px(QUEUE_ITEM_HEIGHT));
             let drag_drop_manager = DragDropListManager::new(cx, config);
@@ -385,7 +387,7 @@ impl Queue {
                 drag_drop_manager,
                 last_queue_position: initial_queue_position,
                 queue_hovered: false,
-                follow_current_pending: false,
+                follow_current_pending: initial_has_current_track,
                 follow_frame_scheduled: false,
                 scroll_follow: SmoothScrollFollow::new(QUEUE_FOLLOW_ANIMATION_DURATION),
             }
