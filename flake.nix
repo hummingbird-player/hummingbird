@@ -50,8 +50,8 @@
             buildInputs = lib.flatten [
               (lib.optionals isLinux [
                 pkgs.libxkbcommon
-                pkgs.xorg.libxcb
-                pkgs.xorg.libX11
+                pkgs.libxcb
+                pkgs.libX11
                 pkgs.fontconfig
                 (pkgs.alsa-lib-with-plugins.override {
                   plugins = [pkgs.alsa-plugins pkgs.pipewire];
