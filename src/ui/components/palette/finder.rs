@@ -434,7 +434,8 @@ where
         let matches = self.get_matches();
         let curr_scroll = self.list_state.logical_scroll_top();
 
-        self.display_list = Self::build_display_list(&matches, &self.expanded_categories, self.query.is_empty());
+        self.display_list =
+            Self::build_display_list(&matches, &self.expanded_categories, self.query.is_empty());
 
         self.views_model = cx.new(|_| FxHashMap::default());
         self.render_counter = cx.new(|_| 0);
