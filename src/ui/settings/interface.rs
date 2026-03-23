@@ -1,26 +1,29 @@
+use std::path::{Path, PathBuf};
+
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px,
+    div, px, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
+    Styled, Window,
 };
 
 use crate::{
     settings::{
-        SettingsGlobal,
         interface::{
-            DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
-            StartupLibraryView, clamp_grid_min_item_width,
+            clamp_grid_min_item_width, StartupLibraryView, DEFAULT_GRID_MIN_ITEM_WIDTH,
+            MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
         },
-        save_settings,
+        save_settings, SettingsGlobal,
     },
     ui::components::{
         checkbox::checkbox,
-        dropdown::{DropdownOption, DropdownState, dropdown},
+        dropdown::{dropdown, DropdownOption, DropdownState},
         label::label,
         labeled_slider::labeled_slider,
         section_header::section_header,
     },
-    ui::theme::{DEFAULT_THEME_ID, Theme, discover_theme_options, resolve_theme_relative_path},
+    ui::theme::{
+        resolve_theme_relative_path, Theme, ThemeOption, ThemeOptionsGlobal, DEFAULT_THEME_ID,
+    },
 };
 
 #[derive(Clone)]
@@ -71,19 +74,97 @@ fn startup_library_view_options() -> Vec<DropdownOption> {
     ]
 }
 
+/// Converts discovered theme entries into dropdown options.
+fn build_theme_dropdown_options(theme_options: &[ThemeOption]) -> Vec<DropdownOption> {
+    theme_options
+        .iter()
+        .map(|theme| {
+            let label: SharedString = if theme.id.is_none() {
+                tr!("THEME_DEFAULT", "Default").into()
+            } else {
+                theme.label.clone().into()
+            };
+
+            DropdownOption::new(
+                theme
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_THEME_ID.to_string()),
+                label,
+            )
+        })
+        .collect()
+}
+
+/// Builds a theme dropdown bound to the current settings model.
+fn create_theme_dropdown(
+    cx: &mut App,
+    settings: Entity<crate::settings::Settings>,
+    data_dir: &Path,
+    theme_options: &[ThemeOption],
+    selected_theme: Option<&str>,
+) -> Entity<DropdownState> {
+    let resolved_selected_theme = resolve_theme_relative_path(data_dir, selected_theme);
+    let dropdown_options = build_theme_dropdown_options(theme_options);
+    let selected_index = theme_options
+        .iter()
+        .position(|theme| theme.id == resolved_selected_theme)
+        .unwrap_or(0);
+    let focus_handle = cx.focus_handle();
+    let dropdown = dropdown(cx, dropdown_options, selected_index, focus_handle);
+
+    dropdown.update(cx, |state, _| {
+        state.set_width(px(250.0));
+    });
+
+    let settings_for_handler = settings.clone();
+    dropdown.update(cx, |state, _| {
+        state.set_on_change(move |_idx, option, _window, cx| {
+            let theme = option.id.to_string();
+
+            settings_for_handler.update(cx, |settings, cx| {
+                settings.interface.theme = if theme.is_empty() { None } else { Some(theme) };
+                save_settings(cx, settings);
+            });
+        });
+    });
+
+    dropdown
+}
+
 pub struct InterfaceSettings {
     settings: Entity<crate::settings::Settings>,
+    data_dir: PathBuf,
+    theme_options: Entity<Vec<ThemeOption>>,
+    selected_theme: Option<String>,
     language_dropdown: Entity<DropdownState>,
     theme_dropdown: Entity<DropdownState>,
     startup_library_view_dropdown: Entity<DropdownState>,
 }
 
 impl InterfaceSettings {
+    /// Recreates the theme dropdown from settings/discovered themes.
+    fn rebuild_theme_dropdown(&mut self, cx: &mut App) {
+        let selected_theme = self.settings.read(cx).interface.theme.clone();
+        let theme_options = self.theme_options.read(cx).clone();
+
+        self.theme_dropdown = create_theme_dropdown(
+            cx,
+            self.settings.clone(),
+            &self.data_dir,
+            &theme_options,
+            selected_theme.as_deref(),
+        );
+        self.selected_theme = selected_theme;
+    }
+
     pub fn new(cx: &mut App) -> Entity<Self> {
         let settings_global = cx.global::<SettingsGlobal>();
         let settings = settings_global.model.clone();
         let data_dir = settings_global.path.parent().unwrap().to_path_buf();
+        let theme_options = cx.global::<ThemeOptionsGlobal>().model.clone();
         let interface = settings.read(cx).interface.clone();
+        let selected_theme = interface.theme.clone();
 
         let languages = get_available_languages();
         let dropdown_options: Vec<DropdownOption> = languages
@@ -96,38 +177,18 @@ impl InterfaceSettings {
             .position(|l| l.code == interface.language)
             .unwrap_or(0);
 
-        let theme_options = discover_theme_options(&data_dir);
-        let selected_theme = resolve_theme_relative_path(&data_dir, interface.theme.as_deref());
-        let theme_dropdown_options: Vec<DropdownOption> = theme_options
-            .iter()
-            .map(|theme| {
-                let label: SharedString = if theme.id.is_none() {
-                    tr!("THEME_DEFAULT", "Default").into()
-                } else {
-                    theme.label.clone().into()
-                };
-                DropdownOption::new(
-                    theme.id.clone().unwrap_or(DEFAULT_THEME_ID.to_string()),
-                    label,
-                )
-            })
-            .collect();
-        let theme_selected_index = theme_options
-            .iter()
-            .position(|theme| theme.id == selected_theme)
-            .unwrap_or(0);
-
         let startup_view_options = startup_library_view_options();
         let startup_view_selected_index = interface.startup_library_view.index();
+        let initial_theme_options = theme_options.read(cx).clone();
 
         let focus_handle = cx.focus_handle();
         let language_dropdown = dropdown(cx, dropdown_options, selected_index, focus_handle);
-        let theme_focus_handle = cx.focus_handle();
-        let theme_dropdown = dropdown(
+        let theme_dropdown = create_theme_dropdown(
             cx,
-            theme_dropdown_options,
-            theme_selected_index,
-            theme_focus_handle,
+            settings.clone(),
+            &data_dir,
+            &initial_theme_options,
+            interface.theme.as_deref(),
         );
         let startup_view_focus_handle = cx.focus_handle();
         let startup_library_view_dropdown = dropdown(
@@ -138,10 +199,6 @@ impl InterfaceSettings {
         );
 
         language_dropdown.update(cx, |state, _| {
-            state.set_width(px(250.0));
-        });
-
-        theme_dropdown.update(cx, |state, _| {
             state.set_width(px(250.0));
         });
 
@@ -162,18 +219,6 @@ impl InterfaceSettings {
         });
 
         let settings_for_handler = settings.clone();
-        theme_dropdown.update(cx, |state, _| {
-            state.set_on_change(move |_idx, option, _window, cx| {
-                let theme = option.id.to_string();
-
-                settings_for_handler.update(cx, |settings, cx| {
-                    settings.interface.theme = if theme.is_empty() { None } else { Some(theme) };
-                    save_settings(cx, settings);
-                });
-            });
-        });
-
-        let settings_for_handler = settings.clone();
         startup_library_view_dropdown.update(cx, |state, _| {
             state.set_on_change(move |idx, _option, _window, cx| {
                 settings_for_handler.update(cx, |settings, cx| {
@@ -184,9 +229,26 @@ impl InterfaceSettings {
         });
 
         cx.new(|cx| {
-            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            cx.observe(&settings, |this: &mut Self, _, cx| {
+                let selected_theme = this.settings.read(cx).interface.theme.clone();
+                if this.selected_theme != selected_theme {
+                    this.rebuild_theme_dropdown(cx);
+                }
+                cx.notify();
+            })
+            .detach();
+
+            cx.observe(&theme_options, |this: &mut Self, _, cx| {
+                this.rebuild_theme_dropdown(cx);
+                cx.notify();
+            })
+            .detach();
+
             Self {
                 settings,
+                data_dir,
+                theme_options,
+                selected_theme,
                 language_dropdown,
                 theme_dropdown,
                 startup_library_view_dropdown,

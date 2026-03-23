@@ -4,7 +4,7 @@ pub mod replaygain;
 pub mod scan;
 pub mod storage;
 
-use std::{fs, fs::File, path::PathBuf, sync::mpsc::channel, time::Duration};
+use std::{fs, fs::File, path::{Path, PathBuf}, sync::mpsc::channel, time::Duration};
 
 use gpui::{App, AppContext, AsyncApp, Entity, Global};
 use notify::{Event, RecursiveMode, Watcher};
@@ -30,7 +30,7 @@ fn has_stored_theme_setting(value: &serde_json::Value) -> bool {
         .is_some_and(|interface| interface.contains_key("theme"))
 }
 
-fn apply_legacy_theme_selection(path: &PathBuf, settings: &mut Settings, has_theme_setting: bool) {
+fn apply_legacy_theme_selection(path: &Path, settings: &mut Settings, has_theme_setting: bool) {
     if has_theme_setting || settings.interface.theme.is_some() {
         return;
     }

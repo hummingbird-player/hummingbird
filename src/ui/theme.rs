@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::settings::SettingsGlobal;
-use gpui::{App, AppContext, AsyncApp, EventEmitter, Global, Rgba, rgb, rgba};
+use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tracing::{error, info, warn};
@@ -268,6 +268,12 @@ pub struct ThemeOption {
     pub label: String,
 }
 
+pub struct ThemeOptionsGlobal {
+    pub model: Entity<Vec<ThemeOption>>,
+}
+
+impl Global for ThemeOptionsGlobal {}
+
 pub fn create_theme(path: &Path) -> Theme {
     if let Ok(file) = File::open(path) {
         let reader = BufReader::new(file);
@@ -396,6 +402,15 @@ fn event_affects_selected_theme(
         })
 }
 
+/// Checks whether a filesystem event changes the set of available theme choices.
+fn event_affects_theme_options(data_dir: &Path, event_paths: &[PathBuf]) -> bool {
+    let themes_dir = data_dir.join(THEMES_DIR_NAME);
+
+    event_paths
+        .iter()
+        .any(|path| path == &themes_dir || theme_relative_path_for_event(data_dir, path).is_some())
+}
+
 #[derive(PartialEq, Clone)]
 pub struct ThemeEvTransmitter;
 
@@ -410,6 +425,14 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
     let settings_model = cx.global::<SettingsGlobal>().model.clone();
     let selected_theme = settings_model.read(cx).interface.theme.clone();
     let selected_theme_state = Arc::new(RwLock::new(selected_theme.clone()));
+    let theme_options_model = cx.new({
+        let data_dir = data_dir.clone();
+        move |_| discover_theme_options(&data_dir)
+    });
+
+    cx.set_global(ThemeOptionsGlobal {
+        model: theme_options_model.clone(),
+    });
 
     cx.set_global(load_selected_theme(&data_dir, selected_theme.as_deref()));
     let theme_transmitter = cx.new(|_| ThemeEvTransmitter);
@@ -457,11 +480,22 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
             let data_dir = data_dir.clone();
             let selected_theme_state = selected_theme_state.clone();
             let theme_transmitter = theme_transmitter.clone();
+            let theme_options_model = theme_options_model.clone();
             async move |cx: &mut AsyncApp| {
                 loop {
                     while let Ok(event) = rx.try_recv() {
                         match event {
                             Ok(v) => {
+                                if event_affects_theme_options(&data_dir, &v.paths) {
+                                    let theme_options = discover_theme_options(&data_dir);
+                                    theme_options_model.update(cx, move |current, cx| {
+                                        if *current != theme_options {
+                                            *current = theme_options;
+                                        }
+                                        cx.notify();
+                                    });
+                                }
+
                                 let selected_theme = selected_theme_state.read().unwrap().clone();
                                 if !event_affects_selected_theme(
                                     &data_dir,
