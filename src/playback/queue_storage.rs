@@ -39,10 +39,12 @@ impl PlaybackSessionStorageWorker {
 
     pub async fn run(mut self) {
         while self.rx.changed().await.is_ok() {
-            let mut json = match {
+            let serialized_session = {
                 let session = self.rx.borrow_and_update();
                 serde_json::to_vec(&*session)
-            } {
+            };
+
+            let mut json = match serialized_session {
                 Ok(json) => json,
                 Err(e) => {
                     error!("Failed to serialize PlaybackSessionData: {}", e);
