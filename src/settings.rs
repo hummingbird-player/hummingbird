@@ -136,15 +136,17 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
                             notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
                                 info!("Settings changed, updating...");
                                 let settings = create_settings(&path_for_watcher);
-                                settings_model.update(app, |v, _| {
+                                settings_model.update(app, |v, cx| {
                                     *v = settings;
+                                    cx.notify();
                                 });
                             }
                             notify::EventKind::Remove(_) => {
                                 info!("Settings file removed, using default settings");
                                 let settings = create_settings(&path_for_watcher);
-                                settings_model.update(app, |v, _| {
+                                settings_model.update(app, |v, cx| {
                                     *v = settings;
+                                    cx.notify();
                                 });
                             }
                             _ => (),

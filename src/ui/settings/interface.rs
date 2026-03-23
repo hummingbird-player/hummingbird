@@ -125,6 +125,7 @@ fn create_theme_dropdown(
             settings_for_handler.update(cx, |settings, cx| {
                 settings.interface.theme = if theme.is_empty() { None } else { Some(theme) };
                 save_settings(cx, settings);
+                cx.notify();
             });
         });
     });
@@ -214,6 +215,7 @@ impl InterfaceSettings {
                 settings_for_handler.update(cx, |settings, cx| {
                     settings.interface.language = code;
                     save_settings(cx, settings);
+                    cx.notify();
                 });
             });
         });
@@ -224,6 +226,7 @@ impl InterfaceSettings {
                 settings_for_handler.update(cx, |settings, cx| {
                     settings.interface.startup_library_view = StartupLibraryView::from_index(idx);
                     save_settings(cx, settings);
+                    cx.notify();
                 });
             });
         });
