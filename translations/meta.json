@@ -359,6 +359,18 @@
     "plural": false,
     "description": null
   },
+  "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:275",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:278",
+    "plural": false,
+    "description": null
+  },
   "INTERFACE_FULL_WIDTH_LIBRARY": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:197",

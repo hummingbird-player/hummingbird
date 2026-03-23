@@ -59,6 +59,8 @@
   "HIDE": "Hide Hummingbird",
   "HIDE_OTHERS": "Hide Others",
   "INTERFACE": "Interface",
+  "INTERFACE_ALWAYS_SHOW_SCROLLBARS": "Always show scrollbars",
+  "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": "Keeps scrollbars visible instead of hiding them automatically.",
   "INTERFACE_FULL_WIDTH_LIBRARY": "Full-width library",
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": "Allows the library to take up the full width of the screen.",
   "INTERFACE_GRID_MIN_ITEM_WIDTH": "Grid item width",

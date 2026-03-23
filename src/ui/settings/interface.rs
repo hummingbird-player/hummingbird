@@ -269,5 +269,27 @@ impl Render for InterfaceSettings {
                         }),
                 ),
             )
+            .child(
+                label(
+                    "interface-always-show-scrollbars",
+                    tr!("INTERFACE_ALWAYS_SHOW_SCROLLBARS", "Always show scrollbars"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT",
+                    "Keeps scrollbars visible instead of hiding them automatically."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .has_checkbox()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_interface(cx, |interface| {
+                        interface.always_show_scrollbars = !interface.always_show_scrollbars;
+                    });
+                }))
+                .child(checkbox(
+                    "interface-always-show-scrollbars-check",
+                    interface.always_show_scrollbars,
+                )),
+            )
     }
 }

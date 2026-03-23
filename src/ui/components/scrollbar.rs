@@ -13,6 +13,7 @@ use gpui::{
     StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb, white,
 };
 
+use crate::settings::SettingsGlobal;
 use crate::ui::theme::Theme;
 
 #[derive(Clone)]
@@ -181,7 +182,7 @@ impl Element for Scrollbar {
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) {
         let background: Background = self
             .style
@@ -269,6 +270,10 @@ impl Element for Scrollbar {
         let hitbox_for_events = hitbox;
         let hide_delay = self.hide_delay;
         let fade_duration = self.fade_duration;
+        let always_visible = {
+            let settings = cx.global::<SettingsGlobal>();
+            settings.model.read(cx).interface.always_show_scrollbars
+        };
 
         window.with_optional_element_state(
             id,
@@ -327,7 +332,7 @@ impl Element for Scrollbar {
                 drop(state_read);
 
                 // handle opacity and fades
-                let opacity = if is_dragging || currently_hovered {
+                let opacity = if is_dragging || currently_hovered || always_visible {
                     1.0
                 } else if let Some(interaction_time) = last_interaction {
                     let elapsed = now.duration_since(interaction_time);
