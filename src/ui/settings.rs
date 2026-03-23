@@ -66,6 +66,32 @@ enum SettingsSectionKind {
     Playback,
 }
 
+impl SettingsSectionKind {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Interface => "interface",
+            Self::Library => "library",
+            Self::Playback => "playback",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Interface => WORLD,
+            Self::Library => BOOKS,
+            Self::Playback => PLAY,
+        }
+    }
+
+    fn label(self) -> SharedString {
+        match self {
+            Self::Interface => tr!("INTERFACE", "Interface").into(),
+            Self::Library => tr!("LIBRARY", "Library").into(),
+            Self::Playback => tr!("PLAYBACK", "Playback").into(),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
@@ -87,6 +113,14 @@ impl SettingsSection {
             Self::Interface(_) => SettingsSectionKind::Interface,
             Self::Library(_) => SettingsSectionKind::Library,
             Self::Playback(_) => SettingsSectionKind::Playback,
+        }
+    }
+
+    fn element(&self) -> gpui::AnyElement {
+        match self {
+            Self::Interface(interface) => interface.clone().into_any_element(),
+            Self::Library(library) => library.clone().into_any_element(),
+            Self::Playback(playback) => playback.clone().into_any_element(),
         }
     }
 }
@@ -121,6 +155,20 @@ impl SettingsWindow {
         // padding are properly updated.
         self.redraw = true;
     }
+
+    fn render_section_item(
+        &self,
+        section: SettingsSectionKind,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        sidebar_item(section.id())
+            .icon(section.icon())
+            .child(section.label())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.switch_section(section, cx);
+            }))
+            .when(self.active.kind() == section, |this| this.active())
+    }
 }
 
 impl Render for SettingsWindow {
@@ -137,7 +185,6 @@ impl Render for SettingsWindow {
 
         let theme = cx.global::<Theme>();
         let active = &self.active;
-        let active_kind = active.kind();
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_always_visible = {
             let settings = cx.global::<SettingsGlobal>();
@@ -150,12 +197,7 @@ impl Render for SettingsWindow {
                     || scroll_handle.should_draw_scrollbar())
         };
 
-        let content = match active {
-            SettingsSection::Interface(interface) => interface.clone().into_any_element(),
-            SettingsSection::Library(library) => library.clone().into_any_element(),
-            SettingsSection::Playback(playback) => playback.clone().into_any_element(),
-        };
-
+        let content = active.element();
         window_chrome(
             div()
                 .track_focus(&self.focus_handle)
@@ -185,42 +227,9 @@ impl Render for SettingsWindow {
                                 .flex()
                                 .flex_col()
                                 .flex_shrink_0()
-                                .child(
-                                    sidebar_item("interface")
-                                        .icon(WORLD)
-                                        .child(tr!("INTERFACE", "Interface"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.switch_section(SettingsSectionKind::Interface, cx);
-                                        }))
-                                        .when(
-                                            active_kind == SettingsSectionKind::Interface,
-                                            |this| this.active(),
-                                        ),
-                                )
-                                .child(
-                                    sidebar_item("library")
-                                        .icon(BOOKS)
-                                        .child(tr!("LIBRARY", "Library"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.switch_section(SettingsSectionKind::Library, cx);
-                                        }))
-                                        .when(
-                                            active_kind == SettingsSectionKind::Library,
-                                            |this| this.active(),
-                                        ),
-                                )
-                                .child(
-                                    sidebar_item("playback")
-                                        .icon(PLAY)
-                                        .child(tr!("PLAYBACK", "Playback"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.switch_section(SettingsSectionKind::Playback, cx);
-                                        }))
-                                        .when(
-                                            active_kind == SettingsSectionKind::Playback,
-                                            |this| this.active(),
-                                        ),
-                                ),
+                                .child(self.render_section_item(SettingsSectionKind::Interface, cx))
+                                .child(self.render_section_item(SettingsSectionKind::Library, cx))
+                                .child(self.render_section_item(SettingsSectionKind::Playback, cx)),
                         )
                         .child(
                             div()
