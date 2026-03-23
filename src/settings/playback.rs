@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::replaygain::ReplayGainSettings;
 
+fn default_keep_current_on_queue_clear() -> bool {
+    true
+}
+
 /// User-set playback settings, to be passed to the playback thread.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaybackSettings {
@@ -37,7 +41,7 @@ pub struct PlaybackSettings {
     /// option is true, the currently playing track will be preserved in the queue when clearing.
     ///
     /// Defaults to true.
-    #[serde(default)]
+    #[serde(default = "default_keep_current_on_queue_clear")]
     pub keep_current_on_queue_clear: bool,
 
     /// ReplayGain settings.
