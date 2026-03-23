@@ -691,19 +691,19 @@
   },
   "SCAN": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:296",
+    "definedIn": "src/ui/settings/library.rs:311",
     "plural": false,
     "description": null
   },
   "SCANNING": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:244",
+    "definedIn": "src/ui/settings/library.rs:261",
     "plural": false,
     "description": null
   },
   "SCANNING_ADD_FOLDERS": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:258",
+    "definedIn": "src/ui/settings/library.rs:275",
     "plural": false,
     "description": null
   },
@@ -757,61 +757,61 @@
   },
   "SCANNING_MISSING_POLICY": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:272",
+    "definedIn": "src/ui/settings/library.rs:287",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_POLICY_ASK": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:56",
+    "definedIn": "src/ui/settings/library.rs:57",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_POLICY_DELETE": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:64",
+    "definedIn": "src/ui/settings/library.rs:65",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_POLICY_KEEP": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:60",
+    "definedIn": "src/ui/settings/library.rs:61",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_POLICY_SUBTEXT": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:277",
+    "definedIn": "src/ui/settings/library.rs:292",
     "plural": false,
     "description": null
   },
   "SCANNING_NO_FOLDERS": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:180",
+    "definedIn": "src/ui/settings/library.rs:195",
     "plural": false,
     "description": null
   },
   "SCANNING_RESCAN_REQUIRED": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:287",
+    "definedIn": "src/ui/settings/library.rs:302",
     "plural": false,
     "description": null
   },
   "SCANNING_RESCAN_REQUIRED_TITLE": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:290",
+    "definedIn": "src/ui/settings/library.rs:305",
     "plural": false,
     "description": null
   },
   "SCANNING_SELECT_FOLDERS": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:116",
+    "definedIn": "src/ui/settings/library.rs:117",
     "plural": false,
     "description": null
   },
   "SCANNING_SUBTITLE": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:246",
+    "definedIn": "src/ui/settings/library.rs:263",
     "plural": false,
     "description": null
   },

@@ -2,7 +2,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    PathPromptOptions, Render, SharedString, Styled, Window, div, prelude::FluentBuilder, px,
+    PathPromptOptions, Render, SharedString, Styled, WeakEntity, Window, div,
+    prelude::FluentBuilder, px,
 };
 use tracing::warn;
 
@@ -108,7 +109,7 @@ impl LibrarySettings {
         }
     }
 
-    fn add_folder(&self, cx: &mut App) {
+    fn add_folder(&self, view: WeakEntity<Self>, cx: &mut App) {
         let path_future = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -142,32 +143,46 @@ impl LibrarySettings {
                 return;
             }
 
-            settings.update(cx, move |settings, cx| {
+            let updated = settings.update(cx, move |settings, cx| {
                 if merge_scan_paths(&mut settings.scanning.paths, paths) {
                     save_settings(cx, settings);
                     cx.notify();
+                    true
+                } else {
+                    false
                 }
             });
+
+            if updated {
+                let _ = view.update(cx, |this, cx| {
+                    this.scanning_modified = true;
+                    cx.notify();
+                });
+            }
         })
         .detach();
     }
 
-    fn remove_folder(settings: Entity<Settings>, path: &Utf8Path, cx: &mut App) {
+    fn remove_folder(settings: Entity<Settings>, path: &Utf8Path, cx: &mut App) -> bool {
         settings.update(cx, move |settings, cx| {
             let before_len = settings.scanning.paths.len();
             settings.scanning.paths.retain(|p| p != path);
 
-            if settings.scanning.paths.len() != before_len {
+            let updated = settings.scanning.paths.len() != before_len;
+            if updated {
                 save_settings(cx, settings);
                 cx.notify();
             }
-        });
+
+            updated
+        })
     }
 }
 
 impl Render for LibrarySettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let view = cx.entity().downgrade();
         let scanning = self.settings.read(cx).scanning.clone();
         let paths = scanning.paths;
 
@@ -226,9 +241,11 @@ impl Render for LibrarySettings {
                             .child(icon(TRASH).size(px(14.0)))
                             .id(format!("library-scan-remove-{idx}"))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.scanning_modified = true;
-                                LibrarySettings::remove_folder(settings.clone(), &path_clone, cx);
-                                cx.notify();
+                                if LibrarySettings::remove_folder(settings.clone(), &path_clone, cx)
+                                {
+                                    this.scanning_modified = true;
+                                    cx.notify();
+                                }
                             })),
                     )
             });
@@ -258,10 +275,8 @@ impl Render for LibrarySettings {
                                     .child(tr!("SCANNING_ADD_FOLDERS", "Add Folders")),
                             )
                             .id("library-settings-add-folder")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.scanning_modified = true;
-                                this.add_folder(cx);
-                                cx.notify();
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.add_folder(view.clone(), cx);
                             })),
                     ),
             )
