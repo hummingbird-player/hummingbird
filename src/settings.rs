@@ -4,7 +4,7 @@ pub mod replaygain;
 pub mod scan;
 pub mod storage;
 
-use std::{fs::File, path::PathBuf, sync::mpsc::channel, time::Duration};
+use std::{fs, fs::File, path::PathBuf, sync::mpsc::channel, time::Duration};
 
 use gpui::{App, AppContext, AsyncApp, Entity, Global};
 use notify::{Event, RecursiveMode, Watcher};
@@ -23,18 +23,52 @@ pub struct Settings {
     pub interface: interface::InterfaceSettings,
 }
 
-pub fn create_settings(path: &PathBuf) -> Settings {
-    let Ok(file) = File::open(path) else {
-        return Settings::default();
-    };
-    let reader = std::io::BufReader::new(file);
+fn has_stored_theme_setting(value: &serde_json::Value) -> bool {
+    value
+        .get("interface")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|interface| interface.contains_key("theme"))
+}
 
-    if let Ok(settings) = serde_json::from_reader(reader) {
-        settings
-    } else {
-        warn!("Failed to parse settings file, using default settings");
-        Settings::default()
+fn apply_legacy_theme_selection(path: &PathBuf, settings: &mut Settings, has_theme_setting: bool) {
+    if has_theme_setting || settings.interface.theme.is_some() {
+        return;
     }
+
+    let legacy_theme = path.parent().unwrap().join("theme.json");
+    if legacy_theme.is_file() {
+        settings.interface.theme = Some("theme.json".to_string());
+    }
+}
+
+pub fn create_settings(path: &PathBuf) -> Settings {
+    let Ok(contents) = fs::read_to_string(path) else {
+        let mut settings = Settings::default();
+        apply_legacy_theme_selection(path, &mut settings, false);
+        return settings;
+    };
+
+    let value: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(value) => value,
+        Err(_) => {
+            warn!("Failed to parse settings file, using default settings");
+            let mut settings = Settings::default();
+            apply_legacy_theme_selection(path, &mut settings, false);
+            return settings;
+        }
+    };
+
+    let has_theme_setting = has_stored_theme_setting(&value);
+    let mut settings: Settings = match serde_json::from_value(value) {
+        Ok(settings) => settings,
+        Err(_) => {
+            warn!("Failed to parse settings file, using default settings");
+            Settings::default()
+        }
+    };
+
+    apply_legacy_theme_selection(path, &mut settings, has_theme_setting);
+    settings
 }
 
 pub fn save_settings(cx: &mut App, settings: &Settings) {
@@ -96,8 +130,8 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
                 match event {
                     Ok(v) => {
                         if !v.paths.iter().any(|t| t.ends_with("settings.json")) {
-                            return;
-                        };
+                            continue;
+                        }
                         match v.kind {
                             notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
                                 info!("Settings changed, updating...");
@@ -108,8 +142,9 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
                             }
                             notify::EventKind::Remove(_) => {
                                 info!("Settings file removed, using default settings");
+                                let settings = create_settings(&path_for_watcher);
                                 settings_model.update(app, |v, _| {
-                                    *v = Settings::default();
+                                    *v = settings;
                                 });
                             }
                             _ => (),

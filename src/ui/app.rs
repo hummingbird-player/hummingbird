@@ -213,8 +213,8 @@ pub fn run() -> anyhow::Result<()> {
             let (queue_tx, queue_rx) = tokio::sync::watch::channel(playback_session.clone());
             crate::RUNTIME.spawn(PlaybackSessionStorageWorker::new(session_file, queue_rx).run());
 
-            setup_theme(cx, data_dir.join("theme.json"));
             setup_settings(cx, data_dir.join("settings.json"));
+            setup_theme(cx, data_dir.clone());
             cx.set_global(Pool(pool.clone()));
 
             let settings = cx.global::<SettingsGlobal>().model.read(cx);

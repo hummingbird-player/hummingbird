@@ -48,6 +48,8 @@ pub struct InterfaceSettings {
     #[serde(default)]
     pub language: String,
     #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default)]
     pub full_width_library: bool,
     #[serde(default)]
     pub two_column_library: bool,
@@ -73,6 +75,7 @@ impl Default for InterfaceSettings {
     fn default() -> Self {
         Self {
             language: String::new(),
+            theme: None,
             full_width_library: false,
             two_column_library: false,
             startup_library_view: StartupLibraryView::default(),

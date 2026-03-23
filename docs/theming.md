@@ -1,11 +1,20 @@
 # Theming
-Hummingbird can be themed with a `theme.json` file located in the following places:
+Hummingbird includes a built-in default theme and can also load custom themes from its data directory.
 
-| Platform | Location                                                           |
-|----------|--------------------------------------------------------------------|
-| Linux    | `~/.local/share/hummingbird/theme.json`                            |
-| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/theme.json` |
-| Windows  | `%appdata%\mailliw\hummingbird\data\theme.json`                    |
+## Theme locations
+
+| Theme type       | Location                   |
+|------------------|----------------------------|
+| Built-in default | No file required           |
+| Custom themes    | `<data dir>/themes/*.json` |
+
+Platform-specific data directory locations:
+
+| Platform | Data directory                                           |
+|----------|----------------------------------------------------------|
+| Linux    | `~/.local/share/hummingbird/`                            |
+| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/` |
+| Windows  | `%appdata%\mailliw\hummingbird\data\`                    |
 
 > [!NOTE]
 > The default data directory was chanaged when Muzak was renamed to Hummingbird.
@@ -26,10 +35,23 @@ Hummingbird can be themed with a `theme.json` file located in the following plac
 > This can be applied to all paths - they have all been changed in the same manner.
 > </details>
 
-When this file is created, deleted, or modified, the theme is reloaded. If your
-theme produces the default theme with no modified properties, it is likely that
-your theme failed to parse - running with `RUST_LOG=hummingbird=info` may give you
-more information.
+## Selecting a theme
+
+Open **Settings > Interface > Theme** to choose from available themes.
+
+Place custom theme files in the `themes/` folder and they will appear in the list.
+
+## How theme changes work
+
+Your theme is applied immediately when you select it, and updates automatically
+when you edit or replace the theme file.
+
+If something goes wrong:
+
+- Broken theme files use the built-in default
+- Missing theme files use the built-in default
+
+If your colors do not appear to change, check that your theme file is valid JSON.
 
 Colors are specified as CSS-style hex codes (`#ABCDEF`). If a color is not
 specified, the color from the default theme is used.

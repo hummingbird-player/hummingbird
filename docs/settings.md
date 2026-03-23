@@ -30,6 +30,9 @@ Hummingbird can be configured with a `settings.json` file located in the followi
 
 ```json
 {
+  "interface": {
+    "theme": "themes/mytheme.json"
+  },
   "scanning": {
     "paths": ["/home/me/Music", "/home/me/other"]
   },
@@ -39,6 +42,18 @@ Hummingbird can be configured with a `settings.json` file located in the followi
   }
 }
 ```
+
+## Interface settings
+
+### `interface.theme`
+
+Controls the selected theme.
+
+- `null` or omitted: use the built-in default theme
+- `"themes/<name>.json"`: use a custom theme file from the `themes/` directory
+
+You can change this from **Settings > Interface > Theme**. Theme changes apply
+immediately.
 
 ## Last.FM
 The current Last.FM session is stored in the following places:

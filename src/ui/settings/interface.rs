@@ -20,7 +20,7 @@ use crate::{
         labeled_slider::labeled_slider,
         section_header::section_header,
     },
-    ui::theme::Theme,
+    ui::theme::{DEFAULT_THEME_ID, Theme, discover_theme_options, resolve_theme_relative_path},
 };
 
 #[derive(Clone)]
@@ -74,12 +74,15 @@ fn startup_library_view_options() -> Vec<DropdownOption> {
 pub struct InterfaceSettings {
     settings: Entity<crate::settings::Settings>,
     language_dropdown: Entity<DropdownState>,
+    theme_dropdown: Entity<DropdownState>,
     startup_library_view_dropdown: Entity<DropdownState>,
 }
 
 impl InterfaceSettings {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let settings = cx.global::<SettingsGlobal>().model.clone();
+        let settings_global = cx.global::<SettingsGlobal>();
+        let settings = settings_global.model.clone();
+        let data_dir = settings_global.path.parent().unwrap().to_path_buf();
         let interface = settings.read(cx).interface.clone();
 
         let languages = get_available_languages();
@@ -93,11 +96,39 @@ impl InterfaceSettings {
             .position(|l| l.code == interface.language)
             .unwrap_or(0);
 
+        let theme_options = discover_theme_options(&data_dir);
+        let selected_theme = resolve_theme_relative_path(&data_dir, interface.theme.as_deref());
+        let theme_dropdown_options: Vec<DropdownOption> = theme_options
+            .iter()
+            .map(|theme| {
+                let label: SharedString = if theme.id.is_none() {
+                    tr!("THEME_DEFAULT", "Default").into()
+                } else {
+                    theme.label.clone().into()
+                };
+                DropdownOption::new(
+                    theme.id.clone().unwrap_or(DEFAULT_THEME_ID.to_string()),
+                    label,
+                )
+            })
+            .collect();
+        let theme_selected_index = theme_options
+            .iter()
+            .position(|theme| theme.id == selected_theme)
+            .unwrap_or(0);
+
         let startup_view_options = startup_library_view_options();
         let startup_view_selected_index = interface.startup_library_view.index();
 
         let focus_handle = cx.focus_handle();
         let language_dropdown = dropdown(cx, dropdown_options, selected_index, focus_handle);
+        let theme_focus_handle = cx.focus_handle();
+        let theme_dropdown = dropdown(
+            cx,
+            theme_dropdown_options,
+            theme_selected_index,
+            theme_focus_handle,
+        );
         let startup_view_focus_handle = cx.focus_handle();
         let startup_library_view_dropdown = dropdown(
             cx,
@@ -107,6 +138,10 @@ impl InterfaceSettings {
         );
 
         language_dropdown.update(cx, |state, _| {
+            state.set_width(px(250.0));
+        });
+
+        theme_dropdown.update(cx, |state, _| {
             state.set_width(px(250.0));
         });
 
@@ -127,6 +162,18 @@ impl InterfaceSettings {
         });
 
         let settings_for_handler = settings.clone();
+        theme_dropdown.update(cx, |state, _| {
+            state.set_on_change(move |_idx, option, _window, cx| {
+                let theme = option.id.to_string();
+
+                settings_for_handler.update(cx, |settings, cx| {
+                    settings.interface.theme = if theme.is_empty() { None } else { Some(theme) };
+                    save_settings(cx, settings);
+                });
+            });
+        });
+
+        let settings_for_handler = settings.clone();
         startup_library_view_dropdown.update(cx, |state, _| {
             state.set_on_change(move |idx, _option, _window, cx| {
                 settings_for_handler.update(cx, |settings, cx| {
@@ -141,6 +188,7 @@ impl InterfaceSettings {
             Self {
                 settings,
                 language_dropdown,
+                theme_dropdown,
                 startup_library_view_dropdown,
             }
         })
@@ -182,6 +230,16 @@ impl Render for InterfaceSettings {
                     ))
                     .w_full()
                     .child(self.language_dropdown.clone()),
+            )
+            .child(
+                label("theme-selector", tr!("INTERFACE_THEME", "Theme"))
+                    .subtext(tr!(
+                        "INTERFACE_THEME_SUBTEXT",
+                        "Choose a built-in theme or add your own. Place custom theme files in the \
+                        themes folder. Changes apply immediately."
+                    ))
+                    .w_full()
+                    .child(self.theme_dropdown.clone()),
             )
             .child(
                 label(

@@ -1,5 +1,12 @@
-use std::{fs::File, io::BufReader, path::PathBuf, sync::mpsc::channel, time::Duration};
+use std::{
+    fs::{self, File},
+    io::BufReader,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock, mpsc::channel},
+    time::Duration,
+};
 
+use crate::settings::SettingsGlobal;
 use gpui::{App, AppContext, AsyncApp, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
 use serde::Deserialize;
@@ -251,7 +258,17 @@ impl Default for Theme {
 
 impl Global for Theme {}
 
-pub fn create_theme(path: &PathBuf) -> Theme {
+pub const DEFAULT_THEME_ID: &str = "";
+pub const LEGACY_THEME_PATH: &str = "theme.json";
+pub const THEMES_DIR_NAME: &str = "themes";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeOption {
+    pub id: Option<String>,
+    pub label: String,
+}
+
+pub fn create_theme(path: &Path) -> Theme {
     if let Ok(file) = File::open(path) {
         let reader = BufReader::new(file);
 
@@ -266,6 +283,119 @@ pub fn create_theme(path: &PathBuf) -> Theme {
     }
 }
 
+/// Discovers all available theme options in the data directory.
+/// Returns a vector containing the default theme, legacy theme (if present),
+/// and any custom themes found in the themes subdirectory.
+pub fn discover_theme_options(data_dir: &Path) -> Vec<ThemeOption> {
+    let mut themes = vec![ThemeOption {
+        id: None,
+        label: "Default".to_string(),
+    }];
+
+    let legacy_theme = data_dir.join(LEGACY_THEME_PATH);
+    if legacy_theme.is_file() {
+        themes.push(ThemeOption {
+            id: Some(LEGACY_THEME_PATH.to_string()),
+            label: LEGACY_THEME_PATH.to_string(),
+        });
+    }
+
+    let themes_dir = data_dir.join(THEMES_DIR_NAME);
+    let mut custom_themes = fs::read_dir(themes_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
+        .filter_map(|path| {
+            let file_name = path.file_name()?.to_string_lossy().into_owned();
+            Some(ThemeOption {
+                id: Some(format!("{THEMES_DIR_NAME}/{file_name}")),
+                label: file_name,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    custom_themes.sort_by(|a, b| a.id.cmp(&b.id));
+    themes.extend(custom_themes);
+    themes
+}
+
+/// Resolves a theme identifier to its relative path if the file exists.
+/// Returns None if no theme is selected or the file does not exist.
+pub fn resolve_theme_relative_path(
+    data_dir: &Path,
+    selected_theme: Option<&str>,
+) -> Option<String> {
+    if let Some(selected_theme) = selected_theme {
+        let path = data_dir.join(selected_theme);
+        return path.is_file().then(|| selected_theme.to_string());
+    }
+
+    None
+}
+
+/// Resolves a theme identifier to its full filesystem path.
+/// Returns None if no theme is selected or the file does not exist.
+pub fn resolve_theme_path(data_dir: &Path, selected_theme: Option<&str>) -> Option<PathBuf> {
+    resolve_theme_relative_path(data_dir, selected_theme).map(|path| data_dir.join(path))
+}
+
+/// Loads the theme for the given selection, falling back to the default theme
+/// if the file does not exist or cannot be parsed.
+pub fn load_selected_theme(data_dir: &Path, selected_theme: Option<&str>) -> Theme {
+    resolve_theme_path(data_dir, selected_theme)
+        .map(|path| create_theme(&path))
+        .unwrap_or_default()
+}
+
+/// Converts a filesystem path to a theme-relative path for comparison.
+fn theme_relative_path_for_event(data_dir: &Path, path: &Path) -> Option<String> {
+    if path.parent() == Some(data_dir) && path.file_name() == Some(LEGACY_THEME_PATH.as_ref()) {
+        return Some(LEGACY_THEME_PATH.to_string());
+    }
+
+    let themes_dir = data_dir.join(THEMES_DIR_NAME);
+    if path.parent() == Some(themes_dir.as_path())
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
+        let file_name = path.file_name()?.to_string_lossy();
+        return Some(format!("{THEMES_DIR_NAME}/{file_name}"));
+    }
+
+    None
+}
+
+/// Checks if any of the paths in a filesystem event affect the currently selected theme.
+fn event_affects_selected_theme(
+    data_dir: &Path,
+    selected_theme: Option<&str>,
+    event_paths: &[PathBuf],
+) -> bool {
+    let active_theme = resolve_theme_relative_path(data_dir, selected_theme);
+
+    event_paths
+        .iter()
+        .filter_map(|path| theme_relative_path_for_event(data_dir, path))
+        .any(|changed_path| {
+            if let Some(active_theme) = active_theme.as_deref() {
+                return changed_path == active_theme;
+            }
+
+            if let Some(selected_theme) = selected_theme {
+                return changed_path == selected_theme;
+            }
+
+            false
+        })
+}
+
 #[derive(PartialEq, Clone)]
 pub struct ThemeEvTransmitter;
 
@@ -276,8 +406,12 @@ pub struct ThemeWatcher(pub Box<dyn Watcher>);
 
 impl Global for ThemeWatcher {}
 
-pub fn setup_theme(cx: &mut App, path: PathBuf) {
-    cx.set_global(create_theme(&path));
+pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
+    let settings_model = cx.global::<SettingsGlobal>().model.clone();
+    let selected_theme = settings_model.read(cx).interface.theme.clone();
+    let selected_theme_state = Arc::new(RwLock::new(selected_theme.clone()));
+
+    cx.set_global(load_selected_theme(&data_dir, selected_theme.as_deref()));
     let theme_transmitter = cx.new(|_| ThemeEvTransmitter);
 
     cx.subscribe(&theme_transmitter, |_, theme, cx| {
@@ -286,46 +420,81 @@ pub fn setup_theme(cx: &mut App, path: PathBuf) {
     })
     .detach();
 
-    let (tx, rx) = channel::<notify::Result<Event>>();
+    let data_dir_for_settings = data_dir.clone();
+    let selected_theme_state_for_settings = selected_theme_state.clone();
+    let theme_transmitter_for_settings = theme_transmitter.clone();
+    let settings_model_for_observer = settings_model.clone();
+    cx.observe(&settings_model, move |_, cx| {
+        let selected_theme = settings_model_for_observer.read(cx).interface.theme.clone();
+        let should_update = {
+            let mut current_theme = selected_theme_state_for_settings.write().unwrap();
+            if *current_theme == selected_theme {
+                false
+            } else {
+                *current_theme = selected_theme.clone();
+                true
+            }
+        };
 
+        if should_update {
+            let theme = load_selected_theme(&data_dir_for_settings, selected_theme.as_deref());
+            theme_transmitter_for_settings.update(cx, move |_, m| {
+                m.emit(theme);
+            });
+        }
+    })
+    .detach();
+
+    let (tx, rx) = channel::<notify::Result<Event>>();
     let watcher = notify::recommended_watcher(tx);
 
     if let Ok(mut watcher) = watcher {
-        if let Err(e) = watcher.watch(path.parent().unwrap(), RecursiveMode::NonRecursive) {
-            warn!("failed to watch settings directory: {:?}", e);
+        if let Err(e) = watcher.watch(&data_dir, RecursiveMode::Recursive) {
+            warn!("failed to watch theme directory: {:?}", e);
         }
 
-        cx.spawn(async move |cx: &mut AsyncApp| {
-            loop {
-                while let Ok(event) = rx.try_recv() {
-                    match event {
-                        Ok(v) => {
-                            if v.paths.iter().any(|t| t.ends_with("theme.json")) {
+        cx.spawn({
+            let data_dir = data_dir.clone();
+            let selected_theme_state = selected_theme_state.clone();
+            let theme_transmitter = theme_transmitter.clone();
+            async move |cx: &mut AsyncApp| {
+                loop {
+                    while let Ok(event) = rx.try_recv() {
+                        match event {
+                            Ok(v) => {
+                                let selected_theme = selected_theme_state.read().unwrap().clone();
+                                if !event_affects_selected_theme(
+                                    &data_dir,
+                                    selected_theme.as_deref(),
+                                    &v.paths,
+                                ) {
+                                    continue;
+                                }
+
                                 match v.kind {
-                                    notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
-                                        info!("Theme changed, updating...");
-                                        let theme = create_theme(&path);
+                                    notify::EventKind::Create(_)
+                                    | notify::EventKind::Modify(_)
+                                    | notify::EventKind::Remove(_) => {
+                                        info!("Theme changed, updating");
+                                        let theme = load_selected_theme(
+                                            &data_dir,
+                                            selected_theme.as_deref(),
+                                        );
                                         theme_transmitter.update(cx, move |_, m| {
                                             m.emit(theme);
-                                        });
-                                    }
-                                    notify::EventKind::Remove(_) => {
-                                        info!("Theme file removed, resetting to default...");
-                                        theme_transmitter.update(cx, |_, m| {
-                                            m.emit(Theme::default());
                                         });
                                     }
                                     _ => (),
                                 }
                             }
+                            Err(e) => error!("error occured while watching themes: {:?}", e),
                         }
-                        Err(e) => error!("error occured while watching theme.json: {:?}", e),
                     }
-                }
 
-                cx.background_executor()
-                    .timer(Duration::from_millis(10))
-                    .await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(10))
+                        .await;
+                }
             }
         })
         .detach();
@@ -334,6 +503,6 @@ pub fn setup_theme(cx: &mut App, path: PathBuf) {
         let tw = ThemeWatcher(Box::new(watcher));
         cx.set_global(tw);
     } else if let Err(e) = watcher {
-        warn!("failed to watch settings directory: {:?}", e);
+        warn!("failed to watch theme directory: {:?}", e);
     }
 }
