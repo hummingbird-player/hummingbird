@@ -2,27 +2,28 @@ use std::path::{Path, PathBuf};
 
 use cntp_i18n::tr;
 use gpui::{
-    div, px, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Window,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window, div, px,
 };
 
 use crate::{
     settings::{
+        SettingsGlobal,
         interface::{
-            clamp_grid_min_item_width, StartupLibraryView, DEFAULT_GRID_MIN_ITEM_WIDTH,
-            MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
+            DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
+            StartupLibraryView, clamp_grid_min_item_width,
         },
-        save_settings, SettingsGlobal,
+        save_settings,
     },
     ui::components::{
         checkbox::checkbox,
-        dropdown::{dropdown, DropdownOption, DropdownState},
+        dropdown::{DropdownOption, DropdownState, dropdown},
         label::label,
         labeled_slider::labeled_slider,
         section_header::section_header,
     },
     ui::theme::{
-        resolve_theme_relative_path, Theme, ThemeOption, ThemeOptionsGlobal, DEFAULT_THEME_ID,
+        DEFAULT_THEME_ID, Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path,
     },
 };
 
@@ -162,7 +163,11 @@ impl InterfaceSettings {
     pub fn new(cx: &mut App) -> Entity<Self> {
         let settings_global = cx.global::<SettingsGlobal>();
         let settings = settings_global.model.clone();
-        let data_dir = settings_global.path.parent().unwrap().to_path_buf();
+        let data_dir = settings_global
+            .path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
         let theme_options = cx.global::<ThemeOptionsGlobal>().model.clone();
         let interface = settings.read(cx).interface.clone();
         let selected_theme = interface.theme.clone();
