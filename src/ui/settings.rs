@@ -11,11 +11,11 @@ use gpui::{
 };
 
 use crate::{
-    settings::storage::DEFAULT_SIDEBAR_WIDTH,
+    settings::{SettingsGlobal, storage::DEFAULT_SIDEBAR_WIDTH},
     ui::{
         components::{
             icons::{BOOKS, PLAY, WORLD},
-            scrollbar::{RightPad, floating_scrollbar},
+            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
             window_header::header,
@@ -59,6 +59,13 @@ pub fn open_settings_window(cx: &mut App) {
     .ok();
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsSectionKind {
+    Interface,
+    Library,
+    Playback,
+}
+
 #[derive(Clone, PartialEq)]
 enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
@@ -66,23 +73,53 @@ enum SettingsSection {
     Playback(Entity<PlaybackSettings>),
 }
 
+impl SettingsSection {
+    fn new(section: SettingsSectionKind, cx: &mut App) -> Self {
+        match section {
+            SettingsSectionKind::Interface => Self::Interface(InterfaceSettings::new(cx)),
+            SettingsSectionKind::Library => Self::Library(LibrarySettings::new(cx)),
+            SettingsSectionKind::Playback => Self::Playback(PlaybackSettings::new(cx)),
+        }
+    }
+
+    fn kind(&self) -> SettingsSectionKind {
+        match self {
+            Self::Interface(_) => SettingsSectionKind::Interface,
+            Self::Library(_) => SettingsSectionKind::Library,
+            Self::Playback(_) => SettingsSectionKind::Playback,
+        }
+    }
+}
+
 struct SettingsWindow {
     active: SettingsSection,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     first_render: bool,
+    redraw: bool,
 }
 
 impl SettingsWindow {
     fn new(cx: &mut App) -> gpui::Entity<Self> {
         let focus_handle = cx.focus_handle();
-        let interface = interface::InterfaceSettings::new(cx);
+        let active = SettingsSection::new(SettingsSectionKind::Interface, cx);
         cx.new(|_| Self {
-            active: SettingsSection::Interface(interface),
+            active,
             scroll_handle: ScrollHandle::new(),
             first_render: true,
             focus_handle,
+            redraw: false,
         })
+    }
+
+    fn switch_section(&mut self, section: SettingsSectionKind, cx: &mut Context<Self>) {
+        self.active = SettingsSection::new(section, cx);
+        self.scroll_handle.scroll_to_top_of_item(0);
+        cx.notify();
+
+        // Force a redraw to make sure that scrollbars and
+        // padding are properly updated.
+        self.redraw = true;
     }
 }
 
@@ -93,9 +130,25 @@ impl Render for SettingsWindow {
             self.focus_handle.focus(window, cx);
         }
 
+        if self.redraw {
+            self.redraw = false;
+            window.request_animation_frame();
+        }
+
         let theme = cx.global::<Theme>();
         let active = &self.active;
+        let active_kind = active.kind();
         let scroll_handle = self.scroll_handle.clone();
+        let scrollbar_always_visible = {
+            let settings = cx.global::<SettingsGlobal>();
+            let scroll_handle: ScrollableHandle = scroll_handle.clone().into();
+
+            // On the first draw, total_content_height returns 0. In this case,
+            // we want to always draw padding to prevent a noticeable jitter.
+            settings.model.read(cx).interface.always_show_scrollbars
+                && (scroll_handle.total_content_height() <= 0.0
+                    || scroll_handle.should_draw_scrollbar())
+        };
 
         let content = match active {
             SettingsSection::Interface(interface) => interface.clone().into_any_element(),
@@ -136,18 +189,11 @@ impl Render for SettingsWindow {
                                     sidebar_item("interface")
                                         .icon(WORLD)
                                         .child(tr!("INTERFACE", "Interface"))
-                                        .on_click(cx.listener({
-                                            let scroll_handle = self.scroll_handle.clone();
-                                            move |this, _, _, cx| {
-                                                this.active = SettingsSection::Interface(
-                                                    InterfaceSettings::new(cx),
-                                                );
-                                                scroll_handle.scroll_to_top_of_item(0);
-                                                cx.notify();
-                                            }
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.switch_section(SettingsSectionKind::Interface, cx);
                                         }))
                                         .when(
-                                            matches!(active, SettingsSection::Interface(_)),
+                                            active_kind == SettingsSectionKind::Interface,
                                             |this| this.active(),
                                         ),
                                 )
@@ -155,18 +201,11 @@ impl Render for SettingsWindow {
                                     sidebar_item("library")
                                         .icon(BOOKS)
                                         .child(tr!("LIBRARY", "Library"))
-                                        .on_click({
-                                            let scroll_handle = self.scroll_handle.clone();
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.active = SettingsSection::Library(
-                                                    LibrarySettings::new(cx),
-                                                );
-                                                scroll_handle.scroll_to_top_of_item(0);
-                                                cx.notify();
-                                            })
-                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.switch_section(SettingsSectionKind::Library, cx);
+                                        }))
                                         .when(
-                                            matches!(active, SettingsSection::Library(_)),
+                                            active_kind == SettingsSectionKind::Library,
                                             |this| this.active(),
                                         ),
                                 )
@@ -174,18 +213,11 @@ impl Render for SettingsWindow {
                                     sidebar_item("playback")
                                         .icon(PLAY)
                                         .child(tr!("PLAYBACK", "Playback"))
-                                        .on_click({
-                                            let scroll_handle = self.scroll_handle.clone();
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.active = SettingsSection::Playback(
-                                                    PlaybackSettings::new(cx),
-                                                );
-                                                scroll_handle.scroll_to_top_of_item(0);
-                                                cx.notify();
-                                            })
-                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.switch_section(SettingsSectionKind::Playback, cx);
+                                        }))
                                         .when(
-                                            matches!(active, SettingsSection::Playback(_)),
+                                            active_kind == SettingsSectionKind::Playback,
                                             |this| this.active(),
                                         ),
                                 ),
@@ -206,7 +238,16 @@ impl Render for SettingsWindow {
                                         .track_scroll(&scroll_handle)
                                         .flex_shrink()
                                         .overflow_x_hidden()
-                                        .child(div().w_full().p(px(16.0)).child(content)),
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .p(px(16.0))
+                                                .when(scrollbar_always_visible, |div| {
+                                                    // 16px padding + 10px buffer
+                                                    div.pr(px(26.0))
+                                                })
+                                                .child(content),
+                                        ),
                                 )
                                 .child(floating_scrollbar(
                                     "settings-scrollbar",
