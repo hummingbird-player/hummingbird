@@ -467,11 +467,28 @@ impl Render for Library {
             }
         }
 
-        let content = if two_column && self.left_view.is_some() && self.right_view.is_some() {
+        let single_column = |view: &LibraryView| {
+            div()
+                .w_full()
+                .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
+                .h_full()
+                .flex()
+                .flex_col()
+                .flex_shrink()
+                .mr_auto()
+                .overflow_hidden()
+                .child(self.navigation_view.clone())
+                .child(render_library_view(view))
+                .into_any_element()
+        };
+
+        let content = if let (true, Some(left), Some(right)) = (
+            two_column,
+            self.left_view.as_ref(),
+            self.right_view.as_ref(),
+        ) {
             // two column
             let split_width_model = cx.global::<Models>().split_width.clone();
-            let left = self.left_view.as_ref().unwrap();
-            let right = self.right_view.as_ref().unwrap();
 
             div()
                 .w_full()
@@ -511,26 +528,12 @@ impl Render for Library {
                         .child(render_library_view(right)),
                 )
                 .into_any_element()
+        } else if two_column {
+            // single column - two column mode but views not available
+            single_column(self.left_view.as_ref().unwrap_or(&self.view))
         } else {
-            // single column
-            let active_view = if two_column {
-                self.left_view.as_ref().unwrap_or(&self.view)
-            } else {
-                &self.view
-            };
-
-            div()
-                .w_full()
-                .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
-                .h_full()
-                .flex()
-                .flex_col()
-                .flex_shrink()
-                .mr_auto()
-                .overflow_hidden()
-                .child(self.navigation_view.clone())
-                .child(render_library_view(active_view))
-                .into_any_element()
+            // single column - two column mode disabled
+            single_column(&self.view)
         };
 
         div()

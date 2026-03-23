@@ -136,7 +136,7 @@ impl PaletteItem for SearchPaletteItem {
                 }
             }
             SearchPaletteItem::Track { id, .. } => {
-                let track = cx.get_track_by_id(*id as i64);
+                let track = cx.get_track_by_id(*id);
 
                 if let Ok(track) = track {
                     play_track_next(cx, &track);

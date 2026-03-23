@@ -178,8 +178,9 @@ impl RenderOnce for SidebarItem {
                 )
             });
 
-        if self.collapsed && self.label.is_some() {
-            let label_text = self.label.unwrap();
+        if self.collapsed
+            && let Some(label_text) = self.label
+        {
             let group_name = self.group_id;
 
             deferred(
