@@ -169,7 +169,7 @@
   },
   "APP_NAME": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:263",
+    "definedIn": "src/ui/controls.rs:264",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -613,19 +613,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:548",
+    "definedIn": "src/ui/controls.rs:549",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:538",
+    "definedIn": "src/ui/controls.rs:539",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:557",
+    "definedIn": "src/ui/controls.rs:558",
     "plural": false,
     "description": null
   },
@@ -949,13 +949,13 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:292",
+    "definedIn": "src/ui/controls.rs:293",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:287",
+    "definedIn": "src/ui/controls.rs:288",
     "plural": false,
     "description": null
   },

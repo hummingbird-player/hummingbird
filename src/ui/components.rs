@@ -27,5 +27,6 @@ pub mod table;
 pub mod textbox;
 pub mod tooltip;
 pub mod uniform_grid;
+pub mod volume_tooltip;
 pub mod window_chrome;
 pub mod window_header;

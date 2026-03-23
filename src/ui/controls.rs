@@ -12,6 +12,7 @@ use crate::{
                 REPEAT_ONCE, SHUFFLE, VOLUME, VOLUME_OFF, icon,
             },
             menu::{menu, menu_item},
+            volume_tooltip::build_volume_tooltip,
         },
         library::context_menus::{
             info_section::InfoSectionContextMenu, resolve_library_track_by_path,
@@ -21,7 +22,7 @@ use crate::{
     },
 };
 use cntp_i18n::tr;
-use gpui::{Corner, *};
+use gpui::{Corner, InteractiveElement, *};
 use prelude::FluentBuilder;
 use std::{path::PathBuf, rc::Rc};
 
@@ -813,7 +814,9 @@ impl Render for SecondaryControls {
                 )
                 .child(
                     div()
+                        .id("volume-container")
                         .mx(px(4.0))
+                        .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
                         .child(
                             slider()
                                 .w(px(80.0))
