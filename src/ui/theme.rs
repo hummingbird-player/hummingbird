@@ -532,7 +532,7 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
                                     _ => (),
                                 }
                             }
-                            Err(e) => error!("error occured while watching themes: {:?}", e),
+                            Err(e) => error!("error occurred while watching themes: {:?}", e),
                         }
                     }
 

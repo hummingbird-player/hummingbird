@@ -422,7 +422,7 @@ pub fn perform_edge_scroll(
 
 /// Handle a drag move event for a drag-drop list.
 ///
-/// Returns `true` if scrolling occurred. If scrolling occured, the caller should request an
+/// Returns `true` if scrolling occurred. If scrolling occurred, the caller should request an
 /// animation frame to continuously scroll while the mouse is in an edge zone.
 pub fn handle_drag_move<V: 'static>(
     manager: Entity<DragDropListManager>,
