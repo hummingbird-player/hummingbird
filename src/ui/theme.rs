@@ -302,7 +302,7 @@ pub fn discover_theme_options(data_dir: &Path) -> Vec<ThemeOption> {
     if legacy_theme.is_file() {
         themes.push(ThemeOption {
             id: Some(LEGACY_THEME_PATH.to_string()),
-            label: LEGACY_THEME_PATH.to_string(),
+            label: "Legacy".to_string(),
         });
     }
 
@@ -319,9 +319,13 @@ pub fn discover_theme_options(data_dir: &Path) -> Vec<ThemeOption> {
         })
         .filter_map(|path| {
             let file_name = path.file_name()?.to_string_lossy().into_owned();
+            let label = file_name
+                .strip_suffix(".json")
+                .map(|s| s.to_string())
+                .unwrap_or(file_name);
             Some(ThemeOption {
                 id: Some(format!("{THEMES_DIR_NAME}/{file_name}")),
-                label: file_name,
+                label,
             })
         })
         .collect::<Vec<_>>();
