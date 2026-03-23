@@ -1,7 +1,7 @@
 use std::{io::BufReader, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::mpsc::UnboundedReceiver};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::watch};
 use tracing::error;
 
 use crate::playback::{events::RepeatState, queue::QueueItemData};
@@ -29,16 +29,28 @@ impl Default for PlaybackSessionData {
 
 pub struct PlaybackSessionStorageWorker {
     file_path: PathBuf,
-    rx: UnboundedReceiver<PlaybackSessionData>,
+    rx: watch::Receiver<PlaybackSessionData>,
 }
 
 impl PlaybackSessionStorageWorker {
-    pub fn new(file_path: PathBuf, rx: UnboundedReceiver<PlaybackSessionData>) -> Self {
+    pub fn new(file_path: PathBuf, rx: watch::Receiver<PlaybackSessionData>) -> Self {
         Self { file_path, rx }
     }
 
     pub async fn run(mut self) {
-        while let Some(session) = self.rx.recv().await {
+        while self.rx.changed().await.is_ok() {
+            let mut json = match {
+                let session = self.rx.borrow_and_update();
+                serde_json::to_vec(&*session)
+            } {
+                Ok(json) => json,
+                Err(e) => {
+                    error!("Failed to serialize PlaybackSessionData: {}", e);
+                    continue;
+                }
+            };
+            json.push(b'\n');
+
             let file = match OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -52,15 +64,6 @@ impl PlaybackSessionStorageWorker {
                     continue;
                 }
             };
-
-            let mut json = match serde_json::to_vec(&session) {
-                Ok(json) => json,
-                Err(e) => {
-                    error!("Failed to serialize PlaybackSessionData: {}", e);
-                    continue;
-                }
-            };
-            json.push(b'\n');
 
             let mut file = file;
             if let Err(e) = file.write_all(&json).await {

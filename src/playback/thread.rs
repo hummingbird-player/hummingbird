@@ -10,7 +10,10 @@ use std::{
 };
 
 use itertools::Itertools as _;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    watch,
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -90,7 +93,7 @@ impl PlaybackThread {
         playback_settings: PlaybackSettings,
         last_volume: f64,
         session: PlaybackSessionData,
-        storage_tx: UnboundedSender<PlaybackSessionData>,
+        storage_tx: watch::Sender<PlaybackSessionData>,
     ) -> PlaybackInterface {
         let (commands_tx, commands_rx) = unbounded_channel();
         let (events_tx, events_rx) = unbounded_channel();

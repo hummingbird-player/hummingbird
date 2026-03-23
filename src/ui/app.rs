@@ -210,7 +210,7 @@ pub fn run() -> anyhow::Result<()> {
             let queue: Arc<RwLock<Vec<QueueItemData>>> =
                 Arc::new(RwLock::new(playback_session.queue.clone()));
 
-            let (queue_tx, queue_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (queue_tx, queue_rx) = tokio::sync::watch::channel(playback_session.clone());
             crate::RUNTIME.spawn(PlaybackSessionStorageWorker::new(session_file, queue_rx).run());
 
             setup_theme(cx, data_dir.join("theme.json"));

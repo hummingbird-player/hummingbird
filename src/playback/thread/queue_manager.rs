@@ -5,7 +5,6 @@ use std::{
 };
 
 use rand::{rng, seq::SliceRandom};
-use tracing::error;
 
 use crate::{
     playback::{events::RepeatState, queue::QueueItemData, queue_storage::PlaybackSessionData},
@@ -110,10 +109,21 @@ pub struct QueueManager {
     /// If queue_next == queue.len(), we're on the last track.
     queue_next: usize,
     repeat: RepeatState,
-    storage_tx: tokio::sync::mpsc::UnboundedSender<PlaybackSessionData>,
+    storage_tx: tokio::sync::watch::Sender<PlaybackSessionData>,
 }
 
 impl QueueManager {
+    fn normalize_repeat_state(
+        playback_settings: &PlaybackSettings,
+        state: RepeatState,
+    ) -> RepeatState {
+        if state == RepeatState::NotRepeating && playback_settings.always_repeat {
+            RepeatState::Repeating
+        } else {
+            state
+        }
+    }
+
     fn item_is_playable(item: &QueueItemData) -> bool {
         item.get_path().exists()
     }
@@ -140,32 +150,39 @@ impl QueueManager {
         queue: Arc<RwLock<Vec<QueueItemData>>>,
         playback_settings: PlaybackSettings,
         session: PlaybackSessionData,
-        storage_tx: tokio::sync::mpsc::UnboundedSender<PlaybackSessionData>,
+        storage_tx: tokio::sync::watch::Sender<PlaybackSessionData>,
     ) -> Self {
-        let queue_len = queue.read().expect("poisoned queue lock").len();
-        let queue_position = session
-            .queue_position
-            .filter(|position| *position < queue_len);
-        let shuffle = session.shuffle;
-        let original_queue = if shuffle && session.original_queue.len() == queue_len {
-            session.original_queue
-        } else if shuffle {
-            queue.read().expect("poisoned queue lock").clone()
-        } else {
-            Vec::new()
-        };
+        let PlaybackSessionData {
+            original_queue: session_original_queue,
+            queue_position: session_queue_position,
+            shuffle,
+            repeat,
+            ..
+        } = session;
+        let (queue_len, original_queue) = {
+            let queue = queue.read().expect("poisoned queue lock");
+            let queue_len = queue.len();
+            let original_queue = if shuffle && session_original_queue.len() == queue_len {
+                session_original_queue
+            } else if shuffle {
+                queue.clone()
+            } else {
+                Vec::new()
+            };
 
-        let mut this = Self {
-            repeat: RepeatState::NotRepeating,
+            (queue_len, original_queue)
+        };
+        let queue_position = session_queue_position.filter(|position| *position < queue_len);
+
+        Self {
+            repeat: Self::normalize_repeat_state(&playback_settings, repeat),
             playback_settings,
             queue,
             original_queue,
             shuffle,
             queue_next: queue_position.map_or(0, |position| position + 1),
             storage_tx,
-        };
-        this.set_repeat(session.repeat);
-        this
+        }
     }
 
     /// Get the current queue position (0-indexed).
@@ -222,18 +239,13 @@ impl QueueManager {
     /// Set the queue position directly (used after opening a track).
     pub fn set_position(&mut self, index: usize) {
         self.queue_next = index + 1;
-        self.persist_session();
+        self.persist_session_state();
     }
 
     /// Set the repeat state.
     pub fn set_repeat(&mut self, state: RepeatState) {
-        self.repeat = if state == RepeatState::NotRepeating && self.playback_settings.always_repeat
-        {
-            RepeatState::Repeating
-        } else {
-            state
-        };
-        self.persist_session();
+        self.repeat = Self::normalize_repeat_state(&self.playback_settings, state);
+        self.persist_session_state();
     }
 
     /// Update playback settings.
@@ -242,7 +254,7 @@ impl QueueManager {
 
         if self.playback_settings.always_repeat && self.repeat == RepeatState::NotRepeating {
             self.repeat = RepeatState::Repeating;
-            self.persist_session();
+            self.persist_session_state();
         }
     }
 
@@ -293,8 +305,12 @@ impl QueueManager {
             }
         };
 
-        if matches!(result, QueueNavigationResult::Changed { .. }) {
-            self.persist_session();
+        if let QueueNavigationResult::Changed { reshuffled, .. } = &result {
+            if *reshuffled == Reshuffled::Reshuffled {
+                self.persist_session_with_queue();
+            } else {
+                self.persist_session_state();
+            }
         }
 
         result
@@ -338,8 +354,12 @@ impl QueueManager {
             }
         };
 
-        if matches!(result, QueueNavigationResult::Changed { .. }) {
-            self.persist_session();
+        if let QueueNavigationResult::Changed { reshuffled, .. } = &result {
+            if *reshuffled == Reshuffled::Reshuffled {
+                self.persist_session_with_queue();
+            } else {
+                self.persist_session_state();
+            }
         }
 
         result
@@ -353,7 +373,7 @@ impl QueueManager {
             let path = queue[index].get_path().clone();
             drop(queue);
             self.queue_next = index + 1;
-            self.persist_session();
+            self.persist_session_state();
             JumpResult::Jumped { path }
         } else {
             JumpResult::OutOfBounds
@@ -397,7 +417,7 @@ impl QueueManager {
         let index = queue.len() - 1;
 
         drop(queue);
-        self.persist_session();
+        self.persist_session_with_queue();
 
         index
     }
@@ -425,7 +445,7 @@ impl QueueManager {
         }
 
         drop(queue);
-        self.persist_session();
+        self.persist_session_with_queue();
 
         first_index
     }
@@ -456,7 +476,7 @@ impl QueueManager {
             }
         };
 
-        self.persist_session();
+        self.persist_session_with_queue();
         result
     }
 
@@ -491,7 +511,7 @@ impl QueueManager {
             }
         };
 
-        self.persist_session();
+        self.persist_session_with_queue();
         result
     }
 
@@ -531,7 +551,7 @@ impl QueueManager {
         };
 
         drop(queue);
-        self.persist_session();
+        self.persist_session_with_queue();
 
         res
     }
@@ -574,7 +594,7 @@ impl QueueManager {
         };
 
         drop(queue);
-        self.persist_session();
+        self.persist_session_with_queue();
 
         res
     }
@@ -600,7 +620,7 @@ impl QueueManager {
 
         drop(queue);
         self.queue_next = 0;
-        self.persist_session();
+        self.persist_session_with_queue();
 
         match first_item {
             Some(first) => ReplaceResult::Replaced {
@@ -618,7 +638,7 @@ impl QueueManager {
         self.queue_next = 0;
 
         drop(queue);
-        self.persist_session();
+        self.persist_session_with_queue();
     }
 
     /// Toggle shuffle mode.
@@ -659,23 +679,49 @@ impl QueueManager {
             }
         };
 
-        self.persist_session();
+        self.persist_session_with_queue();
         result
     }
 
-    fn playback_session(&self) -> PlaybackSessionData {
-        PlaybackSessionData {
-            queue: self.queue.read().expect("poisoned queue lock").clone(),
-            original_queue: self.original_queue.clone(),
-            queue_position: self.current_position(),
-            shuffle: self.shuffle,
-            repeat: self.repeat,
-        }
+    /// Persist the queue session when only playback state changed.
+    ///
+    /// This reuses the stored queue snapshot and updates fields like
+    /// the current position, shuffle mode, and repeat mode.
+    fn persist_session_state(&self) {
+        let queue_position = self.current_position();
+        let shuffle = self.shuffle;
+        let repeat = self.repeat;
+
+        self.storage_tx.send_modify(|session| {
+            session.queue_position = queue_position;
+            session.shuffle = shuffle;
+            session.repeat = repeat;
+        });
     }
 
-    fn persist_session(&self) {
-        if let Err(e) = self.storage_tx.send(self.playback_session()) {
-            error!("Failed to persist playback session: {}", e);
-        }
+    /// Persist the queue session when queue contents or ordering changed.
+    ///
+    /// This refreshes the stored queue alongside the current position,
+    /// shuffle mode, and repeat mode.
+    fn persist_session_with_queue(&self) {
+        let queue = self.queue.read().expect("poisoned queue lock");
+        let queue_snapshot = queue.clone();
+        let queue_position = self
+            .queue_next
+            .checked_sub(1)
+            .filter(|position| *position < queue.len());
+        drop(queue);
+
+        let original_queue = self.original_queue.clone();
+        let shuffle = self.shuffle;
+        let repeat = self.repeat;
+
+        self.storage_tx.send_modify(move |session| {
+            session.queue = queue_snapshot;
+            session.original_queue = original_queue;
+            session.queue_position = queue_position;
+            session.shuffle = shuffle;
+            session.repeat = repeat;
+        });
     }
 }
