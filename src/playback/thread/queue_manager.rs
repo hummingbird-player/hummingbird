@@ -7,7 +7,7 @@ use std::{
 use rand::{rng, seq::SliceRandom};
 
 use crate::{
-    playback::{events::RepeatState, queue::QueueItemData, queue_storage::PlaybackSessionData},
+    playback::{events::RepeatState, queue::QueueItemData, session_storage::PlaybackSessionData},
     settings::playback::PlaybackSettings,
 };
 

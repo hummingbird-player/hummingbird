@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     media::errors::PlaybackStartError,
-    playback::{events::RepeatState, queue_storage::PlaybackSessionData},
+    playback::{events::RepeatState, session_storage::PlaybackSessionData},
     settings::{
         playback::PlaybackSettings,
         replaygain::{ReplayGainAutoHint, calculate_gain},

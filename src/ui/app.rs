@@ -18,7 +18,7 @@ use crate::{
     },
     playback::{
         interface::PlaybackInterface, queue::QueueItemData,
-        queue_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
+        session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
     },
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
