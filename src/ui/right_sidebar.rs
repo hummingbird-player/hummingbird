@@ -54,7 +54,7 @@ impl Render for RightSidebar {
 
         resizable("queue-resizable", queue_width, ResizeEdge::Left)
             .min_size(px(225.0))
-            .max_size(px(450.0))
+            .max_size(px(800.0))
             .default_size(DEFAULT_QUEUE_WIDTH)
             .h_full()
             .child(
