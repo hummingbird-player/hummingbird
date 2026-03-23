@@ -122,7 +122,7 @@
   "RG_TRACK": "Track",
   "SCAN": "Scan",
   "SCANNING": "Scanning",
-  "SCANNING_ADD_FOLDER": "Add Folder",
+  "SCANNING_ADD_FOLDERS": "Add Folders",
   "SCANNING_MISSING_DIALOG_BODY": "One or more folders in your library are missing. What would you like to do with the items in those folders?",
   "SCANNING_MISSING_DIALOG_DELETE": "Delete items",
   "SCANNING_MISSING_DIALOG_DELETE_SUBTITLE": "Remove the tracks and albums from the missing folder now. They will be removed from your library and playlists.",
