@@ -139,7 +139,7 @@
   "SCANNING_NO_FOLDERS": "No folders are currently scanned.",
   "SCANNING_RESCAN_REQUIRED": "Your changes will be applied on your next scan.",
   "SCANNING_RESCAN_REQUIRED_TITLE": "Rescan Required",
-  "SCANNING_SELECT_FOLDER": "Select a folder to scan...",
+  "SCANNING_SELECT_FOLDERS": "Select folders to scan...",
   "SCANNING_SUBTITLE": "Changes apply on your next scan. Duplicate folders are ignored.",
   "SCAN_COMPLETE_WATCHING": "Watching for updates",
   "SCAN_PROGRESS_DISCOVERING": "Scanning {{current}} files...",

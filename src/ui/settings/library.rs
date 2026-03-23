@@ -6,6 +6,23 @@ use gpui::{
 };
 use tracing::warn;
 
+/// Adds new scan paths while ignoring duplicates.
+fn merge_scan_paths(
+    paths: &mut Vec<Utf8PathBuf>,
+    new_paths: impl IntoIterator<Item = Utf8PathBuf>,
+) -> bool {
+    let mut updated = false;
+
+    for path in new_paths {
+        if !paths.contains(&path) {
+            paths.push(path);
+            updated = true;
+        }
+    }
+
+    updated
+}
+
 use crate::{
     library::scan::ScanInterface,
     settings::{Settings, SettingsGlobal, save_settings, scan::MissingFolderPolicy},
@@ -95,36 +112,42 @@ impl LibrarySettings {
         let path_future = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
-            multiple: false,
-            prompt: Some(tr!("SCANNING_SELECT_FOLDER", "Select a folder to scan...").into()),
+            multiple: true,
+            prompt: Some(tr!("SCANNING_SELECT_FOLDERS", "Select folders to scan...").into()),
         });
 
         let settings = self.settings.clone();
 
         cx.spawn(async move |cx| {
-            if let Ok(Ok(Some(mut paths))) = path_future.await
-                && let Some(path) = paths.pop()
-            {
-                let path = path.canonicalize().unwrap_or(path);
+            let Ok(Ok(Some(paths))) = path_future.await else {
+                return;
+            };
 
-                if let Ok(path) = Utf8PathBuf::try_from(path) {
-                    settings.update(cx, move |settings, cx| {
-                        let mut updated = false;
+            let paths = paths
+                .into_iter()
+                .filter_map(|path| {
+                    let path = path.canonicalize().unwrap_or(path);
 
-                        if !settings.scanning.paths.contains(&path) {
-                            settings.scanning.paths.push(path);
-                            updated = true;
+                    match Utf8PathBuf::try_from(path) {
+                        Ok(path) => Some(path),
+                        Err(_) => {
+                            warn!("Selected music directory path is not UTF-8: will not be added.");
+                            None
                         }
+                    }
+                })
+                .collect::<Vec<_>>();
 
-                        if updated {
-                            save_settings(cx, settings);
-                            cx.notify();
-                        }
-                    });
-                } else {
-                    warn!("Selected music directory path is not UTF-8: will not be added.");
-                }
+            if paths.is_empty() {
+                return;
             }
+
+            settings.update(cx, move |settings, cx| {
+                if merge_scan_paths(&mut settings.scanning.paths, paths) {
+                    save_settings(cx, settings);
+                    cx.notify();
+                }
+            });
         })
         .detach();
     }
@@ -232,7 +255,7 @@ impl Render for LibrarySettings {
                                     .flex()
                                     .gap(px(6.0))
                                     .child(icon(CIRCLE_PLUS).my_auto().size(px(14.0)))
-                                    .child(tr!("SCANNING_ADD_FOLDER", "Add Folder")),
+                                    .child(tr!("SCANNING_ADD_FOLDERS", "Add Folders")),
                             )
                             .id("library-settings-add-folder")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -282,5 +305,81 @@ impl Render for LibrarySettings {
                 )
             })
             .child(list)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_scan_paths;
+    use camino::Utf8PathBuf;
+
+    /// Adds multiple new paths in order.
+    #[test]
+    fn merge_scan_paths_adds_multiple_unique_paths() {
+        let mut paths = vec![Utf8PathBuf::from("/music/existing")];
+
+        let updated = merge_scan_paths(
+            &mut paths,
+            [
+                Utf8PathBuf::from("/music/one"),
+                Utf8PathBuf::from("/music/two"),
+            ],
+        );
+
+        assert!(updated);
+        assert_eq!(
+            paths,
+            vec![
+                Utf8PathBuf::from("/music/existing"),
+                Utf8PathBuf::from("/music/one"),
+                Utf8PathBuf::from("/music/two"),
+            ]
+        );
+    }
+
+    /// Ignores paths that already exist.
+    #[test]
+    fn merge_scan_paths_ignores_existing_paths() {
+        let mut paths = vec![Utf8PathBuf::from("/music/existing")];
+
+        let updated = merge_scan_paths(&mut paths, [Utf8PathBuf::from("/music/existing")]);
+
+        assert!(!updated);
+        assert_eq!(paths, vec![Utf8PathBuf::from("/music/existing")]);
+    }
+
+    /// Ignores duplicate paths in one batch.
+    #[test]
+    fn merge_scan_paths_ignores_duplicates_within_same_batch() {
+        let mut paths = Vec::new();
+
+        let updated = merge_scan_paths(
+            &mut paths,
+            [
+                Utf8PathBuf::from("/music/one"),
+                Utf8PathBuf::from("/music/one"),
+                Utf8PathBuf::from("/music/two"),
+            ],
+        );
+
+        assert!(updated);
+        assert_eq!(
+            paths,
+            vec![
+                Utf8PathBuf::from("/music/one"),
+                Utf8PathBuf::from("/music/two")
+            ]
+        );
+    }
+
+    /// Reports no change for an empty batch.
+    #[test]
+    fn merge_scan_paths_reports_no_change_when_batch_is_empty() {
+        let mut paths = vec![Utf8PathBuf::from("/music/existing")];
+
+        let updated = merge_scan_paths(&mut paths, []);
+
+        assert!(!updated);
+        assert_eq!(paths, vec![Utf8PathBuf::from("/music/existing")]);
     }
 }
