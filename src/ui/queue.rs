@@ -491,7 +491,6 @@ impl Render for Queue {
                             .id("clear-queue")
                             .on_click(|_, _, cx| {
                                 cx.global::<PlaybackInterface>().clear_queue();
-                                cx.global::<PlaybackInterface>().stop();
                             }),
                     )
                     .child(

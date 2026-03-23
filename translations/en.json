@@ -89,6 +89,8 @@
   "PLAYBACK": "Playback",
   "PLAYBACK_ALWAYS_REPEAT": "Always repeat",
   "PLAYBACK_ALWAYS_REPEAT_SUBTEXT": "Disables the \"Off\" repeat mode.",
+  "PLAYBACK_KEEP_CURRENT_ON_CLEAR": "Keep current track when clearing queue",
+  "PLAYBACK_KEEP_CURRENT_ON_CLEAR_SUBTEXT": "Preserves the currently playing song instead of removing all tracks.",
   "PLAYBACK_PREVIOUS_JUMPS": "Previous button jumps to the beginning of the track if more than 5 seconds has elapsed",
   "PLAYBACK_RG_FALLBACK_PREAMP": "ReplayGain fallback pre-amp",
   "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": "Applied when tracks have no ReplayGain data.",

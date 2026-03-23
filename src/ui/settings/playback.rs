@@ -93,6 +93,32 @@ impl Render for PlaybackSettings {
                     playback.prev_track_jump_first,
                 )),
             )
+            .child(
+                label(
+                    "playback-keep-current-on-clear",
+                    tr!(
+                        "PLAYBACK_KEEP_CURRENT_ON_CLEAR",
+                        "Keep current track when clearing queue"
+                    ),
+                )
+                .subtext(tr!(
+                    "PLAYBACK_KEEP_CURRENT_ON_CLEAR_SUBTEXT",
+                    "Preserves the currently playing song instead of removing all tracks."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .has_checkbox()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_playback(cx, |playback| {
+                        playback.keep_current_on_queue_clear =
+                            !playback.keep_current_on_queue_clear;
+                    });
+                }))
+                .child(checkbox(
+                    "playback-keep-current-on-clear-check",
+                    playback.keep_current_on_queue_clear,
+                )),
+            )
             .child({
                 let settings = self.settings.clone();
                 label(

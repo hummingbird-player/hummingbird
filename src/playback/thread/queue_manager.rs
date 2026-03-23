@@ -631,11 +631,31 @@ impl QueueManager {
     }
 
     /// Clear the queue.
-    pub fn clear(&mut self) {
+    ///
+    /// If `keep_current` is true, the currently playing track will be preserved and the
+    /// queue will contain only that track.
+    pub fn clear(&mut self, keep_current: bool) {
         let mut queue = self.queue.write().expect("poisoned queue lock");
+        let current_item = keep_current
+            .then(|| {
+                (self.queue_next > 0 && self.queue_next <= queue.len())
+                    .then(|| queue[self.queue_next - 1].clone())
+            })
+            .flatten();
+
         queue.clear();
         self.original_queue.clear();
-        self.queue_next = 0;
+
+        if let Some(current_item) = current_item {
+            queue.push(current_item.clone());
+            self.queue_next = 1;
+
+            if self.shuffle {
+                self.original_queue.push(current_item);
+            }
+        } else {
+            self.queue_next = 0;
+        }
 
         drop(queue);
         self.persist_session_with_queue();

@@ -724,10 +724,18 @@ impl PlaybackThread {
 
     /// Clear the current queue.
     fn clear_queue(&mut self) {
-        self.queue.clear();
+        let keep_current = self.playback_settings.keep_current_on_queue_clear
+            && self.state() != PlaybackState::Stopped;
+        self.queue.clear(keep_current);
         self.refresh_rg_auto_hint();
 
-        self.send_event(PlaybackEvent::QueuePositionChanged(0));
+        if !keep_current {
+            self.stop();
+        }
+
+        self.send_event(PlaybackEvent::QueuePositionChanged(
+            self.queue.current_position().unwrap_or(0),
+        ));
         self.send_event(PlaybackEvent::QueueUpdated);
     }
 

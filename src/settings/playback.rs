@@ -31,6 +31,15 @@ pub struct PlaybackSettings {
     #[serde(default)]
     pub prev_track_jump_first: bool,
 
+    /// Determines whether or not clearing the queue should preserve the currently playing track.
+    ///
+    /// If the option is false, clearing the queue removes all tracks and stops playback. If the
+    /// option is true, the currently playing track will be preserved in the queue when clearing.
+    ///
+    /// Defaults to true.
+    #[serde(default)]
+    pub keep_current_on_queue_clear: bool,
+
     /// ReplayGain settings.
     #[serde(default)]
     pub replaygain: ReplayGainSettings,
@@ -42,6 +51,7 @@ impl Default for PlaybackSettings {
         Self {
             always_repeat: false,
             prev_track_jump_first: false,
+            keep_current_on_queue_clear: true,
             replaygain: ReplayGainSettings::default(),
         }
     }
