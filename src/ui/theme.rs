@@ -322,7 +322,7 @@ pub fn discover_theme_options(data_dir: &Path) -> Vec<ThemeOption> {
             let label = file_name
                 .strip_suffix(".json")
                 .map(|s| s.to_string())
-                .unwrap_or(file_name);
+                .unwrap_or(file_name.clone());
             Some(ThemeOption {
                 id: Some(format!("{THEMES_DIR_NAME}/{file_name}")),
                 label,
