@@ -95,6 +95,7 @@ impl AtomicGainRamp {
     }
 
     pub fn set_target(&self, target: f64, duration_pcm_frames: u32) {
+        self.generation.fetch_add(1, Ordering::Release);
         self.target.store(target, Ordering::Relaxed);
         self.duration_pcm_frames
             .store(duration_pcm_frames, Ordering::Relaxed);
@@ -104,6 +105,12 @@ impl AtomicGainRamp {
     pub fn snapshot(&self) -> GainRampCommand {
         loop {
             let generation_before = self.generation.load(Ordering::Acquire);
+
+            if !generation_before.is_multiple_of(2) {
+                std::hint::spin_loop();
+                continue; // shouldn't last very long
+            }
+
             let target = self.target.load(Ordering::Relaxed);
             let duration_pcm_frames = self.duration_pcm_frames.load(Ordering::Relaxed);
             let generation_after = self.generation.load(Ordering::Acquire);
@@ -138,17 +145,6 @@ pub struct GainRamp {
 }
 
 impl GainRamp {
-    #[cfg(test)]
-    pub fn new(initial_gain: f64) -> Self {
-        Self {
-            current_gain: initial_gain,
-            target_gain: initial_gain,
-            step_per_pcm_frame: 0.0,
-            remaining_pcm_frames: 0,
-            last_generation: 0,
-        }
-    }
-
     pub fn from_shared(shared: &AtomicGainRamp) -> Self {
         let command = shared.snapshot();
         Self {
