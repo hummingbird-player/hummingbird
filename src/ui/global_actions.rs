@@ -12,7 +12,10 @@ use crate::{
     },
 };
 
-use super::models::{Models, PlaybackInfo};
+use super::{
+    models::{Models, PlaybackInfo},
+    troubleshooting,
+};
 
 actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
 actions!(player, [PlayPause, Next, Previous, ShuffleAll]);
@@ -38,6 +41,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(issues);
     cx.on_action(shuffle_all);
     cx.on_action(scan);
+    troubleshooting::register(cx);
 
     debug!("actions: {:?}", cx.all_action_names());
     debug!("action available: {:?}", cx.is_action_available(&Quit));

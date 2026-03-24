@@ -4,7 +4,13 @@ pub mod replaygain;
 pub mod scan;
 pub mod storage;
 
-use std::{fs, fs::File, path::{Path, PathBuf}, sync::mpsc::channel, time::Duration};
+use std::{
+    fs,
+    fs::File,
+    path::{Path, PathBuf},
+    sync::mpsc::channel,
+    time::Duration,
+};
 
 use gpui::{App, AppContext, AsyncApp, Entity, Global};
 use notify::{Event, RecursiveMode, Watcher};

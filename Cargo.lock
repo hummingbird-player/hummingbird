@@ -3413,6 +3413,7 @@ dependencies = [
  "symphonia",
  "symphonia-adapter-fdk-aac",
  "symphonia-adapter-libopus",
+ "sysinfo",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

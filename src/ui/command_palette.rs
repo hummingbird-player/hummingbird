@@ -18,6 +18,7 @@ use crate::ui::{
     global_actions::{
         About, ForceScan, Next, PlayPause, Previous, Quit, Search, Settings, ShuffleAll,
     },
+    troubleshooting::CopyTroubleshootingInfo,
 };
 
 actions!(hummingbird, [OpenPalette]);
@@ -179,6 +180,18 @@ impl CommandPalette {
                     Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
                     tr!("ACTION_SETTINGS", "Settings"),
                     Settings,
+                    None,
+                ),
+            );
+            items.insert(
+                ("hummingbird::copy_troubleshooting_info", 0),
+                Command::new(
+                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
+                    tr!(
+                        "ACTION_COPY_TROUBLESHOOTING_INFO",
+                        "Copy Troubleshooting Info"
+                    ),
+                    CopyTroubleshootingInfo,
                     None,
                 ),
             );
