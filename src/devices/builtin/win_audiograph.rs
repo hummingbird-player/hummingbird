@@ -1,4 +1,4 @@
-use std::{slice::from_raw_parts_mut, sync::Arc};
+use std::{cell::RefCell, slice::from_raw_parts_mut, sync::Arc};
 
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use tracing::error;
@@ -185,10 +185,12 @@ impl Device for AudioGraphDevice {
 
         let volume = Arc::new(AtomicGainRamp::new(1.0));
         let pcm_channel_count = format.channels.count() as usize;
-        let mut volume_ramp = GainRamp::from_shared(&volume);
+        let volume_for_handler = volume.clone();
+        let volume_ramp_for_handler = RefCell::new(GainRamp::from_shared(&volume));
 
         let handler =
-            TypedEventHandler::<AudioFrameInputNode, FrameInputNodeQuantumStartedEventArgs>::new(
+            TypedEventHandler::<AudioFrameInputNode, FrameInputNodeQuantumStartedEventArgs>::new({
+                let volume_for_handler = volume_for_handler.clone();
                 move |sender, args| {
                     let samples = args.as_ref().unwrap().RequiredSamples()?;
 
@@ -206,13 +208,11 @@ impl Device for AudioGraphDevice {
                         let lock = frame.LockBuffer(AudioBufferAccessMode::Write)?;
                         let reference = lock.CreateReference()?;
 
-                        // why?
                         let write = reference.cast::<IMemoryBufferByteAccess>()?;
 
                         let slice;
 
                         unsafe {
-                            // what the fuck?
                             let mut value = std::ptr::null_mut();
                             let mut capacity = 0;
                             write
@@ -226,11 +226,13 @@ impl Device for AudioGraphDevice {
                         // should be fine? IEEE says that 0.0 is 0x00000000...
                         slice[read..].iter_mut().for_each(|v| *v = 0);
 
-                        volume_ramp.sync_from_shared(&volume);
+                        let mut volume_ramp = volume_ramp_for_handler.borrow_mut();
+
+                        volume_ramp.sync_from_shared(&volume_for_handler);
 
                         let written_samples = read / size_of::<f32>();
                         let frames_written = written_samples / pcm_channel_count;
-                        let has_partial_frame = written_samples % pcm_channel_count != 0;
+                        let has_partial_frame = !written_samples.is_multiple_of(pcm_channel_count);
 
                         if volume_ramp.is_ramping() || volume_ramp.current_gain() <= 0.98 {
                             unsafe {
@@ -284,8 +286,8 @@ impl Device for AudioGraphDevice {
                     }
 
                     windows_result::Result::Ok(())
-                },
-            );
+                }
+            });
 
         input_node.QuantumStarted(&handler)?;
         input_node.SetOutgoingGain(1.0)?;

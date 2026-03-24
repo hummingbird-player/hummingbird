@@ -133,7 +133,7 @@ fn create_stream_internal<T: CpalSample>(
             volume_ramp.sync_from_shared(&volume);
 
             let frames_written = written / channel_count;
-            let has_partial_frame = written % channel_count != 0;
+            let has_partial_frame = !written.is_multiple_of(channel_count);
 
             if volume_ramp.is_ramping() || volume_ramp.current_gain() <= 0.98 {
                 for frame in 0..frames_written {
