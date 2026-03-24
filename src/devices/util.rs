@@ -1,5 +1,9 @@
 use intx::{I24, U24};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+pub fn duration_ms_to_pcm_frames(sample_rate: u32, duration_ms: u32) -> u32 {
+    ((sample_rate.saturating_mul(duration_ms)).saturating_add(999) / 1000).max(1)
+}
 
 use super::resample::{SampleFrom, SampleInto};
 
@@ -64,13 +68,148 @@ impl AtomicF64 {
         }
     }
 
-    pub fn store(&self, value: f64, ordering: std::sync::atomic::Ordering) {
+    pub fn store(&self, value: f64, ordering: Ordering) {
         let as_u64 = value.to_bits();
         self.inner.store(as_u64, ordering)
     }
 
-    pub fn load(&self, ordering: std::sync::atomic::Ordering) -> f64 {
+    pub fn load(&self, ordering: Ordering) -> f64 {
         let as_u64 = self.inner.load(ordering);
         f64::from_bits(as_u64)
+    }
+}
+
+pub struct AtomicGainRamp {
+    target: AtomicF64,
+    duration_pcm_frames: AtomicU32,
+    generation: AtomicU64,
+}
+
+impl AtomicGainRamp {
+    pub fn new(initial_gain: f64) -> Self {
+        Self {
+            target: AtomicF64::new(initial_gain),
+            duration_pcm_frames: AtomicU32::new(0),
+            generation: AtomicU64::new(0),
+        }
+    }
+
+    pub fn set_target(&self, target: f64, duration_pcm_frames: u32) {
+        self.target.store(target, Ordering::Relaxed);
+        self.duration_pcm_frames
+            .store(duration_pcm_frames, Ordering::Relaxed);
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn snapshot(&self) -> GainRampCommand {
+        loop {
+            let generation_before = self.generation.load(Ordering::Acquire);
+            let target = self.target.load(Ordering::Relaxed);
+            let duration_pcm_frames = self.duration_pcm_frames.load(Ordering::Relaxed);
+            let generation_after = self.generation.load(Ordering::Acquire);
+
+            if generation_before == generation_after {
+                return GainRampCommand {
+                    generation: generation_after,
+                    target,
+                    duration_pcm_frames,
+                };
+            }
+
+            std::hint::spin_loop();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GainRampCommand {
+    pub generation: u64,
+    pub target: f64,
+    pub duration_pcm_frames: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GainRamp {
+    current_gain: f64,
+    target_gain: f64,
+    step_per_pcm_frame: f64,
+    remaining_pcm_frames: u32,
+    last_generation: u64,
+}
+
+impl GainRamp {
+    #[cfg(test)]
+    pub fn new(initial_gain: f64) -> Self {
+        Self {
+            current_gain: initial_gain,
+            target_gain: initial_gain,
+            step_per_pcm_frame: 0.0,
+            remaining_pcm_frames: 0,
+            last_generation: 0,
+        }
+    }
+
+    pub fn from_shared(shared: &AtomicGainRamp) -> Self {
+        let command = shared.snapshot();
+        Self {
+            current_gain: command.target,
+            target_gain: command.target,
+            step_per_pcm_frame: 0.0,
+            remaining_pcm_frames: 0,
+            last_generation: command.generation,
+        }
+    }
+
+    pub fn current_gain(&self) -> f64 {
+        self.current_gain
+    }
+
+    pub fn is_ramping(&self) -> bool {
+        self.remaining_pcm_frames != 0
+    }
+
+    pub fn sync_from_shared(&mut self, shared: &AtomicGainRamp) {
+        let command = shared.snapshot();
+
+        if command.generation == self.last_generation {
+            return;
+        }
+
+        self.last_generation = command.generation;
+        self.retarget(command.target, command.duration_pcm_frames);
+    }
+
+    pub fn retarget(&mut self, target_gain: f64, duration_pcm_frames: u32) {
+        self.target_gain = target_gain;
+
+        if duration_pcm_frames == 0 || (self.current_gain - target_gain).abs() <= f64::EPSILON {
+            self.current_gain = target_gain;
+            self.step_per_pcm_frame = 0.0;
+            self.remaining_pcm_frames = 0;
+            return;
+        }
+
+        self.remaining_pcm_frames = duration_pcm_frames;
+        self.step_per_pcm_frame =
+            (target_gain - self.current_gain) / f64::from(duration_pcm_frames);
+    }
+
+    pub fn advance(&mut self) -> f64 {
+        let gain = self.current_gain;
+
+        if self.remaining_pcm_frames == 0 {
+            return gain;
+        }
+
+        self.remaining_pcm_frames -= 1;
+
+        if self.remaining_pcm_frames == 0 {
+            self.current_gain = self.target_gain;
+            self.step_per_pcm_frame = 0.0;
+        } else {
+            self.current_gain += self.step_per_pcm_frame;
+        }
+
+        gain
     }
 }

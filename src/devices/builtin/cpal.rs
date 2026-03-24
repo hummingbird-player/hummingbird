@@ -7,7 +7,7 @@ use crate::{
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, Scale},
+        util::{AtomicGainRamp, GainRamp, Scale, duration_ms_to_pcm_frames},
     },
     media::{pipeline::ChannelConsumers, playback::Mute},
     util::make_unknown_error,
@@ -18,6 +18,8 @@ use cpal::{
 };
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use std::sync::Arc;
+
+const VOLUME_RAMP_DURATION_MS: u32 = 15;
 
 pub struct CpalProvider {
     host: Host,
@@ -115,23 +117,47 @@ fn create_stream_internal<T: CpalSample>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buffer_size: usize,
-    volume: Arc<AtomicF64>,
+    volume: Arc<AtomicGainRamp>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
     let rb: SpscRb<T> = SpscRb::new(buffer_size);
     let cons = rb.consumer();
     let prod = rb.producer();
+    let channel_count = usize::from(config.channels);
+    let mut volume_ramp = GainRamp::from_shared(&volume);
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let written = cons.read(data).unwrap_or(0);
 
-            let volume = volume.load(std::sync::atomic::Ordering::Relaxed);
+            volume_ramp.sync_from_shared(&volume);
 
-            // don't scale if the volume is close to 1, it could lead to (negligable) quality loss
-            if volume <= 0.98 {
-                for sample in &mut data[..written] {
-                    *sample = sample.scale(volume);
+            let frames_written = written / channel_count;
+            let has_partial_frame = written % channel_count != 0;
+
+            if volume_ramp.is_ramping() || volume_ramp.current_gain() <= 0.98 {
+                for frame in 0..frames_written {
+                    let gain = volume_ramp.advance();
+
+                    for sample in &mut data[(frame * channel_count)..((frame + 1) * channel_count)]
+                    {
+                        *sample = sample.scale(gain);
+                    }
+                }
+
+                if has_partial_frame {
+                    let gain = volume_ramp.advance();
+                    for sample in &mut data[(frames_written * channel_count)..written] {
+                        *sample = sample.scale(gain);
+                    }
+                }
+            } else {
+                for _ in 0..frames_written {
+                    let _ = volume_ramp.advance();
+                }
+
+                if has_partial_frame {
+                    let _ = volume_ramp.advance();
                 }
             }
 
@@ -156,7 +182,7 @@ impl CpalDevice {
 
         let buffer_size = ((200 * config.sample_rate as usize) / 1000) * channels as usize;
 
-        let volume = Arc::new(AtomicF64::new(1.0));
+        let volume = Arc::new(AtomicGainRamp::new(1.0));
 
         let (stream, prod) =
             create_stream_internal::<T>(&self.device, &config, buffer_size, volume.clone())?;
@@ -169,6 +195,10 @@ impl CpalDevice {
             buffer_size,
             device: self.device.clone(),
             volume,
+            volume_ramp_duration_pcm_frames: duration_ms_to_pcm_frames(
+                format.sample_rate,
+                VOLUME_RAMP_DURATION_MS,
+            ),
             replaygain: 1.0,
             interleave_buffer: Vec::with_capacity(buffer_size),
         }))
@@ -259,7 +289,8 @@ where
     pub device: cpal::Device,
     pub format: FormatInfo,
     pub buffer_size: usize,
-    pub volume: Arc<AtomicF64>,
+    pub volume: Arc<AtomicGainRamp>,
+    pub volume_ramp_duration_pcm_frames: u32,
     pub replaygain: f64,
     pub interleave_buffer: Vec<T>,
 }
@@ -301,7 +332,7 @@ where
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
         self.volume
-            .store(volume, std::sync::atomic::Ordering::Relaxed);
+            .set_target(volume, self.volume_ramp_duration_pcm_frames);
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use std::slice::from_raw_parts_mut;
+use std::{slice::from_raw_parts_mut, sync::Arc};
 
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use tracing::error;
@@ -25,11 +25,13 @@ use crate::{
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         traits::{Device, DeviceProvider, OutputStream},
-        util::Packed,
+        util::{AtomicGainRamp, GainRamp, Packed, Scale, duration_ms_to_pcm_frames},
     },
     media::pipeline::ChannelConsumers,
     util::make_unknown_error,
 };
+
+const VOLUME_RAMP_DURATION_MS: u32 = 15;
 
 /// Windows Audio Graph backend
 ///
@@ -181,6 +183,10 @@ impl Device for AudioGraphDevice {
         let cons = rb.consumer();
         let prod = rb.producer();
 
+        let volume = Arc::new(AtomicGainRamp::new(1.0));
+        let pcm_channel_count = format.channels.count() as usize;
+        let mut volume_ramp = GainRamp::from_shared(&volume);
+
         let handler =
             TypedEventHandler::<AudioFrameInputNode, FrameInputNodeQuantumStartedEventArgs>::new(
                 move |sender, args| {
@@ -190,13 +196,8 @@ impl Device for AudioGraphDevice {
                         return windows_result::Result::Ok(());
                     }
 
-                    let channel_count = sender
-                        .as_ref()
-                        .unwrap()
-                        .EncodingProperties()?
-                        .ChannelCount()?;
                     let required_capacity =
-                        (samples as u32) * size_of::<f32>() as u32 * channel_count;
+                        (samples as u32) * size_of::<f32>() as u32 * pcm_channel_count as u32;
 
                     let frame = AudioFrame::Create(required_capacity)?;
 
@@ -225,6 +226,48 @@ impl Device for AudioGraphDevice {
                         // should be fine? IEEE says that 0.0 is 0x00000000...
                         slice[read..].iter_mut().for_each(|v| *v = 0);
 
+                        volume_ramp.sync_from_shared(&volume);
+
+                        let written_samples = read / size_of::<f32>();
+                        let frames_written = written_samples / pcm_channel_count;
+                        let has_partial_frame = written_samples % pcm_channel_count != 0;
+
+                        if volume_ramp.is_ramping() || volume_ramp.current_gain() <= 0.98 {
+                            unsafe {
+                                let samples_f32 = std::slice::from_raw_parts_mut(
+                                    slice.as_mut_ptr().cast::<f32>(),
+                                    written_samples,
+                                );
+
+                                for frame in 0..frames_written {
+                                    let gain = volume_ramp.advance();
+
+                                    for sample in &mut samples_f32[(frame * pcm_channel_count)
+                                        ..((frame + 1) * pcm_channel_count)]
+                                    {
+                                        *sample = sample.scale(gain);
+                                    }
+                                }
+
+                                if has_partial_frame {
+                                    let gain = volume_ramp.advance();
+                                    for sample in &mut samples_f32
+                                        [(frames_written * pcm_channel_count)..written_samples]
+                                    {
+                                        *sample = sample.scale(gain);
+                                    }
+                                }
+                            }
+                        } else {
+                            for _ in 0..frames_written {
+                                let _ = volume_ramp.advance();
+                            }
+
+                            if has_partial_frame {
+                                let _ = volume_ramp.advance();
+                            }
+                        }
+
                         let lock_result = lock.Close();
 
                         if let Err(err) = lock_result {
@@ -245,13 +288,18 @@ impl Device for AudioGraphDevice {
             );
 
         input_node.QuantumStarted(&handler)?;
+        input_node.SetOutgoingGain(1.0)?;
 
         let stream = AudioGraphStream {
             node: input_node,
             producer: prod,
             interleaved_buffer: Vec::with_capacity(buffer_size as usize),
             packed_buffer: Vec::with_capacity(buffer_size as usize),
-            last_volume: 1.0,
+            volume,
+            volume_ramp_duration_pcm_frames: duration_ms_to_pcm_frames(
+                format.sample_rate,
+                VOLUME_RAMP_DURATION_MS,
+            ),
             last_replaygain: 1.0,
         };
 
@@ -316,7 +364,8 @@ pub struct AudioGraphStream {
     pub producer: Producer<u8>,
     interleaved_buffer: Vec<f32>,
     packed_buffer: Vec<u8>,
-    last_volume: f64,
+    volume: Arc<AtomicGainRamp>,
+    volume_ramp_duration_pcm_frames: u32,
     last_replaygain: f64,
 }
 
@@ -342,8 +391,9 @@ impl OutputStream for AudioGraphStream {
     }
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
-        self.last_volume = volume;
-        self.node.SetOutgoingGain(volume).map_err(|e| e.into())
+        self.volume
+            .set_target(volume, self.volume_ramp_duration_pcm_frames);
+        Ok(())
     }
 
     fn set_replaygain(&mut self, gain: f64) -> Result<(), StateError> {
