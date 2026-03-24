@@ -1,22 +1,36 @@
-use gpui::{App, ClipboardItem, actions};
+use gpui::{App, ClipboardItem, Window, actions};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 actions!(hummingbird, [CopyTroubleshootingInfo]);
 
-pub fn register(cx: &mut App) {
-    cx.on_action(copy_troubleshooting_info);
-}
+pub fn copy_troubleshooting_info(_window: &Window, cx: &mut App) {
+    // GPUI only supports fetching GPU info on Linux
+    #[cfg(target_os = "linux")]
+    let info = {
+        let mut info = format!(
+            "Hummingbird {}\nArchitecture: {}\nOperating System: {}\nCPU: {}\nMemory: {}",
+            crate::VERSION_STRING,
+            std::env::consts::ARCH,
+            operating_system_label(),
+            cpu_label(),
+            formatted_total_memory(),
+        );
+        info.push_str("\nGPU: ");
+        info.push_str(&gpu_label(_window));
+        info
+    };
 
-fn copy_troubleshooting_info(_: &CopyTroubleshootingInfo, cx: &mut App) {
-    cx.write_to_clipboard(ClipboardItem::new_string(format!(
+    #[cfg(not(target_os = "linux"))]
+    let info = format!(
         "Hummingbird {}\nArchitecture: {}\nOperating System: {}\nCPU: {}\nMemory: {}",
         crate::VERSION_STRING,
         std::env::consts::ARCH,
         operating_system_label(),
         cpu_label(),
         formatted_total_memory(),
-    )));
-    // TODO: show toast
+    );
+
+    cx.write_to_clipboard(ClipboardItem::new_string(info));
 }
 
 fn operating_system_label() -> String {
@@ -30,15 +44,13 @@ fn operating_system_label() -> String {
     ) {
         (Some(name), Some(version)) => format!("{name} {version}"),
         (Some(name), None) => name,
-        (None, Some(version)) => version,
-        (None, None) => std::env::consts::OS.to_string(),
+        (None, Some(_)) | (None, None) => std::env::consts::OS.to_string(),
     }
 }
 
 fn cpu_label() -> String {
-    let system = System::new_with_specifics(
-        RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
-    );
+    let system =
+        System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
     let Some(cpu) = system.cpus().first() else {
         return "Unknown".to_string();
     };
@@ -49,6 +61,35 @@ fn cpu_label() -> String {
     } else {
         brand.to_string()
     }
+}
+
+#[cfg(target_os = "linux")]
+fn gpu_label(window: &Window) -> String {
+    let Some(specs) = window.gpu_specs() else {
+        return "Unavailable".to_string();
+    };
+
+    let mut gpu = specs.device_name.trim().to_string();
+    if gpu.is_empty() {
+        gpu = "Unavailable".to_string();
+    }
+
+    let driver_name = specs.driver_name.trim();
+    let driver_info = specs.driver_info.trim();
+
+    if !driver_name.is_empty() && !driver_info.is_empty() {
+        gpu.push_str(&format!(" ({driver_name}; {driver_info})"));
+    } else if !driver_name.is_empty() {
+        gpu.push_str(&format!(" ({driver_name})"));
+    } else if !driver_info.is_empty() {
+        gpu.push_str(&format!(" ({driver_info})"));
+    }
+
+    if specs.is_software_emulated {
+        gpu.push_str(" [software]");
+    }
+
+    gpu
 }
 
 fn formatted_total_memory() -> String {
