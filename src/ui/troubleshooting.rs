@@ -8,15 +8,13 @@ pub fn register(cx: &mut App) {
 }
 
 fn copy_troubleshooting_info(_: &CopyTroubleshootingInfo, cx: &mut App) {
-    let info = format!(
+    cx.write_to_clipboard(ClipboardItem::new_string(format!(
         "Hummingbird {}\nArchitecture: {}\nOperating System: {}\nMemory: {}",
         crate::VERSION_STRING,
         std::env::consts::ARCH,
         operating_system_label(),
         formatted_total_memory(),
-    );
-
-    cx.write_to_clipboard(ClipboardItem::new_string(info.clone()));
+    )));
     // TODO: show toast
 }
 
