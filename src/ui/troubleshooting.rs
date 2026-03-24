@@ -1,5 +1,5 @@
 use gpui::{App, ClipboardItem, actions};
-use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 actions!(hummingbird, [CopyTroubleshootingInfo]);
 
@@ -9,10 +9,11 @@ pub fn register(cx: &mut App) {
 
 fn copy_troubleshooting_info(_: &CopyTroubleshootingInfo, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(format!(
-        "Hummingbird {}\nArchitecture: {}\nOperating System: {}\nMemory: {}",
+        "Hummingbird {}\nArchitecture: {}\nOperating System: {}\nCPU: {}\nMemory: {}",
         crate::VERSION_STRING,
         std::env::consts::ARCH,
         operating_system_label(),
+        cpu_label(),
         formatted_total_memory(),
     )));
     // TODO: show toast
@@ -31,6 +32,22 @@ fn operating_system_label() -> String {
         (Some(name), None) => name,
         (None, Some(version)) => version,
         (None, None) => std::env::consts::OS.to_string(),
+    }
+}
+
+fn cpu_label() -> String {
+    let system = System::new_with_specifics(
+        RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+    );
+    let Some(cpu) = system.cpus().first() else {
+        return "Unknown".to_string();
+    };
+
+    let brand = cpu.brand().trim();
+    if brand.is_empty() {
+        "Unknown".to_string()
+    } else {
+        brand.to_string()
     }
 }
 
