@@ -154,15 +154,7 @@ pub struct Pool(pub SqlitePool);
 impl Global for Pool {}
 
 pub fn get_dirs() -> ProjectDirs {
-    let secondary_dirs = directories::ProjectDirs::from("me", "william341", "muzak")
-        .expect("couldn't generate project dirs (secondary)");
-
-    if secondary_dirs.data_dir().exists() {
-        return secondary_dirs;
-    }
-
-    directories::ProjectDirs::from("org", "mailliw", "hummingbird")
-        .expect("couldn't generate project dirs")
+    crate::paths::project_dirs()
 }
 
 pub struct DropImageDummyModel;
