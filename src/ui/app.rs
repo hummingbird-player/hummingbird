@@ -156,7 +156,7 @@ pub struct Pool(pub SqlitePool);
 
 impl Global for Pool {}
 
-pub fn get_dirs() -> ProjectDirs {
+pub fn get_dirs() -> &'static ProjectDirs {
     crate::paths::project_dirs()
 }
 
