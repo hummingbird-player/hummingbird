@@ -81,6 +81,12 @@ pub enum PlaybackCommand {
     SettingsChanged(PlaybackSettings),
     /// Informs the playback thread whether the app window is currently focused.
     SetPositionBroadcastActive(bool),
+    /// Requests that the playback thread start a sleep timer that will fade out and stop playback
+    /// after the given number of seconds.
+    SetSleepTimer(u64),
+    /// Requests that the playback thread cancel the currently running sleep timer (if any) and
+    /// restore the volume to its pre-fade level.
+    CancelSleepTimer,
 }
 
 /// An event from the playback thread. This is used to communicate information from the playback
@@ -113,4 +119,7 @@ pub enum PlaybackEvent {
     RepeatChanged(RepeatState),
     /// Indicates that the volume has changed. The f64 is the new volume, from 0.0 to 1.0.
     VolumeChanged(f64),
+    /// Indicates the sleep timer remaining time in seconds, or None if the timer was cancelled or
+    /// has expired and playback has stopped.
+    SleepTimerUpdated(Option<u64>),
 }

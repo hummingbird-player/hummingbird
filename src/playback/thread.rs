@@ -7,6 +7,7 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
     thread::sleep,
+    time::Instant,
 };
 
 use itertools::Itertools as _;
@@ -84,6 +85,17 @@ pub struct PlaybackThread {
     last_track_gain: Option<f64>,
     /// Cached album gain from last metadata update.
     last_album_gain: Option<f64>,
+    /// The current playback volume (0.0–1.0). Tracked here so the sleep timer can save and
+    /// restore it across a fade-out without needing to query the engine.
+    current_volume: f64,
+    /// Deadline for the sleep timer. When `Instant::now()` passes this value, playback stops.
+    sleep_timer_deadline: Option<Instant>,
+    /// The volume at the moment the sleep timer was set (or when the fade window was entered).
+    /// Restored when the timer is cancelled or after the stop.
+    sleep_timer_pre_fade_volume: Option<f64>,
+    /// Last remaining-seconds value broadcast to the UI, used to throttle `SleepTimerUpdated`
+    /// events to at most once per second.
+    last_timer_broadcast_secs: Option<u64>,
 }
 
 impl PlaybackThread {
@@ -117,6 +129,10 @@ impl PlaybackThread {
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
                     last_track_gain: None,
                     last_album_gain: None,
+                    current_volume: last_volume,
+                    sleep_timer_deadline: None,
+                    sleep_timer_pre_fade_volume: None,
+                    last_timer_broadcast_secs: None,
                 };
 
                 thread.run();
@@ -147,6 +163,7 @@ impl PlaybackThread {
 
     /// Start command intake and audio playback loop.
     pub fn main_loop(&mut self) {
+        self.check_sleep_timer();
         self.command_intake();
 
         if self.engine.state() == EngineState::Playing {
@@ -198,6 +215,8 @@ impl PlaybackThread {
                 PlaybackCommand::SetPositionBroadcastActive(active) => {
                     self.set_position_broadcast_active(active)
                 }
+                PlaybackCommand::SetSleepTimer(secs) => self.set_sleep_timer(secs),
+                PlaybackCommand::CancelSleepTimer => self.cancel_sleep_timer(),
             }
         }
     }
@@ -770,6 +789,7 @@ impl PlaybackThread {
 
     /// Sets the volume of the playback stream.
     fn set_volume(&mut self, volume: f64) {
+        self.current_volume = volume;
         if let Err(e) = self.engine.set_volume(volume) {
             warn!("Failed to set volume: {:?}", e);
         }
@@ -804,6 +824,83 @@ impl PlaybackThread {
     fn set_position_broadcast_active(&mut self, active: bool) {
         self.position_broadcast_active = active;
         self.update_ts(true);
+    }
+
+    /// Start the sleep timer. Records the current volume as the pre-fade level, sets the
+    /// deadline, and immediately broadcasts the initial remaining time.
+    fn set_sleep_timer(&mut self, secs: u64) {
+        // If we're already in a fade, restore volume before resetting so the pre-fade anchor is
+        // the user's original level, not the faded level.
+        let pre_fade_vol = self
+            .sleep_timer_pre_fade_volume
+            .unwrap_or(self.current_volume);
+
+        if self.sleep_timer_pre_fade_volume.is_some() {
+            self.set_volume(pre_fade_vol);
+        }
+
+        self.sleep_timer_deadline =
+            Some(Instant::now() + std::time::Duration::from_secs(secs));
+        self.sleep_timer_pre_fade_volume = Some(pre_fade_vol);
+        self.last_timer_broadcast_secs = Some(secs);
+        self.send_event(PlaybackEvent::SleepTimerUpdated(Some(secs)));
+    }
+
+    /// Cancel the sleep timer, restoring the volume if a fade was in progress.
+    fn cancel_sleep_timer(&mut self) {
+        self.sleep_timer_deadline = None;
+        self.last_timer_broadcast_secs = None;
+        if let Some(vol) = self.sleep_timer_pre_fade_volume.take() {
+            self.set_volume(vol);
+        }
+        self.send_event(PlaybackEvent::SleepTimerUpdated(None));
+    }
+
+    /// Check the sleep timer and apply fade-out or stop when appropriate. Called once per
+    /// `main_loop` iteration before command intake.
+    fn check_sleep_timer(&mut self) {
+        let Some(deadline) = self.sleep_timer_deadline else {
+            return;
+        };
+
+        let now = Instant::now();
+
+        if deadline <= now {
+            // Timer expired: restore volume, stop playback, clear state.
+            self.sleep_timer_deadline = None;
+            self.last_timer_broadcast_secs = None;
+            if let Some(vol) = self.sleep_timer_pre_fade_volume.take() {
+                self.set_volume(vol);
+            }
+            self.stop();
+            self.send_event(PlaybackEvent::SleepTimerUpdated(None));
+            return;
+        }
+
+        let remaining = deadline.duration_since(now);
+        let remaining_secs_f64 = remaining.as_secs_f64();
+
+        // Gradually fade volume over the last 10 seconds.
+        if remaining_secs_f64 <= 10.0 {
+            if let Some(pre_fade_vol) = self.sleep_timer_pre_fade_volume {
+                let fade_factor = (remaining_secs_f64 / 10.0).clamp(0.0, 1.0);
+                let faded_vol = pre_fade_vol * fade_factor;
+                // Apply directly to engine (without updating current_volume) so cancel can
+                // restore the correct original level.
+                if let Err(e) = self.engine.set_volume(faded_vol) {
+                    warn!("Sleep timer fade: failed to set volume: {:?}", e);
+                } else {
+                    self.send_event(PlaybackEvent::VolumeChanged(faded_vol));
+                }
+            }
+        }
+
+        // Broadcast remaining time at ~1-second granularity.
+        let remaining_secs_u64 = remaining.as_secs();
+        if Some(remaining_secs_u64) != self.last_timer_broadcast_secs {
+            self.last_timer_broadcast_secs = Some(remaining_secs_u64);
+            self.send_event(PlaybackEvent::SleepTimerUpdated(Some(remaining_secs_u64)));
+        }
     }
 
     /// Process audio samples through the engine and send to device.

@@ -21,6 +21,7 @@ pub mod scrollbar;
 pub mod section_header;
 pub mod segmented_control;
 pub mod sidebar;
+pub mod sleep_timer;
 pub mod slider;
 pub mod styling;
 pub mod table;

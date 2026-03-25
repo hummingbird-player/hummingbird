@@ -29,7 +29,10 @@ use std::{path::PathBuf, rc::Rc};
 
 use self::replaygain::ReplayGainButton;
 use super::{
-    components::slider::slider,
+    components::{
+        sleep_timer::SleepTimer,
+        slider::slider,
+    },
     constants::APP_ROUNDING,
     global_actions::{Next, PlayPause, Previous},
     models::{Models, PlaybackInfo},
@@ -773,6 +776,7 @@ pub struct SecondaryControls {
     show_queue: Entity<bool>,
     show_lyrics: Entity<bool>,
     replaygain_button: Entity<ReplayGainButton>,
+    sleep_timer: Entity<SleepTimer>,
 }
 
 impl SecondaryControls {
@@ -791,6 +795,7 @@ impl SecondaryControls {
                 show_queue,
                 show_lyrics,
                 replaygain_button: ReplayGainButton::new(cx),
+                sleep_timer: SleepTimer::new(cx),
             }
         })
     }
@@ -869,6 +874,7 @@ impl Render for SecondaryControls {
                         }),
                 )
                 .child(self.replaygain_button.clone())
+                .child(self.sleep_timer.clone())
                 .child(
                     div()
                         .h(px(24.0))

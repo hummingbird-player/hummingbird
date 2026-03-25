@@ -150,6 +150,20 @@ impl PlaybackInterface {
             .unwrap();
     }
 
+    /// Start the sleep timer. Playback will fade out and stop after `secs` seconds.
+    pub fn set_sleep_timer(&self, secs: u64) {
+        self.cmd_tx
+            .send(PlaybackCommand::SetSleepTimer(secs))
+            .unwrap();
+    }
+
+    /// Cancel the running sleep timer (if any) and restore volume.
+    pub fn cancel_sleep_timer(&self) {
+        self.cmd_tx
+            .send(PlaybackCommand::CancelSleepTimer)
+            .unwrap();
+    }
+
     pub fn get_sender(&self) -> UnboundedSender<PlaybackCommand> {
         self.cmd_tx.clone()
     }
@@ -292,6 +306,12 @@ impl PlaybackInterface {
                                 *m = v;
                                 cx.notify();
                             })
+                        }
+                        PlaybackEvent::SleepTimerUpdated(remaining) => {
+                            playback_info.sleep_timer_remaining.update(cx, |m, cx| {
+                                *m = remaining;
+                                cx.notify();
+                            });
                         }
                     }
                 }

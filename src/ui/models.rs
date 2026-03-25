@@ -105,6 +105,8 @@ pub struct PlaybackInfo {
     pub repeating: Entity<RepeatState>,
     pub volume: Entity<f64>,
     pub prev_volume: Entity<f64>,
+    /// Remaining sleep timer seconds, or `None` when no timer is active.
+    pub sleep_timer_remaining: Entity<Option<u64>>,
 }
 
 impl Global for PlaybackInfo {}
@@ -352,6 +354,7 @@ pub fn build_models(
     let repeating: Entity<RepeatState> = cx.new(|_| initial_repeat);
     let volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
+    let sleep_timer_remaining: Entity<Option<u64>> = cx.new(|_| None);
 
     cx.set_global(PlaybackInfo {
         position,
@@ -362,6 +365,7 @@ pub fn build_models(
         repeating,
         volume,
         prev_volume,
+        sleep_timer_remaining,
     });
 }
 
