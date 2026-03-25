@@ -58,6 +58,7 @@ immediately.
 ## Logs
 Hummingbird writes logs to stdout and to a log file in the data directory.
 When the log file exceeds 1 MB, it is backed up to `hummingbird.log.old` and a new log is started.
+You can open the active log file from the command palette with the **Hummingbird: Open Log** action.
 
 | Platform | Active log                                                              | Backup log                                                                  |
 |----------|-------------------------------------------------------------------------|-----------------------------------------------------------------------------|

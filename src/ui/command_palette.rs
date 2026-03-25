@@ -18,7 +18,7 @@ use crate::ui::{
     global_actions::{
         About, ForceScan, Next, PlayPause, Previous, Quit, Search, Settings, ShuffleAll,
     },
-    troubleshooting::CopyTroubleshootingInfo,
+    troubleshooting::{CopyTroubleshootingInfo, OpenLog},
 };
 
 actions!(hummingbird, [OpenPalette]);
@@ -180,6 +180,15 @@ impl CommandPalette {
                     Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
                     tr!("ACTION_SETTINGS", "Settings"),
                     Settings,
+                    None,
+                ),
+            );
+            items.insert(
+                ("hummingbird::open_log", 0),
+                Command::new(
+                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
+                    tr!("ACTION_OPEN_LOG", "Open Log"),
+                    OpenLog,
                     None,
                 ),
             );

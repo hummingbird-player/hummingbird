@@ -86,6 +86,14 @@ pub fn flush() {
     }
 }
 
+pub fn active_log_path() -> PathBuf {
+    active_log_path_in(&crate::paths::data_dir())
+}
+
+fn active_log_path_in(data_dir: &Path) -> PathBuf {
+    data_dir.join(LOG_FILE_NAME)
+}
+
 fn filter_value() -> String {
     ["HUMMINGBIRD_LOG", "RUST_LOG"]
         .iter()
@@ -257,7 +265,7 @@ impl RotatingLogFile {
     fn open(data_dir: &Path, max_len: u64) -> io::Result<Self> {
         fs::create_dir_all(data_dir)?;
 
-        let active_path = data_dir.join(LOG_FILE_NAME);
+        let active_path = active_log_path_in(data_dir);
         let old_path = data_dir.join(OLD_LOG_FILE_NAME);
         let current_len = fs::metadata(&active_path)
             .map(|metadata| metadata.len())
@@ -353,6 +361,13 @@ mod tests {
 
     fn read_file(path: &Path) -> Vec<u8> {
         fs::read(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn active_log_path_uses_standard_file_name() {
+        let dir = temp_dir();
+        assert_eq!(super::active_log_path_in(&dir), dir.join(LOG_FILE_NAME));
+        let _ = fs::remove_dir_all(dir);
     }
 
     fn reset_test_stdout() {

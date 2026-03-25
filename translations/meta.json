@@ -67,13 +67,13 @@
   },
   "ACTION_COPY_TROUBLESHOOTING_INFO": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:191",
+    "definedIn": "src/ui/command_palette.rs:200",
     "plural": false,
     "description": null
   },
   "ACTION_FORCESCAN": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:231",
+    "definedIn": "src/ui/command_palette.rs:240",
     "plural": false,
     "description": null
   },
@@ -85,7 +85,7 @@
   },
   "ACTION_GROUP_PLAYBACK": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:202",
+    "definedIn": "src/ui/command_palette.rs:211",
     "plural": false,
     "description": null
   },
@@ -97,7 +97,7 @@
   },
   "ACTION_GROUP_SCAN": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:230",
+    "definedIn": "src/ui/command_palette.rs:239",
     "plural": false,
     "description": null
   },
@@ -109,19 +109,25 @@
   },
   "ACTION_NEXT": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:212",
+    "definedIn": "src/ui/command_palette.rs:221",
+    "plural": false,
+    "description": null
+  },
+  "ACTION_OPEN_LOG": {
+    "context": "command_palette.rs",
+    "definedIn": "src/ui/command_palette.rs:190",
     "plural": false,
     "description": null
   },
   "ACTION_PLAYPAUSE": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:203",
+    "definedIn": "src/ui/command_palette.rs:212",
     "plural": false,
     "description": null
   },
   "ACTION_PREVIOUS": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:221",
+    "definedIn": "src/ui/command_palette.rs:230",
     "plural": false,
     "description": null
   },
@@ -145,7 +151,7 @@
   },
   "ACTION_SHUFFLE_ALL": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:241",
+    "definedIn": "src/ui/command_palette.rs:250",
     "plural": false,
     "description": null
   },
