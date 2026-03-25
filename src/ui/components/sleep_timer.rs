@@ -75,15 +75,18 @@ impl Render for SleepTimer {
         };
 
         // The trigger button — moon icon, plus countdown text when active.
+        // Fixed width when idle; slightly wider (but capped) when showing countdown.
         let button = div()
             .id("sleep-timer-button")
             .relative()
             .rounded(px(3.0))
             .h(px(25.0))
+            .w(if timer_active { px(62.0) } else { px(25.0) })
             .mt(px(2.0))
             .flex()
             .items_center()
             .justify_center()
+            .overflow_hidden()
             .gap(px(4.0))
             .px(if timer_active { px(6.0) } else { px(5.0) })
             .border_color(theme.playback_button_border)
@@ -111,9 +114,9 @@ impl Render for SleepTimer {
         div().relative().child(button).when(popover_open, |this| {
             this.child(
                 popover()
-                    .position(PopoverPosition::TopCenter)
+                    .position(PopoverPosition::TopRight)
                     .edge_offset(px(6.0))
-                    .min_w(px(230.0))
+                    .min_w(px(190.0))
                     .flex()
                     .flex_col()
                     .gap(px(8.0))
