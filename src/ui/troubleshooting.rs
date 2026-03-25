@@ -34,7 +34,7 @@ pub fn copy_troubleshooting_info(_window: &Window, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(info));
 }
 
-pub fn open_log(_: &Window, _: &mut App) {
+pub fn open_log(_: &OpenLog, _: &mut App) {
     crate::logging::flush();
     let path = crate::logging::active_log_path();
 
