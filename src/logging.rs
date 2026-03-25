@@ -36,7 +36,7 @@ thread_local! {
 
 /// Initializes logging to stdout and, when available, to a rotating log file.
 pub fn init(data_dir: &Path) -> anyhow::Result<()> {
-    let filter = filter_value();
+    let env = tracing_subscriber::EnvFilter::builder().parse(filter_value())?; // inform user they have a malformed filter
     let file_writer = open_file_make_writer(data_dir);
 
     if let Some(writer) = &file_writer {
@@ -45,22 +45,18 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
 
     let stdout_layer = fmt::layer()
         .with_writer(StdoutMakeWriter)
-        .with_thread_names(true)
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
-        .with_timer(fmt::time::uptime())
-        .with_filter(tracing_subscriber::EnvFilter::builder().parse(&filter)?);
+        .with_thread_names(true) // nice to have until we replace with tasks
+        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
+        .with_timer(fmt::time::uptime()) // date's useless
+        .with_filter(env.clone());
     let file_layer = file_writer.map(|writer| {
         fmt::layer()
             .with_writer(writer)
             .with_ansi(false)
-            .with_thread_names(true)
-            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
-            .with_timer(fmt::time::uptime())
-            .with_filter(
-                tracing_subscriber::EnvFilter::builder()
-                    .parse(&filter)
-                    .unwrap(),
-            )
+            .with_thread_names(true) // nice to have until we replace with tasks
+            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
+            .with_timer(fmt::time::uptime()) // date's useless
+            .with_filter(env)
     });
 
     let subscriber = tracing_subscriber::registry()
@@ -95,10 +91,10 @@ fn active_log_path_in(data_dir: &Path) -> PathBuf {
 }
 
 fn filter_value() -> String {
-    ["HUMMINGBIRD_LOG", "RUST_LOG"]
-        .iter()
-        .find_map(|key| std::env::var(key).ok())
-        .filter(|value| !value.is_empty())
+    ["HUMMINGBIRD_LOG", "RUST_LOG"] // prefer Hummingbird-specific variable
+        .iter() // find the first one that's set at all
+        .find_map(|key| std::env::var(key).ok()) // even if it's empty
+        .filter(|value| !value.is_empty()) // NOW we can check is_empty and use default
         .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_owned())
 }
 
