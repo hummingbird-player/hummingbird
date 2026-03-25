@@ -1,4 +1,4 @@
-use std::{f32, sync::Arc};
+use std::sync::Arc;
 
 use cntp_i18n::tr;
 use gpui::*;
@@ -38,7 +38,7 @@ pub struct ReleaseView {
 }
 
 impl ReleaseView {
-    pub(super) fn new(cx: &mut App, album_id: i64) -> Entity<Self> {
+    pub(super) fn new(cx: &mut App, album_id: i64, target_track_id: Option<i64>) -> Entity<Self> {
         cx.new(|cx| {
             // TODO: error handling
             let album = cx
@@ -60,7 +60,6 @@ impl ReleaseView {
             let track_listing = TrackListing::new(
                 cx,
                 tracks.clone(),
-                px(f32::INFINITY), // render the whole thing
                 ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
                 album.vinyl_numbering,
                 false,
@@ -89,6 +88,15 @@ impl ReleaseView {
                 }
             };
 
+            let scroll_handle = ScrollHandle::new();
+            if let Some(track_index) = target_track_id.and_then(|track_id| {
+                tracks
+                    .iter()
+                    .position(|track| track.id == track_id && is_track_available(track))
+            }) {
+                scroll_handle.scroll_to_top_of_item(track_index + 1);
+            }
+
             ReleaseView {
                 album,
                 artist_name,
@@ -96,7 +104,7 @@ impl ReleaseView {
                 track_listing,
                 release_info,
                 img_path: SharedString::from(format!("!db://album/{album_id}/full")),
-                scroll_handle: ScrollHandle::new(),
+                scroll_handle,
             }
         })
     }
@@ -305,18 +313,7 @@ impl Render for ReleaseView {
                         current_track_in_album,
                         is_playing,
                     ))
-                    .child({
-                        let render_fn = self.track_listing.make_render_fn();
-                        let what = self.track_listing.track_list_state().clone();
-
-                        list(what, render_fn)
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .mx_auto()
-                            .max_h_full()
-                            .with_sizing_behavior(ListSizingBehavior::Infer)
-                    })
+                    .children(self.track_listing.track_elements())
                     .when(
                         self.release_info.is_some()
                             || self.album.release_date.is_some()

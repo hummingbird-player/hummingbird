@@ -216,7 +216,8 @@ pub enum ViewSwitchMessage {
     Albums,
     Tracks,
     Artists,
-    Release(i64),
+    /// album id, track id
+    Release(i64, Option<i64>),
     Artist(i64),
     Playlist(i64),
     Back,
@@ -228,7 +229,7 @@ impl ViewSwitchMessage {
     pub fn is_detail_page(&self) -> bool {
         matches!(
             self,
-            ViewSwitchMessage::Release(_) | ViewSwitchMessage::Artist(_)
+            ViewSwitchMessage::Release(_, _) | ViewSwitchMessage::Artist(_)
         )
     }
 
@@ -273,7 +274,9 @@ fn make_view(
             model.clone(),
             scroll_state.artist_view_scroll,
         )),
-        ViewSwitchMessage::Release(id) => LibraryView::Release(ReleaseView::new(cx, *id)),
+        ViewSwitchMessage::Release(id, target_track_id) => {
+            LibraryView::Release(ReleaseView::new(cx, *id, *target_track_id))
+        }
         ViewSwitchMessage::Artist(id) => {
             LibraryView::ArtistDetail(ArtistDetailView::new(cx, *id, model.clone()))
         }

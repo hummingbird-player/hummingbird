@@ -91,7 +91,7 @@
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:412",
+    "definedIn": "src/ui/library.rs:415",
     "plural": false,
     "description": null
   },
@@ -103,7 +103,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:413",
+    "definedIn": "src/ui/library.rs:416",
     "plural": false,
     "description": null
   },
@@ -601,13 +601,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:235",
+    "definedIn": "src/ui/library/release_view.rs:243",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:244",
+    "definedIn": "src/ui/library/release_view.rs:252",
     "plural": false,
     "description": null
   },

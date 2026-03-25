@@ -262,13 +262,21 @@ pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track) {
 }
 
 pub(crate) fn navigate_to_track_album(cx: &mut App, track: &Track) {
+    navigate_to_album(cx, track, None);
+}
+
+pub(crate) fn navigate_to_track_album_and_reveal(cx: &mut App, track: &Track) {
+    navigate_to_album(cx, track, Some(track.id));
+}
+
+fn navigate_to_album(cx: &mut App, track: &Track, target_track_id: Option<i64>) {
     let Some(album_id) = track.album_id else {
         return;
     };
 
     let switcher = cx.global::<Models>().switcher_model.clone();
     switcher.update(cx, |_, cx| {
-        cx.emit(ViewSwitchMessage::Release(album_id));
+        cx.emit(ViewSwitchMessage::Release(album_id, target_track_id));
     });
 }
 

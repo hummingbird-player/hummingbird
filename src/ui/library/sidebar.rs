@@ -156,7 +156,7 @@ impl Render for Sidebar {
                     .when(
                         matches!(
                             sidebar_view,
-                            ViewSwitchMessage::Albums | ViewSwitchMessage::Release(_)
+                            ViewSwitchMessage::Albums | ViewSwitchMessage::Release(_, _)
                         ),
                         |this| this.active(),
                     ),

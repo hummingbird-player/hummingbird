@@ -16,7 +16,7 @@ use crate::{
             volume_tooltip::build_volume_tooltip,
         },
         library::context_menus::{
-            info_section::InfoSectionContextMenu, navigate_to_track_album,
+            info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
             navigate_to_track_artist, resolve_library_track_by_path,
         },
         models::CurrentTrack,
@@ -334,7 +334,7 @@ impl Render for InfoSection {
                                         .w_full()
                                         .when_some(album_navigation_track, |this, track| {
                                             this.cursor_pointer().on_click(move |_, _, cx| {
-                                                navigate_to_track_album(cx, &track);
+                                                navigate_to_track_album_and_reveal(cx, &track);
                                             })
                                         })
                                         .child(self.track_name.clone().unwrap_or_else(|| {

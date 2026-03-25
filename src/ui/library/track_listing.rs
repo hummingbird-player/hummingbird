@@ -2,7 +2,7 @@ pub mod track_item;
 
 use std::sync::Arc;
 
-use gpui::{App, Entity, IntoElement, ListAlignment, ListState, Pixels, Window};
+use gpui::{AnyElement, App, Entity, IntoElement};
 
 use crate::{
     library::types::{DBString, Track},
@@ -22,21 +22,17 @@ pub struct TrackListing {
     // TODO: replace this with Arc<Vec<i64>>, memoize TrackItem, fetch on load instead of before
     tracks: Arc<Vec<Entity<TrackItem>>>,
     original_tracks: Arc<Vec<Track>>,
-    track_list_state: ListState,
 }
 
 impl TrackListing {
     pub fn new(
         cx: &mut App,
         tracks: Arc<Vec<Track>>,
-        overdraw: Pixels,
         artist_name_visibility: ArtistNameVisibility,
         vinyl_numbering: bool,
         show_go_to_album: bool,
         show_go_to_artist: bool,
     ) -> Self {
-        let state = ListState::new(tracks.len(), ListAlignment::Top, overdraw);
-
         // find biggest track number and provide it to track item for measurement
         let max_track_num_str = tracks
             .iter()
@@ -72,7 +68,6 @@ impl TrackListing {
                     .collect()
             }),
             original_tracks: tracks,
-            track_list_state: state,
         }
     }
 
@@ -80,14 +75,11 @@ impl TrackListing {
         &self.original_tracks
     }
 
-    pub fn track_list_state(&self) -> &ListState {
-        &self.track_list_state
-    }
-
-    pub fn make_render_fn(
-        &self,
-    ) -> impl Fn(usize, &mut Window, &mut App) -> gpui::AnyElement + Clone + 'static {
-        let tracks = self.tracks.clone();
-        move |idx, _, _| tracks[idx].clone().into_any_element()
+    pub fn track_elements(&self) -> Vec<AnyElement> {
+        self.tracks
+            .iter()
+            .cloned()
+            .map(|track| track.into_any_element())
+            .collect()
     }
 }
