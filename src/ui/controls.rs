@@ -1,7 +1,7 @@
 mod replaygain;
 
 use crate::{
-    library::types::Track,
+    library::{db::LibraryAccess, types::Track},
     playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
@@ -16,7 +16,8 @@ use crate::{
             volume_tooltip::build_volume_tooltip,
         },
         library::context_menus::{
-            info_section::InfoSectionContextMenu, resolve_library_track_by_path,
+            info_section::InfoSectionContextMenu, navigate_to_track_album,
+            navigate_to_track_artist, resolve_library_track_by_path,
         },
         models::CurrentTrack,
         util::{drop_image_from_app, find_art_file_for_path},
@@ -91,6 +92,8 @@ pub struct InfoSection {
     is_hovering_art: bool,
     current_track_path: Option<PathBuf>,
     current_library_track: Option<Rc<Track>>,
+    can_navigate_to_album: bool,
+    can_navigate_to_artist: bool,
 }
 
 impl InfoSection {
@@ -177,6 +180,19 @@ impl InfoSection {
             .detach();
 
             let initial_current_track = current_track_model.read(cx).clone();
+            let current_track_path = initial_current_track
+                .as_ref()
+                .map(|track| track.get_path().clone());
+            let current_library_track = initial_current_track
+                .as_ref()
+                .and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
+            let can_navigate_to_album = current_library_track
+                .as_ref()
+                .is_some_and(|track| track.album_id.is_some());
+            let can_navigate_to_artist = current_library_track
+                .as_ref()
+                .and_then(|track| track.album_id)
+                .is_some_and(|album_id| cx.artist_id_for_album(album_id).is_ok());
 
             Self {
                 artist_name: None,
@@ -185,12 +201,10 @@ impl InfoSection {
                 albumart_original: None,
                 playback_info,
                 is_hovering_art: false,
-                current_track_path: initial_current_track
-                    .as_ref()
-                    .map(|track| track.get_path().clone()),
-                current_library_track: initial_current_track
-                    .as_ref()
-                    .and_then(|track| resolve_library_track_by_path(cx, track.get_path())),
+                current_track_path,
+                current_library_track,
+                can_navigate_to_album,
+                can_navigate_to_artist,
             }
         })
     }
@@ -209,6 +223,14 @@ impl Render for InfoSection {
 
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
+        let album_navigation_track = self
+            .can_navigate_to_album
+            .then(|| self.current_library_track.clone())
+            .flatten();
+        let artist_navigation_track = self
+            .can_navigate_to_artist
+            .then(|| self.current_library_track.clone())
+            .flatten();
         let content = div()
             .id("info-section")
             .flex()
@@ -306,19 +328,32 @@ impl Render for InfoSection {
                                 .w_full()
                                 .child(
                                     div()
+                                        .id("info-section-track-name")
                                         .font_weight(FontWeight::EXTRA_BOLD)
                                         .text_ellipsis()
                                         .w_full()
-                                        .child(self.track_name.clone().unwrap_or(
-                                            tr!("UNKNOWN_TRACK", "Unknown Track").into(),
-                                        )),
+                                        .when_some(album_navigation_track, |this, track| {
+                                            this.cursor_pointer().on_click(move |_, _, cx| {
+                                                navigate_to_track_album(cx, &track);
+                                            })
+                                        })
+                                        .child(self.track_name.clone().unwrap_or_else(|| {
+                                            tr!("UNKNOWN_TRACK", "Unknown Track").into()
+                                        })),
                                 )
                                 .child(
-                                    div().text_ellipsis().w_full().child(
-                                        self.artist_name.clone().unwrap_or(
-                                            tr!("UNKNOWN_ARTIST", "Unknown Artist").into(),
-                                        ),
-                                    ),
+                                    div()
+                                        .id("info-section-artist-name")
+                                        .text_ellipsis()
+                                        .w_full()
+                                        .when_some(artist_navigation_track, |this, track| {
+                                            this.cursor_pointer().on_click(move |_, _, cx| {
+                                                navigate_to_track_artist(cx, &track);
+                                            })
+                                        })
+                                        .child(self.artist_name.clone().unwrap_or_else(|| {
+                                            tr!("UNKNOWN_ARTIST", "Unknown Artist").into()
+                                        })),
                                 ),
                         )
                     }),
@@ -356,6 +391,15 @@ fn update_current_track_state(
     this.current_track_path = current_track.map(|track| track.get_path().clone());
     this.current_library_track =
         current_track.and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
+    this.can_navigate_to_album = this
+        .current_library_track
+        .as_ref()
+        .is_some_and(|track| track.album_id.is_some());
+    this.can_navigate_to_artist = this
+        .current_library_track
+        .as_ref()
+        .and_then(|track| track.album_id)
+        .is_some_and(|album_id| cx.artist_id_for_album(album_id).is_ok());
 }
 
 pub struct PlaybackSection {

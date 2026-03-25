@@ -249,7 +249,7 @@ fn queue_track(cx: &mut App, track: &Track) {
     cx.global::<PlaybackInterface>().queue(data);
 }
 
-fn navigate_to_track_artist(cx: &mut App, track: &Track) {
+pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track) {
     let Some(album_id) = track.album_id else {
         return;
     };
@@ -261,7 +261,7 @@ fn navigate_to_track_artist(cx: &mut App, track: &Track) {
     navigate_to_artist(cx, artist_id);
 }
 
-fn navigate_to_track_album(cx: &mut App, track: &Track) {
+pub(crate) fn navigate_to_track_album(cx: &mut App, track: &Track) {
     let Some(album_id) = track.album_id else {
         return;
     };
