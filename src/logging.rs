@@ -53,9 +53,9 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
         fmt::layer()
             .with_writer(writer)
             .with_ansi(false)
-            .with_thread_names(true) // nice to have until we replace with tasks
-            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
-            .with_timer(fmt::time::uptime()) // date's useless
+            .with_thread_names(true)
+            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+            .with_timer(fmt::time::uptime())
             .with_filter(env)
     });
 
