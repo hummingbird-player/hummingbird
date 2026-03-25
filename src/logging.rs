@@ -22,19 +22,19 @@ type SharedLogFile = Arc<Mutex<Option<RotatingLogFile>>>;
 static LOG_FILE: OnceLock<SharedLogFile> = OnceLock::new();
 
 #[cfg(test)]
-enum TestStdout {
+enum TestStderr {
     Capture(Arc<Mutex<Vec<u8>>>),
     Fail,
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_STDOUT: std::cell::RefCell<Option<TestStdout>> = const {
+    static TEST_STDERR: std::cell::RefCell<Option<TestStderr>> = const {
         std::cell::RefCell::new(None)
     };
 }
 
-/// Initializes logging to stdout and, when available, to a rotating log file.
+/// Initializes logging to stderr and, when available, to a rotating log file.
 pub fn init(data_dir: &Path) -> anyhow::Result<()> {
     let env = tracing_subscriber::EnvFilter::builder().parse(filter_value())?; // inform user they have a malformed filter
     let file_writer = open_file_make_writer(data_dir);
@@ -43,8 +43,8 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
         let _ = LOG_FILE.set(writer.file.clone());
     }
 
-    let stdout_layer = fmt::layer()
-        .with_writer(StdoutMakeWriter)
+    let stderr_layer = fmt::layer()
+        .with_writer(StderrMakeWriter)
         .with_thread_names(true) // nice to have until we replace with tasks
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
         .with_timer(fmt::time::uptime()) // date's useless
@@ -60,7 +60,7 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
     });
 
     let subscriber = tracing_subscriber::registry()
-        .with(stdout_layer)
+        .with(stderr_layer)
         .with(file_layer);
 
     #[cfg(feature = "console")]
@@ -70,9 +70,9 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Flushes stdout and asks the OS to persist the active log file's data.
+/// Flushes stderr and asks the OS to persist the active log file's data.
 pub fn flush() {
-    let _ = io::stdout().flush();
+    let _ = io::stderr().flush();
 
     if let Some(file) = LOG_FILE.get()
         && let Ok(mut state) = file.lock()
@@ -104,37 +104,37 @@ fn open_file_make_writer(data_dir: &Path) -> Option<FileMakeWriter> {
         .map(FileMakeWriter::new)
 }
 
-/// Creates stdout writers for the tracing stdout layer.
+/// Creates stderr writers for the tracing stderr layer.
 #[derive(Clone, Copy)]
-struct StdoutMakeWriter;
+struct StderrMakeWriter;
 
-impl<'a> MakeWriter<'a> for StdoutMakeWriter {
-    type Writer = StdoutWriter;
+impl<'a> MakeWriter<'a> for StderrMakeWriter {
+    type Writer = StderrWriter;
 
     fn make_writer(&'a self) -> Self::Writer {
-        StdoutWriter {
+        StderrWriter {
             buffer: Vec::with_capacity(256),
         }
     }
 }
 
-/// Buffers a single formatted log record before writing it to stdout.
-struct StdoutWriter {
+/// Buffers a single formatted log record before writing it to stderr.
+struct StderrWriter {
     buffer: Vec<u8>,
 }
 
-impl StdoutWriter {
+impl StderrWriter {
     fn commit(&mut self) {
         if self.buffer.is_empty() {
             return;
         }
 
         let buffer = std::mem::take(&mut self.buffer);
-        let _ = write_stdout(&buffer);
+        let _ = write_stderr(&buffer);
     }
 }
 
-impl Write for StdoutWriter {
+impl Write for StderrWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
         Ok(buf.len())
@@ -146,24 +146,24 @@ impl Write for StdoutWriter {
     }
 }
 
-impl Drop for StdoutWriter {
+impl Drop for StderrWriter {
     fn drop(&mut self) {
         self.commit();
     }
 }
 
-fn write_stdout(buffer: &[u8]) -> io::Result<()> {
+fn write_stderr(buffer: &[u8]) -> io::Result<()> {
     #[cfg(test)]
     {
-        let handled = TEST_STDOUT.with(|stdout| match &*stdout.borrow() {
-            Some(TestStdout::Capture(stdout)) => {
-                let result = match stdout.lock() {
-                    Ok(mut stdout) => stdout.write_all(buffer),
-                    Err(_) => Err(io::Error::other("test stdout lock poisoned")),
+        let handled = TEST_STDERR.with(|stderr| match &*stderr.borrow() {
+            Some(TestStderr::Capture(stderr)) => {
+                let result = match stderr.lock() {
+                    Ok(mut stderr) => stderr.write_all(buffer),
+                    Err(_) => Err(io::Error::other("test stderr lock poisoned")),
                 };
                 Some(result)
             }
-            Some(TestStdout::Fail) => Some(Err(io::Error::other("test stdout failure"))),
+            Some(TestStderr::Fail) => Some(Err(io::Error::other("test stderr failure"))),
             None => None,
         });
 
@@ -172,8 +172,8 @@ fn write_stdout(buffer: &[u8]) -> io::Result<()> {
         }
     }
 
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(buffer)
+    let mut stderr = io::stderr().lock();
+    stderr.write_all(buffer)
 }
 
 /// Creates file writers that share access to the rotating log file state.
@@ -366,39 +366,39 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    fn reset_test_stdout() {
-        TEST_STDOUT.with(|stdout| {
-            stdout.borrow_mut().take();
+    fn reset_test_stderr() {
+        TEST_STDERR.with(|stderr| {
+            stderr.borrow_mut().take();
         });
     }
 
-    fn override_stdout(buffer: Arc<Mutex<Vec<u8>>>) -> impl Drop {
+    fn override_stderr(buffer: Arc<Mutex<Vec<u8>>>) -> impl Drop {
         struct Guard;
 
         impl Drop for Guard {
             fn drop(&mut self) {
-                reset_test_stdout();
+                reset_test_stderr();
             }
         }
 
-        TEST_STDOUT.with(|stdout| {
-            *stdout.borrow_mut() = Some(TestStdout::Capture(buffer));
+        TEST_STDERR.with(|stderr| {
+            *stderr.borrow_mut() = Some(TestStderr::Capture(buffer));
         });
 
         Guard
     }
 
-    fn fail_stdout() -> impl Drop {
+    fn fail_stderr() -> impl Drop {
         struct Guard;
 
         impl Drop for Guard {
             fn drop(&mut self) {
-                reset_test_stdout();
+                reset_test_stderr();
             }
         }
 
-        TEST_STDOUT.with(|stdout| {
-            *stdout.borrow_mut() = Some(TestStdout::Fail);
+        TEST_STDERR.with(|stderr| {
+            *stderr.borrow_mut() = Some(TestStderr::Fail);
         });
 
         Guard
@@ -406,7 +406,7 @@ mod tests {
 
     fn log_with_layers(file_writer: Option<FileMakeWriter>) {
         let subscriber = tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(StdoutMakeWriter).without_time())
+            .with(fmt::layer().with_writer(StderrMakeWriter).without_time())
             .with(file_writer.map(|writer| {
                 fmt::layer()
                     .with_writer(writer)
@@ -501,9 +501,9 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// File sink setup failures leave stdout-only logging available.
+    /// File sink setup failures leave stderr-only logging available.
     #[test]
-    fn file_logging_failure_falls_back_to_stdout_only() {
+    fn file_logging_failure_falls_back_to_stderr_only() {
         let dir = temp_dir();
         let file_path = dir.join("not-a-directory");
         fs::write(&file_path, b"x").unwrap();
@@ -514,31 +514,31 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// A non-terminal stdout sink still allows the log file to be written.
+    /// A non-terminal stderr sink still allows the log file to be written.
     #[test]
-    fn non_tty_stdout_still_writes_to_log_file() {
+    fn non_tty_stderr_still_writes_to_log_file() {
         let dir = temp_dir();
         let active_path = dir.join(LOG_FILE_NAME);
-        let stdout_buffer = Arc::new(Mutex::new(Vec::new()));
-        let _stdout = override_stdout(stdout_buffer.clone());
+        let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
+        let _stderr = override_stderr(stderr_buffer.clone());
 
         log_with_layers(open_file_make_writer(&dir));
 
-        let stdout = String::from_utf8(stdout_buffer.lock().unwrap().clone()).unwrap();
+        let stderr = String::from_utf8(stderr_buffer.lock().unwrap().clone()).unwrap();
         let file = String::from_utf8(read_file(&active_path)).unwrap();
 
-        assert!(stdout.contains("integration log test"));
+        assert!(stderr.contains("integration log test"));
         assert!(file.contains("integration log test"));
 
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// A failing stdout sink does not prevent writes from reaching the log file.
+    /// A failing stderr sink does not prevent writes from reaching the log file.
     #[test]
-    fn failing_stdout_still_writes_to_log_file() {
+    fn failing_stderr_still_writes_to_log_file() {
         let dir = temp_dir();
         let active_path = dir.join(LOG_FILE_NAME);
-        let _stdout = fail_stdout();
+        let _stderr = fail_stderr();
 
         log_with_layers(open_file_make_writer(&dir));
 
