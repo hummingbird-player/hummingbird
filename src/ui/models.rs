@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::ui::library::NavigationHistory;
+use crate::{services::mmb::discord::Discord, ui::library::NavigationHistory};
 use gpui::{App, AppContext, Entity, EventEmitter, Global, Pixels, RenderImage};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -226,6 +226,8 @@ pub fn build_models(
 
     let mmbs_clone = mmbs.clone();
 
+    create_discord_mmbs(cx, &mmbs_clone);
+
     cx.subscribe(&lastfm, move |m, ev, cx| {
         let session_clone = ev.clone();
         create_last_fm_mmbs(cx, &mmbs_clone, session_clone.key.clone());
@@ -369,5 +371,12 @@ pub fn create_last_fm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, session: 
     let mmbs = LastFM::new(client);
     mmbs_list.update(cx, |m, _| {
         m.0.insert("lastfm".to_string(), Arc::new(Mutex::new(mmbs)));
+    });
+}
+
+pub fn create_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
+    let mmbs = Discord::new();
+    mmbs_list.update(cx, |m, _| {
+        m.0.insert("discord".to_string(), Arc::new(Mutex::new(mmbs)));
     });
 }

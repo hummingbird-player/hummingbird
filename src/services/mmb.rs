@@ -1,4 +1,5 @@
 pub mod lastfm;
+pub mod discord;
 
 use std::{path::PathBuf, sync::Arc};
 
