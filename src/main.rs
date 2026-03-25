@@ -7,11 +7,12 @@
 use std::sync::LazyLock;
 
 use cntp_i18n::{I18N_MANAGER, tr_load};
-use tracing_subscriber::{fmt::format::FmtSpan, prelude::*};
 
 mod devices;
 mod library;
+mod logging;
 mod media;
+mod paths;
 mod playback;
 mod services;
 mod settings;
@@ -30,30 +31,8 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 
 fn main() -> anyhow::Result<()> {
     I18N_MANAGER.write().unwrap().load_source(tr_load!());
-
-    let reg = tracing_subscriber::registry();
-
-    #[cfg(feature = "console")]
-    let reg = reg.with(console_subscriber::spawn());
-
-    let env = tracing_subscriber::EnvFilter::builder().parse(
-        ["HUMMINGBIRD_LOG", "RUST_LOG"] // prefer Hummingbird-specific variable
-            .iter() // find the first one that's set at all
-            .find_map(|key| std::env::var(key).ok()) // even if it's empty
-            .filter(|s| !s.is_empty()) // NOW we can check is_empty and use default
-            .unwrap_or_else(|| "info,blade_graphics=warn,symphonia=warn,zbus=warn".to_owned()),
-    )?; // inform user they have a malformed filter
-
-    reg.with(
-        tracing_subscriber::fmt::layer()
-            .with_thread_names(true) // nice to have until we replace with tasks
-            .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
-            .with_timer(tracing_subscriber::fmt::time::uptime()) // date's useless
-            .with_filter(env),
-    )
-    .init();
+    crate::logging::init(&crate::paths::data_dir())?;
 
     tracing::info!("version {VERSION_STRING}");
-
     crate::ui::app::run()
 }

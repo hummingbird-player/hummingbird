@@ -363,6 +363,8 @@ pub fn run() -> anyhow::Result<()> {
                                         liked_tracks_sort_method,
                                         sidebar_collapsed,
                                     });
+
+                                    crate::logging::flush();
                                 })
                             }
                         })
