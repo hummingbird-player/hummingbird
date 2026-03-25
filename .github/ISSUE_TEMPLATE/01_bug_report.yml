@@ -40,7 +40,8 @@ body:
     attributes:
       label: Logs
       description: |
-        If applicable, paste any relevant log output. Please review logs for any sensitive information and redact them before posting.
+        If applicable, paste any relevant log output. Open the command palette and run "Hummingbird: Open Log" to open the log file.
+        Please review logs for any sensitive information and redact them before posting.
       value: |
         <details><summary>Logs</summary>
 
