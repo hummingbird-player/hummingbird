@@ -55,6 +55,16 @@ Controls the selected theme.
 You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
+## Logs
+Hummingbird writes logs to stdout and to a log file in the data directory.
+When the log file exceeds 1 MB, it is backed up to `hummingbird.log.old` and a new log is started.
+
+| Platform | Active log                                                              | Backup log                                                                  |
+|----------|-------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| Linux    | `~/.local/share/hummingbird/hummingbird.log`                            | `~/.local/share/hummingbird/hummingbird.log.old`                            |
+| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log` | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log.old` |
+| Windows  | `%appdata%\mailliw\hummingbird\data\hummingbird.log`                    | `%appdata%\mailliw\hummingbird\data\hummingbird.log.old`                    |
+
 ## Last.FM
 The current Last.FM session is stored in the following places:
 
