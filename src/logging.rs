@@ -28,19 +28,6 @@ type SharedLogFile = Arc<Mutex<Option<RotatingLogFile>>>;
 static ACTIVE_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 static LOG_FILE: OnceLock<SharedLogFile> = OnceLock::new();
 
-#[cfg(test)]
-enum TestStderr {
-    Capture(Arc<Mutex<Vec<u8>>>),
-    Fail,
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_STDERR: std::cell::RefCell<Option<TestStderr>> = const {
-        std::cell::RefCell::new(None)
-    };
-}
-
 /// Initializes logging to stderr and, when available, to a rotating log file.
 pub fn init() -> anyhow::Result<()> {
     let env = tracing_subscriber::EnvFilter::builder().parse(filter_value())?; // inform user they have a malformed filter
@@ -177,25 +164,6 @@ impl Drop for StderrWriter {
 }
 
 fn write_stderr(buffer: &[u8]) -> io::Result<()> {
-    #[cfg(test)]
-    {
-        let handled = TEST_STDERR.with(|stderr| match &*stderr.borrow() {
-            Some(TestStderr::Capture(stderr)) => {
-                let result = match stderr.lock() {
-                    Ok(mut stderr) => stderr.write_all(buffer),
-                    Err(_) => Err(io::Error::other("test stderr lock poisoned")),
-                };
-                Some(result)
-            }
-            Some(TestStderr::Fail) => Some(Err(io::Error::other("test stderr failure"))),
-            None => None,
-        });
-
-        if let Some(result) = handled {
-            return result;
-        }
-    }
-
     let mut stderr = io::stderr().lock();
     stderr.write_all(buffer)
 }
@@ -275,6 +243,74 @@ impl Drop for FileWriter {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use tracing_subscriber::fmt::writer::BoxMakeWriter;
+
+    #[derive(Clone)]
+    enum TestStderrMakeWriter {
+        Capture(Arc<Mutex<Vec<u8>>>),
+        Fail,
+    }
+
+    impl TestStderrMakeWriter {
+        fn capture(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self::Capture(buffer)
+        }
+
+        fn fail() -> Self {
+            Self::Fail
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for TestStderrMakeWriter {
+        type Writer = TestStderrWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            TestStderrWriter {
+                sink: self.clone(),
+                buffer: Vec::with_capacity(256),
+            }
+        }
+    }
+
+    struct TestStderrWriter {
+        sink: TestStderrMakeWriter,
+        buffer: Vec<u8>,
+    }
+
+    impl TestStderrWriter {
+        fn commit(&mut self) {
+            if self.buffer.is_empty() {
+                return;
+            }
+
+            let buffer = std::mem::take(&mut self.buffer);
+            let _ = match &self.sink {
+                TestStderrMakeWriter::Capture(stderr) => match stderr.lock() {
+                    Ok(mut stderr) => stderr.write_all(&buffer),
+                    Err(_) => Err(io::Error::other("test stderr lock poisoned")),
+                },
+                TestStderrMakeWriter::Fail => Err(io::Error::other("test stderr failure")),
+            };
+        }
+    }
+
+    impl Write for TestStderrWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.commit();
+            Ok(())
+        }
+    }
+
+    impl Drop for TestStderrWriter {
+        fn drop(&mut self) {
+            self.commit();
+        }
+    }
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -292,47 +328,9 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    fn reset_test_stderr() {
-        TEST_STDERR.with(|stderr| {
-            stderr.borrow_mut().take();
-        });
-    }
-
-    fn override_stderr(buffer: Arc<Mutex<Vec<u8>>>) -> impl Drop {
-        struct Guard;
-
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                reset_test_stderr();
-            }
-        }
-
-        TEST_STDERR.with(|stderr| {
-            *stderr.borrow_mut() = Some(TestStderr::Capture(buffer));
-        });
-
-        Guard
-    }
-
-    fn fail_stderr() -> impl Drop {
-        struct Guard;
-
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                reset_test_stderr();
-            }
-        }
-
-        TEST_STDERR.with(|stderr| {
-            *stderr.borrow_mut() = Some(TestStderr::Fail);
-        });
-
-        Guard
-    }
-
-    fn log_with_layers(file_writer: Option<FileMakeWriter>) {
+    fn log_with_layers(stderr_writer: BoxMakeWriter, file_writer: Option<FileMakeWriter>) {
         let subscriber = tracing_subscriber::registry()
-            .with(fmt::layer().with_writer(StderrMakeWriter).without_time())
+            .with(fmt::layer().with_writer(stderr_writer).without_time())
             .with(file_writer.map(|writer| {
                 fmt::layer()
                     .with_writer(writer)
@@ -366,9 +364,11 @@ mod tests {
         let dir = temp_dir();
         let active_path = active_log_path_in(&dir);
         let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
-        let _stderr = override_stderr(stderr_buffer.clone());
 
-        log_with_layers(open_file_make_writer(&active_path));
+        log_with_layers(
+            BoxMakeWriter::new(TestStderrMakeWriter::capture(stderr_buffer.clone())),
+            open_file_make_writer(&active_path),
+        );
 
         let stderr = String::from_utf8(stderr_buffer.lock().unwrap().clone()).unwrap();
         let file = fs::read_to_string(&active_path).unwrap();
@@ -383,9 +383,11 @@ mod tests {
     fn failing_stderr_still_writes_to_log_file() {
         let dir = temp_dir();
         let active_path = active_log_path_in(&dir);
-        let _stderr = fail_stderr();
 
-        log_with_layers(open_file_make_writer(&active_path));
+        log_with_layers(
+            BoxMakeWriter::new(TestStderrMakeWriter::fail()),
+            open_file_make_writer(&active_path),
+        );
 
         let file = fs::read_to_string(&active_path).unwrap();
         assert!(file.contains("integration log test"));
