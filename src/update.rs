@@ -5,6 +5,8 @@ use crate::ui::models::Models;
 
 mod check;
 mod download;
+#[cfg(target_os = "windows")]
+mod windows;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ReleaseChannel {
@@ -75,4 +77,17 @@ pub fn start_update_task(cx: &mut App) {
         cx.update_entity(&update_model, |this, _| *this = Some(download));
     })
     .detach();
+}
+
+pub fn complete_update(path: &std::path::Path) {
+    info!("Attempting to complete update");
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = windows::update_installer(path) {
+            error!("Failed to complete update: {e:?}");
+        }
+
+        return;
+    }
 }

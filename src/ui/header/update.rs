@@ -4,10 +4,13 @@ use gpui::{
     div, px,
 };
 
-use crate::ui::{
-    components::icons::{UPDATE, icon},
-    models::Models,
-    theme::Theme,
+use crate::{
+    ui::{
+        components::icons::{UPDATE, icon},
+        models::Models,
+        theme::Theme,
+    },
+    update::complete_update,
 };
 
 #[derive(IntoElement)]
@@ -16,7 +19,8 @@ pub struct Update;
 impl RenderOnce for Update {
     fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
-        let update = cx.global::<Models>().pending_update.read(cx).is_some();
+        let update_model = cx.global::<Models>().pending_update.clone();
+        let update = update_model.read(cx).is_some();
 
         if update {
             div()
@@ -44,7 +48,15 @@ impl RenderOnce for Update {
                                     .size(px(14.0))
                                     .text_color(theme.button_primary_text),
                             ),
-                        ),
+                        )
+                        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                        })
+                        .on_click(move |_, _, cx| {
+                            let path = update_model.read(cx).as_ref().unwrap();
+                            complete_update(path);
+                        }),
                 )
         } else {
             div()

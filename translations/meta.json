@@ -1009,7 +1009,7 @@
   },
   "UPDATE_READY": {
     "context": "update.rs",
-    "definedIn": "src/ui/header/update.rs:25",
+    "definedIn": "src/ui/header/update.rs:29",
     "plural": false,
     "description": null
   },
