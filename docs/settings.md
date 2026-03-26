@@ -56,15 +56,14 @@ You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
 ## Logs
-Hummingbird writes logs to stderr and to a log file in the data directory.
-When the log file exceeds 1 MB, it is backed up to `hummingbird.log.old` and a new log is started.
-You can open the active log file from the command palette with the **Hummingbird: Open Log** action.
+Hummingbird writes logs to stderr and keeps a log file in the data directory.
+You can open the current log from the command palette with the **Hummingbird: Open Log** action.
 
-| Platform | Active log                                                              | Backup log                                                                  |
-|----------|-------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| Linux    | `~/.local/share/hummingbird/hummingbird.log`                            | `~/.local/share/hummingbird/hummingbird.log.old`                            |
-| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log` | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log.old` |
-| Windows  | `%appdata%\mailliw\hummingbird\data\hummingbird.log`                    | `%appdata%\mailliw\hummingbird\data\hummingbird.log.old`                    |
+| Platform | File path                                                               |
+|----------|-------------------------------------------------------------------------|
+| Linux    | `~/.local/share/hummingbird/hummingbird.log`                            |
+| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log` |
+| Windows  | `%appdata%\mailliw\hummingbird\data\hummingbird.log`                    |
 
 ## Last.FM
 The current Last.FM session is stored in the following places:
