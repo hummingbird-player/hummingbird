@@ -829,19 +829,19 @@
   },
   "SCAN_COMPLETE_WATCHING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:144",
+    "definedIn": "src/ui/header.rs:146",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:123",
+    "definedIn": "src/ui/header.rs:125",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:131",
+    "definedIn": "src/ui/header.rs:133",
     "plural": false,
     "description": null
   },

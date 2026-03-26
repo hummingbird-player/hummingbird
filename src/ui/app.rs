@@ -32,7 +32,6 @@ use crate::{
         components::dropdown,
         library::{self, missing_folder_dialog::MissingFolderDialog},
     },
-    update::start_update_task,
 };
 
 use super::{
@@ -277,7 +276,8 @@ pub fn run() -> anyhow::Result<()> {
             }
             cx.set_global(playback_interface);
 
-            start_update_task(cx);
+            #[cfg(feature = "update")]
+            crate::update::start_update_task(cx);
 
             cx.activate(true);
 
