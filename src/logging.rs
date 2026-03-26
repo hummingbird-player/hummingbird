@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
@@ -51,6 +51,7 @@ pub fn init(data_dir: &Path) -> anyhow::Result<()> {
 
     let stderr_layer = fmt::layer()
         .with_writer(StderrMakeWriter)
+        .with_ansi(io::stderr().is_terminal())
         .with_thread_names(true) // nice to have until we replace with tasks
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE) // async can be noisy
         .with_timer(fmt::time::uptime()) // date's useless
