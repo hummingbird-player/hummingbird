@@ -119,7 +119,7 @@ impl Render for InterfaceSettings {
                 .selected(interface.language.clone())
                 .on_change(move |code, _, cx| {
                     settings_c.update(cx, |s, cx| {
-                        s.interface.language = code;
+                        s.interface.language = code.clone();
                         save_settings(cx, s);
                         cx.notify();
                     });
@@ -138,7 +138,7 @@ impl Render for InterfaceSettings {
                 .selected(resolved)
                 .on_change(move |id, _, cx| {
                     settings_c.update(cx, |s, cx| {
-                        s.interface.theme = id;
+                        s.interface.theme = id.clone();
                         save_settings(cx, s);
                         cx.notify();
                     });
@@ -165,7 +165,7 @@ impl Render for InterfaceSettings {
                 .option(StartupLibraryView::LikedSongs, tr!("LIKED_SONGS"))
                 .on_change(move |view, _, cx| {
                     settings_c.update(cx, |s, cx| {
-                        s.interface.startup_library_view = view;
+                        s.interface.startup_library_view = *view;
                         save_settings(cx, s);
                         cx.notify();
                     });

@@ -1,7 +1,10 @@
 use gpui::{App, AppContext};
 use tracing::{error, info};
 
-use crate::ui::models::Models;
+use crate::{
+    settings::{Settings, SettingsGlobal, update::ReleaseChannel},
+    ui::models::Models,
+};
 
 mod check;
 mod download;
@@ -9,12 +12,6 @@ mod download;
 mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ReleaseChannel {
-    Stable,
-    Unstable,
-}
 
 const PLATFORM_PACKAGE: &str = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
     "hummingbird-arm.app.zip"
@@ -34,16 +31,11 @@ const PLATFORM_PACKAGE: &str = if cfg!(all(target_os = "macos", target_arch = "a
 
 pub fn start_update_task(cx: &mut App) {
     let update_model = cx.global::<Models>().pending_update.clone();
+    let update_settings = cx.global::<SettingsGlobal>().model.read(cx).update.clone();
 
     cx.spawn(async move |cx| {
-        let channel = match env!("HUMMINGBIRD_CHANNEL") {
-            "stable" => ReleaseChannel::Stable,
-            "dev" => ReleaseChannel::Unstable,
-            _ => return,
-        };
-
         let update = crate::RUNTIME
-            .spawn(check::check_for_updates(channel))
+            .spawn(check::check_for_updates(update_settings.release_channel))
             .await
             .unwrap();
 

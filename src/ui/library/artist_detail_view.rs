@@ -392,7 +392,7 @@ impl Render for ArtistDetailView {
                                             .w(px(200.0))
                                             .on_change(move |sort_method, _, cx| {
                                                 entity.update(cx, |this, cx| {
-                                                    this.update_liked_sort(sort_method, cx);
+                                                    this.update_liked_sort(*sort_method, cx);
                                                 });
                                             }),
                                         ),

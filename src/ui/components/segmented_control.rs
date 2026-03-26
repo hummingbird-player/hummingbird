@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 use crate::ui::theme::Theme;
 
-pub type ChangeHandler<T> = dyn Fn(T, &mut Window, &mut App);
+pub type ChangeHandler<T> = dyn Fn(&T, &mut Window, &mut App);
 
 #[derive(IntoElement)]
 pub struct SegmentedControl<T: Clone + PartialEq + 'static> {
@@ -30,7 +30,7 @@ impl<T: Clone + PartialEq + 'static> SegmentedControl<T> {
         self
     }
 
-    pub fn on_change(mut self, on_change: impl Fn(T, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_change(mut self, on_change: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(on_change));
         self
     }
@@ -84,7 +84,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for SegmentedControl<T> {
                     })
                     .on_click(move |_, window, cx| {
                         if let Some(on_change) = &on_change {
-                            on_change(value.clone(), window, cx);
+                            on_change(&value, window, cx);
                         }
                     })
                     .child(label.clone()),

@@ -62,7 +62,7 @@ impl<T: Clone + PartialEq + 'static> Dropdown<T> {
         self
     }
 
-    pub fn on_change(mut self, on_change: impl Fn(T, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_change(mut self, on_change: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(on_change));
         self
     }
@@ -229,7 +229,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                         if let Some(option) = highlighted.read(cx).and_then(|i| options.get(i))
                             && let Some(on_change) = &on_change
                         {
-                            (on_change)(option.0.clone(), window, cx);
+                            (on_change)(&option.0, window, cx);
                             is_open.write(cx, false);
                         }
                     }
@@ -284,7 +284,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                             move |_, window, cx| {
                                 highlighted.write(cx, Some(idx));
                                 if let Some(on_change) = &on_change {
-                                    (on_change)(option.0.clone(), window, cx);
+                                    (on_change)(&option.0, window, cx);
                                 }
                                 is_open.write(cx, false);
                             }

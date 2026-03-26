@@ -263,7 +263,7 @@ impl Render for LibrarySettings {
                         )
                         .on_change(move |policy, _, cx| {
                             settings_c.update(cx, |s, cx| {
-                                s.scanning.missing_folder_policy = policy;
+                                s.scanning.missing_folder_policy = *policy;
                                 save_settings(cx, s);
                                 cx.notify();
                             });

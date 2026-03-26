@@ -203,6 +203,12 @@
     "plural": false,
     "description": null
   },
+  "AUTO_UPDATE": {
+    "context": "update.rs",
+    "definedIn": "src/ui/settings/update.rs:75",
+    "plural": false,
+    "description": null
+  },
   "CANCEL": {
     "context": "playlists.rs",
     "definedIn": "src/ui/library/sidebar/playlists.rs:411",
@@ -367,7 +373,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:88",
+    "definedIn": "src/ui/settings.rs:96",
     "plural": false,
     "description": null
   },
@@ -463,7 +469,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:89",
+    "definedIn": "src/ui/settings.rs:97",
     "plural": false,
     "description": null
   },
@@ -529,7 +535,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:90",
+    "definedIn": "src/ui/settings.rs:98",
     "plural": false,
     "description": null
   },
@@ -614,6 +620,18 @@
   "RELEASED_YEAR": {
     "context": "release_view.rs",
     "definedIn": "src/ui/library/release_view.rs:258",
+    "plural": false,
+    "description": null
+  },
+  "RELEASE_CHANNEL": {
+    "context": "update.rs",
+    "definedIn": "src/ui/settings/update.rs:55",
+    "plural": false,
+    "description": null
+  },
+  "RELEASE_CHANNEL_SUBTEXT": {
+    "context": "update.rs",
+    "definedIn": "src/ui/settings/update.rs:58",
     "plural": false,
     "description": null
   },
@@ -859,7 +877,7 @@
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:44",
+    "definedIn": "src/ui/settings.rs:47",
     "plural": false,
     "description": null
   },
@@ -920,6 +938,12 @@
   "SORT_TITLE": {
     "context": "artist_detail_view.rs",
     "definedIn": "src/ui/library/artist_detail_view.rs:385",
+    "plural": false,
+    "description": null
+  },
+  "STABLE": {
+    "context": "update.rs",
+    "definedIn": "src/ui/settings/update.rs:64",
     "plural": false,
     "description": null
   },
@@ -998,6 +1022,18 @@
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
     "definedIn": "src/ui/controls.rs:341",
+    "plural": false,
+    "description": null
+  },
+  "UNSTABLE": {
+    "context": "update.rs",
+    "definedIn": "src/ui/settings/update.rs:65",
+    "plural": false,
+    "description": null
+  },
+  "UPDATE": {
+    "context": "settings.rs",
+    "definedIn": "src/ui/settings.rs:100",
     "plural": false,
     "description": null
   },

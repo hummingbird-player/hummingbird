@@ -133,7 +133,7 @@ impl Render for ReplayGainButton {
                                                 .selected(rg_mode)
                                                 .on_change(move |mode, _, cx| {
                                                     settings.update(cx, |settings, cx| {
-                                                        settings.playback.replaygain.mode = mode;
+                                                        settings.playback.replaygain.mode = *mode;
                                                         save_settings(cx, settings);
                                                         cx.notify();
                                                     });

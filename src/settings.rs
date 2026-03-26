@@ -3,6 +3,7 @@ pub mod playback;
 pub mod replaygain;
 pub mod scan;
 pub mod storage;
+pub mod update;
 
 use std::{
     fs,
@@ -27,6 +28,10 @@ pub struct Settings {
     pub playback: playback::PlaybackSettings,
     #[serde(default)]
     pub interface: interface::InterfaceSettings,
+    // include update settings even when the feature is disabled to avoid screwing up user's
+    // settings files if they switch to/from an official build later
+    #[serde(default)]
+    pub update: update::UpdateSettings,
 }
 
 fn has_stored_theme_setting(value: &serde_json::Value) -> bool {

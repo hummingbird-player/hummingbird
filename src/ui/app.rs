@@ -207,6 +207,8 @@ pub fn run() -> anyhow::Result<()> {
             let language = settings.interface.language.clone();
             let playback_settings = settings.playback.clone();
             let scanning_settings = settings.scanning.clone();
+            #[cfg(feature = "update")]
+            let update_settings = settings.update.clone();
             let initial_repeat = if playback_settings.always_repeat
                 && playback_session.repeat == crate::playback::events::RepeatState::NotRepeating
             {
@@ -277,7 +279,9 @@ pub fn run() -> anyhow::Result<()> {
             cx.set_global(playback_interface);
 
             #[cfg(feature = "update")]
-            crate::update::start_update_task(cx);
+            if update_settings.auto_update {
+                crate::update::start_update_task(cx);
+            }
 
             cx.activate(true);
 

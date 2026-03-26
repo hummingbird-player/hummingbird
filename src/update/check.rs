@@ -5,7 +5,7 @@ use semver::Version;
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
-use crate::update::{PLATFORM_PACKAGE, ReleaseChannel};
+use crate::{settings::update::ReleaseChannel, update::PLATFORM_PACKAGE};
 
 const LATEST_STABLE: &str =
     "https://api.github.com/repos/hummingbird-player/hummingbird/releases/latest";

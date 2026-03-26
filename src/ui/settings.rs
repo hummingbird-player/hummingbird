@@ -1,6 +1,8 @@
 mod interface;
 mod library;
 mod playback;
+#[cfg(feature = "update")]
+mod update;
 
 use cntp_i18n::tr;
 use gpui::{
@@ -20,9 +22,10 @@ use crate::{
             window_chrome::window_chrome,
             window_header::header,
         },
-        settings::interface::InterfaceSettings,
-        settings::library::LibrarySettings,
-        settings::playback::PlaybackSettings,
+        settings::{
+            interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
+            update::UpdateSettings,
+        },
         theme::Theme,
     },
 };
@@ -64,6 +67,7 @@ enum SettingsSectionKind {
     Interface,
     Library,
     Playback,
+    Update,
 }
 
 impl SettingsSectionKind {
@@ -72,6 +76,8 @@ impl SettingsSectionKind {
             Self::Interface => "interface",
             Self::Library => "library",
             Self::Playback => "playback",
+            #[cfg(feature = "update")]
+            Self::Update => "update",
         }
     }
 
@@ -80,6 +86,8 @@ impl SettingsSectionKind {
             Self::Interface => WORLD,
             Self::Library => BOOKS,
             Self::Playback => PLAY,
+            #[cfg(feature = "update")]
+            Self::Update => super::components::icons::UPDATE,
         }
     }
 
@@ -88,6 +96,8 @@ impl SettingsSectionKind {
             Self::Interface => tr!("INTERFACE", "Interface").into(),
             Self::Library => tr!("LIBRARY", "Library").into(),
             Self::Playback => tr!("PLAYBACK", "Playback").into(),
+            #[cfg(feature = "update")]
+            Self::Update => tr!("UPDATE", "Update").into(),
         }
     }
 }
@@ -97,6 +107,7 @@ enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
     Library(Entity<LibrarySettings>),
     Playback(Entity<PlaybackSettings>),
+    Update(Entity<UpdateSettings>),
 }
 
 impl SettingsSection {
@@ -105,6 +116,8 @@ impl SettingsSection {
             SettingsSectionKind::Interface => Self::Interface(InterfaceSettings::new(cx)),
             SettingsSectionKind::Library => Self::Library(LibrarySettings::new(cx)),
             SettingsSectionKind::Playback => Self::Playback(PlaybackSettings::new(cx)),
+            #[cfg(feature = "update")]
+            SettingsSectionKind::Update => Self::Update(UpdateSettings::new(cx)),
         }
     }
 
@@ -113,6 +126,8 @@ impl SettingsSection {
             Self::Interface(_) => SettingsSectionKind::Interface,
             Self::Library(_) => SettingsSectionKind::Library,
             Self::Playback(_) => SettingsSectionKind::Playback,
+            #[cfg(feature = "update")]
+            Self::Update(_) => SettingsSectionKind::Update,
         }
     }
 
@@ -121,6 +136,8 @@ impl SettingsSection {
             Self::Interface(interface) => interface.clone().into_any_element(),
             Self::Library(library) => library.clone().into_any_element(),
             Self::Playback(playback) => playback.clone().into_any_element(),
+            #[cfg(feature = "update")]
+            Self::Update(update) => update.clone().into_any_element(),
         }
     }
 }
@@ -198,6 +215,26 @@ impl Render for SettingsWindow {
         };
 
         let content = active.element();
+        let sidebar = sidebar()
+            .width(DEFAULT_SIDEBAR_WIDTH)
+            .h_full()
+            .pt(px(8.0))
+            .pb(px(8.0))
+            .pl(px(8.0))
+            .pr(px(7.0))
+            .border_r_1()
+            .border_color(theme.border_color)
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .child(self.render_section_item(SettingsSectionKind::Interface, cx))
+            .child(self.render_section_item(SettingsSectionKind::Library, cx))
+            .child(self.render_section_item(SettingsSectionKind::Playback, cx));
+
+        #[cfg(feature = "update")]
+        let sidebar = sidebar.child(self.render_section_item(SettingsSectionKind::Update, cx));
+
         window_chrome(
             div()
                 .track_focus(&self.focus_handle)
@@ -213,24 +250,7 @@ impl Render for SettingsWindow {
                         .flex_shrink()
                         .flex_grow()
                         .min_h(px(0.0))
-                        .child(
-                            sidebar()
-                                .width(DEFAULT_SIDEBAR_WIDTH)
-                                .h_full()
-                                .pt(px(8.0))
-                                .pb(px(8.0))
-                                .pl(px(8.0))
-                                .pr(px(7.0))
-                                .border_r_1()
-                                .border_color(theme.border_color)
-                                .overflow_hidden()
-                                .flex()
-                                .flex_col()
-                                .flex_shrink_0()
-                                .child(self.render_section_item(SettingsSectionKind::Interface, cx))
-                                .child(self.render_section_item(SettingsSectionKind::Library, cx))
-                                .child(self.render_section_item(SettingsSectionKind::Playback, cx)),
-                        )
+                        .child(sidebar)
                         .child(
                             div()
                                 .relative()

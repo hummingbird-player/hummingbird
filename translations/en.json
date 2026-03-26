@@ -33,6 +33,7 @@
   "ARTISTS": "Artists",
   "ARTIST_ALBUMS": "Albums",
   "ARTIST_LIKED_TRACKS": "Liked Tracks",
+  "AUTO_UPDATE": "Auto-update",
   "CANCEL": "Cancel",
   "CLEAR_QUEUE": "Clear",
   "CLICK_TO_CONFIRM": "Click to confirm sign in",
@@ -108,6 +109,8 @@
   "QUIT": "Quit Hummingbird",
   "RELEASED_DATE": "Released {{date}}",
   "RELEASED_YEAR": "Released {{year}}",
+  "RELEASE_CHANNEL": "Release channel",
+  "RELEASE_CHANNEL_SUBTEXT": "Unstable builds are experimental and may contain bugs.",
   "REMOVE_FROM_PLAYLIST": "Remove from playlist",
   "REMOVE_FROM_QUEUE": "Remove from queue",
   "REMOVE_FROM_SELECTED_PLAYLIST": "Remove from {{name}}",
@@ -159,6 +162,7 @@
   "SORT_RECENTLY_ADDED": "Recently Added",
   "SORT_RELEASE_ORDER": "Release Order",
   "SORT_TITLE": "Title",
+  "STABLE": "Stable",
   "STATS_TOTAL_LENGTH": {
     "one": "{{count}} minute",
     "other": "{{count}} minutes"
@@ -178,6 +182,8 @@
   "TRACK_SIDE": "Side {{side}}",
   "UNKNOWN_ARTIST": "Unknown Artist",
   "UNKNOWN_TRACK": "Unknown Track",
+  "UNSTABLE": "Unstable",
+  "UPDATE": "Update",
   "UPDATE_PLAYLIST": "Update {{name}}",
   "UPDATE_READY": "Update ready",
   "VIEW": "View",
