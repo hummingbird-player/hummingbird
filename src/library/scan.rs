@@ -31,10 +31,7 @@ use crate::{
     },
     paths,
     settings::scan::{MissingFolderPolicy, ScanSettings},
-    ui::{
-        app::get_dirs,
-        models::{Models, PlaylistEvent},
-    },
+    ui::models::{Models, PlaylistEvent},
 };
 
 /// Maximum number of items to accumulate before flushing a DB transaction.
