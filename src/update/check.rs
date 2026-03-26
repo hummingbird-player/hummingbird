@@ -120,16 +120,12 @@ async fn unstable_asset(release_info: &GithubRelease) -> anyhow::Result<Option<A
     let build_time = DateTime::parse_from_rfc3339(env!("VERGEN_BUILD_TIMESTAMP"))?.to_utc();
 
     // compare with release info asset
-    let asset = release_info.assets.iter().find(|a| {
-        println!("a: {}", a.name);
-        println!("b: {}", PLATFORM_PACKAGE);
-        a.name == PLATFORM_PACKAGE
-    });
+    let asset = release_info
+        .assets
+        .iter()
+        .find(|a| a.name == PLATFORM_PACKAGE);
 
     let minimum_acceptable_time = build_time + Duration::hours(2);
-
-    println!("a: {}", var_os("HUMMINGBIRD_ALWAYS_UPDATE").is_some());
-    println!("b: {:?}", asset);
 
     if let Some(asset) = asset
         && (asset.updated_at > minimum_acceptable_time
