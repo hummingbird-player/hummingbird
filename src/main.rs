@@ -17,6 +17,7 @@ mod playback;
 mod services;
 mod settings;
 mod ui;
+mod update;
 mod util;
 #[cfg(target_os = "windows")]
 mod windows;

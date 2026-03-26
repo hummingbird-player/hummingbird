@@ -1,6 +1,7 @@
 use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, Result};
+use vergen::{BuildBuilder, Emitter};
 
 fn read_or_create_file(path: &str) -> Result<String> {
     std::fs::File::options()
@@ -45,6 +46,15 @@ fn version_id_from_git() -> Result<String> {
 }
 
 fn main() -> Result<()> {
+    // set build time information
+    let build = BuildBuilder::default()
+        .build_timestamp(true)
+        .use_local(false)
+        .build()?;
+
+    Emitter::default().add_instructions(&build)?.emit()?;
+
+    // read env
     let envfile = read_or_create_file(".env")?;
     println!("cargo:rerun-if-changed=.env");
     dotenvy::from_read(envfile.as_bytes())?;
@@ -66,6 +76,11 @@ fn main() -> Result<()> {
         println!("cargo:rerun-if-changed=package/RELEASE_CHANNEL");
         Ok(channel.trim_ascii_end().to_owned())
     });
+
+    println!(
+        "cargo:rustc-env=HUMMINGBIRD_CHANNEL={}",
+        channel.as_deref().unwrap_or("dev")
+    );
 
     // get parenthesized version id based on channel kind
     channel.and_then(|kind| {

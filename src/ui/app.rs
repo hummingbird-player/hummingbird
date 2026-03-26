@@ -30,9 +30,9 @@ use crate::{
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
         components::dropdown,
-        library,
-        library::missing_folder_dialog::MissingFolderDialog,
+        library::{self, missing_folder_dialog::MissingFolderDialog},
     },
+    update::start_update_task,
 };
 
 use super::{
@@ -276,6 +276,8 @@ pub fn run() -> anyhow::Result<()> {
                 playback_interface.pause();
             }
             cx.set_global(playback_interface);
+
+            start_update_task(cx);
 
             cx.activate(true);
 

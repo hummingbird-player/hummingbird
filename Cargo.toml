@@ -71,6 +71,7 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, features = [
 sysinfo = "0.31"
 discord-rich-presence = "1"
 file-rotate = "0.8.0"
+semver = "1"
 
 [patch.crates-io]
 gpui = { git = "https://github.com/zed-industries/zed" }
@@ -79,6 +80,7 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 anyhow = "1"
 dotenvy = "0.15"
 cntp_i18n_gen = "0.1"
+vergen = { version = "9", features = ["build"] }
 
 [target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
 symphonia-adapter-fdk-aac = "0.1"
