@@ -191,8 +191,8 @@ async fn run_scanner(
     event_tx: UnboundedSender<ScanEvent>,
 ) {
     let directory = paths::data_dir();
-    if !tokio::fs::try_exists(directory).await.unwrap_or_default() {
-        tokio::fs::create_dir(directory)
+    if !tokio::fs::try_exists(&directory).await.unwrap_or_default() {
+        tokio::fs::create_dir(&directory)
             .await
             .expect("couldn't create data directory");
     }
