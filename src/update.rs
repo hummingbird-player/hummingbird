@@ -5,6 +5,8 @@ use crate::ui::models::Models;
 
 mod check;
 mod download;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -87,7 +89,12 @@ pub fn complete_update(path: &std::path::Path) {
         if let Err(e) = windows::update_installer(path) {
             error!("Failed to complete update: {e:?}");
         }
+    }
 
-        return;
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = linux::update_linux(path) {
+            error!("Failed to complete update: {e:?}");
+        }
     }
 }
