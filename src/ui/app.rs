@@ -154,10 +154,6 @@ pub struct Pool(pub SqlitePool);
 
 impl Global for Pool {}
 
-pub fn get_dirs() -> &'static ProjectDirs {
-    crate::paths::project_dirs()
-}
-
 pub struct DropImageDummyModel;
 
 impl EventEmitter<Vec<Arc<RenderImage>>> for DropImageDummyModel {}
