@@ -31,7 +31,7 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 
 fn main() -> anyhow::Result<()> {
     I18N_MANAGER.write().unwrap().load_source(tr_load!());
-    crate::logging::init(&crate::paths::data_dir())?;
+    crate::logging::init()?;
 
     tracing::info!("version {VERSION_STRING}");
     crate::ui::app::run()

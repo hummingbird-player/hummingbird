@@ -25,6 +25,7 @@ const MAX_LOG_FILES: usize = 4;
 type RotatingLogFile = FileRotate<AppendTimestamp>;
 type SharedLogFile = Arc<Mutex<Option<RotatingLogFile>>>;
 
+static ACTIVE_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 static LOG_FILE: OnceLock<SharedLogFile> = OnceLock::new();
 
 #[cfg(test)]
@@ -41,9 +42,11 @@ thread_local! {
 }
 
 /// Initializes logging to stderr and, when available, to a rotating log file.
-pub fn init(data_dir: &Path) -> anyhow::Result<()> {
+pub fn init() -> anyhow::Result<()> {
     let env = tracing_subscriber::EnvFilter::builder().parse(filter_value())?; // inform user they have a malformed filter
-    let file_writer = open_file_make_writer(data_dir);
+    let active_log_path = default_active_log_path();
+    let _ = ACTIVE_LOG_PATH.set(active_log_path.clone());
+    let file_writer = open_file_make_writer(&active_log_path);
 
     if let Some(writer) = &file_writer {
         let _ = LOG_FILE.set(writer.file.clone());
@@ -91,11 +94,18 @@ pub fn flush() {
 }
 
 pub fn active_log_path() -> PathBuf {
-    active_log_path_in(&crate::paths::data_dir())
+    ACTIVE_LOG_PATH
+        .get()
+        .cloned()
+        .unwrap_or_else(default_active_log_path)
 }
 
-fn active_log_path_in(data_dir: &Path) -> PathBuf {
-    data_dir.join(LOG_FILE_NAME)
+fn default_active_log_path() -> PathBuf {
+    active_log_path_in(&crate::paths::log_dir())
+}
+
+fn active_log_path_in(log_dir: &Path) -> PathBuf {
+    log_dir.join(LOG_FILE_NAME)
 }
 
 fn filter_value() -> String {
@@ -106,9 +116,11 @@ fn filter_value() -> String {
         .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_owned())
 }
 
-fn open_file_make_writer(data_dir: &Path) -> Option<FileMakeWriter> {
+fn open_file_make_writer(log_path: &Path) -> Option<FileMakeWriter> {
+    fs::create_dir_all(log_path.parent()?).ok()?;
+
     Some(FileMakeWriter::new(FileRotate::new(
-        active_log_path_in(data_dir),
+        log_path,
         AppendTimestamp::default(FileLimit::MaxFiles(MAX_LOG_FILES)),
         ContentLimit::BytesSurpassed(MAX_LOG_FILE_SIZE),
         Compression::None,
@@ -338,10 +350,12 @@ mod tests {
     fn file_logging_failure_falls_back_to_stderr_only() {
         let dir = temp_dir();
         let file_path = dir.join("not-a-directory");
+        let log_path = active_log_path_in(&dir);
+        let invalid_log_path = file_path.join(LOG_FILE_NAME);
         fs::write(&file_path, b"x").unwrap();
 
-        assert!(open_file_make_writer(&dir).is_some());
-        assert!(open_file_make_writer(&file_path).is_none());
+        assert!(open_file_make_writer(&log_path).is_some());
+        assert!(open_file_make_writer(&invalid_log_path).is_none());
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -350,11 +364,11 @@ mod tests {
     #[test]
     fn non_tty_stderr_still_writes_to_log_file() {
         let dir = temp_dir();
-        let active_path = dir.join(LOG_FILE_NAME);
+        let active_path = active_log_path_in(&dir);
         let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
         let _stderr = override_stderr(stderr_buffer.clone());
 
-        log_with_layers(open_file_make_writer(&dir));
+        log_with_layers(open_file_make_writer(&active_path));
 
         let stderr = String::from_utf8(stderr_buffer.lock().unwrap().clone()).unwrap();
         let file = fs::read_to_string(&active_path).unwrap();
@@ -368,10 +382,10 @@ mod tests {
     #[test]
     fn failing_stderr_still_writes_to_log_file() {
         let dir = temp_dir();
-        let active_path = dir.join(LOG_FILE_NAME);
+        let active_path = active_log_path_in(&dir);
         let _stderr = fail_stderr();
 
-        log_with_layers(open_file_make_writer(&dir));
+        log_with_layers(open_file_make_writer(&active_path));
 
         let file = fs::read_to_string(&active_path).unwrap();
         assert!(file.contains("integration log test"));
