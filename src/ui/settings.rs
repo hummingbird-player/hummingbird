@@ -24,11 +24,13 @@ use crate::{
         },
         settings::{
             interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
-            update::UpdateSettings,
         },
         theme::Theme,
     },
 };
+
+#[cfg(feature = "update")]
+use crate::ui::settings::update::UpdateSettings;
 
 pub fn open_settings_window(cx: &mut App) {
     let bounds = WindowBounds::Windowed(gpui::Bounds::centered(
@@ -67,6 +69,7 @@ enum SettingsSectionKind {
     Interface,
     Library,
     Playback,
+    #[cfg(feature = "update")]
     Update,
 }
 
@@ -107,6 +110,7 @@ enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
     Library(Entity<LibrarySettings>),
     Playback(Entity<PlaybackSettings>),
+    #[cfg(feature = "update")]
     Update(Entity<UpdateSettings>),
 }
 

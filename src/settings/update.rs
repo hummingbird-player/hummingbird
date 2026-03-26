@@ -19,10 +19,19 @@ fn default_auto_update() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSettings {
     #[serde(default)]
     pub release_channel: ReleaseChannel,
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            release_channel: Default::default(),
+            auto_update: true,
+        }
+    }
 }
