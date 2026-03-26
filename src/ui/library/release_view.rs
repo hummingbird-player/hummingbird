@@ -94,7 +94,7 @@ impl ReleaseView {
                     .iter()
                     .position(|track| track.id == track_id && is_track_available(track))
             }) {
-                scroll_handle.scroll_to_top_of_item(track_index + 1);
+                scroll_handle.scroll_to_top_of_item(track_index);
             }
 
             ReleaseView {
