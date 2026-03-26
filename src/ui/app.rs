@@ -16,6 +16,7 @@ use crate::{
         db::create_pool,
         scan::{ScanEvent, ScanInterface, start_scanner},
     },
+    paths,
     playback::{
         interface::PlaybackInterface, queue::QueueItemData,
         session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
@@ -153,25 +154,12 @@ pub struct Pool(pub SqlitePool);
 
 impl Global for Pool {}
 
-pub fn get_dirs() -> ProjectDirs {
-    let secondary_dirs = directories::ProjectDirs::from("me", "william341", "muzak")
-        .expect("couldn't generate project dirs (secondary)");
-
-    if secondary_dirs.data_dir().exists() {
-        return secondary_dirs;
-    }
-
-    directories::ProjectDirs::from("org", "mailliw", "hummingbird")
-        .expect("couldn't generate project dirs")
-}
-
 pub struct DropImageDummyModel;
 
 impl EventEmitter<Vec<Arc<RenderImage>>> for DropImageDummyModel {}
 
 pub fn run() -> anyhow::Result<()> {
-    let dirs = get_dirs();
-    let data_dir = dirs.data_dir().to_path_buf();
+    let data_dir = paths::data_dir();
     fs::create_dir_all(&data_dir).inspect_err(|error| {
         tracing::error!(
             ?error,
@@ -371,6 +359,8 @@ pub fn run() -> anyhow::Result<()> {
                                         liked_tracks_sort_method,
                                         sidebar_collapsed,
                                     });
+
+                                    crate::logging::flush();
                                 })
                             }
                         })

@@ -1,0 +1,36 @@
+name: Feature Request
+description: Suggest a new feature for Hummingbird.
+labels: "needs triage"
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Has this feature been requested before?** Please search [existing issues](https://github.com/hummingbird-player/hummingbird/issues) to check.
+  - type: textarea
+    attributes:
+      label: Description
+      description: |
+        Describe the feature you want. What would it do? What would it look like? How would it behave?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Why do you want this feature?
+      description: |
+        Explain your use case. What problem does this solve? How would this improve your experience?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional information
+      description: |
+        Any other context, mockups, references, or alternatives you've considered.
+    validations:
+      required: false
+  - type: upload
+    attributes:
+      label: Attachments
+      description: Screenshots, mockups, or diagrams to help explain your request.
+    validations:
+      required: false

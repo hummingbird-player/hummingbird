@@ -1,7 +1,7 @@
 use gpui::{App, ClipboardItem, Window, actions};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
-actions!(hummingbird, [CopyTroubleshootingInfo]);
+actions!(hummingbird, [CopyTroubleshootingInfo, OpenLog]);
 
 pub fn copy_troubleshooting_info(_window: &Window, cx: &mut App) {
     // GPUI only supports fetching GPU info on Linux
@@ -31,6 +31,11 @@ pub fn copy_troubleshooting_info(_window: &Window, cx: &mut App) {
     );
 
     cx.write_to_clipboard(ClipboardItem::new_string(info));
+}
+
+pub fn open_log(_: &OpenLog, cx: &mut App) {
+    crate::logging::flush();
+    cx.open_with_system(&crate::logging::active_log_path());
 }
 
 fn operating_system_label() -> String {

@@ -55,6 +55,20 @@ Controls the selected theme.
 You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
+## Logs
+Hummingbird writes logs to stderr and also saves them to `hummingbird.log`.
+You can open the current log from the command palette with the **Hummingbird: Open Log** action.
+
+By default, logs are stored here:
+
+| Platform | File path                                                               |
+|----------|-------------------------------------------------------------------------|
+| Linux    | `~/.local/state/hummingbird/hummingbird.log`                            |
+| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/hummingbird.log` |
+| Windows  | `%localappdata%\mailliw\hummingbird\data\hummingbird.log`               |
+
+You can choose a different folder by setting `HUMMINGBIRD_LOG_DIR`.
+
 ## Last.FM
 The current Last.FM session is stored in the following places:
 

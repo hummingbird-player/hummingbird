@@ -18,6 +18,7 @@
   "ACTION_GROUP_SCAN": "Scan",
   "ACTION_IMPORT_PLAYLIST": "Import M3U Playlist",
   "ACTION_NEXT": "Next Track",
+  "ACTION_OPEN_LOG": "Open Log",
   "ACTION_PLAYPAUSE": "Pause/Resume Current Track",
   "ACTION_PREVIOUS": "Previous Track",
   "ACTION_QUIT": "Quit",

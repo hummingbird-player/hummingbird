@@ -16,7 +16,6 @@ pub struct Label {
     subtext: Option<SharedString>,
     on_click: Option<ClickEvHandler>,
     children: SmallVec<[AnyElement; 2]>,
-    has_checkbox: bool,
     div: Div,
 }
 
@@ -31,11 +30,6 @@ impl Label {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(on_click));
-        self
-    }
-
-    pub fn has_checkbox(mut self) -> Self {
-        self.has_checkbox = true;
         self
     }
 }
@@ -62,13 +56,6 @@ impl RenderOnce for Label {
             .overflow_hidden()
             .text_sm()
             .gap(px(6.0))
-            .border_1()
-            .border_color(theme.border_color)
-            .bg(theme.background_secondary)
-            .px(px(12.0))
-            .rounded(px(6.0))
-            .min_h(px(60.0))
-            .py(px(8.0))
             .child(
                 div()
                     .flex()
@@ -87,13 +74,7 @@ impl RenderOnce for Label {
                         )
                     }),
             )
-            .child(
-                div()
-                    .my_auto()
-                    .when(self.has_checkbox, |this| this.mr(px(10.0)))
-                    .flex()
-                    .children(self.children),
-            )
+            .child(div().my_auto().flex().children(self.children))
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
     }
 }
@@ -104,7 +85,6 @@ pub fn label(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Label {
         text: text.into(),
         subtext: None,
         children: SmallVec::new(),
-        has_checkbox: false,
         on_click: None,
         div: div(),
     }

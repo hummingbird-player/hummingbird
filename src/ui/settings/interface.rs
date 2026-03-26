@@ -289,7 +289,7 @@ impl Render for InterfaceSettings {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(px(14.0))
             .child(section_header(tr!("INTERFACE")))
             .child(
                 label("language-selector", tr!("LANGUAGE", "Language"))
@@ -334,7 +334,6 @@ impl Render for InterfaceSettings {
                 ))
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .child(checkbox(
                     "interface-full-width-library-check",
                     interface.full_width_library || interface.two_column_library,
@@ -361,7 +360,6 @@ impl Render for InterfaceSettings {
                 ))
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_interface(cx, |interface| {
                         interface.two_column_library = !interface.two_column_library;
@@ -412,7 +410,6 @@ impl Render for InterfaceSettings {
                 ))
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_interface(cx, |interface| {
                         interface.always_show_scrollbars = !interface.always_show_scrollbars;

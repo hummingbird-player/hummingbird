@@ -2281,6 +2281,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "file-rotate"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e8e2fa049328a1f3295991407a88585805d126dfaadf74b9fe8c194c730aafc"
+dependencies = [
+ "chrono",
+ "flate2",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3394,6 +3404,7 @@ dependencies = [
  "directories",
  "discord-rich-presence",
  "dotenvy",
+ "file-rotate",
  "futures",
  "globwalk",
  "gpui",

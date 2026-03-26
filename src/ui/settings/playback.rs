@@ -60,7 +60,6 @@ impl Render for PlaybackSettings {
                 ))
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_playback(cx, |playback| {
                         playback.always_repeat = !playback.always_repeat;
@@ -82,7 +81,6 @@ impl Render for PlaybackSettings {
                 )
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_playback(cx, |playback| {
                         playback.prev_track_jump_first = !playback.prev_track_jump_first;
@@ -107,7 +105,6 @@ impl Render for PlaybackSettings {
                 ))
                 .cursor_pointer()
                 .w_full()
-                .has_checkbox()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.update_playback(cx, |playback| {
                         playback.keep_current_on_queue_clear =

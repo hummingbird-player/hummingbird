@@ -37,8 +37,9 @@ impl AlbumView {
                 .cloned();
 
             let handler = Rc::new(move |cx: &mut App, id: &(u32, String)| {
-                view_switch_model
-                    .update(cx, |_, cx| cx.emit(ViewSwitchMessage::Release(id.0 as i64)))
+                view_switch_model.update(cx, |_, cx| {
+                    cx.emit(ViewSwitchMessage::Release(id.0 as i64, None))
+                })
             });
 
             let table = Table::new(

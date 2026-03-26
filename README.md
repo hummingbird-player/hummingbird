@@ -18,6 +18,7 @@ design standard.
 - Desktop integration
 - Playlists
 - Lyrics
+- Discord RPC
 
 ## Planned Features
 - WASM Extension support:
@@ -55,6 +56,11 @@ currently ongoing.
 The latest commit is built using Github Actions and uploaded to the
 [latest](https://github.com/143mailliw/hummingbird/releases/tag/latest) tag
 automatically. Windows installers aren't available for unstable builds.
+
+Official builds are signed with `minisign`. The signature is attached to the release and must be downloaded seperately and placed next to the binary you are attempting to verify. Verify with:
+```
+minisign -Vm <file> -P RWTVGbNhJ/77g9Dm280SNcfxaPz118Hgg8vI55tFX83sIMiObZuxpDyV
+```
 
 ## Building
 For more detailed instructions, see the [Building](docs/building.md) documentation.

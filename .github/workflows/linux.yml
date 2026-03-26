@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm]
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
 
     runs-on: ${{ matrix.os }}
 
@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev minisign
       - name: Update rust
         run: rustup update
       - name: Install cntp build tools
@@ -42,13 +42,24 @@ jobs:
         run: |
           cargo cntp-bundle --no-open --verbose
           cargo cntp-deploy --no-open --verbose --output-file "hummingbird-$ARCH.AppImage"
+      - name: Write minisign key
+        env:
+          MINISIGN_PRIV_KEY: ${{ secrets.MINISIGN_PRIV_KEY }}
+        run: |
+          printf '%s' "$MINISIGN_PRIV_KEY" > minisign.key
+      - name: Sign AppImage
+        run: minisign -S -s minisign.key -m "hummingbird-$ARCH.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: hummingbird-${{ env.ARCH }}.AppImage
-          path: hummingbird-${{ env.ARCH }}.AppImage
+          path: |
+            hummingbird-${{ env.ARCH }}.AppImage
+            hummingbird-${{ env.ARCH }}.AppImage.minisig
       - uses: softprops/action-gh-release@v2
         with:
-          files: hummingbird-${{ env.ARCH }}.AppImage
+          files: |
+            hummingbird-${{ env.ARCH }}.AppImage
+            hummingbird-${{ env.ARCH }}.AppImage.minisig
           prerelease: true
           name: latest
           tag_name: latest

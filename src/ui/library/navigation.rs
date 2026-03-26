@@ -32,7 +32,7 @@ impl NavigationView {
                 this.current_message = m.read(cx).current();
 
                 this.description = match this.current_message {
-                    ViewSwitchMessage::Release(id) => cx
+                    ViewSwitchMessage::Release(id, _) => cx
                         .get_album_by_id(id, AlbumMethod::Metadata)
                         .ok()
                         .map(|v| SharedString::from(v.title.clone())),

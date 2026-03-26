@@ -491,7 +491,7 @@ impl Render for ArtistDetailView {
                     .when(album_count > 0, |this| {
                         let handler: Option<Rc<GridHandler>> = Some(Rc::new(move |cx, id| {
                             nav_model.update(cx, |_, cx| {
-                                cx.emit(ViewSwitchMessage::Release(id.0 as i64));
+                                cx.emit(ViewSwitchMessage::Release(id.0 as i64, None));
                             });
                         }));
 

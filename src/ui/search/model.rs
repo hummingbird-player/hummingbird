@@ -73,11 +73,13 @@ impl SearchModel {
 
             let on_accept: OnAccept = Box::new(move |item, cx| {
                 let event = match item.as_ref() {
-                    SearchPaletteItem::Album { id, .. } => ViewSwitchMessage::Release(*id as i64),
+                    SearchPaletteItem::Album { id, .. } => {
+                        ViewSwitchMessage::Release(*id as i64, None)
+                    }
                     SearchPaletteItem::Artist { id, .. } => ViewSwitchMessage::Artist(*id),
-                    SearchPaletteItem::Track { album_id, .. } => {
+                    SearchPaletteItem::Track { id, album_id, .. } => {
                         if let Some(album_id) = album_id {
-                            ViewSwitchMessage::Release(*album_id)
+                            ViewSwitchMessage::Release(*album_id, Some(*id))
                         } else {
                             return;
                         }

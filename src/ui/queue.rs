@@ -278,7 +278,7 @@ impl Render for QueueItem {
                                             let switcher =
                                                 cx.global::<Models>().switcher_model.clone();
                                             switcher.update(cx, |_, cx| {
-                                                cx.emit(ViewSwitchMessage::Release(album_id));
+                                                cx.emit(ViewSwitchMessage::Release(album_id, None));
                                             })
                                         }
                                     },

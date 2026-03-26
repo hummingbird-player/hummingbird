@@ -60,11 +60,6 @@ impl MenuBuilder {
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
     pub fn build(self) -> Option<Menu> {
         if self.macos_only && !cfg!(target_os = "macos") {
             return None;

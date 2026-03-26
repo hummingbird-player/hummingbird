@@ -1,0 +1,60 @@
+name: Bug Report
+description: Report a bug, crash, freeze, or hang in Hummingbird.
+labels: "needs triage"
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Is this bug already reported?** Please search [existing issues](https://github.com/hummingbird-player/hummingbird/issues) to check.
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+      description: A step-by-step description of how to reproduce the bug. The more context you provide, the easier it is to find and fix the problem.
+      placeholder: |
+        1. Start Hummingbird
+        2. Click X
+        3. Observe the bug
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Current vs. Expected behavior
+      description: |
+        Describe the current behavior vs. what you expected. Screenshots or videos are helpful.
+      placeholder: |
+        Current behavior: The button does not respond when clicked.
+        Expected behavior: The button should open the settings dialog.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment and Hardware
+      description: |
+        Open the command palette and run "Hummingbird: Copy Troubleshooting Info" to copy version and system information to your clipboard. Paste it here.
+      placeholder: |
+        <!-- Paste the output from "Hummingbird: Copy Troubleshooting Info" here -->
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: |
+        If applicable, paste any relevant log output. Open the command palette and run "Hummingbird: Open Log" to open the log file.
+        Please review logs for any sensitive information and redact them before posting.
+      value: |
+        <details><summary>Logs</summary>
+
+        ```
+        <!-- Paste your logs here -->
+        ```
+
+        </details>
+    validations:
+      required: false
+  - type: upload
+    attributes:
+      label: Screenshots or recordings
+      description: If applicable, add screenshots or recordings to help explain your problem.
+    validations:
+      required: false

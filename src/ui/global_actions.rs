@@ -9,6 +9,7 @@ use crate::{
         command_palette::OpenPalette,
         components::menus_builder::{MenuBuilder, MenusBuilder, menu_item, menu_separator},
         settings::open_settings_window,
+        troubleshooting::open_log,
     },
 };
 
@@ -38,6 +39,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(issues);
     cx.on_action(shuffle_all);
     cx.on_action(scan);
+    cx.on_action(open_log);
 
     debug!("actions: {:?}", cx.all_action_names());
     debug!("action available: {:?}", cx.is_action_available(&Quit));

@@ -27,6 +27,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Update Inno Setup
         run: choco upgrade innosetup -y
+      - name: Install minisign
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+          scoop install minisign
+          "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Try minisign
+        shell: pwsh
+        run: minisign -v
       - name: Update rust
         run: rustup update
       - name: Set ENV
@@ -44,18 +53,36 @@ jobs:
           iscc.exe /Q package\inno\Hummingbird_${{ env.ARCH }}.iss
       - name: Move binary
         run: mv target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird-${{ env.ARCH }}.exe
+      - name: Write minisign private key
+        shell: pwsh
+        env:
+          MINISIGN_PRIV_KEY: ${{ secrets.MINISIGN_PRIV_KEY }}
+        run: |
+          Set-Content -Path minisign.key -Value $env:MINISIGN_PRIV_KEY -NoNewline
+      - name: Sign portable binary
+        shell: pwsh
+        run: minisign -S -s minisign.key -m target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
+      - name: Sign installer
+        shell: pwsh
+        run: minisign -S -s minisign.key -m package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe
       - uses: actions/upload-artifact@v4
         with:
           name: hummingbird-${{ env.ARCH }}.exe
-          path: target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
+          path: |
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe.minisig
       - uses: actions/upload-artifact@v4
         with:
           name: HummingbirdSetup_${{ env.ARCH }}.exe
-          path: package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
+          path: |
+            package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe
+            package\inno\Output\HummingbirdSetup_${{ env.ARCH }}.exe.minisig
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe.minisig
             package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe
+            package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe.minisig
           name: ${{ github.event.release.name }}
           tag_name: ${{ github.event.release.tag_name }}

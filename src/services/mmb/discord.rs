@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -23,7 +23,8 @@ pub struct Discord {
     last_position: u64,
     last_duration: Option<u64>,
     last_state: PlaybackState,
-    stage: u8,
+    needs_update_time: Option<SystemTime>,
+    last_update_time: Option<SystemTime>,
     client: DiscordIpcClient,
 }
 
@@ -39,7 +40,8 @@ impl Discord {
             last_position: 0,
             last_duration: None,
             last_state: PlaybackState::Stopped,
-            stage: 0,
+            last_update_time: Some(SystemTime::now() - Duration::from_secs(16)),
+            needs_update_time: None,
             client,
         }
     }
@@ -103,6 +105,12 @@ impl Discord {
                 .as_secs(),
         );
     }
+
+    pub fn mark_dirty(&mut self) {
+        if self.needs_update_time.is_none() {
+            self.needs_update_time = Some(SystemTime::now());
+        }
+    }
 }
 
 #[async_trait]
@@ -113,20 +121,15 @@ impl MediaMetadataBroadcastService for Discord {
         self.last_duration = None;
         self.last_position = 0;
         self.last_path = Some(file_path.clone());
-        self.stage = 1;
 
-        self.client.clear_activity().ok();
+        self.mark_dirty();
     }
 
     async fn metadata_recieved(&mut self, info: Arc<Metadata>) {
         self.metadata = Some(info.clone());
 
-        if self.stage != 3 {
-            self.stage += 1;
-        }
-
-        if self.last_state == PlaybackState::Playing && self.stage == 3 {
-            self.update_activity();
+        if self.last_state == PlaybackState::Playing {
+            self.mark_dirty();
         }
     }
 
@@ -136,7 +139,7 @@ impl MediaMetadataBroadcastService for Discord {
         match state {
             PlaybackState::Playing => {
                 self.update_start_time();
-                self.update_activity();
+                self.mark_dirty();
             }
             PlaybackState::Paused | PlaybackState::Stopped => {
                 self.client.clear_activity().ok();
@@ -153,7 +156,29 @@ impl MediaMetadataBroadcastService for Discord {
             && self.last_state == PlaybackState::Playing
         {
             // we scrubbed, discord needs new timestamps
+            self.mark_dirty();
+        }
+
+        let current_time = SystemTime::now();
+
+        let Ok(time_since_needs) =
+            current_time.duration_since(self.needs_update_time.unwrap_or(current_time))
+        else {
+            return;
+        };
+
+        let Ok(time_since_last_update) =
+            current_time.duration_since(self.last_update_time.unwrap_or(current_time))
+        else {
+            return;
+        };
+
+        if time_since_needs > Duration::from_millis(500)
+            && time_since_last_update > Duration::from_secs(15)
+        {
             self.update_activity();
+            self.needs_update_time = None;
+            self.last_update_time = Some(SystemTime::now());
         }
     }
 
@@ -161,12 +186,8 @@ impl MediaMetadataBroadcastService for Discord {
         self.last_duration = Some(duration);
         self.update_start_time();
 
-        if self.stage != 3 {
-            self.stage += 1;
-        }
-
-        if self.last_state == PlaybackState::Playing && self.stage == 3 {
-            self.update_activity();
+        if self.last_state == PlaybackState::Playing {
+            self.needs_update_time = Some(SystemTime::now());
         }
     }
 }

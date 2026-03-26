@@ -29,11 +29,9 @@ use crate::{
         discover::{cleanup_removed_directories, cleanup_with_exclusions, discover},
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_scan_record},
     },
+    paths,
     settings::scan::{MissingFolderPolicy, ScanSettings},
-    ui::{
-        app::get_dirs,
-        models::{Models, PlaylistEvent},
-    },
+    ui::models::{Models, PlaylistEvent},
 };
 
 /// Maximum number of items to accumulate before flushing a DB transaction.
@@ -192,10 +190,9 @@ async fn run_scanner(
     mut command_rx: Receiver<ScanCommand>,
     event_tx: UnboundedSender<ScanEvent>,
 ) {
-    let dirs = get_dirs();
-    let directory = dirs.data_dir();
-    if !tokio::fs::try_exists(directory).await.unwrap_or_default() {
-        tokio::fs::create_dir(directory)
+    let directory = paths::data_dir();
+    if !tokio::fs::try_exists(&directory).await.unwrap_or_default() {
+        tokio::fs::create_dir(&directory)
             .await
             .expect("couldn't create data directory");
     }

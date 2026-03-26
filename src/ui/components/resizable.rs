@@ -10,7 +10,6 @@ pub enum ResizeEdge {
     Left,
     Right,
     Top,
-    Bottom,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -309,9 +308,7 @@ impl Element for Resizable {
                                 axis_position(edge, ev.position) - drag_state.start_position;
                             match edge {
                                 ResizeEdge::Left | ResizeEdge::Top => drag_state.start_size - delta,
-                                ResizeEdge::Right | ResizeEdge::Bottom => {
-                                    drag_state.start_size + delta
-                                }
+                                ResizeEdge::Right => drag_state.start_size + delta,
                             }
                         }
                         SizeMode::Percent => {
@@ -323,9 +320,7 @@ impl Element for Resizable {
                                 ResizeEdge::Left | ResizeEdge::Top => {
                                     drag_state.start_size - delta_frac
                                 }
-                                ResizeEdge::Right | ResizeEdge::Bottom => {
-                                    drag_state.start_size + delta_frac
-                                }
+                                ResizeEdge::Right => drag_state.start_size + delta_frac,
                             }
                         }
                     };
@@ -359,7 +354,7 @@ impl Element for Resizable {
 fn axis_position(edge: ResizeEdge, position: Point<Pixels>) -> Pixels {
     match edge {
         ResizeEdge::Left | ResizeEdge::Right => position.x,
-        ResizeEdge::Top | ResizeEdge::Bottom => position.y,
+        ResizeEdge::Top => position.y,
     }
 }
 
@@ -389,16 +384,6 @@ fn handle_bounds(bounds: Bounds<Pixels>, edge: ResizeEdge, handle_size: Pixels) 
                 height: handle_size,
             },
         },
-        ResizeEdge::Bottom => Bounds {
-            origin: Point {
-                x: bounds.origin.x,
-                y: bounds.origin.y + bounds.size.height - handle_size,
-            },
-            size: Size {
-                width: bounds.size.width,
-                height: bounds.size.height - handle_size,
-            },
-        },
     }
 }
 
@@ -423,16 +408,6 @@ fn divider_bounds(bounds: Bounds<Pixels>, edge: ResizeEdge, line_width: Pixels) 
         },
         ResizeEdge::Top => Bounds {
             origin: bounds.origin,
-            size: Size {
-                width: bounds.size.width,
-                height: line_width,
-            },
-        },
-        ResizeEdge::Bottom => Bounds {
-            origin: Point {
-                x: bounds.origin.x,
-                y: bounds.origin.y + bounds.size.height - line_width,
-            },
             size: Size {
                 width: bounds.size.width,
                 height: line_width,

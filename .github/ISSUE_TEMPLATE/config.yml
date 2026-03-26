@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-issue-config.json
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: Search existing issues
+    url: https://github.com/hummingbird-player/hummingbird/issues
+    about: Please search to see if an issue already exists for the problem or feature you want to report.
