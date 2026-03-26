@@ -72,6 +72,7 @@ pub struct Models {
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
     pub sidebar_collapsed: Entity<bool>,
     pub lyrics_height: Entity<Pixels>,
+    pub pending_update: Entity<Option<PathBuf>>,
 }
 
 impl Global for Models {}
@@ -322,6 +323,8 @@ pub fn build_models(
         }
     });
 
+    let pending_update = cx.new(|_| None);
+
     cx.set_global(Models {
         metadata,
         albumart,
@@ -340,6 +343,7 @@ pub fn build_models(
         liked_tracks_sort_method,
         sidebar_collapsed,
         lyrics_height,
+        pending_update,
     });
 
     let position: Entity<u64> = cx.new(|_| 0);

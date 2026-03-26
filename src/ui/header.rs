@@ -1,4 +1,5 @@
 mod lastfm;
+mod update;
 
 use cntp_i18n::tr;
 use gpui::*;
@@ -8,10 +9,13 @@ use tracing::{info, warn};
 use crate::{
     library::scan::ScanEvent,
     services::mmb::lastfm::LASTFM_CREDS,
-    ui::components::{
-        icons::{FOLDER_CHECK, FOLDER_SEARCH, icon},
-        menu_bar::MenuBar,
-        window_header::header,
+    ui::{
+        components::{
+            icons::{FOLDER_CHECK, FOLDER_SEARCH, icon},
+            menu_bar::MenuBar,
+            window_header::header,
+        },
+        header::update::Update,
     },
 };
 
@@ -57,6 +61,8 @@ impl Render for Header {
         }
 
         header = header.left(self.scan_status.clone());
+
+        header = header.right(Update);
 
         if let Some(lastfm) = self.lastfm.clone() {
             header = header.right(lastfm);

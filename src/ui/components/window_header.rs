@@ -153,7 +153,6 @@ impl RenderOnce for WindowButton {
             .flex()
             .w(px(36.0))
             .h(px(37.0))
-            .pb(px(1.0))
             .items_center()
             .justify_center()
             .cursor_pointer()

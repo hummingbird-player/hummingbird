@@ -66,7 +66,8 @@ urlencoding = "2"
 zed-reqwest = { version = "0.12.15-zed", default-features = false, features = [
     "json",
     "macos-system-configuration",
-    "rustls-tls-native-roots",
+    # this was native-roots, but this caused intermittent issues on Windows
+    "rustls-tls-webpki-roots",
 ] }
 sysinfo = "0.31"
 discord-rich-presence = "1"

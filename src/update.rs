@@ -1,5 +1,7 @@
-use gpui::App;
+use gpui::{App, AppContext};
 use tracing::{error, info};
+
+use crate::ui::models::Models;
 
 mod check;
 mod download;
@@ -10,7 +12,7 @@ enum ReleaseChannel {
     Unstable,
 }
 
-const PLATFORM_PACKAGE: &'static str = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+const PLATFORM_PACKAGE: &str = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
     "hummingbird-arm.app.zip"
 } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
     "hummingbird-intel.app.zip"
@@ -27,7 +29,9 @@ const PLATFORM_PACKAGE: &'static str = if cfg!(all(target_os = "macos", target_a
 };
 
 pub fn start_update_task(cx: &mut App) {
-    cx.spawn(async |_cx| {
+    let update_model = cx.global::<Models>().pending_update.clone();
+
+    cx.spawn(async move |cx| {
         let channel = match env!("HUMMINGBIRD_CHANNEL") {
             "stable" => ReleaseChannel::Stable,
             "dev" => ReleaseChannel::Unstable,
@@ -41,6 +45,7 @@ pub fn start_update_task(cx: &mut App) {
 
         if let Err(e) = update.as_ref() {
             error!("Failed to check for updates: {e:?}");
+            return;
         }
 
         let Ok(Some(update)) = update else {
@@ -50,7 +55,7 @@ pub fn start_update_task(cx: &mut App) {
 
         info!(
             "Update available: {}",
-            update.version.as_ref().unwrap_or_else(|| &update.digest)
+            update.version.as_ref().unwrap_or(&update.digest)
         );
 
         let download = crate::RUNTIME
@@ -59,12 +64,15 @@ pub fn start_update_task(cx: &mut App) {
             .unwrap();
 
         if let Err(e) = download.as_ref() {
-            error!("Failed to download update: {e}")
+            error!("Failed to download update: {e}");
+            return;
         }
 
         let download = download.unwrap();
 
         info!("Downloaded update to {}", download.display());
+
+        cx.update_entity(&update_model, |this, _| *this = Some(download));
     })
     .detach();
 }

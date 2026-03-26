@@ -25,7 +25,6 @@ struct Asset {
     browser_download_url: String,
     digest: String,
     updated_at: DateTime<Utc>,
-    size: usize,
     uploader: Uploader,
 }
 
@@ -39,7 +38,6 @@ struct GithubRelease {
 pub(super) struct Update {
     pub url: String,
     pub digest: String,
-    pub size: usize,
     pub version: Option<String>,
 }
 
@@ -85,7 +83,6 @@ pub async fn check_for_updates(channel: ReleaseChannel) -> anyhow::Result<Option
     Ok(Some(Update {
         url: update_available.browser_download_url,
         digest: update_available.digest,
-        size: update_available.size,
         version: if release_info.tag_name == "latest" {
             None
         } else {

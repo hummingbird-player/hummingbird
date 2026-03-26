@@ -829,19 +829,19 @@
   },
   "SCAN_COMPLETE_WATCHING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:138",
+    "definedIn": "src/ui/header.rs:144",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:117",
+    "definedIn": "src/ui/header.rs:123",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:125",
+    "definedIn": "src/ui/header.rs:131",
     "plural": false,
     "description": null
   },
@@ -1004,6 +1004,12 @@
   "UPDATE_PLAYLIST": {
     "context": "update_playlist.rs",
     "definedIn": "src/ui/library/update_playlist.rs:33",
+    "plural": false,
+    "description": null
+  },
+  "UPDATE_READY": {
+    "context": "update.rs",
+    "definedIn": "src/ui/header/update.rs:25",
     "plural": false,
     "description": null
   },

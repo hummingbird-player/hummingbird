@@ -179,6 +179,7 @@
   "UNKNOWN_ARTIST": "Unknown Artist",
   "UNKNOWN_TRACK": "Unknown Track",
   "UPDATE_PLAYLIST": "Update {{name}}",
+  "UPDATE_READY": "Update ready",
   "VIEW": "View",
   "WINDOW": "Window"
 }
