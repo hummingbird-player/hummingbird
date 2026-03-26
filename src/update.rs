@@ -77,6 +77,7 @@ pub fn start_update_task(cx: &mut App) {
         info!("Downloaded update to {}", download.display());
 
         cx.update_entity(&update_model, |this, _| *this = Some(download));
+        cx.refresh();
     })
     .detach();
 }
