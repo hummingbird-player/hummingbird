@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use cntp_i18n::tr;
 use gpui::*;
@@ -15,7 +15,7 @@ use crate::{
         caching::hummingbird_cache,
         components::{
             playback_controls::playback_controls,
-            scrollbar::{RightPad, floating_scrollbar},
+            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
         },
         library::{
@@ -23,9 +23,12 @@ use crate::{
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{Models, PlaybackInfo},
+        scroll_follow::SmoothScrollFollow,
         theme::Theme,
     },
 };
+
+const RELEASE_SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(250);
 
 pub struct ReleaseView {
     album: Arc<Album>,
@@ -35,6 +38,9 @@ pub struct ReleaseView {
     release_info: Option<SharedString>,
     img_path: SharedString,
     scroll_handle: ScrollHandle,
+    pending_scroll: Option<usize>,
+    scroll_follow: SmoothScrollFollow,
+    scroll_frame_scheduled: bool,
 }
 
 impl ReleaseView {
@@ -88,14 +94,11 @@ impl ReleaseView {
                 }
             };
 
-            let scroll_handle = ScrollHandle::new();
-            if let Some(track_index) = target_track_id.and_then(|track_id| {
+            let pending_scroll = target_track_id.and_then(|track_id| {
                 tracks
                     .iter()
                     .position(|track| track.id == track_id && is_track_available(track))
-            }) {
-                scroll_handle.scroll_to_top_of_item(track_index);
-            }
+            });
 
             ReleaseView {
                 album,
@@ -104,7 +107,10 @@ impl ReleaseView {
                 track_listing,
                 release_info,
                 img_path: SharedString::from(format!("!db://album/{album_id}/full")),
-                scroll_handle,
+                scroll_handle: ScrollHandle::new(),
+                pending_scroll,
+                scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
+                scroll_frame_scheduled: false,
             }
         })
     }
@@ -260,10 +266,86 @@ impl ReleaseView {
                 this.child(div().child(isrc.clone()))
             })
     }
+
+    fn schedule_scroll_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scroll_frame_scheduled {
+            return;
+        }
+
+        self.scroll_frame_scheduled = true;
+        cx.on_next_frame(window, |this, window, cx| {
+            this.scroll_frame_scheduled = false;
+            this.advance_scroll_animation(window, cx);
+        });
+    }
+
+    fn advance_scroll_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending_scroll) = self.pending_scroll {
+            match self.compute_follow_target(pending_scroll) {
+                FollowTarget::PendingLayout => {
+                    self.schedule_scroll_frame(window, cx);
+                    return;
+                }
+                FollowTarget::NoScrollNeeded => {
+                    self.pending_scroll = None;
+                }
+                FollowTarget::Target(target_scroll_top) => {
+                    let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+                    self.scroll_follow
+                        .animate_to(&scroll_handle, target_scroll_top);
+                    self.pending_scroll = None;
+                }
+            }
+        }
+
+        let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+        let changed = self.scroll_follow.advance(&scroll_handle);
+
+        if self.scroll_follow.is_active() {
+            self.schedule_scroll_frame(window, cx);
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn compute_follow_target(&self, track_index: usize) -> FollowTarget {
+        let viewport = self.scroll_handle.bounds();
+        if viewport.size.height <= px(0.0) {
+            return FollowTarget::PendingLayout;
+        }
+
+        let Some(item_bounds) = self.scroll_handle.bounds_for_item(track_index + 1) else {
+            return FollowTarget::PendingLayout;
+        };
+
+        let max_scroll_top = self.scroll_handle.max_offset().y.max(px(0.0));
+        let raw_offset_y = viewport.origin.y - item_bounds.origin.y;
+        let target_scroll_top = (-raw_offset_y).max(px(0.0)).min(max_scroll_top);
+        let current_scroll_top = -self.scroll_handle.offset().y;
+
+        if (target_scroll_top - current_scroll_top).abs() <= px(0.1) {
+            FollowTarget::NoScrollNeeded
+        } else {
+            FollowTarget::Target(target_scroll_top)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FollowTarget {
+    PendingLayout,
+    NoScrollNeeded,
+    Target(Pixels),
 }
 
 impl Render for ReleaseView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.pending_scroll.is_some() || self.scroll_follow.is_active() {
+            self.schedule_scroll_frame(window, cx);
+        }
+
         let theme = cx.global::<Theme>();
 
         let is_playing =
