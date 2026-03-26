@@ -72,6 +72,7 @@ sysinfo = "0.31"
 discord-rich-presence = "1"
 file-rotate = "0.8.0"
 semver = "1"
+minisign-verify = "0.2"
 
 [patch.crates-io]
 gpui = { git = "https://github.com/zed-industries/zed" }

@@ -2,6 +2,7 @@ use gpui::App;
 use tracing::{error, info};
 
 mod check;
+mod download;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ReleaseChannel {
@@ -39,7 +40,7 @@ pub fn start_update_task(cx: &mut App) {
             .unwrap();
 
         if let Err(e) = update.as_ref() {
-            error!("update error: {:?}", e);
+            error!("Failed to check for updates: {e:?}");
         }
 
         let Ok(Some(update)) = update else {
@@ -51,6 +52,19 @@ pub fn start_update_task(cx: &mut App) {
             "Update available: {}",
             update.version.as_ref().unwrap_or_else(|| &update.digest)
         );
+
+        let download = crate::RUNTIME
+            .spawn(download::download(update))
+            .await
+            .unwrap();
+
+        if let Err(e) = download.as_ref() {
+            error!("Failed to download update: {e}")
+        }
+
+        let download = download.unwrap();
+
+        info!("Downloaded update to {}", download.display());
     })
     .detach();
 }
