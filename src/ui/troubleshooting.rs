@@ -1,6 +1,5 @@
 use gpui::{App, ClipboardItem, Window, actions};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-use tracing::warn;
 
 actions!(hummingbird, [CopyTroubleshootingInfo, OpenLog]);
 

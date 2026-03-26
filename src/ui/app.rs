@@ -16,6 +16,7 @@ use crate::{
         db::create_pool,
         scan::{ScanEvent, ScanInterface, start_scanner},
     },
+    paths,
     playback::{
         interface::PlaybackInterface, queue::QueueItemData,
         session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
@@ -162,8 +163,7 @@ pub struct DropImageDummyModel;
 impl EventEmitter<Vec<Arc<RenderImage>>> for DropImageDummyModel {}
 
 pub fn run() -> anyhow::Result<()> {
-    let dirs = get_dirs();
-    let data_dir = dirs.data_dir().to_path_buf();
+    let data_dir = paths::data_dir();
     fs::create_dir_all(&data_dir).inspect_err(|error| {
         tracing::error!(
             ?error,

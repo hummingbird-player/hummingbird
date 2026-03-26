@@ -9,7 +9,7 @@ use discord_rich_presence::{
     DiscordIpc, DiscordIpcClient,
     activity::{Activity, Assets, StatusDisplayType, Timestamps},
 };
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     media::metadata::Metadata, playback::thread::PlaybackState,

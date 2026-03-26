@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::{services::mmb::discord::Discord, ui::library::NavigationHistory};
+use crate::{paths, services::mmb::discord::Discord, ui::library::NavigationHistory};
 use gpui::{App, AppContext, Entity, EventEmitter, Global, Pixels, RenderImage};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ use crate::{
             DEFAULT_SPLIT_FRACTION, StorageData, TableSettings,
         },
     },
-    ui::{app::get_dirs, data::Decode, library::ViewSwitchMessage},
+    ui::{data::Decode, library::ViewSwitchMessage},
 };
 
 // yes this looks a little silly
@@ -190,8 +190,7 @@ pub fn build_models(
     let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList(FxHashMap::default()));
     let show_about: Entity<bool> = cx.new(|_| false);
     let lastfm: Entity<LastFMState> = cx.new(|cx| {
-        let dirs = get_dirs();
-        let directory = dirs.data_dir().to_path_buf();
+        let directory = paths::data_dir();
         let path = directory.join("lastfm.json");
 
         if LASTFM_CREDS.is_some() && let Ok(file) = File::open(path) {
@@ -236,8 +235,7 @@ pub fn build_models(
             cx.notify();
         });
 
-        let dirs = get_dirs();
-        let directory = dirs.data_dir().to_path_buf();
+        let directory = paths::data_dir();
         let path = directory.join("lastfm.json");
         let file = OpenOptions::new()
             .write(true)

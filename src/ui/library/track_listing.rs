@@ -54,7 +54,7 @@ impl TrackListing {
                                 || track.track_number == Some(1)
                                 || tracks_for_closure
                                     .get(index - 1)
-                                    .map_or(false, |t| t.disc_number != track.disc_number),
+                                    .is_some_and(|t| t.disc_number != track.disc_number),
                             artist_name_visibility.clone(),
                             TrackItemLeftField::TrackNum,
                             None,
