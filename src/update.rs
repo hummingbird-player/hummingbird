@@ -14,9 +14,9 @@ mod linux;
 mod windows;
 
 const PLATFORM_PACKAGE: &str = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-    "hummingbird-arm.app.zip"
+    "hummingbird-arm.zip"
 } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-    "hummingbird-intel.app.zip"
+    "hummingbird-intel.zip"
 } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
     "HummingbirdSetup_aarch64.exe"
 } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
