@@ -207,10 +207,10 @@ impl TableData<AlbumColumn> for Album {
         let mut columns: IndexMap<AlbumColumn, f32, FxBuildHasher> = IndexMap::with_hasher(s);
         columns.insert(AlbumColumn::Title, 300.0);
         columns.insert(AlbumColumn::Artist, 200.0);
-        columns.insert(AlbumColumn::Date, 100.0);
+        columns.insert(AlbumColumn::Date, 125.0);
         columns.insert(AlbumColumn::Label, 150.0);
         // length is weird because the image column is 47.0
-        columns.insert(AlbumColumn::CatalogNumber, 203.0);
+        columns.insert(AlbumColumn::CatalogNumber, 178.0);
         columns
     }
 
