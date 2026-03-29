@@ -268,13 +268,13 @@ impl TableData<AlbumColumn> for Album {
             GridContext::Standalone => None,
         };
 
-        let date_part = format_album_release_date(self.release_date.as_ref(), self.date_precision);
-        let year_part = format_album_release_date_with(self.release_date.as_ref(), "Y", "medium");
-        let secondary = match (artist_part, year_part, date_part) {
-            (Some(artist), Some(year), _) => Some(format!("{artist} • {year}").into()),
-            (Some(artist), None, _) => Some(SharedString::from(artist)),
-            (None, _, Some(date)) => Some(date),
-            (None, _, None) => None,
+        let secondary = match artist_part {
+            Some(artist) => {
+                format_album_release_date_with(self.release_date.as_ref(), "Y", "medium")
+                    .map(|year| format!("{artist} • {year}").into())
+                    .or(Some(SharedString::from(artist)))
+            }
+            None => format_album_release_date(self.release_date.as_ref(), self.date_precision),
         };
 
         Some((title, secondary))
