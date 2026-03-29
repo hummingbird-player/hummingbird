@@ -16,6 +16,8 @@ use crate::{
 use super::models::{Models, PlaybackInfo};
 
 actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
+#[cfg(feature = "update")]
+actions!(hummingbird, [CheckForUpdates]);
 actions!(player, [PlayPause, Next, Previous, ShuffleAll]);
 actions!(scan, [ForceScan, Scan]);
 actions!(hummingbird, [HideSelf, HideOthers, ShowAll]);
@@ -34,6 +36,8 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(about);
     cx.on_action(force_scan);
     cx.on_action(open_settings);
+    #[cfg(feature = "update")]
+    cx.on_action(check_for_updates);
     cx.on_action(discord);
     cx.on_action(patreon);
     cx.on_action(issues);
@@ -70,25 +74,36 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("shift-s", Scan, Some("!TextInput"))]);
     cx.bind_keys([KeyBinding::new("space", PlayPause, None)]);
 
+    let mut app_menu = MenuBuilder::new(tr!("APP_NAME"))
+        .add_item(menu_item(tr!("ABOUT", "About Hummingbird"), About, false))
+        .add_item(menu_separator(false))
+        .add_item(menu_item(tr!("SETTINGS"), Settings, false));
+
+    #[cfg(feature = "update")]
+    {
+        app_menu = app_menu.add_item(menu_item(
+            tr!("ACTION_CHECK_FOR_UPDATES", "Check for Updates"),
+            CheckForUpdates,
+            false,
+        ));
+    }
+
+    app_menu = app_menu
+        .add_item(menu_separator(true))
+        .add_item(MenuBuilder::new("Services").macos_only(true).build_item())
+        .add_item(menu_separator(true))
+        .add_item(menu_item(tr!("HIDE", "Hide Hummingbird"), HideSelf, true))
+        .add_item(menu_item(
+            tr!("HIDE_OTHERS", "Hide Others"),
+            HideOthers,
+            true,
+        ))
+        .add_item(menu_item(tr!("SHOW_ALL", "Show All"), ShowAll, true))
+        .add_item(menu_separator(false))
+        .add_item(menu_item(tr!("QUIT", "Quit Hummingbird"), Quit, false));
+
     MenusBuilder::new()
-        .add_menu(
-            MenuBuilder::new(tr!("APP_NAME"))
-                .add_item(menu_item(tr!("ABOUT", "About Hummingbird"), About, false))
-                .add_item(menu_separator(false))
-                .add_item(menu_item(tr!("SETTINGS"), Settings, false))
-                .add_item(menu_separator(true))
-                .add_item(MenuBuilder::new("Services").macos_only(true).build_item())
-                .add_item(menu_separator(true))
-                .add_item(menu_item(tr!("HIDE", "Hide Hummingbird"), HideSelf, true))
-                .add_item(menu_item(
-                    tr!("HIDE_OTHERS", "Hide Others"),
-                    HideOthers,
-                    true,
-                ))
-                .add_item(menu_item(tr!("SHOW_ALL", "Show All"), ShowAll, true))
-                .add_item(menu_separator(false))
-                .add_item(menu_item(tr!("QUIT", "Quit Hummingbird"), Quit, false)),
-        )
+        .add_menu(app_menu)
         .add_menu(
             MenuBuilder::new(tr!(
                 "VIEW",
@@ -226,6 +241,11 @@ fn scan(_: &Scan, cx: &mut App) {
 
 fn open_settings(_: &Settings, cx: &mut App) {
     open_settings_window(cx);
+}
+
+#[cfg(feature = "update")]
+fn check_for_updates(_: &CheckForUpdates, cx: &mut App) {
+    crate::update::start_update_task(cx);
 }
 
 fn discord(_: &Discord, cx: &mut App) {

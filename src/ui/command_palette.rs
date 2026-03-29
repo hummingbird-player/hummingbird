@@ -15,11 +15,11 @@ use crate::ui::{
         modal::modal,
         palette::{FinderItemLeft, Palette, PaletteItem},
     },
-    global_actions::{
-        About, ForceScan, Next, PlayPause, Previous, Quit, Search, Settings, ShuffleAll,
-    },
+    global_actions::{About, ForceScan, Next, PlayPause, Previous, Quit, Search, Settings, ShuffleAll},
     troubleshooting::{CopyTroubleshootingInfo, OpenLog},
 };
+#[cfg(feature = "update")]
+use crate::ui::global_actions::CheckForUpdates;
 
 actions!(hummingbird, [OpenPalette]);
 
@@ -180,6 +180,16 @@ impl CommandPalette {
                     Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
                     tr!("ACTION_SETTINGS", "Settings"),
                     Settings,
+                    None,
+                ),
+            );
+            #[cfg(feature = "update")]
+            items.insert(
+                ("hummingbird::check_for_updates", 0),
+                Command::new(
+                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
+                    tr!("ACTION_CHECK_FOR_UPDATES", "Check for Updates"),
+                    CheckForUpdates,
                     None,
                 ),
             );
