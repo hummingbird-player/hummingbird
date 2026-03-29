@@ -36,7 +36,7 @@ jobs:
           cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
           cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
       - name: Build
-        run: cargo build --verbose --profile release-distro
+        run: cargo build --verbose --profile release-distro -F update
       - name: Bundle
         run: |
           cargo cntp-bundle --no-open --verbose --profile release-distro

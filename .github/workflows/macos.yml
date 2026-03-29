@@ -1,135 +1,135 @@
 name: macOS (binary)
 
 on:
-    push:
-        branches: ["master"]
+  push:
+    branches: ["master"]
 
 env:
-    CARGO_TERM_COLOR: always
-    LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-    LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+  CARGO_TERM_COLOR: always
+  LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+  LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
 
 jobs:
-    build:
-        strategy:
-            matrix:
-                os: [macos-15, macos-15-intel]
+  build:
+    strategy:
+      matrix:
+        os: [macos-15, macos-15-intel]
 
-        runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
 
+    env:
+      ARCH: "${{ endsWith(matrix.os, 'intel') && 'intel' || 'arm' }}"
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update rust
+        run: rustup update
+      - name: Install minisign
+        run: brew install minisign
+      - name: Set ENV
+        run: echo "TARGET_TRIPLE=$(rustc -vV | grep 'host:' | cut -d' ' -f2)" >> $GITHUB_ENV
+      - name: Install cntp build tools
+        run: |
+          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
+          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --verbose --release -F update
+      - name: Bundle
+        run: cargo cntp-bundle --no-open --verbose
+      # Codesigning adapted from https://federicoterzi.com/blog/automatic-code-signing-and-notarization-for-macos-apps-using-github-actions/
+      - name: Codesign app bundle
         env:
-            ARCH: "${{ endsWith(matrix.os, 'intel') && 'intel' || 'arm' }}"
+          MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
+          MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
+        run: |
+          # Turn our base64-encoded certificate back to a regular .p12 file
 
-        permissions:
-            contents: write
+          echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
 
-        steps:
-            - uses: actions/checkout@v4
-            - name: Update rust
-              run: rustup update
-            - name: Install minisign
-              run: brew install minisign
-            - name: Set ENV
-              run: echo "TARGET_TRIPLE=$(rustc -vV | grep 'host:' | cut -d' ' -f2)" >> $GITHUB_ENV
-            - name: Install cntp build tools
-              run: |
-                  cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
-                  cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
-            - uses: Swatinem/rust-cache@v2
-            - name: Build
-              run: cargo build --verbose --release
-            - name: Bundle
-              run: cargo cntp-bundle --no-open --verbose
-            # Codesigning adapted from https://federicoterzi.com/blog/automatic-code-signing-and-notarization-for-macos-apps-using-github-actions/
-            - name: Codesign app bundle
-              env:
-                  MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
-                  MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
-                  MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
-                  MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
-              run: |
-                  # Turn our base64-encoded certificate back to a regular .p12 file
+          # We need to create a new keychain, otherwise using the certificate will prompt
+          # with a UI dialog asking for the certificate password, which we can't
+          # use in a headless CI environment
 
-                  echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_CI_KEYCHAIN_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_CI_KEYCHAIN_PWD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CI_KEYCHAIN_PWD" build.keychain
 
-                  # We need to create a new keychain, otherwise using the certificate will prompt
-                  # with a UI dialog asking for the certificate password, which we can't
-                  # use in a headless CI environment
+          # We finally codesign our app bundle, specifying the Hardened runtime option
 
-                  security create-keychain -p "$MACOS_CI_KEYCHAIN_PWD" build.keychain
-                  security default-keychain -s build.keychain
-                  security unlock-keychain -p "$MACOS_CI_KEYCHAIN_PWD" build.keychain
-                  security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
-                  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CI_KEYCHAIN_PWD" build.keychain
+          /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" --options runtime target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app -v
+      - name: "Notarize app bundle"
+        env:
+          PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
+          PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
+          PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
+        run: |
+          # Store the notarization credentials so that we can prevent a UI password dialog
+          # from blocking the CI
 
-                  # We finally codesign our app bundle, specifying the Hardened runtime option
+          echo "Create keychain profile"
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "$PROD_MACOS_NOTARIZATION_APPLE_ID" --team-id "$PROD_MACOS_NOTARIZATION_TEAM_ID" --password "$PROD_MACOS_NOTARIZATION_PWD"
 
-                  /usr/bin/codesign --force -s "$MACOS_CERTIFICATE_NAME" --options runtime target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app -v
-            - name: "Notarize app bundle"
-              env:
-                  PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
-                  PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
-                  PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
-              run: |
-                  # Store the notarization credentials so that we can prevent a UI password dialog
-                  # from blocking the CI
+          # We can't notarize an app bundle directly, but we need to compress it as an archive.
+          # Therefore, we create a zip file containing our app bundle, so that we can send it to the
+          # notarization service
 
-                  echo "Create keychain profile"
-                  xcrun notarytool store-credentials "notarytool-profile" --apple-id "$PROD_MACOS_NOTARIZATION_APPLE_ID" --team-id "$PROD_MACOS_NOTARIZATION_TEAM_ID" --password "$PROD_MACOS_NOTARIZATION_PWD"
+          echo "Creating temp notarization archive"
+          ditto -c -k --keepParent "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app" "notarization.zip"
 
-                  # We can't notarize an app bundle directly, but we need to compress it as an archive.
-                  # Therefore, we create a zip file containing our app bundle, so that we can send it to the
-                  # notarization service
+          # Here we send the notarization request to the Apple's Notarization service, waiting for the result.
+          # This typically takes a few seconds inside a CI environment, but it might take more depending on the App
+          # characteristics. Visit the Notarization docs for more information and strategies on how to optimize it if
+          # you're curious
 
-                  echo "Creating temp notarization archive"
-                  ditto -c -k --keepParent "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app" "notarization.zip"
+          echo "Notarize app"
+          xcrun notarytool submit "notarization.zip" --keychain-profile "notarytool-profile" --wait
 
-                  # Here we send the notarization request to the Apple's Notarization service, waiting for the result.
-                  # This typically takes a few seconds inside a CI environment, but it might take more depending on the App
-                  # characteristics. Visit the Notarization docs for more information and strategies on how to optimize it if
-                  # you're curious
-
-                  echo "Notarize app"
-                  xcrun notarytool submit "notarization.zip" --keychain-profile "notarytool-profile" --wait
-
-                  # Finally, we need to "attach the staple" to our executable, which will allow our app to be
-                  # validated by macOS even when an internet connection is not available.
-                  echo "Attach staple"
-                  xcrun stapler staple "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app"
-            - name: Make DMG
-              run: cargo cntp-deploy --no-open --verbose --output-file "hummingbird-$ARCH.dmg"
-            - name: Make Zip
-              run: |
-                  cd target/bundle/${{ env.TARGET_TRIPLE }}/release
-                  zip -r "$GITHUB_WORKSPACE/hummingbird-$ARCH.zip" Hummingbird.app
-            - name: Prepare minisign key
-              env:
-                  MINISIGN_PRIV_KEY: ${{ secrets.MINISIGN_PRIV_KEY }}
-              run: |
-                  printf '%s' "$MINISIGN_PRIV_KEY" > minisign.key
-            - name: Sign DMG
-              run: minisign -S -s minisign.key -m "hummingbird-$ARCH.dmg"
-            - name: Sign Zip
-              run: minisign -S -s minisign.key -m "hummingbird-$ARCH.zip"
-            - uses: actions/upload-artifact@v4
-              with:
-                  name: hummingbird-${{ env.ARCH }}.zip
-                  path: |
-                      hummingbird-${{ env.ARCH }}.zip
-                      hummingbird-${{ env.ARCH }}.zip.minisig
-            - uses: actions/upload-artifact@v4
-              with:
-                  name: hummingbird-${{ env.ARCH }}.dmg
-                  path: |
-                      hummingbird-${{ env.ARCH }}.dmg
-                      hummingbird-${{ env.ARCH }}.dmg.minisig
-            - uses: softprops/action-gh-release@v2
-              with:
-                  files: |
-                      hummingbird-${{ env.ARCH }}.zip
-                      hummingbird-${{ env.ARCH }}.zip.minisig
-                      hummingbird-${{ env.ARCH }}.dmg
-                      hummingbird-${{ env.ARCH }}.dmg.minisig
-                  prerelease: true
-                  name: latest
-                  tag_name: latest
+          # Finally, we need to "attach the staple" to our executable, which will allow our app to be
+          # validated by macOS even when an internet connection is not available.
+          echo "Attach staple"
+          xcrun stapler staple "target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird.app"
+      - name: Make DMG
+        run: cargo cntp-deploy --no-open --verbose --output-file "hummingbird-$ARCH.dmg"
+      - name: Make Zip
+        run: |
+          cd target/bundle/${{ env.TARGET_TRIPLE }}/release
+          zip -r "$GITHUB_WORKSPACE/hummingbird-$ARCH.zip" Hummingbird.app
+      - name: Prepare minisign key
+        env:
+          MINISIGN_PRIV_KEY: ${{ secrets.MINISIGN_PRIV_KEY }}
+        run: |
+          printf '%s' "$MINISIGN_PRIV_KEY" > minisign.key
+      - name: Sign DMG
+        run: minisign -S -s minisign.key -m "hummingbird-$ARCH.dmg"
+      - name: Sign Zip
+        run: minisign -S -s minisign.key -m "hummingbird-$ARCH.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hummingbird-${{ env.ARCH }}.zip
+          path: |
+            hummingbird-${{ env.ARCH }}.zip
+            hummingbird-${{ env.ARCH }}.zip.minisig
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hummingbird-${{ env.ARCH }}.dmg
+          path: |
+            hummingbird-${{ env.ARCH }}.dmg
+            hummingbird-${{ env.ARCH }}.dmg.minisig
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hummingbird-${{ env.ARCH }}.zip
+            hummingbird-${{ env.ARCH }}.zip.minisig
+            hummingbird-${{ env.ARCH }}.dmg
+            hummingbird-${{ env.ARCH }}.dmg.minisig
+          prerelease: true
+          name: latest
+          tag_name: latest
