@@ -16,6 +16,8 @@ mod paths;
 mod playback;
 mod services;
 mod settings;
+#[cfg(test)]
+mod test_support;
 mod ui;
 #[cfg(feature = "update")]
 mod update;

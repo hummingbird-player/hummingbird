@@ -242,8 +242,12 @@ impl Drop for FileWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use crate::test_support::TestDir;
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
+
+    fn create_test_dir() -> TestDir {
+        TestDir::new("hummingbird-log-test")
+    }
 
     #[derive(Clone)]
     enum TestStderrMakeWriter {
@@ -312,20 +316,10 @@ mod tests {
         }
     }
 
-    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-    fn temp_dir() -> PathBuf {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("hummingbird-log-test-{id}"));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
     #[test]
     fn active_log_path_uses_standard_file_name() {
-        let dir = temp_dir();
-        assert_eq!(super::active_log_path_in(&dir), dir.join(LOG_FILE_NAME));
-        let _ = fs::remove_dir_all(dir);
+        let dir = create_test_dir();
+        assert_eq!(super::active_log_path_in(dir.path()), dir.join(LOG_FILE_NAME));
     }
 
     fn log_with_layers(stderr_writer: BoxMakeWriter, file_writer: Option<FileMakeWriter>) {
@@ -346,23 +340,21 @@ mod tests {
     /// File sink setup failures leave stderr-only logging available.
     #[test]
     fn file_logging_failure_falls_back_to_stderr_only() {
-        let dir = temp_dir();
+        let dir = create_test_dir();
         let file_path = dir.join("not-a-directory");
-        let log_path = active_log_path_in(&dir);
+        let log_path = active_log_path_in(dir.path());
         let invalid_log_path = file_path.join(LOG_FILE_NAME);
         fs::write(&file_path, b"x").unwrap();
 
         assert!(open_file_make_writer(&log_path).is_some());
         assert!(open_file_make_writer(&invalid_log_path).is_none());
-
-        let _ = fs::remove_dir_all(dir);
     }
 
     /// A non-terminal stderr sink still allows the log file to be written.
     #[test]
     fn non_tty_stderr_still_writes_to_log_file() {
-        let dir = temp_dir();
-        let active_path = active_log_path_in(&dir);
+        let dir = create_test_dir();
+        let active_path = active_log_path_in(dir.path());
         let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
 
         log_with_layers(
@@ -375,14 +367,12 @@ mod tests {
 
         assert!(stderr.contains("integration log test"));
         assert!(file.contains("integration log test"));
-
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn failing_stderr_still_writes_to_log_file() {
-        let dir = temp_dir();
-        let active_path = active_log_path_in(&dir);
+        let dir = create_test_dir();
+        let active_path = active_log_path_in(dir.path());
 
         log_with_layers(
             BoxMakeWriter::new(TestStderrMakeWriter::fail()),
@@ -391,7 +381,5 @@ mod tests {
 
         let file = fs::read_to_string(&active_path).unwrap();
         assert!(file.contains("integration log test"));
-
-        let _ = fs::remove_dir_all(dir);
     }
 }
