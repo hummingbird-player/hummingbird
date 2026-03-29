@@ -182,3 +182,125 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
 
     cx.set_global(global);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Settings, apply_legacy_theme_selection, create_settings, has_stored_theme_setting,
+    };
+    use crate::test_support::TestDir;
+    use serde_json::json;
+    use std::{fs, path::PathBuf};
+
+    fn create_test_dir() -> TestDir {
+        TestDir::new("hummingbird-settings-test")
+    }
+
+    fn settings_path(dir: &TestDir) -> PathBuf {
+        dir.join("settings.json")
+    }
+
+    #[test]
+    fn has_stored_theme_setting_detects_raw_theme_key_presence() {
+        assert!(has_stored_theme_setting(&json!({
+            "interface": { "theme": "custom.json" }
+        })));
+        assert!(has_stored_theme_setting(&json!({
+            "interface": { "theme": null }
+        })));
+        assert!(!has_stored_theme_setting(&json!({ "interface": {} })));
+        assert!(!has_stored_theme_setting(&json!({})));
+    }
+
+    #[test]
+    fn apply_legacy_theme_selection_only_applies_when_allowed() {
+        let dir = create_test_dir();
+        let settings_path = settings_path(&dir);
+        fs::write(dir.path().join("theme.json"), "{}").unwrap();
+
+        let mut settings = Settings::default();
+        apply_legacy_theme_selection(&settings_path, &mut settings, false);
+        assert_eq!(settings.interface.theme.as_deref(), Some("theme.json"));
+
+        let mut settings = Settings::default();
+        apply_legacy_theme_selection(&settings_path, &mut settings, true);
+        assert_eq!(settings.interface.theme, None);
+
+        let mut settings = Settings::default();
+        settings.interface.theme = Some("custom.json".to_string());
+        apply_legacy_theme_selection(&settings_path, &mut settings, false);
+        assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
+    }
+
+    #[test]
+    fn create_settings_missing_file_uses_defaults() {
+        let dir = create_test_dir();
+        let settings = create_settings(&settings_path(&dir));
+        let defaults = Settings::default();
+
+        assert_eq!(settings.interface, defaults.interface);
+        assert_eq!(settings.playback, defaults.playback);
+        assert_eq!(
+            settings.update.release_channel,
+            defaults.update.release_channel
+        );
+        assert_eq!(settings.update.auto_update, defaults.update.auto_update);
+    }
+
+    #[test]
+    fn create_settings_invalid_json_uses_defaults() {
+        let dir = create_test_dir();
+        fs::write(settings_path(&dir), "{not valid json").unwrap();
+
+        let settings = create_settings(&settings_path(&dir));
+        let defaults = Settings::default();
+
+        assert_eq!(settings.interface, defaults.interface);
+        assert_eq!(settings.playback, defaults.playback);
+        assert_eq!(
+            settings.update.release_channel,
+            defaults.update.release_channel
+        );
+        assert_eq!(settings.update.auto_update, defaults.update.auto_update);
+    }
+
+    #[test]
+    fn create_settings_deserializes_valid_json() {
+        let dir = create_test_dir();
+        fs::write(
+            settings_path(&dir),
+            serde_json::to_vec(&json!({
+                "playback": {
+                    "always_repeat": true,
+                    "prev_track_jump_first": true,
+                    "keep_current_on_queue_clear": false
+                },
+                "interface": {
+                    "theme": "custom.json",
+                    "full_width_library": true,
+                    "always_show_scrollbars": true
+                },
+                "update": {
+                    "release_channel": "Stable",
+                    "auto_update": false
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let settings = create_settings(&settings_path(&dir));
+
+        assert!(settings.playback.always_repeat);
+        assert!(settings.playback.prev_track_jump_first);
+        assert!(!settings.playback.keep_current_on_queue_clear);
+        assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
+        assert!(settings.interface.full_width_library);
+        assert!(settings.interface.always_show_scrollbars);
+        assert_eq!(
+            settings.update.release_channel,
+            super::update::ReleaseChannel::Stable
+        );
+        assert!(!settings.update.auto_update);
+    }
+}

@@ -165,3 +165,159 @@ impl Storage {
             .unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Storage, StorageData, TableSettings, TableViewModeSetting};
+    use crate::{
+        library::db::LikedTrackSortMethod, test_support::TestDir, ui::models::CurrentTrack,
+    };
+    use std::{collections::HashMap, fs};
+
+    fn create_test_dir() -> TestDir {
+        TestDir::new("hummingbird-storage-test")
+    }
+
+    #[test]
+    fn load_or_default_returns_default_when_file_is_missing() {
+        let dir = create_test_dir();
+        let storage = Storage::new(dir.join("storage.json"));
+
+        let data = storage.load_or_default();
+
+        assert!(data.current_track.is_none());
+        assert_eq!(data.volume, StorageData::default().volume);
+        assert_eq!(data.sidebar_width, StorageData::default().sidebar_width);
+        assert_eq!(data.queue_width, StorageData::default().queue_width);
+        assert_eq!(data.split_fraction, StorageData::default().split_fraction);
+        assert_eq!(data.lyrics_fraction, StorageData::default().lyrics_fraction);
+    }
+
+    #[test]
+    fn load_or_default_returns_default_when_json_is_invalid() {
+        let dir = create_test_dir();
+        let path = dir.join("storage.json");
+        fs::write(&path, "{not valid json").unwrap();
+        let storage = Storage::new(path);
+
+        let data = storage.load_or_default();
+
+        assert!(data.current_track.is_none());
+        assert_eq!(data.volume, StorageData::default().volume);
+        assert_eq!(data.sidebar_width, StorageData::default().sidebar_width);
+        assert_eq!(data.queue_width, StorageData::default().queue_width);
+        assert_eq!(data.split_fraction, StorageData::default().split_fraction);
+        assert_eq!(data.lyrics_fraction, StorageData::default().lyrics_fraction);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_preserves_valid_data() {
+        let dir = create_test_dir();
+        let path = dir.join("storage.json");
+        let track_path = dir.join("track.flac");
+        fs::write(&track_path, b"audio").unwrap();
+
+        let mut table_settings = HashMap::new();
+        table_settings.insert(
+            "tracks".to_string(),
+            TableSettings {
+                column_widths: HashMap::from([
+                    ("title".to_string(), 240.0),
+                    ("artist".to_string(), 180.0),
+                ]),
+                column_order: vec!["title".to_string(), "artist".to_string()],
+                hidden_columns: vec!["album".to_string()],
+                view_mode: TableViewModeSetting::Grid,
+            },
+        );
+
+        let expected = StorageData {
+            current_track: Some(CurrentTrack::new(track_path.clone())),
+            volume: 0.42,
+            sidebar_width: 300.0,
+            queue_width: 410.0,
+            split_fraction: 0.6,
+            table_settings,
+            liked_tracks_sort_method: LikedTrackSortMethod::RecentlyAddedAsc,
+            sidebar_collapsed: true,
+            lyrics_fraction: 0.7,
+        };
+
+        let storage = Storage::new(path);
+        storage.save(&expected);
+        let loaded = storage.load_or_default();
+
+        assert_eq!(
+            loaded.current_track.as_ref().map(CurrentTrack::get_path),
+            Some(&track_path)
+        );
+        assert_eq!(loaded.volume, expected.volume);
+        assert_eq!(loaded.sidebar_width, expected.sidebar_width);
+        assert_eq!(loaded.queue_width, expected.queue_width);
+        assert_eq!(loaded.split_fraction, expected.split_fraction);
+        assert_eq!(
+            loaded.liked_tracks_sort_method,
+            expected.liked_tracks_sort_method
+        );
+        assert_eq!(loaded.sidebar_collapsed, expected.sidebar_collapsed);
+        assert_eq!(loaded.lyrics_fraction, expected.lyrics_fraction);
+
+        let loaded_table = loaded.table_settings.get("tracks").unwrap();
+        let expected_table = expected.table_settings.get("tracks").unwrap();
+        assert_eq!(loaded_table.column_widths, expected_table.column_widths);
+        assert_eq!(loaded_table.column_order, expected_table.column_order);
+        assert_eq!(loaded_table.view_mode, expected_table.view_mode);
+    }
+
+    #[test]
+    fn load_or_default_clears_invalid_current_track_and_preserves_other_fields() {
+        let dir = create_test_dir();
+        let path = dir.join("storage.json");
+        let missing_track = dir.join("missing.flac");
+        let storage = Storage::new(path.clone());
+
+        let mut table_settings = HashMap::new();
+        table_settings.insert(
+            "albums".to_string(),
+            TableSettings {
+                column_widths: HashMap::from([("year".to_string(), 90.0)]),
+                column_order: vec!["year".to_string()],
+                hidden_columns: Vec::new(),
+                view_mode: TableViewModeSetting::List,
+            },
+        );
+
+        let stored = StorageData {
+            current_track: Some(CurrentTrack::new(missing_track)),
+            volume: 0.33,
+            sidebar_width: 280.0,
+            queue_width: 350.0,
+            split_fraction: 0.55,
+            table_settings,
+            liked_tracks_sort_method: LikedTrackSortMethod::TitleDesc,
+            sidebar_collapsed: true,
+            lyrics_fraction: 0.4,
+        };
+
+        storage.save(&stored);
+        let loaded = storage.load_or_default();
+
+        assert!(loaded.current_track.is_none());
+        assert_eq!(loaded.volume, stored.volume);
+        assert_eq!(loaded.sidebar_width, stored.sidebar_width);
+        assert_eq!(loaded.queue_width, stored.queue_width);
+        assert_eq!(loaded.split_fraction, stored.split_fraction);
+        assert_eq!(
+            loaded.liked_tracks_sort_method,
+            stored.liked_tracks_sort_method
+        );
+        assert_eq!(loaded.sidebar_collapsed, stored.sidebar_collapsed);
+        assert_eq!(loaded.lyrics_fraction, stored.lyrics_fraction);
+
+        let loaded_table = loaded.table_settings.get("albums").unwrap();
+        let stored_table = stored.table_settings.get("albums").unwrap();
+        assert_eq!(loaded_table.column_widths, stored_table.column_widths);
+        assert_eq!(loaded_table.column_order, stored_table.column_order);
+        assert_eq!(loaded_table.view_mode, stored_table.view_mode);
+    }
+}

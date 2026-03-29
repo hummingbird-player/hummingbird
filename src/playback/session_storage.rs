@@ -83,3 +83,68 @@ impl PlaybackSessionStorageWorker {
         serde_json::from_reader(BufReader::new(file)).unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PlaybackSessionData, PlaybackSessionStorageWorker};
+    use crate::{playback::events::RepeatState, test_support::TestDir};
+    use std::fs;
+
+    fn create_test_dir() -> TestDir {
+        TestDir::new("hummingbird-session-storage-test")
+    }
+
+    #[test]
+    fn load_returns_default_when_file_is_missing() {
+        let dir = create_test_dir();
+        let path = dir.join("session.json");
+
+        let session = PlaybackSessionStorageWorker::load(&path);
+        let default = PlaybackSessionData::default();
+
+        assert!(session.queue.is_empty());
+        assert!(session.original_queue.is_empty());
+        assert_eq!(session.queue_position, default.queue_position);
+        assert_eq!(session.shuffle, default.shuffle);
+        assert_eq!(session.repeat, default.repeat);
+    }
+
+    #[test]
+    fn load_returns_default_when_json_is_invalid() {
+        let dir = create_test_dir();
+        let path = dir.join("session.json");
+        fs::write(&path, "{not valid json").unwrap();
+
+        let session = PlaybackSessionStorageWorker::load(&path);
+        let default = PlaybackSessionData::default();
+
+        assert!(session.queue.is_empty());
+        assert!(session.original_queue.is_empty());
+        assert_eq!(session.queue_position, default.queue_position);
+        assert_eq!(session.shuffle, default.shuffle);
+        assert_eq!(session.repeat, default.repeat);
+    }
+
+    #[test]
+    fn load_reads_valid_session_file() {
+        let dir = create_test_dir();
+        let path = dir.join("session.json");
+        let expected = PlaybackSessionData {
+            queue: Vec::new(),
+            original_queue: Vec::new(),
+            queue_position: Some(3),
+            shuffle: true,
+            repeat: RepeatState::RepeatingOne,
+        };
+
+        fs::write(&path, serde_json::to_vec(&expected).unwrap()).unwrap();
+
+        let session = PlaybackSessionStorageWorker::load(&path);
+
+        assert!(session.queue.is_empty());
+        assert!(session.original_queue.is_empty());
+        assert_eq!(session.queue_position, expected.queue_position);
+        assert_eq!(session.shuffle, expected.shuffle);
+        assert_eq!(session.repeat, expected.repeat);
+    }
+}
