@@ -10,7 +10,7 @@ categories = ["multimedia::audio"]
 [features]
 runtime_shaders = ["gpui_platform/runtime_shaders"]
 console = ["dep:console-subscriber", "tokio/tracing"]
-update = ["dep:semver", "dep:minisign-verify"]
+update = ["dep:semver", "dep:minisign-verify", "dep:winreg"]
 
 [dependencies]
 anyhow = "1"
@@ -104,6 +104,7 @@ windows = { version = "0.62", features = [
 ] }
 windows-future = "0.3"
 windows-result = "0.4"
+winreg = { version = "0.56", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text = "=21.0.0" # GPUI issue, zed#47168

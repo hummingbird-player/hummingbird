@@ -5,7 +5,7 @@ use semver::Version;
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
-use crate::{settings::update::ReleaseChannel, update::PLATFORM_PACKAGE};
+use crate::settings::update::ReleaseChannel;
 
 const LATEST_STABLE: &str =
     "https://api.github.com/repos/hummingbird-player/hummingbird/releases/latest";
@@ -51,7 +51,10 @@ struct CurrentBuild<'a> {
     always_update: bool,
 }
 
-pub async fn check_for_updates(channel: ReleaseChannel) -> anyhow::Result<Option<Update>> {
+pub async fn check_for_updates(
+    channel: ReleaseChannel,
+    package: &str,
+) -> anyhow::Result<Option<Update>> {
     let version = env!("CARGO_PKG_VERSION");
 
     let client = zed_reqwest::Client::builder()
@@ -71,7 +74,7 @@ pub async fn check_for_updates(channel: ReleaseChannel) -> anyhow::Result<Option
         build_time: DateTime::parse_from_rfc3339(env!("VERGEN_BUILD_TIMESTAMP"))?.to_utc(),
         current_channel: current_build_channel(),
         target_channel: channel,
-        platform_package: PLATFORM_PACKAGE,
+        platform_package: package,
         always_update: var_os("HUMMINGBIRD_ALWAYS_UPDATE").is_some(),
     };
 

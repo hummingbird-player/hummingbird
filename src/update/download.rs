@@ -5,9 +5,9 @@ use rand::{RngExt, distr::Alphanumeric, rng};
 use tokio::{fs::create_dir, io::AsyncWriteExt};
 use tracing::info;
 
-use crate::update::{PLATFORM_PACKAGE, check::Update};
+use crate::update::check::Update;
 
-pub async fn download(update: Update) -> anyhow::Result<PathBuf> {
+pub async fn download(update: Update, package: &str) -> anyhow::Result<PathBuf> {
     // place in randomly generated sub-folder
     let temp_path = std::env::temp_dir().join(
         rng()
@@ -19,7 +19,7 @@ pub async fn download(update: Update) -> anyhow::Result<PathBuf> {
 
     create_dir(&temp_path).await?;
 
-    let package_path = temp_path.join(PLATFORM_PACKAGE);
+    let package_path = temp_path.join(package);
 
     let client = zed_reqwest::Client::new();
     let mut response = client.get(&update.url).send().await?;

@@ -28,13 +28,32 @@ const PLATFORM_PACKAGE: &str = if cfg!(all(target_os = "macos", target_arch = "a
     panic!("Unsupported platform")
 };
 
+#[cfg(target_os = "windows")]
+const PORTABLE_PLATFORM_PACKAGE: &str = if cfg!(target_arch = "aarch64") {
+    "Hummingbird-aarch64.exe"
+} else {
+    "Hummingbird-x86_64.exe"
+};
+
 pub fn start_update_task(cx: &mut App) {
     let update_model = cx.global::<Models>().pending_update.clone();
     let update_settings = cx.global::<SettingsGlobal>().model.read(cx).update.clone();
+    let package = if cfg!(target_os = "windows") {
+        if windows::used_installer().is_ok_and(|v| v) {
+            PLATFORM_PACKAGE
+        } else {
+            PORTABLE_PLATFORM_PACKAGE
+        }
+    } else {
+        PLATFORM_PACKAGE
+    };
 
     cx.spawn(async move |cx| {
         let update = crate::RUNTIME
-            .spawn(check::check_for_updates(update_settings.release_channel))
+            .spawn(check::check_for_updates(
+                update_settings.release_channel,
+                package,
+            ))
             .await
             .unwrap();
 
@@ -54,7 +73,7 @@ pub fn start_update_task(cx: &mut App) {
         );
 
         let download = crate::RUNTIME
-            .spawn(download::download(update))
+            .spawn(download::download(update, package))
             .await
             .unwrap();
 
@@ -78,8 +97,21 @@ pub fn complete_update(path: &std::path::Path) {
 
     #[cfg(target_os = "windows")]
     {
-        if let Err(e) = windows::update_installer(path) {
-            error!("Failed to complete update: {e:?}");
+        if path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .map(|v| v.contains("Setup"))
+            .unwrap_or_default()
+        {
+            info!("Updating with installer");
+            if let Err(e) = windows::update_installer(path) {
+                error!("Failed to complete update: {e:?}");
+            }
+        } else {
+            info!("Updating using portable binary script");
+            if let Err(e) = windows::update_portable(path) {
+                error!("Failed to complete update: {e:?}");
+            }
         }
     }
 
