@@ -7,7 +7,10 @@ use prelude::FluentBuilder;
 use crate::{
     library::{
         db::{AlbumMethod, LibraryAccess},
-        types::{Album, DBString, Track},
+        types::{
+            Album, DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
+            DBString, Track,
+        },
     },
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
@@ -236,7 +239,7 @@ impl ReleaseView {
                     .as_ref()
                     .zip(self.album.date_precision),
                 |this, (date, precision)| match precision {
-                    1 => {
+                    DATE_PRECISION_FULL_DATE | DATE_PRECISION_YEAR_MONTH => {
                         if let Ok(nd) =
                             chrono::NaiveDate::parse_from_str(date.0.as_str(), "%Y-%m-%d")
                         {
@@ -245,16 +248,24 @@ impl ReleaseView {
                                 dt,
                                 chrono::Utc,
                             );
-                            this.child(tr!(
-                                "RELEASED_DATE",
-                                "Released {{date}}",
-                                date:date("YMD", length="long")=utc
-                            ))
+
+                            this.child(if precision == DATE_PRECISION_FULL_DATE {
+                                tr!(
+                                    "RELEASED_DATE",
+                                    "Released {{date}}",
+                                    date:date("YMD", length="long")=utc
+                                )
+                            } else {
+                                tr!(
+                                    "RELEASED_DATE",
+                                    date:date("YM", length="long")=utc
+                                )
+                            })
                         } else {
                             this
                         }
                     }
-                    0 => this.child(tr!(
+                    DATE_PRECISION_YEAR => this.child(tr!(
                         "RELEASED_YEAR",
                         "Released {{year}}",
                         year = date.0.as_str()[..4]

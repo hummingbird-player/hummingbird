@@ -184,6 +184,10 @@ impl sqlx::Type<sqlx::Sqlite> for DBString {
     }
 }
 
+pub const DATE_PRECISION_YEAR: i32 = 0;
+pub const DATE_PRECISION_FULL_DATE: i32 = 1;
+pub const DATE_PRECISION_YEAR_MONTH: i32 = 2;
+
 #[derive(sqlx::FromRow, Clone)]
 pub struct Album {
     pub id: i64,
@@ -193,7 +197,7 @@ pub struct Album {
     #[sqlx(default)]
     pub release_date: Option<DBString>,
     #[sqlx(default)]
-    /// Date precision: 0 = year only, 1 = full date. None if no date info.
+    /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
     pub date_precision: Option<i32>,
     pub created_at: DateTime<Utc>,
     #[sqlx(default)]

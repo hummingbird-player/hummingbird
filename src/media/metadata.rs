@@ -14,10 +14,13 @@ pub struct Metadata {
     pub grouping: Option<String>,
     pub bpm: Option<u64>,
     pub compilation: bool,
+    /// Release date metadata. Only one of `date`, `year_month`, or `year` should be set.
     pub date: Option<DateTime<Utc>>,
-    /// Optional year field. If the date field is filled, the year field will be empty. This field
-    /// exists because some tagging software uses the date field as a year field, which cannot be
-    /// handled properly as a date.
+    /// Release year/month metadata for partial dates like `1995-06`.
+    pub year_month: Option<(u16, u8)>,
+    /// Optional year field. If the date or year_month field is filled, the year field will be
+    /// empty. This field exists because some tagging software uses the date field as a year field,
+    /// which cannot be handled properly as a date.
     pub year: Option<u16>,
 
     pub track_current: Option<u64>,

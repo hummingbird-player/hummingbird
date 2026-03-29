@@ -1,5 +1,6 @@
 use std::{ffi::OsStr, fs::File};
 
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use intx::{I24, U24};
 use regex::Regex;
 use smallvec::SmallVec;
@@ -97,6 +98,95 @@ fn time_to_millis(time: Time) -> u64 {
         .saturating_add((time.frac * 1_000.0) as u64)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParsedReleaseDate {
+    FullDate(DateTime<Utc>),
+    YearMonth(u16, u8),
+    Year(u16),
+}
+
+fn utc_midnight(date: NaiveDate) -> DateTime<Utc> {
+    DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
+}
+
+fn parse_fixed_u16(value: &str, len: usize) -> Option<u16> {
+    (value.len() == len && value.chars().all(|c| c.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
+}
+
+fn parse_fixed_u8(value: &str, len: usize) -> Option<u8> {
+    (value.len() == len && value.chars().all(|c| c.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
+}
+
+/// Parses exact ISO release dates before the generic parser.
+///
+/// This preserves the original precision for `YYYY`, `YYYY-MM`, and `YYYY-MM-DD` values.
+/// If a value is not ISO-like, we return `Ok(None)` so the generic parser can still handle
+/// free-form tags like `May 25, 2021`. If a value does look ISO-like but is invalid, we return
+/// `Err(())` so the generic parser does not silently invent a day or otherwise change precision.
+fn parse_iso_release_date(value: &str) -> Result<Option<ParsedReleaseDate>, ()> {
+    let value = value.trim();
+
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'-')
+    {
+        return Ok(None);
+    }
+
+    let mut parts = value.split('-');
+    let first = parts.next().ok_or(())?;
+    let second = parts.next();
+    let third = parts.next();
+
+    if parts.next().is_some() {
+        return Err(());
+    }
+
+    match (second, third) {
+        (None, None) => parse_fixed_u16(first, 4)
+            .map(ParsedReleaseDate::Year)
+            .map(Some)
+            .ok_or(()),
+        (Some(month), None) => {
+            let year = parse_fixed_u16(first, 4).ok_or(())?;
+            let month = match parse_fixed_u8(month, 2) {
+                Some(month @ 1..=12) => month,
+                _ => return Err(()),
+            };
+
+            Ok(Some(ParsedReleaseDate::YearMonth(year, month)))
+        }
+        (Some(month), Some(day)) => {
+            parse_fixed_u16(first, 4).ok_or(())?;
+            parse_fixed_u8(month, 2).ok_or(())?;
+            parse_fixed_u8(day, 2).ok_or(())?;
+
+            NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|date| Some(ParsedReleaseDate::FullDate(utc_midnight(date))))
+                .map_err(|_| ())
+        }
+        (None, Some(_)) => Err(()),
+    }
+}
+
+fn parse_release_date(value: &str) -> Option<ParsedReleaseDate> {
+    match parse_iso_release_date(value) {
+        Ok(Some(date)) => Some(date),
+        Err(()) => None,
+        Ok(None) => {
+            // Non-ISO dates still go through the generic parser, but we pin date-only values to
+            // UTC midnight so they do not pick up local-current-time defaults.
+            dateparser::parse_with(value.trim(), &Utc, NaiveTime::MIN)
+                .ok()
+                .map(ParsedReleaseDate::FullDate)
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
@@ -162,10 +252,21 @@ impl SymphoniaStream {
                     }
                 }
                 Some(StandardTagKey::Date) => {
-                    if let Ok(date) = dateparser::parse(&tag.value.to_string()) {
-                        self.current_metadata.date = Some(date);
-                    } else if let Ok(year) = tag.value.to_string().parse::<u16>() {
-                        self.current_metadata.year = Some(year);
+                    self.current_metadata.date = None;
+                    self.current_metadata.year_month = None;
+                    self.current_metadata.year = None;
+
+                    match parse_release_date(&tag.value.to_string()) {
+                        Some(ParsedReleaseDate::FullDate(date)) => {
+                            self.current_metadata.date = Some(date);
+                        }
+                        Some(ParsedReleaseDate::YearMonth(year, month)) => {
+                            self.current_metadata.year_month = Some((year, month));
+                        }
+                        Some(ParsedReleaseDate::Year(year)) => {
+                            self.current_metadata.year = Some(year);
+                        }
+                        None => {}
                     }
                 }
                 Some(StandardTagKey::TrackNumber) => match &tag.value {
@@ -876,5 +977,59 @@ impl MediaStream for SymphoniaStream {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ParsedReleaseDate, parse_release_date};
+    use chrono::{NaiveTime, TimeZone, Timelike, Utc};
+
+    #[test]
+    fn parses_year_only_release_dates() {
+        assert_eq!(
+            parse_release_date("1995"),
+            Some(ParsedReleaseDate::Year(1995))
+        );
+    }
+
+    #[test]
+    fn parses_year_month_release_dates() {
+        assert_eq!(
+            parse_release_date("1995-06"),
+            Some(ParsedReleaseDate::YearMonth(1995, 6))
+        );
+    }
+
+    #[test]
+    fn parses_full_release_dates() {
+        assert_eq!(
+            parse_release_date("1995-06-24"),
+            Some(ParsedReleaseDate::FullDate(
+                Utc.with_ymd_and_hms(1995, 6, 24, 0, 0, 0).single().unwrap(),
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_partial_release_dates() {
+        assert_eq!(parse_release_date("1995-13"), None);
+    }
+
+    #[test]
+    fn rejects_malformed_release_dates() {
+        assert_eq!(parse_release_date("not-a-date"), None);
+    }
+
+    #[test]
+    fn generic_release_date_fallback_uses_utc_midnight() {
+        let date = Utc.with_ymd_and_hms(2021, 5, 25, 0, 0, 0).single().unwrap();
+
+        assert_eq!(
+            parse_release_date("May 25, 2021"),
+            Some(ParsedReleaseDate::FullDate(date))
+        );
+        assert_eq!(date.time(), NaiveTime::MIN);
+        assert_eq!(date.time().nanosecond(), 0);
     }
 }

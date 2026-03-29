@@ -3,7 +3,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqliteConnection;
 use tracing::{debug, warn};
 
-use crate::{library::scan::decode::process_album_art, media::metadata::Metadata};
+use crate::{
+    library::{
+        scan::decode::process_album_art,
+        types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
+    },
+    media::metadata::Metadata,
+};
 
 async fn insert_artist(
     conn: &mut SqliteConnection,
@@ -51,6 +57,28 @@ async fn insert_artist(
 
 /// Album cache key: (title, mbid, artist_id).
 pub type AlbumCacheKey = (String, String, Option<i64>);
+
+fn bind_release_date(metadata: &Metadata) -> (Option<String>, Option<i32>) {
+    if let Some(date) = metadata.date {
+        return (
+            Some(date.format("%Y-%m-%d").to_string()),
+            Some(DATE_PRECISION_FULL_DATE),
+        );
+    }
+
+    if let Some((year, month)) = metadata.year_month {
+        return (
+            Some(format!("{year:04}-{month:02}-01")),
+            Some(DATE_PRECISION_YEAR_MONTH),
+        );
+    }
+
+    if let Some(year) = metadata.year {
+        return (Some(format!("{year:04}-01-01")), Some(DATE_PRECISION_YEAR));
+    }
+
+    (None, None)
+}
 
 async fn insert_album(
     conn: &mut SqliteConnection,
@@ -115,6 +143,8 @@ async fn insert_album(
                 None => (None, None),
             };
 
+            let (release_date, date_precision) = bind_release_date(metadata);
+
             let result: (i64,) =
                 sqlx::query_as(include_str!("../../../queries/scan/create_album.sql"))
                     .bind(album)
@@ -122,19 +152,8 @@ async fn insert_album(
                     .bind(artist_id)
                     .bind(resized_image.as_deref())
                     .bind(thumb.as_deref())
-                    .bind(
-                        metadata
-                            .date
-                            .map(|d| d.format("%Y-%m-%d").to_string())
-                            .or_else(|| metadata.year.map(|y| format!("{:04}-01-01", y))),
-                    )
-                    .bind(if metadata.date.is_some() {
-                        Some(1i32)
-                    } else if metadata.year.is_some() {
-                        Some(0i32)
-                    } else {
-                        None
-                    })
+                    .bind(release_date)
+                    .bind(date_precision)
                     .bind(&metadata.label)
                     .bind(&metadata.catalog)
                     .bind(&metadata.isrc)
@@ -311,4 +330,61 @@ pub async fn update_metadata(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_release_date;
+    use crate::{
+        library::types::{
+            DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
+        },
+        media::metadata::Metadata,
+    };
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn binds_year_only_release_dates() {
+        let metadata = Metadata {
+            year: Some(1995),
+            ..Metadata::default()
+        };
+
+        assert_eq!(
+            bind_release_date(&metadata),
+            (Some("1995-01-01".to_string()), Some(DATE_PRECISION_YEAR))
+        );
+    }
+
+    #[test]
+    fn binds_year_month_release_dates() {
+        let metadata = Metadata {
+            year_month: Some((1995, 6)),
+            ..Metadata::default()
+        };
+
+        assert_eq!(
+            bind_release_date(&metadata),
+            (
+                Some("1995-06-01".to_string()),
+                Some(DATE_PRECISION_YEAR_MONTH),
+            )
+        );
+    }
+
+    #[test]
+    fn binds_full_release_dates() {
+        let metadata = Metadata {
+            date: Some(Utc.with_ymd_and_hms(1995, 6, 24, 0, 0, 0).single().unwrap()),
+            ..Metadata::default()
+        };
+
+        assert_eq!(
+            bind_release_date(&metadata),
+            (
+                Some("1995-06-24".to_string()),
+                Some(DATE_PRECISION_FULL_DATE),
+            )
+        );
+    }
 }
