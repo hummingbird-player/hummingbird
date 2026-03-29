@@ -4,9 +4,8 @@
     windows_subsystem = "windows"
 )]
 
-use std::{path::Path, sync::LazyLock};
-
 use cntp_i18n::{I18N_MANAGER, tr_load};
+use std::sync::LazyLock;
 
 mod devices;
 mod library;
