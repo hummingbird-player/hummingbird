@@ -1,15 +1,14 @@
 use gpui::{App, AppContext};
 use tracing::{error, info};
 
-use crate::{
-    settings::{Settings, SettingsGlobal, update::ReleaseChannel},
-    ui::models::Models,
-};
+use crate::{settings::SettingsGlobal, ui::models::Models};
 
 mod check;
 mod download;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -87,6 +86,13 @@ pub fn complete_update(path: &std::path::Path) {
     #[cfg(target_os = "linux")]
     {
         if let Err(e) = linux::update_linux(path) {
+            error!("Failed to complete update: {e:?}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = macos::update_macos(path) {
             error!("Failed to complete update: {e:?}");
         }
     }
