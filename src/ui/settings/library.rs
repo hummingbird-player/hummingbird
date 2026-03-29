@@ -248,7 +248,7 @@ impl Render for LibrarySettings {
                     let settings_c = self.settings.clone();
                     dropdown::<MissingFolderPolicy>("missing-folder-policy-dropdown")
                         .w(px(250.0))
-                        .selected(scanning.missing_folder_policy.clone())
+                        .selected(scanning.missing_folder_policy)
                         .option(
                             MissingFolderPolicy::Ask,
                             tr!("SCANNING_MISSING_POLICY_ASK", "Ask when missing"),

@@ -4,7 +4,7 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MissingFolderPolicy {
     #[default]
