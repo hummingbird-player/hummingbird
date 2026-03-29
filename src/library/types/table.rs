@@ -44,17 +44,25 @@ fn album_release_date_format(precision: i32) -> Option<(&'static str, &'static s
     }
 }
 
-fn format_album_release_date(
+fn format_album_release_date_with(
     release_date: Option<&DBString>,
-    date_precision: Option<i32>,
+    format: &'static str,
+    length: &'static str,
 ) -> Option<SharedString> {
     let release_date = parse_album_release_date(release_date?)?;
-    let (format, length) = album_release_date_format(date_precision?)?;
     let format_var = (None, format);
     let length_var = (Some("length"), length);
     let variables = [&format_var, &length_var];
     let locale = &I18N_MANAGER.read().unwrap().locale;
     Some(Date.transform(locale, &release_date, &variables).into())
+}
+
+fn format_album_release_date(
+    release_date: Option<&DBString>,
+    date_precision: Option<i32>,
+) -> Option<SharedString> {
+    let (format, length) = album_release_date_format(date_precision?)?;
+    format_album_release_date_with(release_date, format, length)
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -261,11 +269,12 @@ impl TableData<AlbumColumn> for Album {
         };
 
         let date_part = format_album_release_date(self.release_date.as_ref(), self.date_precision);
-        let secondary = match (artist_part, date_part) {
-            (Some(artist), Some(date)) => Some(format!("{artist} • {date}").into()),
-            (Some(artist), None) => Some(SharedString::from(artist)),
-            (None, Some(date)) => Some(date),
-            (None, None) => None,
+        let year_part = format_album_release_date_with(self.release_date.as_ref(), "Y", "medium");
+        let secondary = match (artist_part, year_part, date_part) {
+            (Some(artist), Some(year), _) => Some(format!("{artist} • {year}").into()),
+            (Some(artist), None, _) => Some(SharedString::from(artist)),
+            (None, _, Some(date)) => Some(date),
+            (None, _, None) => None,
         };
 
         Some((title, secondary))
