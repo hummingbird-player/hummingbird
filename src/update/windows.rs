@@ -68,26 +68,18 @@ pub(super) fn used_installer() -> anyhow::Result<bool> {
         let key_name = key_name?;
         let entry = uninstall.open_subkey(&key_name)?;
 
-        println!("key_name: {key_name:?}");
-
         if let Ok(display_icon) = entry.get_value::<String, _>("DisplayIcon")
             && paths_match(&display_icon_path(&display_icon), &current_exe)
         {
-            println!("display_icon: {display_icon:?}");
             return Ok(true);
         }
 
         if let Ok(install_location) = entry.get_value::<String, _>("InstallLocation") {
-            println!("install_location: {install_location:?}");
-
             let candidate = Path::new(install_location.trim()).join(
                 current_exe
                     .file_name()
                     .ok_or_else(|| anyhow!("current executable has no file name"))?,
             );
-
-            println!("candidate: {candidate:?}");
-            println!("current_exe: {current_exe:?}");
 
             if paths_match(&candidate, &current_exe) {
                 return Ok(true);

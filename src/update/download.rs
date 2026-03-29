@@ -9,13 +9,14 @@ use crate::update::check::Update;
 
 pub async fn download(update: Update, package: &str) -> anyhow::Result<PathBuf> {
     // place in randomly generated sub-folder
-    let temp_path = std::env::temp_dir().join(
+    let temp_path = std::env::temp_dir().join(format!(
+        "hb-update-{}",
         rng()
             .sample_iter(&Alphanumeric)
             .take(16)
             .map(|b| b as char)
-            .collect::<String>(),
-    );
+            .collect::<String>()
+    ));
 
     create_dir(&temp_path).await?;
 
