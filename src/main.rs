@@ -5,6 +5,8 @@
 )]
 
 use cntp_i18n::{I18N_MANAGER, tr_load};
+#[cfg(not(target_os = "macos"))]
+use std::path::Path;
 use std::sync::LazyLock;
 
 mod devices;
