@@ -145,13 +145,20 @@ fn confirm(cx: &mut App, state: Entity<LastFMState>, token: String) {
         .err_into()
         .map(Result::flatten);
     cx.spawn(async move |cx| {
-        let session = get_session.await.inspect_err(|err| {
-            error!(?err, "error getting last.fm session: {err}");
-        })?;
-
-        state.update(cx, move |_, cx| {
-            cx.emit(session);
-        });
+        match get_session.await {
+            Ok(session) => {
+                state.update(cx, move |_, cx| {
+                    cx.emit(session);
+                });
+            }
+            Err(err) => {
+                error!(?err, "error getting last.fm session: {err}");
+                state.update(cx, |m, cx| {
+                    *m = LastFMState::Disconnected;
+                    cx.notify();
+                });
+            }
+        }
 
         anyhow::Ok(())
     })
