@@ -2,6 +2,7 @@ pub mod interface;
 pub mod playback;
 pub mod replaygain;
 pub mod scan;
+pub mod services;
 pub mod storage;
 pub mod update;
 
@@ -28,6 +29,8 @@ pub struct Settings {
     pub playback: playback::PlaybackSettings,
     #[serde(default)]
     pub interface: interface::InterfaceSettings,
+    #[serde(default)]
+    pub services: services::ServicesSettings,
     // include update settings even when the feature is disabled to avoid screwing up user's
     // settings files if they switch to/from an official build later
     #[serde(default)]

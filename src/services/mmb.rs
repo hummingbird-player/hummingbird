@@ -33,4 +33,6 @@ pub trait MediaMetadataBroadcastService {
     /// Called when the duration of the currently playing track changes, or when a new track is
     /// played. Time is in seconds.
     async fn duration_changed(&mut self, duration: u64);
+    /// Enable or disable the service.
+    async fn set_enabled(&mut self, _enabled: bool) {}
 }

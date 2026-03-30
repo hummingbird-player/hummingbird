@@ -147,6 +147,28 @@ pub enum PlaylistEvent {
 
 impl EventEmitter<PlaylistEvent> for PlaylistInfoTransfer {}
 
+fn discord_rpc_enabled(cx: &App) -> bool {
+    cx.global::<SettingsGlobal>()
+        .model
+        .read(cx)
+        .services
+        .discord_rpc_enabled
+}
+
+fn sync_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
+    let enabled = discord_rpc_enabled(cx);
+    debug!(enabled, "syncing discord MMBS state");
+    let discord = mmbs_list.read(cx).0.get("discord").cloned();
+    let Some(discord) = discord else {
+        return;
+    };
+
+    crate::RUNTIME.spawn(async move {
+        let mut discord = discord.lock().await;
+        discord.set_enabled(enabled).await;
+    });
+}
+
 fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitchMessage {
     match startup_view {
         StartupLibraryView::Albums => ViewSwitchMessage::Albums,
@@ -224,13 +246,20 @@ pub fn build_models(
     })
     .detach();
 
-    let mmbs_clone = mmbs.clone();
+    let discord_mmbs = mmbs.clone();
+    create_discord_mmbs(cx, &discord_mmbs, discord_rpc_enabled(cx));
 
-    create_discord_mmbs(cx, &mmbs_clone);
+    let settings_model = cx.global::<SettingsGlobal>().model.clone();
+    let discord_mmbs = mmbs.clone();
+    cx.observe(&settings_model, move |_, cx| {
+        sync_discord_mmbs(cx, &discord_mmbs);
+    })
+    .detach();
 
+    let lastfm_mmbs = mmbs.clone();
     cx.subscribe(&lastfm, move |m, ev, cx| {
         let session_clone = ev.clone();
-        create_last_fm_mmbs(cx, &mmbs_clone, session_clone.key.clone());
+        create_last_fm_mmbs(cx, &lastfm_mmbs, session_clone.key.clone());
         m.update(cx, |m, cx| {
             *m = LastFMState::Connected(session_clone);
             cx.notify();
@@ -376,8 +405,8 @@ pub fn create_last_fm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, session: 
     });
 }
 
-pub fn create_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
-    let mmbs = Discord::new();
+pub fn create_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: bool) {
+    let mmbs = Discord::new(enabled);
     mmbs_list.update(cx, |m, _| {
         m.0.insert("discord".to_string(), Arc::new(Mutex::new(mmbs)));
     });

@@ -1,6 +1,7 @@
 mod interface;
 mod library;
 mod playback;
+mod services;
 #[cfg(feature = "update")]
 mod update;
 
@@ -16,7 +17,7 @@ use crate::{
     settings::{SettingsGlobal, storage::DEFAULT_SIDEBAR_WIDTH},
     ui::{
         components::{
-            icons::{BOOKS, PLAY, WORLD},
+            icons::{ADJUSTMENTS, BOOKS, PLAY, WORLD},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
@@ -24,6 +25,7 @@ use crate::{
         },
         settings::{
             interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
+            services::ServicesSettings,
         },
         theme::Theme,
     },
@@ -69,6 +71,7 @@ enum SettingsSectionKind {
     Interface,
     Library,
     Playback,
+    Services,
     #[cfg(feature = "update")]
     Update,
 }
@@ -79,6 +82,7 @@ impl SettingsSectionKind {
             Self::Interface => "interface",
             Self::Library => "library",
             Self::Playback => "playback",
+            Self::Services => "services",
             #[cfg(feature = "update")]
             Self::Update => "update",
         }
@@ -89,6 +93,7 @@ impl SettingsSectionKind {
             Self::Interface => WORLD,
             Self::Library => BOOKS,
             Self::Playback => PLAY,
+            Self::Services => ADJUSTMENTS,
             #[cfg(feature = "update")]
             Self::Update => super::components::icons::UPDATE,
         }
@@ -99,6 +104,7 @@ impl SettingsSectionKind {
             Self::Interface => tr!("INTERFACE", "Interface").into(),
             Self::Library => tr!("LIBRARY", "Library").into(),
             Self::Playback => tr!("PLAYBACK", "Playback").into(),
+            Self::Services => tr!("SERVICES", "Services").into(),
             #[cfg(feature = "update")]
             Self::Update => tr!("UPDATE", "Update").into(),
         }
@@ -110,6 +116,7 @@ enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
     Library(Entity<LibrarySettings>),
     Playback(Entity<PlaybackSettings>),
+    Services(Entity<ServicesSettings>),
     #[cfg(feature = "update")]
     Update(Entity<UpdateSettings>),
 }
@@ -120,6 +127,7 @@ impl SettingsSection {
             SettingsSectionKind::Interface => Self::Interface(InterfaceSettings::new(cx)),
             SettingsSectionKind::Library => Self::Library(LibrarySettings::new(cx)),
             SettingsSectionKind::Playback => Self::Playback(PlaybackSettings::new(cx)),
+            SettingsSectionKind::Services => Self::Services(ServicesSettings::new(cx)),
             #[cfg(feature = "update")]
             SettingsSectionKind::Update => Self::Update(UpdateSettings::new(cx)),
         }
@@ -130,6 +138,7 @@ impl SettingsSection {
             Self::Interface(_) => SettingsSectionKind::Interface,
             Self::Library(_) => SettingsSectionKind::Library,
             Self::Playback(_) => SettingsSectionKind::Playback,
+            Self::Services(_) => SettingsSectionKind::Services,
             #[cfg(feature = "update")]
             Self::Update(_) => SettingsSectionKind::Update,
         }
@@ -140,6 +149,7 @@ impl SettingsSection {
             Self::Interface(interface) => interface.clone().into_any_element(),
             Self::Library(library) => library.clone().into_any_element(),
             Self::Playback(playback) => playback.clone().into_any_element(),
+            Self::Services(services) => services.clone().into_any_element(),
             #[cfg(feature = "update")]
             Self::Update(update) => update.clone().into_any_element(),
         }
@@ -234,7 +244,8 @@ impl Render for SettingsWindow {
             .flex_shrink_0()
             .child(self.render_section_item(SettingsSectionKind::Interface, cx))
             .child(self.render_section_item(SettingsSectionKind::Library, cx))
-            .child(self.render_section_item(SettingsSectionKind::Playback, cx));
+            .child(self.render_section_item(SettingsSectionKind::Playback, cx))
+            .child(self.render_section_item(SettingsSectionKind::Services, cx));
 
         #[cfg(feature = "update")]
         let sidebar = sidebar.child(self.render_section_item(SettingsSectionKind::Update, cx));
