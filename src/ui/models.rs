@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{paths, services::mmb::discord::Discord, ui::library::NavigationHistory};
-use gpui::{App, AppContext, Entity, EventEmitter, Global, Pixels, RenderImage};
+use gpui::{App, AppContext, Entity, EventEmitter, Global, Pixels, RenderImage, Size};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -54,6 +54,12 @@ pub enum LastFMState {
 
 impl EventEmitter<Session> for LastFMState {}
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct WindowInformation {
+    pub maximized: bool,
+    pub size: Size<Pixels>,
+}
+
 pub struct Models {
     pub metadata: Entity<Metadata>,
     pub albumart: Entity<Option<Arc<RenderImage>>>,
@@ -74,6 +80,7 @@ pub struct Models {
     pub lyrics_height: Entity<Pixels>,
     #[cfg(feature = "update")]
     pub pending_update: Entity<Option<PathBuf>>,
+    pub window_information: Entity<Option<WindowInformation>>,
 }
 
 impl Global for Models {}
@@ -356,6 +363,8 @@ pub fn build_models(
     #[cfg(feature = "update")]
     let pending_update = cx.new(|_| None);
 
+    let window_information = cx.new(|_| None);
+
     cx.set_global(Models {
         metadata,
         albumart,
@@ -376,6 +385,7 @@ pub fn build_models(
         lyrics_height,
         #[cfg(feature = "update")]
         pending_update,
+        window_information,
     });
 
     let position: Entity<u64> = cx.new(|_| 0);

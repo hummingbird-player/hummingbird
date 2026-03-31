@@ -3,7 +3,10 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use gpui::{Pixels, px};
 use serde::{Deserialize, Serialize};
 
-use crate::{library::db::LikedTrackSortMethod, ui::models::CurrentTrack};
+use crate::{
+    library::db::LikedTrackSortMethod,
+    ui::models::{CurrentTrack, WindowInformation},
+};
 
 pub const DEFAULT_SIDEBAR_WIDTH: Pixels = px(225.0);
 pub const DEFAULT_QUEUE_WIDTH: Pixels = px(275.0);
@@ -88,6 +91,8 @@ pub struct StorageData {
     /// Fraction (0..1) of the lyrics panel height
     #[serde(default = "default_lyrics_fraction")]
     pub lyrics_fraction: f32,
+    #[serde(default)]
+    pub window_information: Option<WindowInformation>,
 }
 
 impl StorageData {
@@ -120,6 +125,7 @@ impl Default for StorageData {
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
             sidebar_collapsed: false,
             lyrics_fraction: f32::from(DEFAULT_LYRICS_FRACTION),
+            window_information: None,
         }
     }
 }
@@ -168,9 +174,13 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{Size, px};
+
     use super::{Storage, StorageData, TableSettings, TableViewModeSetting};
     use crate::{
-        library::db::LikedTrackSortMethod, test_support::TestDir, ui::models::CurrentTrack,
+        library::db::LikedTrackSortMethod,
+        test_support::TestDir,
+        ui::models::{CurrentTrack, WindowInformation},
     };
     use std::{collections::HashMap, fs};
 
@@ -241,6 +251,10 @@ mod tests {
             liked_tracks_sort_method: LikedTrackSortMethod::RecentlyAddedAsc,
             sidebar_collapsed: true,
             lyrics_fraction: 0.7,
+            window_information: Some(WindowInformation {
+                maximized: false,
+                size: Size::new(px(800.0), px(800.0)),
+            }),
         };
 
         let storage = Storage::new(path);
@@ -261,6 +275,7 @@ mod tests {
         );
         assert_eq!(loaded.sidebar_collapsed, expected.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, expected.lyrics_fraction);
+        assert_eq!(loaded.window_information, expected.window_information);
 
         let loaded_table = loaded.table_settings.get("tracks").unwrap();
         let expected_table = expected.table_settings.get("tracks").unwrap();
@@ -297,6 +312,10 @@ mod tests {
             liked_tracks_sort_method: LikedTrackSortMethod::TitleDesc,
             sidebar_collapsed: true,
             lyrics_fraction: 0.4,
+            window_information: Some(WindowInformation {
+                maximized: false,
+                size: Size::new(px(800.0), px(800.0)),
+            }),
         };
 
         storage.save(&stored);
@@ -313,6 +332,7 @@ mod tests {
         );
         assert_eq!(loaded.sidebar_collapsed, stored.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, stored.lyrics_fraction);
+        assert_eq!(loaded.window_information, stored.window_information);
 
         let loaded_table = loaded.table_settings.get("albums").unwrap();
         let stored_table = stored.table_settings.get("albums").unwrap();

@@ -31,6 +31,7 @@ use crate::{
         command_palette::{CommandPalette, CommandPaletteHolder},
         components::dropdown,
         library::{self, missing_folder_dialog::MissingFolderDialog},
+        models::WindowInformation,
     },
 };
 
@@ -178,7 +179,6 @@ pub fn run() -> anyhow::Result<()> {
             #[cfg(target_os = "linux")]
             cx.set_text_rendering_mode(TextRenderingMode::Grayscale);
 
-            let bounds = Bounds::centered(None, size(px(1024.0), px(700.0)), cx);
             find_fonts(cx).expect("unable to load fonts");
 
             let storage = Storage::new(data_dir.join("app_data.json"));
@@ -285,9 +285,24 @@ pub fn run() -> anyhow::Result<()> {
 
             cx.activate(true);
 
+            let bounds = if let Some(window_information) = storage_data.window_information {
+                cx.global::<Models>()
+                    .window_information
+                    .clone()
+                    .write(cx, Some(window_information.clone()));
+
+                if window_information.maximized {
+                    WindowBounds::Maximized(Bounds::centered(None, window_information.size, cx))
+                } else {
+                    WindowBounds::Windowed(Bounds::centered(None, window_information.size, cx))
+                }
+            } else {
+                WindowBounds::Maximized(Bounds::centered(None, size(px(1024.0), px(700.0)), cx))
+            };
+
             cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(bounds),
                     window_background: WindowBackgroundAppearance::Opaque,
                     window_decorations: Some(WindowDecorations::Client),
                     window_min_size: Some(size(px(800.0), px(600.0))),
@@ -320,6 +335,24 @@ pub fn run() -> anyhow::Result<()> {
                         })
                         .detach();
 
+                        cx.observe_window_bounds(window, |_, window, cx| {
+                            let window_information =
+                                cx.global::<Models>().window_information.clone();
+
+                            let maximized = window.is_maximized();
+                            let size = if maximized {
+                                window_information.read(cx).clone()
+                            } else {
+                                None
+                            }
+                            .map(|v| v.size)
+                            .unwrap_or(window.bounds().size);
+
+                            window_information
+                                .write(cx, Some(WindowInformation { maximized, size }));
+                        })
+                        .detach();
+
                         cx.observe_window_appearance(window, |_, _, cx| {
                             cx.refresh_windows();
                         })
@@ -337,6 +370,8 @@ pub fn run() -> anyhow::Result<()> {
                             let liked_tracks_sort_method =
                                 cx.global::<Models>().liked_tracks_sort_method.clone();
                             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
+                            let window_information =
+                                cx.global::<Models>().window_information.clone();
                             move |_, cx| {
                                 let current_track = current_track.read(cx).clone();
                                 let volume = *volume.read(cx);
@@ -347,6 +382,8 @@ pub fn run() -> anyhow::Result<()> {
                                 let table_settings = table_settings.read(cx).clone();
                                 let liked_tracks_sort_method = *liked_tracks_sort_method.read(cx);
                                 let sidebar_collapsed = *sidebar_collapsed.read(cx);
+                                let window_information = window_information.read(cx).clone();
+
                                 let storage = storage.clone();
                                 cx.background_executor().spawn(async move {
                                     storage.save(&StorageData {
@@ -359,6 +396,7 @@ pub fn run() -> anyhow::Result<()> {
                                         table_settings,
                                         liked_tracks_sort_method,
                                         sidebar_collapsed,
+                                        window_information,
                                     });
 
                                     crate::logging::flush();
