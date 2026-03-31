@@ -440,15 +440,16 @@ impl TableData<TrackColumn> for Track {
     }
 
     fn get_image_path(&self) -> Option<SharedString> {
-        None
+        self.album_id
+            .map(|album_id| format!("!db://album/{album_id}/thumb").into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        None
+        self.album_id.map(ManagedImageKey::Album)
     }
 
     fn has_images() -> bool {
-        false
+        true
     }
 
     fn column_monospace(_column: TrackColumn) -> bool {
