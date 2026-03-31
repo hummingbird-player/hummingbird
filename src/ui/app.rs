@@ -369,6 +369,8 @@ pub fn run() -> anyhow::Result<()> {
                             let table_settings = cx.global::<Models>().table_settings.clone();
                             let liked_tracks_sort_method =
                                 cx.global::<Models>().liked_tracks_sort_method.clone();
+                            let playlist_sort_methods =
+                                cx.global::<Models>().playlist_sort_methods.clone();
                             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
                             let controls_left_width =
                                 cx.global::<Models>().controls_left_width.clone();
@@ -385,6 +387,7 @@ pub fn run() -> anyhow::Result<()> {
                                 let lyrics_fraction: f32 = (*lyrics_height.read(cx)).into();
                                 let table_settings = table_settings.read(cx).clone();
                                 let liked_tracks_sort_method = *liked_tracks_sort_method.read(cx);
+                                let playlist_sort_methods = playlist_sort_methods.read(cx).clone();
                                 let sidebar_collapsed = *sidebar_collapsed.read(cx);
                                 let controls_left_width: f32 =
                                     (*controls_left_width.read(cx)).into();
@@ -403,6 +406,7 @@ pub fn run() -> anyhow::Result<()> {
                                         lyrics_fraction,
                                         table_settings,
                                         liked_tracks_sort_method,
+                                        playlist_sort_methods,
                                         sidebar_collapsed,
                                         controls_left_width,
                                         controls_right_width,

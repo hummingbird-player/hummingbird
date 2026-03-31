@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::LibraryAccess,
+        db::{LibraryAccess, PlaylistTrackSortMethod},
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
@@ -26,6 +26,7 @@ use crate::{
                 DropIndicator, TrackDragData, check_drag_cancelled, continue_edge_scroll,
                 handle_track_drag_move, handle_track_drop,
             },
+            dropdown::dropdown,
             icons::{PLAYLIST, STAR, icon},
             playback_controls::playback_controls,
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
@@ -52,6 +53,40 @@ pub fn bind_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-s", Export, None)]);
 }
 
+fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
+    match method {
+        PlaylistTrackSortMethod::Custom => tr!("SORT_CUSTOM", "Custom Order").into(),
+        PlaylistTrackSortMethod::TitleAsc => tr!("SORT_TITLE_ASC", "Title (Asc.)").into(),
+        PlaylistTrackSortMethod::TitleDesc => tr!("SORT_TITLE_DESC", "Title (Desc.)").into(),
+        PlaylistTrackSortMethod::ArtistAsc => tr!("SORT_ARTIST_ASC", "Artist (Asc.)").into(),
+        PlaylistTrackSortMethod::ArtistDesc => tr!("SORT_ARTIST_DESC", "Artist (Desc.)").into(),
+        PlaylistTrackSortMethod::AlbumAsc => tr!("SORT_ALBUM_ASC", "Album (Asc.)").into(),
+        PlaylistTrackSortMethod::AlbumDesc => tr!("SORT_ALBUM_DESC", "Album (Desc.)").into(),
+        PlaylistTrackSortMethod::DurationAsc => tr!("SORT_DURATION_ASC", "Duration (Asc.)").into(),
+        PlaylistTrackSortMethod::DurationDesc => {
+            tr!("SORT_DURATION_DESC", "Duration (Desc.)").into()
+        }
+        PlaylistTrackSortMethod::RecentlyAdded => tr!("SORT_RECENTLY_ADDED").into(),
+        PlaylistTrackSortMethod::RecentlyAddedAsc => {
+            tr!("SORT_OLDEST_ADDED", "Oldest Added").into()
+        }
+    }
+}
+
+const ALL_SORT_METHODS: [PlaylistTrackSortMethod; 11] = [
+    PlaylistTrackSortMethod::Custom,
+    PlaylistTrackSortMethod::TitleAsc,
+    PlaylistTrackSortMethod::TitleDesc,
+    PlaylistTrackSortMethod::ArtistAsc,
+    PlaylistTrackSortMethod::ArtistDesc,
+    PlaylistTrackSortMethod::AlbumAsc,
+    PlaylistTrackSortMethod::AlbumDesc,
+    PlaylistTrackSortMethod::DurationAsc,
+    PlaylistTrackSortMethod::DurationDesc,
+    PlaylistTrackSortMethod::RecentlyAdded,
+    PlaylistTrackSortMethod::RecentlyAddedAsc,
+];
+
 /// Wrapper component for playlist track items that adds drag-and-drop support
 pub struct PlaylistTrackItem {
     track_item: Entity<TrackItem>,
@@ -64,6 +99,7 @@ pub struct PlaylistTrackItem {
     track_id: i64,
     album_id: Option<i64>,
     track_path: std::path::PathBuf,
+    drag_enabled: bool,
 }
 
 impl PlaylistTrackItem {
@@ -79,6 +115,7 @@ impl PlaylistTrackItem {
         track_id: i64,
         album_id: Option<i64>,
         track_path: std::path::PathBuf,
+        drag_enabled: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
             cx.observe(&drag_drop_manager, |_, _, cx| {
@@ -96,6 +133,7 @@ impl PlaylistTrackItem {
                 track_id,
                 album_id,
                 track_path,
+                drag_enabled,
             }
         })
     }
@@ -109,30 +147,35 @@ impl Render for PlaylistTrackItem {
         let idx = self.idx;
         let track_title = self.track_title.clone();
 
-        let drag_data = TrackDragData::from_track(
-            self.track_id,
-            self.album_id,
-            self.track_path.clone(),
-            self.track_title.clone(),
-        )
-        .with_reorder_info(self.list_id.clone(), idx);
-
-        div()
+        let mut element = div()
             .id(("playlist-track-item", self.playlist_item_id as u64))
             .w_full()
             .h(px(PLAYLIST_ITEM_HEIGHT))
             .relative()
-            .when(item_state.is_being_dragged, |d| d.opacity(0.5))
-            .on_drag(drag_data, move |_, _, _, cx| {
-                DragPreview::new(cx, track_title.clone())
-            })
-            .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
-            .child(self.track_item.clone())
-            .child(DropIndicator::with_state(
-                item_state.is_drop_target_before,
-                item_state.is_drop_target_after,
-                theme.button_primary,
-            ))
+            .when(item_state.is_being_dragged, |d| d.opacity(0.5));
+
+        if self.drag_enabled {
+            let drag_data = TrackDragData::from_track(
+                self.track_id,
+                self.album_id,
+                self.track_path.clone(),
+                self.track_title.clone(),
+            )
+            .with_reorder_info(self.list_id.clone(), idx);
+
+            element = element
+                .on_drag(drag_data, move |_, _, _, cx| {
+                    DragPreview::new(cx, track_title.clone())
+                })
+                .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
+                .child(DropIndicator::with_state(
+                    item_state.is_drop_target_before,
+                    item_state.is_drop_target_after,
+                    theme.button_primary,
+                ));
+        }
+
+        element.child(self.track_item.clone())
     }
 }
 
@@ -146,6 +189,7 @@ pub struct PlaylistView {
     scroll_handle: UniformListScrollHandle,
     drag_drop_manager: Entity<DragDropListManager>,
     list_id: gpui::ElementId,
+    sort_method: PlaylistTrackSortMethod,
 }
 
 impl PlaylistView {
@@ -157,13 +201,27 @@ impl PlaylistView {
             let config = DragDropListConfig::new(list_id.clone(), px(PLAYLIST_ITEM_HEIGHT));
             let drag_drop_manager = DragDropListManager::new(cx, config);
 
+            let playlist = cx.get_playlist(playlist_id).unwrap();
+            let sort_method = cx
+                .global::<Models>()
+                .playlist_sort_methods
+                .read(cx)
+                .get(&playlist_id)
+                .copied()
+                .unwrap_or(PlaylistTrackSortMethod::Custom);
+            let playlist_track_ids = cx
+                .get_playlist_tracks_sorted(playlist_id, sort_method)
+                .unwrap();
+
             cx.subscribe(
                 &playlist_tracker,
                 move |this: &mut Self, _, ev: &PlaylistEvent, cx| {
                     if let PlaylistEvent::PlaylistUpdated(id) = ev
                         && *id == this.playlist.id
                     {
-                        this.playlist_track_ids = cx.get_playlist_tracks(this.playlist.id).unwrap();
+                        this.playlist_track_ids = cx
+                            .get_playlist_tracks_sorted(this.playlist.id, this.sort_method)
+                            .unwrap();
 
                         this.views = cx.new(|_| FxHashMap::default());
                         this.render_counter = cx.new(|_| 0);
@@ -195,8 +253,8 @@ impl PlaylistView {
             .detach();
 
             Self {
-                playlist: cx.get_playlist(playlist_id).unwrap(),
-                playlist_track_ids: cx.get_playlist_tracks(playlist_id).unwrap(),
+                playlist,
+                playlist_track_ids,
                 views: cx.new(|_| FxHashMap::default()),
                 render_counter: cx.new(|_| 0),
                 focus_handle,
@@ -204,8 +262,32 @@ impl PlaylistView {
                 scroll_handle: UniformListScrollHandle::new(),
                 drag_drop_manager,
                 list_id,
+                sort_method,
             }
         })
+    }
+
+    fn set_sort_method(&mut self, method: PlaylistTrackSortMethod, cx: &mut Context<Self>) {
+        if self.sort_method == method {
+            return;
+        }
+        self.sort_method = method;
+        self.playlist_track_ids = cx
+            .get_playlist_tracks_sorted(self.playlist.id, method)
+            .unwrap();
+        self.views = cx.new(|_| FxHashMap::default());
+        self.render_counter = cx.new(|_| 0);
+
+        let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
+        playlist_sort_methods.update(cx, |map, _| {
+            map.insert(self.playlist.id, method);
+        });
+
+        cx.notify();
+    }
+
+    fn is_custom_sort(&self) -> bool {
+        matches!(self.sort_method, PlaylistTrackSortMethod::Custom)
     }
 
     fn schedule_edge_scroll(
@@ -243,6 +325,8 @@ impl Render for PlaylistView {
         let list_id = self.list_id.clone();
         let item_count = items_clone.len();
         let playlist_id = self.playlist.id;
+        let is_custom_sort = self.is_custom_sort();
+        let current_sort = self.sort_method;
 
         if self.first_render {
             self.first_render = false;
@@ -255,6 +339,20 @@ impl Render for PlaylistView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
+
+        let entity = cx.entity();
+        let mut sort_dropdown = dropdown("playlist-sort-dropdown")
+            .w(px(220.0))
+            .flex_shrink_0()
+            .selected(current_sort)
+            .on_change(move |method: &PlaylistTrackSortMethod, _, cx| {
+                entity.update(cx, |this, cx| {
+                    this.set_sort_method(*method, cx);
+                });
+            });
+        for method in ALL_SORT_METHODS {
+            sort_dropdown = sort_dropdown.option(method, sort_method_label(method));
+        }
 
         div()
             .image_cache(hummingbird_cache(
@@ -328,32 +426,45 @@ impl Render for PlaylistView {
                                         div().child(self.playlist.name.clone())
                                     }),
                             )
-                            .child(playback_controls(
-                                "playlist",
-                                !self.playlist_track_ids.is_empty(),
-                                false,
-                                false,
-                                move |cx| {
-                                    let playlist_track_ids =
-                                        cx.get_playlist_tracks(playlist_id).unwrap_or_default();
-                                    let track_files = cx
-                                        .get_playlist_track_files(playlist_id)
-                                        .unwrap_or_default();
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_end()
+                                    .justify_between()
+                                    .gap(px(12.0))
+                                    .w_full()
+                                    .child(playback_controls(
+                                        "playlist",
+                                        !self.playlist_track_ids.is_empty(),
+                                        false,
+                                        false,
+                                        move |cx| {
+                                            let playlist_track_ids = cx
+                                                .get_playlist_tracks_sorted(
+                                                    playlist_id,
+                                                    current_sort,
+                                                )
+                                                .unwrap_or_default();
+                                            let track_files = cx
+                                                .get_playlist_track_files(playlist_id)
+                                                .unwrap_or_default();
 
-                                    playlist_track_ids
-                                        .iter()
-                                        .zip(track_files.iter())
-                                        .map(|((_, track_id, album_id), path)| {
-                                            QueueItemData::new(
-                                                cx,
-                                                path.into(),
-                                                Some(*track_id),
-                                                Some(*album_id),
-                                            )
-                                        })
-                                        .collect()
-                                },
-                            )),
+                                            playlist_track_ids
+                                                .iter()
+                                                .zip(track_files.iter())
+                                                .map(|((_, track_id, album_id), path)| {
+                                                    QueueItemData::new(
+                                                        cx,
+                                                        path.into(),
+                                                        Some(*track_id),
+                                                        Some(*album_id),
+                                                    )
+                                                })
+                                                .collect()
+                                        },
+                                    ))
+                                    .child(div().ml_auto().child(sort_dropdown)),
+                            ),
                     ),
             )
             .child(
@@ -364,82 +475,88 @@ impl Render for PlaylistView {
                     .h_full()
                     .relative()
                     .mt(px(18.0))
-                    .on_drag_move::<TrackDragData>(cx.listener(
-                        move |this: &mut PlaylistView,
-                              event: &DragMoveEvent<TrackDragData>,
-                              window,
-                              cx| {
-                            let scroll_handle: ScrollableHandle = this.scroll_handle.clone().into();
-
-                            let scrolled = handle_track_drag_move(
-                                this.drag_drop_manager.clone(),
-                                scroll_handle,
-                                event,
-                                item_count,
-                                cx,
-                            );
-
-                            if scrolled {
-                                let entity = cx.entity().downgrade();
-                                let manager = this.drag_drop_manager.clone();
+                    .when(is_custom_sort, |this| {
+                        this.on_drag_move::<TrackDragData>(cx.listener(
+                            move |this: &mut PlaylistView,
+                                  event: &DragMoveEvent<TrackDragData>,
+                                  window,
+                                  cx| {
                                 let scroll_handle: ScrollableHandle =
                                     this.scroll_handle.clone().into();
 
-                                window.on_next_frame(move |window, cx| {
-                                    if let Some(entity) = entity.upgrade() {
-                                        entity.update(cx, |_, cx| {
-                                            Self::schedule_edge_scroll(
-                                                manager,
-                                                scroll_handle,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                });
-                            }
+                                let scrolled = handle_track_drag_move(
+                                    this.drag_drop_manager.clone(),
+                                    scroll_handle,
+                                    event,
+                                    item_count,
+                                    cx,
+                                );
 
-                            cx.notify();
-                        },
-                    ))
-                    .on_drop(cx.listener(
-                        move |this: &mut PlaylistView, drag_data: &TrackDragData, _, cx| {
-                            let playlist_track_ids = this.playlist_track_ids.clone();
-                            let playlist_id = this.playlist.id;
+                                if scrolled {
+                                    let entity = cx.entity().downgrade();
+                                    let manager = this.drag_drop_manager.clone();
+                                    let scroll_handle: ScrollableHandle =
+                                        this.scroll_handle.clone().into();
 
-                            handle_track_drop(
-                                this.drag_drop_manager.clone(),
-                                drag_data,
-                                cx,
-                                |from_idx, to_idx, cx| {
-                                    let item_id = playlist_track_ids[from_idx].0;
-
-                                    let new_position = if to_idx < playlist_track_ids.len() {
-                                        let target_item_id = playlist_track_ids[to_idx].0;
-                                        let target_item =
-                                            cx.get_playlist_item(target_item_id).unwrap();
-                                        target_item.position
-                                    } else {
-                                        let last_item_id =
-                                            playlist_track_ids[playlist_track_ids.len() - 1].0;
-                                        let last_item = cx.get_playlist_item(last_item_id).unwrap();
-                                        last_item.position + 1
-                                    };
-
-                                    if let Err(e) = cx.move_playlist_item(item_id, new_position) {
-                                        error!("Failed to move playlist item: {}", e);
-                                        return;
-                                    }
-
-                                    let tracker = cx.global::<Models>().playlist_tracker.clone();
-                                    tracker.update(cx, |_, cx| {
-                                        cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
+                                    window.on_next_frame(move |window, cx| {
+                                        if let Some(entity) = entity.upgrade() {
+                                            entity.update(cx, |_, cx| {
+                                                Self::schedule_edge_scroll(
+                                                    manager,
+                                                    scroll_handle,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
                                     });
-                                },
-                            );
-                            cx.notify();
-                        },
-                    ))
+                                }
+
+                                cx.notify();
+                            },
+                        ))
+                        .on_drop(cx.listener(
+                            move |this: &mut PlaylistView, drag_data: &TrackDragData, _, cx| {
+                                let playlist_track_ids = this.playlist_track_ids.clone();
+                                let playlist_id = this.playlist.id;
+
+                                handle_track_drop(
+                                    this.drag_drop_manager.clone(),
+                                    drag_data,
+                                    cx,
+                                    |from_idx, to_idx, cx| {
+                                        let item_id = playlist_track_ids[from_idx].0;
+
+                                        let new_position = if to_idx < playlist_track_ids.len() {
+                                            let target_item_id = playlist_track_ids[to_idx].0;
+                                            let target_item =
+                                                cx.get_playlist_item(target_item_id).unwrap();
+                                            target_item.position
+                                        } else {
+                                            let last_item_id =
+                                                playlist_track_ids[playlist_track_ids.len() - 1].0;
+                                            let last_item =
+                                                cx.get_playlist_item(last_item_id).unwrap();
+                                            last_item.position + 1
+                                        };
+
+                                        if let Err(e) = cx.move_playlist_item(item_id, new_position)
+                                        {
+                                            error!("Failed to move playlist item: {}", e);
+                                            return;
+                                        }
+
+                                        let tracker =
+                                            cx.global::<Models>().playlist_tracker.clone();
+                                        tracker.update(cx, |_, cx| {
+                                            cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
+                                        });
+                                    },
+                                );
+                                cx.notify();
+                            },
+                        ))
+                    })
                     .child(
                         uniform_list("playlist-list", items_clone.len(), move |range, _, cx| {
                             let start = range.start;
@@ -501,6 +618,7 @@ impl Render for PlaylistView {
                                                     track_id,
                                                     album_id,
                                                     track_path,
+                                                    is_custom_sort,
                                                 )
                                             },
                                             cx,

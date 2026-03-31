@@ -309,6 +309,14 @@ impl Render for PlaylistList {
                                                     cx.emit(PlaylistEvent::PlaylistDeleted(pl_id))
                                                 });
 
+                                                let playlist_sort_methods = cx
+                                                    .global::<Models>()
+                                                    .playlist_sort_methods
+                                                    .clone();
+                                                playlist_sort_methods.update(cx, |map, _| {
+                                                    map.remove(&pl_id);
+                                                });
+
                                                 let switcher_model =
                                                     cx.global::<Models>().switcher_model.clone();
 
