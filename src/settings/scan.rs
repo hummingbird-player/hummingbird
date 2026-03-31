@@ -1,7 +1,9 @@
+#[cfg(not(target_os = "windows"))]
 use std::fs::exists;
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "windows"))]
 use tracing::{error, warn};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]

@@ -110,6 +110,7 @@ impl ControllerBridge {
         self.playback_thread.send(PlaybackCommand::Pause).unwrap();
     }
 
+    #[cfg(not(target_os = "windows"))]
     pub fn toggle_play_pause(&self) {
         self.playback_thread
             .send(PlaybackCommand::TogglePlayPause)
@@ -131,6 +132,7 @@ impl ControllerBridge {
             .unwrap();
     }
 
+    #[cfg(not(target_os = "windows"))]
     pub fn seek(&self, position: f64) {
         self.playback_thread
             .send(PlaybackCommand::Seek(position))
