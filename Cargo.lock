@@ -3491,7 +3491,7 @@ checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 
 [[package]]
 name = "hummingbird"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-compression",

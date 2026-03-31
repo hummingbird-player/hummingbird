@@ -2,7 +2,7 @@
 AppName=Hummingbird
 AppPublisher=William Whittaker
 AppPublisherURL=https://mailliw.org
-AppVersion=0.3.0
+AppVersion=0.4.0
 WizardStyle=modern dynamic windows11
 DefaultDirName={autopf}\Hummingbird
 DisableProgramGroupPage=yes
