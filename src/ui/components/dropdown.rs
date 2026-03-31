@@ -104,14 +104,18 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .id(self.id)
             .child(
                 div()
+                    .flex_grow()
+                    .flex_shrink()
                     .text_sm()
                     .text_color(theme.text)
                     .overflow_hidden()
+                    .text_ellipsis()
                     .child(display_text),
             )
             .child(
                 icon(CHEVRON_DOWN)
                     .size(px(16.0))
+                    .flex_shrink_0()
                     .text_color(theme.text_secondary),
             )
             .hover(|this| {
@@ -275,7 +279,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                                     )
                                 }),
                         )
-                        .child(div().text_color(theme.text).child(label))
+                        .child(
+                            div()
+                                .flex_grow()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_color(theme.text)
+                                .child(label),
+                        )
                         .on_click({
                             let highlighted = highlighted_index.clone();
                             let on_change = self.on_change.clone();
