@@ -78,6 +78,8 @@ pub struct Models {
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
     pub sidebar_collapsed: Entity<bool>,
     pub lyrics_height: Entity<Pixels>,
+    pub controls_left_width: Entity<Pixels>,
+    pub controls_right_width: Entity<Pixels>,
     #[cfg(feature = "update")]
     pub pending_update: Entity<Option<PathBuf>>,
     pub window_information: Entity<Option<WindowInformation>>,
@@ -359,6 +361,20 @@ pub fn build_models(
             DEFAULT_LYRICS_FRACTION
         }
     });
+    let controls_left_width: Entity<Pixels> = cx.new(|_| {
+        if storage_data.controls_left_width > 0.0 {
+            storage_data.controls_left_width()
+        } else {
+            crate::settings::storage::DEFAULT_CONTROLS_LEFT_WIDTH
+        }
+    });
+    let controls_right_width: Entity<Pixels> = cx.new(|_| {
+        if storage_data.controls_right_width > 0.0 {
+            storage_data.controls_right_width()
+        } else {
+            crate::settings::storage::DEFAULT_CONTROLS_RIGHT_WIDTH
+        }
+    });
 
     #[cfg(feature = "update")]
     let pending_update = cx.new(|_| None);
@@ -383,6 +399,8 @@ pub fn build_models(
         liked_tracks_sort_method,
         sidebar_collapsed,
         lyrics_height,
+        controls_left_width,
+        controls_right_width,
         #[cfg(feature = "update")]
         pending_update,
         window_information,

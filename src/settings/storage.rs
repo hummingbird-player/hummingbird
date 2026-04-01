@@ -12,6 +12,8 @@ pub const DEFAULT_SIDEBAR_WIDTH: Pixels = px(225.0);
 pub const DEFAULT_QUEUE_WIDTH: Pixels = px(275.0);
 pub const DEFAULT_SPLIT_FRACTION: Pixels = px(0.50);
 pub const DEFAULT_LYRICS_FRACTION: Pixels = px(0.35);
+pub const DEFAULT_CONTROLS_LEFT_WIDTH: Pixels = px(275.0);
+pub const DEFAULT_CONTROLS_RIGHT_WIDTH: Pixels = px(220.0);
 
 fn default_sidebar_width() -> f32 {
     f32::from(DEFAULT_SIDEBAR_WIDTH)
@@ -43,6 +45,14 @@ fn default_liked_tracks_sort_method() -> LikedTrackSortMethod {
 
 fn default_lyrics_fraction() -> f32 {
     f32::from(DEFAULT_LYRICS_FRACTION)
+}
+
+fn default_controls_left_width() -> f32 {
+    f32::from(DEFAULT_CONTROLS_LEFT_WIDTH)
+}
+
+fn default_controls_right_width() -> f32 {
+    f32::from(DEFAULT_CONTROLS_RIGHT_WIDTH)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -91,6 +101,12 @@ pub struct StorageData {
     /// Fraction (0..1) of the lyrics panel height
     #[serde(default = "default_lyrics_fraction")]
     pub lyrics_fraction: f32,
+    /// Width of the controls left section (info section) in pixels
+    #[serde(default = "default_controls_left_width")]
+    pub controls_left_width: f32,
+    /// Width of the controls right section (secondary controls) in pixels
+    #[serde(default = "default_controls_right_width")]
+    pub controls_right_width: f32,
     #[serde(default)]
     pub window_information: Option<WindowInformation>,
 }
@@ -111,6 +127,14 @@ impl StorageData {
     pub fn lyrics_fraction(&self) -> Pixels {
         px(self.lyrics_fraction)
     }
+
+    pub fn controls_left_width(&self) -> Pixels {
+        px(self.controls_left_width)
+    }
+
+    pub fn controls_right_width(&self) -> Pixels {
+        px(self.controls_right_width)
+    }
 }
 
 impl Default for StorageData {
@@ -125,6 +149,8 @@ impl Default for StorageData {
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
             sidebar_collapsed: false,
             lyrics_fraction: f32::from(DEFAULT_LYRICS_FRACTION),
+            controls_left_width: f32::from(DEFAULT_CONTROLS_LEFT_WIDTH),
+            controls_right_width: f32::from(DEFAULT_CONTROLS_RIGHT_WIDTH),
             window_information: None,
         }
     }
@@ -251,6 +277,8 @@ mod tests {
             liked_tracks_sort_method: LikedTrackSortMethod::RecentlyAddedAsc,
             sidebar_collapsed: true,
             lyrics_fraction: 0.7,
+            controls_left_width: 300.0,
+            controls_right_width: 250.0,
             window_information: Some(WindowInformation {
                 maximized: false,
                 size: Size::new(px(800.0), px(800.0)),
@@ -275,6 +303,8 @@ mod tests {
         );
         assert_eq!(loaded.sidebar_collapsed, expected.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, expected.lyrics_fraction);
+        assert_eq!(loaded.controls_left_width, expected.controls_left_width);
+        assert_eq!(loaded.controls_right_width, expected.controls_right_width);
         assert_eq!(loaded.window_information, expected.window_information);
 
         let loaded_table = loaded.table_settings.get("tracks").unwrap();
@@ -312,6 +342,8 @@ mod tests {
             liked_tracks_sort_method: LikedTrackSortMethod::TitleDesc,
             sidebar_collapsed: true,
             lyrics_fraction: 0.4,
+            controls_left_width: 200.0,
+            controls_right_width: 190.0,
             window_information: Some(WindowInformation {
                 maximized: false,
                 size: Size::new(px(800.0), px(800.0)),
@@ -332,6 +364,8 @@ mod tests {
         );
         assert_eq!(loaded.sidebar_collapsed, stored.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, stored.lyrics_fraction);
+        assert_eq!(loaded.controls_left_width, stored.controls_left_width);
+        assert_eq!(loaded.controls_right_width, stored.controls_right_width);
         assert_eq!(loaded.window_information, stored.window_information);
 
         let loaded_table = loaded.table_settings.get("albums").unwrap();
