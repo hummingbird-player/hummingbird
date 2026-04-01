@@ -49,6 +49,11 @@ mod update_playlist;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
+/// Global holder for the Library's FocusHandle, so that panels (Search, Command Palette)
+/// can restore focus to the Library after closing.
+pub struct LibraryFocusHandle(pub FocusHandle);
+impl Global for LibraryFocusHandle {}
+
 pub fn bind_actions(cx: &mut App) {
     playlist_view::bind_actions(cx);
     cx.bind_keys([
@@ -409,6 +414,7 @@ impl Library {
             cx.observe(&split_width, |_, _, cx| cx.notify()).detach();
 
             let focus_handle = cx.focus_handle();
+            cx.set_global(LibraryFocusHandle(focus_handle.clone()));
 
             cx.register_command(
                 ("playlist::import", 0),
