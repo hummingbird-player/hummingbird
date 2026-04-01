@@ -47,7 +47,7 @@ mod track_listing;
 mod track_view;
 mod update_playlist;
 
-actions!(library, [NavigateBack, NavigateForward]);
+actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
 pub fn bind_actions(cx: &mut App) {
     playlist_view::bind_actions(cx);
@@ -55,6 +55,7 @@ pub fn bind_actions(cx: &mut App) {
         KeyBinding::new("backspace", NavigateBack, Some("Library")),
         KeyBinding::new("alt-left", NavigateBack, Some("Library")),
         KeyBinding::new("alt-right", NavigateForward, Some("Library")),
+        KeyBinding::new("escape", EscapeBack, Some("Library")),
     ]);
 }
 
@@ -550,6 +551,14 @@ impl Render for Library {
             .id("library")
             .track_focus(&self.focus_handle)
             .key_context("Library")
+            .on_action(cx.listener(|this, _: &EscapeBack, _, cx| {
+                if matches!(this.view, LibraryView::Release(_)) {
+                    let switcher = cx.global::<Models>().switcher_model.clone();
+                    switcher.update(cx, |_, cx| {
+                        cx.emit(ViewSwitchMessage::Back);
+                    });
+                }
+            }))
             .on_action(cx.listener(|_, _: &NavigateBack, _, cx| {
                 let switcher = cx.global::<Models>().switcher_model.clone();
                 switcher.update(cx, |_, cx| {
