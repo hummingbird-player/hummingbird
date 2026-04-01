@@ -31,17 +31,25 @@ use std::{path::PathBuf, rc::Rc};
 
 use self::replaygain::ReplayGainButton;
 use super::{
-    components::slider::slider,
+    components::{
+        resizable::{resizable, ResizeEdge},
+        slider::slider,
+    },
     constants::APP_ROUNDING,
     global_actions::{Next, PlayPause, Previous},
     models::{Models, PlaybackInfo},
     theme::Theme,
 };
 
+const DEFAULT_LEFT_WIDTH: Pixels = px(275.0);
+const DEFAULT_RIGHT_WIDTH: Pixels = px(220.0);
+
 pub struct Controls {
     info_section: Entity<InfoSection>,
     scrubber: Entity<Scrubber>,
     secondary_controls: Entity<SecondaryControls>,
+    left_width: Entity<Pixels>,
+    right_width: Entity<Pixels>,
 }
 
 impl Controls {
@@ -50,6 +58,8 @@ impl Controls {
             info_section: InfoSection::new(cx),
             scrubber: Scrubber::new(cx),
             secondary_controls: SecondaryControls::new(cx, show_queue, show_lyrics),
+            left_width: cx.new(|_| DEFAULT_LEFT_WIDTH),
+            right_width: cx.new(|_| DEFAULT_RIGHT_WIDTH),
         })
     }
 }
@@ -78,9 +88,31 @@ impl Render for Controls {
                 cx.stop_propagation();
             })
             .flex()
-            .child(self.info_section.clone())
+            .child(
+                resizable(
+                    "controls-left-resizable",
+                    self.left_width.clone(),
+                    ResizeEdge::Right,
+                )
+                .min_size(px(150.0))
+                .max_size(px(500.0))
+                .default_size(DEFAULT_LEFT_WIDTH)
+                .border_width(px(0.0))
+                .child(self.info_section.clone()),
+            )
             .child(self.scrubber.clone())
-            .child(self.secondary_controls.clone())
+            .child(
+                resizable(
+                    "controls-right-resizable",
+                    self.right_width.clone(),
+                    ResizeEdge::Left,
+                )
+                .min_size(px(180.0))
+                .max_size(px(500.0))
+                .default_size(DEFAULT_RIGHT_WIDTH)
+                .border_width(px(0.0))
+                .child(self.secondary_controls.clone()),
+            )
     }
 }
 
@@ -239,9 +271,8 @@ impl Render for InfoSection {
         let content = div()
             .id("info-section")
             .flex()
-            .w(px(275.0))
-            .min_w(px(275.0))
-            .max_w(px(275.0))
+            .w_full()
+            .h_full()
             .overflow_x_hidden()
             .flex_shrink_0()
             .child(
@@ -877,9 +908,10 @@ impl Render for SecondaryControls {
         let lyrics_active = *self.show_lyrics.read(cx);
         let queue_active = *self.show_queue.read(cx);
 
-        div().px(px(18.0)).flex().child(
+        div().px(px(18.0)).flex().w_full().child(
             div()
                 .flex()
+                .w_full()
                 .my_auto()
                 .pb(px(2.0))
                 .child(
@@ -916,10 +948,12 @@ impl Render for SecondaryControls {
                     div()
                         .id("volume-container")
                         .mx(px(4.0))
+                        .flex_1()
+                        .min_w(px(50.0))
                         .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
                         .child(
                             slider()
-                                .w(px(80.0))
+                                .w_full()
                                 .h(px(6.0))
                                 .mt(px(11.0))
                                 .rounded(px(3.0))
