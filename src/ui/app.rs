@@ -370,6 +370,10 @@ pub fn run() -> anyhow::Result<()> {
                             let liked_tracks_sort_method =
                                 cx.global::<Models>().liked_tracks_sort_method.clone();
                             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
+                            let controls_left_width =
+                                cx.global::<Models>().controls_left_width.clone();
+                            let controls_right_width =
+                                cx.global::<Models>().controls_right_width.clone();
                             let window_information =
                                 cx.global::<Models>().window_information.clone();
                             move |_, cx| {
@@ -382,6 +386,10 @@ pub fn run() -> anyhow::Result<()> {
                                 let table_settings = table_settings.read(cx).clone();
                                 let liked_tracks_sort_method = *liked_tracks_sort_method.read(cx);
                                 let sidebar_collapsed = *sidebar_collapsed.read(cx);
+                                let controls_left_width: f32 =
+                                    (*controls_left_width.read(cx)).into();
+                                let controls_right_width: f32 =
+                                    (*controls_right_width.read(cx)).into();
                                 let window_information = window_information.read(cx).clone();
 
                                 let storage = storage.clone();
@@ -396,6 +404,8 @@ pub fn run() -> anyhow::Result<()> {
                                         table_settings,
                                         liked_tracks_sort_method,
                                         sidebar_collapsed,
+                                        controls_left_width,
+                                        controls_right_width,
                                         window_information,
                                     });
 

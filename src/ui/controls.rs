@@ -41,8 +41,7 @@ use super::{
     theme::Theme,
 };
 
-const DEFAULT_LEFT_WIDTH: Pixels = px(275.0);
-const DEFAULT_RIGHT_WIDTH: Pixels = px(220.0);
+use crate::settings::storage::{DEFAULT_CONTROLS_LEFT_WIDTH, DEFAULT_CONTROLS_RIGHT_WIDTH};
 
 pub struct Controls {
     info_section: Entity<InfoSection>,
@@ -54,12 +53,15 @@ pub struct Controls {
 
 impl Controls {
     pub fn new(cx: &mut App, show_queue: Entity<bool>, show_lyrics: Entity<bool>) -> Entity<Self> {
+        let models = cx.global::<Models>();
+        let left_width = models.controls_left_width.clone();
+        let right_width = models.controls_right_width.clone();
         cx.new(|cx| Self {
             info_section: InfoSection::new(cx),
             scrubber: Scrubber::new(cx),
             secondary_controls: SecondaryControls::new(cx, show_queue, show_lyrics),
-            left_width: cx.new(|_| DEFAULT_LEFT_WIDTH),
-            right_width: cx.new(|_| DEFAULT_RIGHT_WIDTH),
+            left_width,
+            right_width,
         })
     }
 }
@@ -96,7 +98,7 @@ impl Render for Controls {
                 )
                 .min_size(px(150.0))
                 .max_size(px(500.0))
-                .default_size(DEFAULT_LEFT_WIDTH)
+                .default_size(DEFAULT_CONTROLS_LEFT_WIDTH)
                 .border_width(px(0.0))
                 .child(self.info_section.clone()),
             )
@@ -109,7 +111,7 @@ impl Render for Controls {
                 )
                 .min_size(px(180.0))
                 .max_size(px(500.0))
-                .default_size(DEFAULT_RIGHT_WIDTH)
+                .default_size(DEFAULT_CONTROLS_RIGHT_WIDTH)
                 .border_width(px(0.0))
                 .child(self.secondary_controls.clone()),
             )
