@@ -910,7 +910,7 @@ impl Render for SecondaryControls {
         let lyrics_active = *self.show_lyrics.read(cx);
         let queue_active = *self.show_queue.read(cx);
 
-        div().px(px(18.0)).flex().w_full().child(
+        div().px(px(18.0)).flex().w_full().h_full().child(
             div()
                 .flex()
                 .w_full()
