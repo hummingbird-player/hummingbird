@@ -47,7 +47,7 @@ mod track_listing;
 mod track_view;
 mod update_playlist;
 
-actions!(library, [NavigateBack, NavigateForward]);
+actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
 pub fn bind_actions(cx: &mut App) {
     playlist_view::bind_actions(cx);
@@ -55,6 +55,7 @@ pub fn bind_actions(cx: &mut App) {
         KeyBinding::new("backspace", NavigateBack, Some("Library")),
         KeyBinding::new("alt-left", NavigateBack, Some("Library")),
         KeyBinding::new("alt-right", NavigateForward, Some("Library")),
+        KeyBinding::new("escape", EscapeBack, Some("Library")),
     ]);
 }
 
@@ -209,6 +210,7 @@ pub struct Library {
     focus_handle: FocusHandle,
     scroll_state: ScrollStateStorage,
     reclaim_focus: bool,
+    _focus_lost_sub: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,6 +442,7 @@ impl Library {
                 focus_handle,
                 scroll_state,
                 reclaim_focus: false,
+                _focus_lost_sub: None,
             }
         })
     }
@@ -447,6 +450,11 @@ impl Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self._focus_lost_sub.is_none() {
+            self._focus_lost_sub = Some(cx.on_focus_lost(window, |this, window, _cx| {
+                this.focus_handle.focus(window, _cx);
+            }));
+        }
         if self.reclaim_focus {
             self.reclaim_focus = false;
             self.focus_handle.focus(window, cx);
@@ -550,6 +558,14 @@ impl Render for Library {
             .id("library")
             .track_focus(&self.focus_handle)
             .key_context("Library")
+            .on_action(cx.listener(|this, _: &EscapeBack, _, cx| {
+                if matches!(this.view, LibraryView::Release(_)) {
+                    let switcher = cx.global::<Models>().switcher_model.clone();
+                    switcher.update(cx, |_, cx| {
+                        cx.emit(ViewSwitchMessage::Back);
+                    });
+                }
+            }))
             .on_action(cx.listener(|_, _: &NavigateBack, _, cx| {
                 let switcher = cx.global::<Models>().switcher_model.clone();
                 switcher.update(cx, |_, cx| {
