@@ -49,11 +49,6 @@ mod update_playlist;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
-/// Global holder for the Library's FocusHandle, so that panels (Search, Command Palette)
-/// can restore focus to the Library after closing.
-pub struct LibraryFocusHandle(pub FocusHandle);
-impl Global for LibraryFocusHandle {}
-
 pub fn bind_actions(cx: &mut App) {
     playlist_view::bind_actions(cx);
     cx.bind_keys([
@@ -215,6 +210,7 @@ pub struct Library {
     focus_handle: FocusHandle,
     scroll_state: ScrollStateStorage,
     reclaim_focus: bool,
+    _focus_lost_sub: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -414,7 +410,6 @@ impl Library {
             cx.observe(&split_width, |_, _, cx| cx.notify()).detach();
 
             let focus_handle = cx.focus_handle();
-            cx.set_global(LibraryFocusHandle(focus_handle.clone()));
 
             cx.register_command(
                 ("playlist::import", 0),
@@ -447,6 +442,7 @@ impl Library {
                 focus_handle,
                 scroll_state,
                 reclaim_focus: false,
+                _focus_lost_sub: None,
             }
         })
     }
@@ -454,6 +450,11 @@ impl Library {
 
 impl Render for Library {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self._focus_lost_sub.is_none() {
+            self._focus_lost_sub = Some(cx.on_focus_lost(window, |this, window, _cx| {
+                this.focus_handle.focus(window, _cx);
+            }));
+        }
         if self.reclaim_focus {
             self.reclaim_focus = false;
             self.focus_handle.focus(window, cx);

@@ -5,7 +5,6 @@ use prelude::FluentBuilder;
 
 use crate::ui::{
     constants::{APP_ROUNDING, APP_SHADOW_SIZE},
-    library::LibraryFocusHandle,
     theme::Theme,
 };
 
@@ -100,13 +99,9 @@ impl RenderOnce for Modal {
                     let on_exit_clone = Rc::clone(&on_exit);
                     this.on_any_mouse_down(move |_, window, cx| {
                         on_exit_clone(window, cx);
-                        let handle = cx.global::<LibraryFocusHandle>().0.clone();
-                        handle.focus(window, cx);
                     })
                     .on_action(move |_: &CloseModal, window, cx| {
                         on_exit(window, cx);
-                        let handle = cx.global::<LibraryFocusHandle>().0.clone();
-                        handle.focus(window, cx);
                     })
                 })
                 .child(
