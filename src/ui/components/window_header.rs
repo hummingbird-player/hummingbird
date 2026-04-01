@@ -170,10 +170,7 @@ impl RenderOnce for WindowButton {
                 WindowButton::Maximize => WindowControlArea::Max,
             })
             .text_size(px(11.0))
-            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                cx.stop_propagation();
-                window.prevent_default();
-            })
+            .occlude()
             .child(
                 icon(match self {
                     WindowButton::Close(_) => CROSS,
@@ -194,8 +191,16 @@ impl RenderOnce for WindowButton {
             .on_click(move |_, window, cx| match self {
                 WindowButton::Close(false) => window.remove_window(),
                 WindowButton::Close(true) => cx.quit(),
-                WindowButton::Minimize => window.minimize_window(),
-                WindowButton::Maximize => window.zoom_window(),
+                WindowButton::Minimize => {
+                    if !cfg!(target_os = "windows") {
+                        window.minimize_window()
+                    }
+                }
+                WindowButton::Maximize => {
+                    if !cfg!(target_os = "windows") {
+                        window.zoom_window()
+                    }
+                }
             })
     }
 }
