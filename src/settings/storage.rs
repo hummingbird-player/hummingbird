@@ -4,7 +4,7 @@ use gpui::{App, Pixels, px};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    library::db::LikedTrackSortMethod,
+    library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
     ui::models::{CurrentTrack, Models, PlaybackInfo, WindowInformation},
 };
 
@@ -41,6 +41,10 @@ fn default_table_view_mode() -> TableViewModeSetting {
 
 fn default_liked_tracks_sort_method() -> LikedTrackSortMethod {
     LikedTrackSortMethod::ReleaseOrder
+}
+
+fn default_playlist_sort_methods() -> HashMap<i64, PlaylistTrackSortMethod> {
+    HashMap::new()
 }
 
 fn default_lyrics_fraction() -> f32 {
@@ -107,6 +111,8 @@ pub struct StorageData {
     pub table_settings: HashMap<String, TableSettings>,
     #[serde(default = "default_liked_tracks_sort_method")]
     pub liked_tracks_sort_method: LikedTrackSortMethod,
+    #[serde(default = "default_playlist_sort_methods")]
+    pub playlist_sort_methods: HashMap<i64, PlaylistTrackSortMethod>,
     #[serde(default)]
     pub sidebar_collapsed: bool,
     /// Fraction (0..1) of the lyrics panel height
@@ -202,6 +208,7 @@ impl Default for StorageData {
             split_fractions: HashMap::new(),
             table_settings: HashMap::new(),
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
+            playlist_sort_methods: default_playlist_sort_methods(),
             sidebar_collapsed: false,
             lyrics_fraction: f32::from(DEFAULT_LYRICS_FRACTION),
             controls_left_width: f32::from(DEFAULT_CONTROLS_LEFT_WIDTH),
@@ -259,7 +266,7 @@ mod tests {
 
     use super::{Storage, StorageData, TableSettings, TableViewModeSetting};
     use crate::{
-        library::db::LikedTrackSortMethod,
+        library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
         test_support::TestDir,
         ui::models::{CurrentTrack, WindowInformation},
     };
@@ -334,6 +341,10 @@ mod tests {
             ]),
             table_settings,
             liked_tracks_sort_method: LikedTrackSortMethod::RecentlyAddedAsc,
+            playlist_sort_methods: HashMap::from([
+                (1, PlaylistTrackSortMethod::Custom),
+                (42, PlaylistTrackSortMethod::ArtistDesc),
+            ]),
             sidebar_collapsed: true,
             lyrics_fraction: 0.7,
             controls_left_width: 300.0,
@@ -361,6 +372,7 @@ mod tests {
             loaded.liked_tracks_sort_method,
             expected.liked_tracks_sort_method
         );
+        assert_eq!(loaded.playlist_sort_methods, expected.playlist_sort_methods);
         assert_eq!(loaded.sidebar_collapsed, expected.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, expected.lyrics_fraction);
         assert_eq!(loaded.controls_left_width, expected.controls_left_width);
@@ -401,6 +413,7 @@ mod tests {
             split_fractions: HashMap::from([("artists".to_string(), 0.60)]),
             table_settings,
             liked_tracks_sort_method: LikedTrackSortMethod::TitleDesc,
+            playlist_sort_methods: HashMap::from([(7, PlaylistTrackSortMethod::RecentlyAdded)]),
             sidebar_collapsed: true,
             lyrics_fraction: 0.4,
             controls_left_width: 200.0,
@@ -424,6 +437,7 @@ mod tests {
             loaded.liked_tracks_sort_method,
             stored.liked_tracks_sort_method
         );
+        assert_eq!(loaded.playlist_sort_methods, stored.playlist_sort_methods);
         assert_eq!(loaded.sidebar_collapsed, stored.sidebar_collapsed);
         assert_eq!(loaded.lyrics_fraction, stored.lyrics_fraction);
         assert_eq!(loaded.controls_left_width, stored.controls_left_width);

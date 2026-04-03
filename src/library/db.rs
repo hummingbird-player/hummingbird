@@ -108,6 +108,21 @@ pub enum LikedTrackSortMethod {
     RecentlyAddedAsc,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PlaylistTrackSortMethod {
+    Custom,
+    TitleAsc,
+    TitleDesc,
+    ArtistAsc,
+    ArtistDesc,
+    AlbumAsc,
+    AlbumDesc,
+    DurationAsc,
+    DurationDesc,
+    RecentlyAdded,
+    RecentlyAddedAsc,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AlbumMethod {
     FullQuality,
@@ -530,6 +545,55 @@ pub async fn get_playlist_tracks(
     Ok(Arc::new(tracks))
 }
 
+pub async fn get_playlist_tracks_sorted(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    sort_method: PlaylistTrackSortMethod,
+) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+    let query = match sort_method {
+        PlaylistTrackSortMethod::Custom => {
+            return get_playlist_tracks(pool, playlist_id).await;
+        }
+        PlaylistTrackSortMethod::TitleAsc => {
+            include_str!("../../queries/playlist/get_track_listing_title_asc.sql")
+        }
+        PlaylistTrackSortMethod::TitleDesc => {
+            include_str!("../../queries/playlist/get_track_listing_title_desc.sql")
+        }
+        PlaylistTrackSortMethod::ArtistAsc => {
+            include_str!("../../queries/playlist/get_track_listing_artist_asc.sql")
+        }
+        PlaylistTrackSortMethod::ArtistDesc => {
+            include_str!("../../queries/playlist/get_track_listing_artist_desc.sql")
+        }
+        PlaylistTrackSortMethod::AlbumAsc => {
+            include_str!("../../queries/playlist/get_track_listing_album_asc.sql")
+        }
+        PlaylistTrackSortMethod::AlbumDesc => {
+            include_str!("../../queries/playlist/get_track_listing_album_desc.sql")
+        }
+        PlaylistTrackSortMethod::DurationAsc => {
+            include_str!("../../queries/playlist/get_track_listing_length_asc.sql")
+        }
+        PlaylistTrackSortMethod::DurationDesc => {
+            include_str!("../../queries/playlist/get_track_listing_length_desc.sql")
+        }
+        PlaylistTrackSortMethod::RecentlyAdded => {
+            include_str!("../../queries/playlist/get_track_listing_recent_desc.sql")
+        }
+        PlaylistTrackSortMethod::RecentlyAddedAsc => {
+            include_str!("../../queries/playlist/get_track_listing_recent_asc.sql")
+        }
+    };
+
+    let tracks: Vec<(i64, i64, i64)> = sqlx::query_as(query)
+        .bind(playlist_id)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(Arc::new(tracks))
+}
+
 pub async fn move_playlist_item(
     pool: &SqlitePool,
     item_id: i64,
@@ -661,6 +725,11 @@ pub trait LibraryAccess {
     fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<Playlist>>;
     fn get_playlist_track_files(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<String>>>;
     fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
+    fn get_playlist_tracks_sorted(
+        &self,
+        playlist_id: i64,
+        sort_method: PlaylistTrackSortMethod,
+    ) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
     fn move_playlist_item(&self, item_id: i64, new_position: i64) -> sqlx::Result<()>;
     fn get_playlist_item(&self, item_id: i64) -> sqlx::Result<PlaylistItem>;
     fn get_track_stats(&self) -> sqlx::Result<Arc<TrackStats>>;
@@ -773,6 +842,19 @@ impl LibraryAccess for App {
     fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_playlist_tracks(&pool.0, playlist_id))
+    }
+
+    fn get_playlist_tracks_sorted(
+        &self,
+        playlist_id: i64,
+        sort_method: PlaylistTrackSortMethod,
+    ) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(get_playlist_tracks_sorted(
+            &pool.0,
+            playlist_id,
+            sort_method,
+        ))
     }
 
     fn move_playlist_item(&self, item_id: i64, new_position: i64) -> sqlx::Result<()> {

@@ -13,7 +13,7 @@ use tracing::{debug, error, warn};
 
 use crate::{
     library::{
-        db::{LibraryAccess, LikedTrackSortMethod},
+        db::{LibraryAccess, LikedTrackSortMethod, PlaylistTrackSortMethod},
         scan::ScanEvent,
     },
     media::metadata::Metadata,
@@ -76,6 +76,7 @@ pub struct Models {
     pub split_widths: std::collections::HashMap<String, Entity<Pixels>>,
     pub table_settings: Entity<std::collections::HashMap<String, TableSettings>>,
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
+    pub playlist_sort_methods: Entity<std::collections::HashMap<i64, PlaylistTrackSortMethod>>,
     pub sidebar_collapsed: Entity<bool>,
     pub lyrics_height: Entity<Pixels>,
     pub controls_left_width: Entity<Pixels>,
@@ -344,6 +345,7 @@ pub fn build_models(
 
     let table_settings = cx.new(|_| storage_data.table_settings.clone());
     let liked_tracks_sort_method = cx.new(|_| storage_data.liked_tracks_sort_method);
+    let playlist_sort_methods = cx.new(|_| storage_data.playlist_sort_methods.clone());
     let sidebar_collapsed: Entity<bool> = cx.new(|_| storage_data.sidebar_collapsed);
     let lyrics_height: Entity<Pixels> = cx.new(|_| {
         if storage_data.lyrics_fraction > 0.0 {
@@ -388,6 +390,7 @@ pub fn build_models(
         split_widths,
         table_settings,
         liked_tracks_sort_method,
+        playlist_sort_methods,
         sidebar_collapsed,
         lyrics_height,
         controls_left_width,
