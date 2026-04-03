@@ -361,7 +361,7 @@
   },
   "EXPORT_PLAYLIST_TO_M3U": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:244",
+    "definedIn": "src/ui/library/playlist_view.rs:242",
     "plural": false,
     "description": null
   },
@@ -1013,69 +1013,45 @@
     "plural": false,
     "description": null
   },
-  "SORT_ALBUM_ASC": {
+  "SORT_ALBUM": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:63",
+    "definedIn": "src/ui/library/playlist_view.rs:68",
     "plural": false,
     "description": null
   },
-  "SORT_ALBUM_DESC": {
-    "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:64",
-    "plural": false,
-    "description": null
-  },
-  "SORT_ARTIST_ASC": {
-    "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:61",
-    "plural": false,
-    "description": null
-  },
-  "SORT_ARTIST_DESC": {
-    "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:62",
-    "plural": false,
-    "description": null
-  },
-  "SORT_ASCENDING": {
-    "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:379",
-    "plural": false,
-    "description": null
-  },
-  "SORT_CUSTOM": {
-    "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:58",
-    "plural": false,
-    "description": null
-  },
-  "SORT_DESCENDING": {
-    "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:384",
-    "plural": false,
-    "description": null
-  },
-  "SORT_DURATION_ASC": {
+  "SORT_ARTIST": {
     "context": "playlist_view.rs",
     "definedIn": "src/ui/library/playlist_view.rs:65",
     "plural": false,
     "description": null
   },
-  "SORT_DURATION_DESC": {
+  "SORT_ASCENDING": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:67",
+    "definedIn": "src/ui/library/playlist_view.rs:602",
     "plural": false,
     "description": null
   },
-  "SORT_OLDEST_ADDED": {
+  "SORT_CUSTOM": {
+    "context": "playlist_view.rs",
+    "definedIn": "src/ui/library/playlist_view.rs:60",
+    "plural": false,
+    "description": null
+  },
+  "SORT_DESCENDING": {
+    "context": "playlist_view.rs",
+    "definedIn": "src/ui/library/playlist_view.rs:607",
+    "plural": false,
+    "description": null
+  },
+  "SORT_DURATION": {
     "context": "playlist_view.rs",
     "definedIn": "src/ui/library/playlist_view.rs:71",
     "plural": false,
     "description": null
   },
   "SORT_RECENTLY_ADDED": {
-    "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:395",
+    "context": "playlist_view.rs",
+    "definedIn": "src/ui/library/playlist_view.rs:74",
     "plural": false,
     "description": null
   },
@@ -1086,20 +1062,8 @@
     "description": null
   },
   "SORT_TITLE": {
-    "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:399",
-    "plural": false,
-    "description": null
-  },
-  "SORT_TITLE_ASC": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:59",
-    "plural": false,
-    "description": null
-  },
-  "SORT_TITLE_DESC": {
-    "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:60",
+    "definedIn": "src/ui/library/playlist_view.rs:62",
     "plural": false,
     "description": null
   },

@@ -21,16 +21,18 @@ use crate::{
         caching::hummingbird_cache,
         command_palette::{Command, CommandManager},
         components::{
+            button::{ButtonSize, button},
             drag_drop::{
                 DragDropItemState, DragDropListConfig, DragDropListManager, DragPreview,
                 DropIndicator, TrackDragData, check_drag_cancelled, continue_edge_scroll,
                 handle_track_drag_move, handle_track_drop,
             },
             dropdown::dropdown,
-            icons::{PLAYLIST, STAR, icon},
+            icons::{PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
             playback_controls::playback_controls,
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
+            tooltip::build_tooltip,
         },
         library::track_listing::{
             ArtistNameVisibility,
@@ -56,35 +58,31 @@ pub fn bind_actions(cx: &mut App) {
 fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
     match method {
         PlaylistTrackSortMethod::Custom => tr!("SORT_CUSTOM", "Custom Order").into(),
-        PlaylistTrackSortMethod::TitleAsc => tr!("SORT_TITLE_ASC", "Title (Asc.)").into(),
-        PlaylistTrackSortMethod::TitleDesc => tr!("SORT_TITLE_DESC", "Title (Desc.)").into(),
-        PlaylistTrackSortMethod::ArtistAsc => tr!("SORT_ARTIST_ASC", "Artist (Asc.)").into(),
-        PlaylistTrackSortMethod::ArtistDesc => tr!("SORT_ARTIST_DESC", "Artist (Desc.)").into(),
-        PlaylistTrackSortMethod::AlbumAsc => tr!("SORT_ALBUM_ASC", "Album (Asc.)").into(),
-        PlaylistTrackSortMethod::AlbumDesc => tr!("SORT_ALBUM_DESC", "Album (Desc.)").into(),
-        PlaylistTrackSortMethod::DurationAsc => tr!("SORT_DURATION_ASC", "Duration (Asc.)").into(),
-        PlaylistTrackSortMethod::DurationDesc => {
-            tr!("SORT_DURATION_DESC", "Duration (Desc.)").into()
+        PlaylistTrackSortMethod::TitleAsc | PlaylistTrackSortMethod::TitleDesc => {
+            tr!("SORT_TITLE", "Title").into()
         }
-        PlaylistTrackSortMethod::RecentlyAdded => tr!("SORT_RECENTLY_ADDED").into(),
-        PlaylistTrackSortMethod::RecentlyAddedAsc => {
-            tr!("SORT_OLDEST_ADDED", "Oldest Added").into()
+        PlaylistTrackSortMethod::ArtistAsc | PlaylistTrackSortMethod::ArtistDesc => {
+            tr!("SORT_ARTIST", "Artist").into()
+        }
+        PlaylistTrackSortMethod::AlbumAsc | PlaylistTrackSortMethod::AlbumDesc => {
+            tr!("SORT_ALBUM", "Album").into()
+        }
+        PlaylistTrackSortMethod::DurationAsc | PlaylistTrackSortMethod::DurationDesc => {
+            tr!("SORT_DURATION", "Duration").into()
+        }
+        PlaylistTrackSortMethod::RecentlyAdded | PlaylistTrackSortMethod::RecentlyAddedAsc => {
+            tr!("SORT_RECENTLY_ADDED", "Recently Added").into()
         }
     }
 }
 
-const ALL_SORT_METHODS: [PlaylistTrackSortMethod; 11] = [
+const BASE_SORT_METHODS: [PlaylistTrackSortMethod; 6] = [
     PlaylistTrackSortMethod::Custom,
     PlaylistTrackSortMethod::TitleAsc,
-    PlaylistTrackSortMethod::TitleDesc,
     PlaylistTrackSortMethod::ArtistAsc,
-    PlaylistTrackSortMethod::ArtistDesc,
     PlaylistTrackSortMethod::AlbumAsc,
-    PlaylistTrackSortMethod::AlbumDesc,
     PlaylistTrackSortMethod::DurationAsc,
-    PlaylistTrackSortMethod::DurationDesc,
     PlaylistTrackSortMethod::RecentlyAdded,
-    PlaylistTrackSortMethod::RecentlyAddedAsc,
 ];
 
 /// Wrapper component for playlist track items that adds drag-and-drop support
@@ -267,6 +265,21 @@ impl PlaylistView {
         })
     }
 
+    fn update_sort_method(&mut self, sort_method: PlaylistTrackSortMethod, cx: &mut Context<Self>) {
+        let current_descending = Self::is_descending(self.sort_method);
+        let next_sort = Self::apply_direction(Self::base_sort(sort_method), current_descending);
+
+        self.set_sort_method(next_sort, cx);
+    }
+
+    fn toggle_sort_order(&mut self, cx: &mut Context<Self>) {
+        if self.is_custom_sort() {
+            return;
+        }
+
+        self.set_sort_method(Self::toggled_sort(self.sort_method), cx);
+    }
+
     fn set_sort_method(&mut self, method: PlaylistTrackSortMethod, cx: &mut Context<Self>) {
         if self.sort_method == method {
             return;
@@ -284,6 +297,98 @@ impl PlaylistView {
         });
 
         cx.notify();
+    }
+
+    fn base_sort(sort_method: PlaylistTrackSortMethod) -> PlaylistTrackSortMethod {
+        match sort_method {
+            PlaylistTrackSortMethod::Custom => PlaylistTrackSortMethod::Custom,
+            PlaylistTrackSortMethod::TitleAsc | PlaylistTrackSortMethod::TitleDesc => {
+                PlaylistTrackSortMethod::TitleAsc
+            }
+            PlaylistTrackSortMethod::ArtistAsc | PlaylistTrackSortMethod::ArtistDesc => {
+                PlaylistTrackSortMethod::ArtistAsc
+            }
+            PlaylistTrackSortMethod::AlbumAsc | PlaylistTrackSortMethod::AlbumDesc => {
+                PlaylistTrackSortMethod::AlbumAsc
+            }
+            PlaylistTrackSortMethod::DurationAsc | PlaylistTrackSortMethod::DurationDesc => {
+                PlaylistTrackSortMethod::DurationAsc
+            }
+            PlaylistTrackSortMethod::RecentlyAdded | PlaylistTrackSortMethod::RecentlyAddedAsc => {
+                PlaylistTrackSortMethod::RecentlyAdded
+            }
+        }
+    }
+
+    fn apply_direction(
+        base_sort_method: PlaylistTrackSortMethod,
+        descending: bool,
+    ) -> PlaylistTrackSortMethod {
+        match base_sort_method {
+            PlaylistTrackSortMethod::Custom => PlaylistTrackSortMethod::Custom,
+            PlaylistTrackSortMethod::TitleAsc | PlaylistTrackSortMethod::TitleDesc => {
+                if descending {
+                    PlaylistTrackSortMethod::TitleDesc
+                } else {
+                    PlaylistTrackSortMethod::TitleAsc
+                }
+            }
+            PlaylistTrackSortMethod::ArtistAsc | PlaylistTrackSortMethod::ArtistDesc => {
+                if descending {
+                    PlaylistTrackSortMethod::ArtistDesc
+                } else {
+                    PlaylistTrackSortMethod::ArtistAsc
+                }
+            }
+            PlaylistTrackSortMethod::AlbumAsc | PlaylistTrackSortMethod::AlbumDesc => {
+                if descending {
+                    PlaylistTrackSortMethod::AlbumDesc
+                } else {
+                    PlaylistTrackSortMethod::AlbumAsc
+                }
+            }
+            PlaylistTrackSortMethod::DurationAsc | PlaylistTrackSortMethod::DurationDesc => {
+                if descending {
+                    PlaylistTrackSortMethod::DurationDesc
+                } else {
+                    PlaylistTrackSortMethod::DurationAsc
+                }
+            }
+            PlaylistTrackSortMethod::RecentlyAdded | PlaylistTrackSortMethod::RecentlyAddedAsc => {
+                if descending {
+                    PlaylistTrackSortMethod::RecentlyAdded
+                } else {
+                    PlaylistTrackSortMethod::RecentlyAddedAsc
+                }
+            }
+        }
+    }
+
+    fn is_descending(sort_method: PlaylistTrackSortMethod) -> bool {
+        matches!(
+            sort_method,
+            PlaylistTrackSortMethod::TitleDesc
+                | PlaylistTrackSortMethod::ArtistDesc
+                | PlaylistTrackSortMethod::AlbumDesc
+                | PlaylistTrackSortMethod::DurationDesc
+                | PlaylistTrackSortMethod::RecentlyAdded
+        )
+    }
+
+    fn toggled_sort(sort_method: PlaylistTrackSortMethod) -> PlaylistTrackSortMethod {
+        match sort_method {
+            PlaylistTrackSortMethod::Custom => PlaylistTrackSortMethod::Custom,
+            PlaylistTrackSortMethod::TitleAsc => PlaylistTrackSortMethod::TitleDesc,
+            PlaylistTrackSortMethod::TitleDesc => PlaylistTrackSortMethod::TitleAsc,
+            PlaylistTrackSortMethod::ArtistAsc => PlaylistTrackSortMethod::ArtistDesc,
+            PlaylistTrackSortMethod::ArtistDesc => PlaylistTrackSortMethod::ArtistAsc,
+            PlaylistTrackSortMethod::AlbumAsc => PlaylistTrackSortMethod::AlbumDesc,
+            PlaylistTrackSortMethod::AlbumDesc => PlaylistTrackSortMethod::AlbumAsc,
+            PlaylistTrackSortMethod::DurationAsc => PlaylistTrackSortMethod::DurationDesc,
+            PlaylistTrackSortMethod::DurationDesc => PlaylistTrackSortMethod::DurationAsc,
+            PlaylistTrackSortMethod::RecentlyAdded => PlaylistTrackSortMethod::RecentlyAddedAsc,
+            PlaylistTrackSortMethod::RecentlyAddedAsc => PlaylistTrackSortMethod::RecentlyAdded,
+        }
     }
 
     fn is_custom_sort(&self) -> bool {
@@ -344,13 +449,13 @@ impl Render for PlaylistView {
         let mut sort_dropdown = dropdown("playlist-sort-dropdown")
             .w(px(220.0))
             .flex_shrink_0()
-            .selected(current_sort)
+            .selected(Self::base_sort(current_sort))
             .on_change(move |method: &PlaylistTrackSortMethod, _, cx| {
                 entity.update(cx, |this, cx| {
-                    this.set_sort_method(*method, cx);
+                    this.update_sort_method(*method, cx);
                 });
             });
-        for method in ALL_SORT_METHODS {
+        for method in BASE_SORT_METHODS {
             sort_dropdown = sort_dropdown.option(method, sort_method_label(method));
         }
 
@@ -463,7 +568,50 @@ impl Render for PlaylistView {
                                                 .collect()
                                         },
                                     ))
-                                    .child(div().ml_auto().child(sort_dropdown)),
+                                    .child(
+                                        div()
+                                            .ml_auto()
+                                            .flex()
+                                            .gap(px(12.0))
+                                            .items_stretch()
+                                            .when(!is_custom_sort, |this| {
+                                                this.child(
+                                                    button()
+                                                        .id("playlist-sort-direction-button")
+                                                        .size(ButtonSize::Large)
+                                                        .on_click(cx.listener(
+                                                            |this: &mut PlaylistView, _, _, cx| {
+                                                                this.toggle_sort_order(cx);
+                                                            },
+                                                        ))
+                                                        .child(
+                                                            icon(if Self::is_descending(
+                                                                self.sort_method,
+                                                            ) {
+                                                                SORT_DESCENDING
+                                                            } else {
+                                                                SORT_ASCENDING
+                                                            })
+                                                            .text_color(theme.text_secondary)
+                                                            .size(px(20.0)),
+                                                        )
+                                                        .tooltip(if Self::is_descending(
+                                                            self.sort_method,
+                                                        ) {
+                                                            build_tooltip(tr!(
+                                                                "SORT_ASCENDING",
+                                                                "Sort Ascending"
+                                                            ))
+                                                        } else {
+                                                            build_tooltip(tr!(
+                                                                "SORT_DESCENDING",
+                                                                "Sort Descending"
+                                                            ))
+                                                        }),
+                                                )
+                                            })
+                                            .child(sort_dropdown),
+                                    ),
                             ),
                     ),
             )

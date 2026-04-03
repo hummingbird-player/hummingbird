@@ -211,15 +211,9 @@ mod tests {
 
     use super::{Storage, StorageData, TableSettings, TableViewModeSetting};
     use crate::{
-<<<<<<< HEAD
-        library::db::LikedTrackSortMethod,
-        test_support::TestDir,
-        ui::models::{CurrentTrack, WindowInformation},
-=======
         library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
         test_support::TestDir,
-        ui::models::CurrentTrack,
->>>>>>> 6bbe5b6 (feat: add playlist sorting)
+        ui::models::{CurrentTrack, WindowInformation},
     };
     use std::{collections::HashMap, fs};
 
