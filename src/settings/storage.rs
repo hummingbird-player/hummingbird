@@ -4,8 +4,8 @@ use gpui::{Pixels, px};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ui::models::{CurrentTrack, WindowInformation},
     library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
+    ui::models::{CurrentTrack, WindowInformation},
 };
 
 pub const DEFAULT_SIDEBAR_WIDTH: Pixels = px(225.0);
