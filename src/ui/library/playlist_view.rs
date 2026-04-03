@@ -59,7 +59,7 @@ fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
     match method {
         PlaylistTrackSortMethod::Custom => tr!("SORT_CUSTOM", "Custom Order").into(),
         PlaylistTrackSortMethod::TitleAsc | PlaylistTrackSortMethod::TitleDesc => {
-            tr!("SORT_TITLE", "Title").into()
+            tr!("SORT_TITLE").into()
         }
         PlaylistTrackSortMethod::ArtistAsc | PlaylistTrackSortMethod::ArtistDesc => {
             tr!("SORT_ARTIST", "Artist").into()
@@ -71,7 +71,7 @@ fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
             tr!("SORT_DURATION", "Duration").into()
         }
         PlaylistTrackSortMethod::RecentlyAdded | PlaylistTrackSortMethod::RecentlyAddedAsc => {
-            tr!("SORT_RECENTLY_ADDED", "Recently Added").into()
+            tr!("SORT_RECENTLY_ADDED").into()
         }
     }
 }
@@ -585,29 +585,28 @@ impl Render for PlaylistView {
                                                             },
                                                         ))
                                                         .child(
-                                                            icon(if Self::is_descending(
-                                                                self.sort_method,
-                                                            ) {
-                                                                SORT_DESCENDING
-                                                            } else {
-                                                                SORT_ASCENDING
-                                                            })
+                                                            icon(
+                                                                if Self::is_descending(
+                                                                    self.sort_method,
+                                                                ) {
+                                                                    SORT_DESCENDING
+                                                                } else {
+                                                                    SORT_ASCENDING
+                                                                },
+                                                            )
                                                             .text_color(theme.text_secondary)
                                                             .size(px(20.0)),
                                                         )
-                                                        .tooltip(if Self::is_descending(
-                                                            self.sort_method,
-                                                        ) {
-                                                            build_tooltip(tr!(
-                                                                "SORT_ASCENDING",
-                                                                "Sort Ascending"
-                                                            ))
-                                                        } else {
-                                                            build_tooltip(tr!(
-                                                                "SORT_DESCENDING",
-                                                                "Sort Descending"
-                                                            ))
-                                                        }),
+                                                        .tooltip(
+                                                            if Self::is_descending(self.sort_method)
+                                                            {
+                                                                build_tooltip(tr!("SORT_ASCENDING"))
+                                                            } else {
+                                                                build_tooltip(tr!(
+                                                                    "SORT_DESCENDING"
+                                                                ))
+                                                            },
+                                                        ),
                                                 )
                                             })
                                             .child(sort_dropdown),
