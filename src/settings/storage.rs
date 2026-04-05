@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use gpui::{Pixels, px};
+use gpui::{App, Pixels, px};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     library::db::LikedTrackSortMethod,
-    ui::models::{CurrentTrack, WindowInformation},
+    ui::models::{CurrentTrack, Models, PlaybackInfo, WindowInformation},
 };
 
 pub const DEFAULT_SIDEBAR_WIDTH: Pixels = px(225.0);
@@ -123,6 +123,38 @@ pub struct StorageData {
 }
 
 impl StorageData {
+    pub fn new(cx: &App) -> Self {
+        let playback = cx.global::<PlaybackInfo>();
+        let models = cx.global::<Models>();
+
+        let split_fractions: std::collections::HashMap<String, f32> = models
+            .split_widths
+            .iter()
+            .map(|(key, width)| (key.clone(), f32::from(*width.read(cx))))
+            .collect();
+        let split_fraction = split_fractions
+            .get("albums")
+            .copied()
+            .unwrap_or(f32::from(crate::settings::storage::DEFAULT_SPLIT_FRACTION));
+
+        Self {
+            current_track: playback.current_track.read(cx).clone(),
+            volume: *playback.volume.read(cx),
+            sidebar_width: (*models.sidebar_width.read(cx)).into(),
+            queue_width: (*models.queue_width.read(cx)).into(),
+            split_fraction,
+            split_fractions,
+            table_settings: models.table_settings.read(cx).clone(),
+            liked_tracks_sort_method: *models.liked_tracks_sort_method.read(cx),
+            playlist_sort_methods: models.playlist_sort_methods.read(cx).clone(),
+            sidebar_collapsed: *models.sidebar_collapsed.read(cx),
+            lyrics_fraction: (*models.lyrics_height.read(cx)).into(),
+            controls_left_width: (*models.controls_left_width.read(cx)).into(),
+            controls_right_width: (*models.controls_right_width.read(cx)).into(),
+            window_information: models.window_information.read(cx).clone(),
+        }
+    }
+
     pub fn sidebar_width(&self) -> Pixels {
         px(self.sidebar_width)
     }

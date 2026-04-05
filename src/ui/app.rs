@@ -330,60 +330,13 @@ pub fn run() -> anyhow::Result<()> {
 
                     // Update `StorageData` and save it to file system while quitting the app
                     cx.on_app_quit({
-                        let current_track = cx.global::<PlaybackInfo>().current_track.clone();
-                        let volume = cx.global::<PlaybackInfo>().volume.clone();
-                        let sidebar_width = cx.global::<Models>().sidebar_width.clone();
-                        let queue_width = cx.global::<Models>().queue_width.clone();
-                        let split_widths = cx.global::<Models>().split_widths.clone();
-                        let lyrics_height = cx.global::<Models>().lyrics_height.clone();
-                        let table_settings = cx.global::<Models>().table_settings.clone();
-                        let liked_tracks_sort_method =
-                            cx.global::<Models>().liked_tracks_sort_method.clone();
-                        let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
-                        let controls_left_width = cx.global::<Models>().controls_left_width.clone();
-                        let controls_right_width =
-                            cx.global::<Models>().controls_right_width.clone();
-                        let window_information = cx.global::<Models>().window_information.clone();
+                        let storage = storage.clone();
                         move |cx| {
-                            let current_track = current_track.read(cx).clone();
-                            let volume = *volume.read(cx);
-                            let sidebar_width: f32 = (*sidebar_width.read(cx)).into();
-                            let queue_width: f32 = (*queue_width.read(cx)).into();
-                            let split_fractions: std::collections::HashMap<String, f32> =
-                                split_widths
-                                    .iter()
-                                    .map(|(k, e)| (k.clone(), f32::from(*e.read(cx))))
-                                    .collect();
-                            let split_fraction: f32 =
-                                split_fractions.get("albums").copied().unwrap_or(f32::from(
-                                    crate::settings::storage::DEFAULT_SPLIT_FRACTION,
-                                ));
-                            let lyrics_fraction: f32 = (*lyrics_height.read(cx)).into();
-                            let table_settings = table_settings.read(cx).clone();
-                            let liked_tracks_sort_method = *liked_tracks_sort_method.read(cx);
-                            let sidebar_collapsed = *sidebar_collapsed.read(cx);
-                            let controls_left_width: f32 = (*controls_left_width.read(cx)).into();
-                            let controls_right_width: f32 = (*controls_right_width.read(cx)).into();
-                            let window_information = window_information.read(cx).clone();
-
+                            let data = StorageData::new(cx);
                             let storage = storage.clone();
-                            cx.background_executor().spawn(async move {
-                                storage.save(&StorageData {
-                                    current_track,
-                                    volume,
-                                    sidebar_width,
-                                    queue_width,
-                                    split_fraction,
-                                    split_fractions,
-                                    lyrics_fraction,
-                                    table_settings,
-                                    liked_tracks_sort_method,
-                                    sidebar_collapsed,
-                                    controls_left_width,
-                                    controls_right_width,
-                                    window_information,
-                                });
 
+                            cx.background_executor().spawn(async move {
+                                storage.save(&data);
                                 crate::logging::flush();
                             })
                         }
