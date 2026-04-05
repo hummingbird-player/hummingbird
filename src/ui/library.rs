@@ -220,9 +220,9 @@ impl LibrarySection {
             ViewSwitchMessage::Playlist(_) => Some(Self::Playlists),
             // Release can appear under Albums or Artists – keep current section.
             ViewSwitchMessage::Release(_, _) => None,
-            ViewSwitchMessage::Back
-            | ViewSwitchMessage::Forward
-            | ViewSwitchMessage::Refresh => None,
+            ViewSwitchMessage::Back | ViewSwitchMessage::Forward | ViewSwitchMessage::Refresh => {
+                None
+            }
         }
     }
 }
@@ -348,8 +348,8 @@ impl Library {
             let scroll_state = ScrollStateStorage::default();
             let initial_message = switcher_model.read(cx).current();
             let view = make_view(&initial_message, cx, &switcher_model, &scroll_state);
-            let section = LibrarySection::from_message(&initial_message)
-                .unwrap_or(LibrarySection::Albums);
+            let section =
+                LibrarySection::from_message(&initial_message).unwrap_or(LibrarySection::Albums);
 
             cx.subscribe(
                 &switcher_model,
