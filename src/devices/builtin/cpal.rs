@@ -7,7 +7,7 @@ use crate::{
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, Scale},
+        util::{AtomicF64, GainRamp, Scale},
     },
     media::{pipeline::ChannelConsumers, playback::Mute},
     util::make_unknown_error,
@@ -18,6 +18,13 @@ use cpal::{
 };
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+/// Delay between requesting a fade-out and pausing the stream. Must exceed
+/// the gain ramp length (15 ms) plus a few callback periods to ensure the
+/// audio thread drains a buffer at zero gain.
+const PAUSE_FADE_WAIT: Duration = Duration::from_millis(50);
 
 pub struct CpalProvider {
     host: Host,
@@ -115,27 +122,22 @@ fn create_stream_internal<T: CpalSample>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buffer_size: usize,
-    volume: Arc<AtomicF64>,
+    target_gain: Arc<AtomicF64>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
     let rb: SpscRb<T> = SpscRb::new(buffer_size);
     let cons = rb.consumer();
     let prod = rb.producer();
+    let channels = config.channels as usize;
+    let mut ramp = GainRamp::new(config.sample_rate);
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            let written = cons.read(data).unwrap_or(0);
+            data.iter_mut().for_each(|v| *v = T::muted());
+            let _ = cons.read(data).unwrap_or(0);
 
-            let volume = volume.load(std::sync::atomic::Ordering::Relaxed);
-
-            // don't scale if the volume is close to 1, it could lead to (negligable) quality loss
-            if volume <= 0.98 {
-                for sample in &mut data[..written] {
-                    *sample = sample.scale(volume);
-                }
-            }
-
-            data[written..].iter_mut().for_each(|v| *v = T::muted())
+            let target = target_gain.load(Ordering::Relaxed);
+            ramp.apply(data, channels, target);
         },
         move |_| {},
         None,
@@ -151,15 +153,11 @@ impl CpalDevice {
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
-
         let ChannelSpec::Count(channels) = format.channels;
-
         let buffer_size = ((200 * config.sample_rate as usize) / 1000) * channels as usize;
-
-        let volume = Arc::new(AtomicF64::new(1.0));
-
+        let target_gain = Arc::new(AtomicF64::new(1.0));
         let (stream, prod) =
-            create_stream_internal::<T>(&self.device, &config, buffer_size, volume.clone())?;
+            create_stream_internal::<T>(&self.device, &config, buffer_size, target_gain.clone())?;
 
         Ok(Box::new(CpalStream {
             ring_buf: prod,
@@ -168,7 +166,8 @@ impl CpalDevice {
             config,
             buffer_size,
             device: self.device.clone(),
-            volume,
+            target_gain,
+            last_user_volume: 1.0,
             replaygain: 1.0,
             interleave_buffer: Vec::with_capacity(buffer_size),
         }))
@@ -259,7 +258,11 @@ where
     pub device: cpal::Device,
     pub format: FormatInfo,
     pub buffer_size: usize,
-    pub volume: Arc<AtomicF64>,
+    pub target_gain: Arc<AtomicF64>,
+    /// most recent volume the user asked for. This is tracked separately
+    /// from `target_gain` because pause-fades temporarily overwrite the
+    /// shared atomic with 0.0. `play()` restores from this field.
+    pub last_user_volume: f64,
     pub replaygain: f64,
     pub interleave_buffer: Vec<T>,
 }
@@ -277,10 +280,14 @@ where
     }
 
     fn play(&mut self) -> Result<(), StateError> {
+        self.target_gain
+            .store(self.last_user_volume, Ordering::Relaxed);
         self.stream.play().map_err(|v| v.into())
     }
 
     fn pause(&mut self) -> Result<(), StateError> {
+        self.target_gain.store(0.0, Ordering::Relaxed);
+        std::thread::sleep(PAUSE_FADE_WAIT); // TODO: make this less hacky?
         self.stream.pause().map_err(|v| v.into())
     }
 
@@ -289,7 +296,7 @@ where
             &self.device,
             &self.config,
             self.buffer_size,
-            self.volume.clone(),
+            self.target_gain.clone(),
         )?;
 
         self.stream = stream;
@@ -300,8 +307,8 @@ where
     }
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
-        self.volume
-            .store(volume, std::sync::atomic::Ordering::Relaxed);
+        self.last_user_volume = volume;
+        self.target_gain.store(volume, Ordering::Relaxed);
         Ok(())
     }
 
