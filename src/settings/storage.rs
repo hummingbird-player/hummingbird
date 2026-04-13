@@ -152,6 +152,7 @@ impl StorageData {
             split_fractions,
             table_settings: models.table_settings.read(cx).clone(),
             liked_tracks_sort_method: *models.liked_tracks_sort_method.read(cx),
+            playlist_sort_methods: models.playlist_sort_methods.read(cx).clone(),
             sidebar_collapsed: *models.sidebar_collapsed.read(cx),
             lyrics_fraction: (*models.lyrics_height.read(cx)).into(),
             controls_left_width: (*models.controls_left_width.read(cx)).into(),
