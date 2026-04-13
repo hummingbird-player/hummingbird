@@ -6,7 +6,6 @@ use std::{path::Path, process::Command, rc::Rc, sync::Arc};
 
 use cntp_i18n::tr;
 use gpui::{AnyElement, App, AppContext, Entity, IntoElement, SharedString, Window};
-use rand::{rng, seq::SliceRandom};
 
 use crate::{
     library::{
