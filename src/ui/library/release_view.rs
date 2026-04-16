@@ -23,6 +23,7 @@ use crate::{
         },
         library::{
             ViewSwitchMessage,
+            collection_summary::format_collection_summary,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{Models, PlaybackInfo},
@@ -38,6 +39,7 @@ pub struct ReleaseView {
     artist_name: Option<DBString>,
     tracks: Arc<Vec<Track>>,
     track_listing: TrackListing,
+    collection_summary: SharedString,
     release_info: Option<SharedString>,
     img_path: SharedString,
     scroll_handle: ScrollHandle,
@@ -74,6 +76,10 @@ impl ReleaseView {
                 false,
                 true,
             );
+            let collection_summary = format_collection_summary(
+                tracks.len() as i64,
+                tracks.iter().map(|track| track.duration).sum(),
+            );
 
             let release_info = {
                 let mut info = String::default();
@@ -108,6 +114,7 @@ impl ReleaseView {
                 artist_name,
                 tracks,
                 track_listing,
+                collection_summary,
                 release_info,
                 img_path: SharedString::from(format!("!db://album/{album_id}/full")),
                 scroll_handle: ScrollHandle::new(),
@@ -193,6 +200,13 @@ impl ReleaseView {
                             .w_full()
                             .text_ellipsis()
                             .child(self.album.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .pb(px(10.0))
+                            .text_sm()
+                            .text_color(theme.text_secondary)
+                            .child(self.collection_summary.clone()),
                     )
                     .child(playback_controls(
                         "release",

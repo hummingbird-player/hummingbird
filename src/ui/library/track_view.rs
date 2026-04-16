@@ -22,8 +22,6 @@ use crate::{
         models::Models,
     },
 };
-
-
 #[derive(Clone)]
 pub struct TrackView {
     table_view_header: Entity<TableViewHeader<Track, TrackColumn>>,

@@ -13,10 +13,7 @@ use crate::{
     },
 };
 
-use super::{
-    NavigationHistory, ViewSwitchMessage,
-    table_view_header::TableViewHeader,
-};
+use super::{NavigationHistory, ViewSwitchMessage, table_view_header::TableViewHeader};
 
 #[derive(Clone)]
 pub struct ArtistView {

@@ -97,7 +97,7 @@
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:485",
+    "definedIn": "src/ui/library.rs:486",
     "plural": false,
     "description": null
   },
@@ -109,7 +109,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:486",
+    "definedIn": "src/ui/library.rs:487",
     "plural": false,
     "description": null
   },
@@ -245,6 +245,12 @@
     "plural": false,
     "description": null
   },
+  "COLLECTION_SUMMARY_TRACKS": {
+    "context": "collection_summary.rs",
+    "definedIn": "src/ui/library/collection_summary.rs:8",
+    "plural": true,
+    "description": null
+  },
   "COLUMN_ALBUM": {
     "context": "table.rs",
     "definedIn": "src/library/types/table.rs:303",
@@ -361,7 +367,7 @@
   },
   "EXPORT_PLAYLIST_TO_M3U": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:242",
+    "definedIn": "src/ui/library/playlist_view.rs:244",
     "plural": false,
     "description": null
   },
@@ -685,13 +691,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:254",
+    "definedIn": "src/ui/library/release_view.rs:268",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:269",
+    "definedIn": "src/ui/library/release_view.rs:283",
     "plural": false,
     "description": null
   },
@@ -1021,13 +1027,13 @@
   },
   "SORT_ALBUM": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:68",
+    "definedIn": "src/ui/library/playlist_view.rs:69",
     "plural": false,
     "description": null
   },
   "SORT_ARTIST": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:65",
+    "definedIn": "src/ui/library/playlist_view.rs:66",
     "plural": false,
     "description": null
   },
@@ -1039,7 +1045,7 @@
   },
   "SORT_CUSTOM": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:60",
+    "definedIn": "src/ui/library/playlist_view.rs:61",
     "plural": false,
     "description": null
   },
@@ -1051,7 +1057,7 @@
   },
   "SORT_DURATION": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:71",
+    "definedIn": "src/ui/library/playlist_view.rs:72",
     "plural": false,
     "description": null
   },

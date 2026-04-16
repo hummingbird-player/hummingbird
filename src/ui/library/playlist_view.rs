@@ -14,7 +14,7 @@ use crate::{
     library::{
         db::{LibraryAccess, PlaylistTrackSortMethod},
         playlist::export_playlist,
-        types::{Playlist, PlaylistType},
+        types::{PlaylistType, PlaylistWithCount},
     },
     playback::queue::QueueItemData,
     ui::{
@@ -34,6 +34,7 @@ use crate::{
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
+        library::collection_summary::format_collection_summary,
         library::track_listing::{
             ArtistNameVisibility,
             track_item::{TrackItem, TrackItemLeftField},
@@ -178,7 +179,7 @@ impl Render for PlaylistTrackItem {
 }
 
 pub struct PlaylistView {
-    playlist: Arc<Playlist>,
+    playlist: Arc<PlaylistWithCount>,
     playlist_track_ids: Arc<Vec<(i64, i64, i64)>>,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
     render_counter: Entity<usize>,
@@ -217,6 +218,7 @@ impl PlaylistView {
                     if let PlaylistEvent::PlaylistUpdated(id) = ev
                         && *id == this.playlist.id
                     {
+                        this.playlist = cx.get_playlist(this.playlist.id).unwrap();
                         this.playlist_track_ids = cx
                             .get_playlist_tracks_sorted(this.playlist.id, this.sort_method)
                             .unwrap();
@@ -436,6 +438,8 @@ impl Render for PlaylistView {
         let playlist_id = self.playlist.id;
         let is_custom_sort = self.is_custom_sort();
         let current_sort = self.sort_method;
+        let collection_summary =
+            format_collection_summary(self.playlist.track_count, self.playlist.total_duration);
 
         if self.first_render {
             self.first_render = false;
@@ -541,6 +545,13 @@ impl Render for PlaylistView {
                                             } else {
                                                 div().child(self.playlist.name.clone())
                                             }),
+                                    )
+                                    .child(
+                                        div()
+                                            .pb(px(10.0))
+                                            .text_sm()
+                                            .text_color(theme.text_secondary)
+                                            .child(collection_summary),
                                     )
                                     .child(
                                         div()

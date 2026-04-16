@@ -40,6 +40,10 @@
   "CLICK_TO_CONFIRM": "Click to confirm sign in",
   "CLOSE": "Close",
   "COLLAPSE_SIDEBAR": "Collapse Sidebar",
+  "COLLECTION_SUMMARY_TRACKS": {
+    "one": "{{count}} track",
+    "other": "{{count}} tracks"
+  },
   "COLUMN_ALBUM": "Album",
   "COLUMN_ALBUMS": "# of Albums",
   "COLUMN_ARTIST": "Artist",

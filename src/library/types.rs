@@ -282,6 +282,8 @@ pub struct PlaylistWithCount {
     #[sqlx(rename = "type")]
     pub playlist_type: PlaylistType,
     pub track_count: i64,
+    #[sqlx(default)]
+    pub total_duration: i64,
 }
 
 impl PlaylistWithCount {

@@ -9,7 +9,7 @@ use sqlx::{
 use tracing::debug;
 
 use crate::{
-    library::types::{ArtistWithCounts, Playlist, PlaylistItem, PlaylistWithCount, TrackStats},
+    library::types::{ArtistWithCounts, PlaylistItem, PlaylistWithCount, TrackStats},
     ui::app::Pool,
 };
 
@@ -505,10 +505,13 @@ pub async fn get_all_playlists(pool: &SqlitePool) -> sqlx::Result<Arc<Vec<Playli
     Ok(Arc::new(playlists))
 }
 
-pub async fn get_playlist(pool: &SqlitePool, playlist_id: i64) -> sqlx::Result<Arc<Playlist>> {
+pub async fn get_playlist(
+    pool: &SqlitePool,
+    playlist_id: i64,
+) -> sqlx::Result<Arc<PlaylistWithCount>> {
     let query = include_str!("../../queries/playlist/get_playlist.sql");
 
-    let playlist: Playlist = sqlx::query_as(query)
+    let playlist: PlaylistWithCount = sqlx::query_as(query)
         .bind(playlist_id)
         .fetch_one(pool)
         .await?;
@@ -722,7 +725,7 @@ pub trait LibraryAccess {
     fn delete_playlist(&self, playlist_id: i64) -> sqlx::Result<()>;
     fn rename_playlist(&self, playlist_id: i64, name: &str) -> sqlx::Result<()>;
     fn get_all_playlists(&self) -> sqlx::Result<Arc<Vec<PlaylistWithCount>>>;
-    fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<Playlist>>;
+    fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<PlaylistWithCount>>;
     fn get_playlist_track_files(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<String>>>;
     fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
     fn get_playlist_tracks_sorted(
@@ -829,7 +832,7 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(get_all_playlists(&pool.0))
     }
 
-    fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<Playlist>> {
+    fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<PlaylistWithCount>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_playlist(&pool.0, playlist_id))
     }

@@ -9,10 +9,7 @@ use crate::{
     },
     ui::{
         components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
-        library::{
-            context_menus::AlbumContextMenuContext,
-            table_view_header::TableViewHeader,
-        },
+        library::{context_menus::AlbumContextMenuContext, table_view_header::TableViewHeader},
         models::Models,
     },
 };
