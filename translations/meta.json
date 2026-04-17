@@ -73,7 +73,7 @@
   },
   "ABOUT_LINKS_MIDDLE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:121",
+    "definedIn": "src/ui/about.rs:102",
     "plural": false,
     "description": null
   },
