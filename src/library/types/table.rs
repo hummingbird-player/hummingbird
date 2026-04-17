@@ -25,6 +25,7 @@ use crate::{
             AlbumContextMenuContext, TrackContextMenuContext, album_menu_for_table,
             play_album_next, play_track_next, track_menu_for_table,
         },
+        util::format_duration,
     },
 };
 
@@ -431,11 +432,7 @@ impl TableData<TrackColumn> for Track {
                     None
                 }
             }
-            TrackColumn::Length => {
-                let minutes = self.duration / 60;
-                let seconds = self.duration % 60;
-                Some(format!("{:02}:{:02}", minutes, seconds).into())
-            }
+            TrackColumn::Length => Some(format_duration(self.duration, true).into()),
         }
     }
 
