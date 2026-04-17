@@ -1,1 +1,1 @@
-SELECT playlist.*, COUNT(playlist_item.id) as track_count FROM playlist LEFT JOIN playlist_item ON playlist.id = playlist_item.playlist_id GROUP BY playlist.id;
+SELECT playlist.*, COUNT(playlist_item.id) as track_count, COALESCE(SUM(track.duration), 0) as total_duration FROM playlist LEFT JOIN playlist_item ON playlist.id = playlist_item.playlist_id LEFT JOIN track ON playlist_item.track_id = track.id GROUP BY playlist.id;
