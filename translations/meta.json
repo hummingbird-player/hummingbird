@@ -553,13 +553,13 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:954",
+    "definedIn": "src/ui/controls.rs:964",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:889",
+    "definedIn": "src/ui/controls.rs:899",
     "plural": false,
     "description": null
   },
@@ -1177,7 +1177,7 @@
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:882",
+    "definedIn": "src/ui/controls.rs:892",
     "plural": false,
     "description": null
   },
