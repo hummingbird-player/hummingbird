@@ -1,8 +1,10 @@
 pub mod model;
 pub mod search_item;
 
+use crate::ui::components::modal::ModalActive;
 use gpui::*;
 use model::SearchModel;
+use std::sync::atomic::Ordering;
 
 use super::{
     components::modal::modal,
@@ -25,6 +27,10 @@ impl SearchView {
             let search = SearchModel::new(cx, &show);
 
             App::on_action(cx, move |_: &Search, cx| {
+                if cx.global::<ModalActive>().0.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 show_clone.update(cx, |m, cx| {
                     *m = true;
                     cx.notify();
