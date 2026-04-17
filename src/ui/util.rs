@@ -247,6 +247,19 @@ where
     }
 }
 
+pub fn format_duration(secs: i64) -> String {
+    let secs = secs.max(0);
+    let hours = secs / 3_600;
+    let minutes = (secs % 3_600) / 60;
+    let seconds = secs % 60;
+
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 pub fn find_art_file_for_path(path: &Path) -> Option<Arc<Path>> {
     let parent = path.parent()?;
 

@@ -42,6 +42,7 @@ use super::{
 };
 
 use crate::settings::storage::{DEFAULT_CONTROLS_LEFT_WIDTH, DEFAULT_CONTROLS_RIGHT_WIDTH};
+use crate::ui::util::format_duration;
 
 pub struct Controls {
     info_section: Entity<InfoSection>,
@@ -714,11 +715,12 @@ impl Render for Scrubber {
                     .items_end()
                     .mt(px(6.0))
                     .mb(px(6.0))
-                    .child(div().mr(px(6.0)).line_height(rems(1.0)).child(format!(
-                        "{:02}:{:02}",
-                        position_secs / 60,
-                        position_secs % 60
-                    )))
+                    .child(
+                        div()
+                            .mr(px(6.0))
+                            .line_height(rems(1.0))
+                            .child(format_duration(position_secs as i64)),
+                    )
                     .when(window_width > px(900.0), |this| {
                         this.child(
                             div()
@@ -727,20 +729,17 @@ impl Render for Scrubber {
                                 .border_l(px(2.0))
                                 .pl(px(6.0))
                                 .text_color(rgb(0xcbd5e1))
-                                .child(format!(
-                                    "{:02}:{:02}",
-                                    duration_secs / 60,
-                                    duration_secs % 60
-                                )),
+                                .child(format_duration(duration_secs as i64)),
                         )
                     })
                     .child(self.playback_section.clone())
                     .child(div().h(px(30.0)))
-                    .child(div().ml(auto()).line_height(rems(1.0)).child(format!(
-                        "-{:02}:{:02}",
-                        remaining_secs / 60,
-                        remaining_secs % 60
-                    ))),
+                    .child(
+                        div()
+                            .ml(auto())
+                            .line_height(rems(1.0))
+                            .child(format!("-{}", format_duration(remaining_secs as i64))),
+                    ),
             )
             .child(
                 slider()

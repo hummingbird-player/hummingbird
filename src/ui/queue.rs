@@ -1,3 +1,4 @@
+use crate::ui::util::format_duration;
 use crate::{
     library::db::LibraryAccess,
     playback::{interface::PlaybackInterface, queue::QueueItemData},
@@ -258,11 +259,7 @@ impl Render for QueueItem {
                                                     .ml(px(6.0))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(theme.text_secondary)
-                                                    .child(format!(
-                                                        "{:02}:{:02}",
-                                                        duration / 60,
-                                                        duration % 60
-                                                    )),
+                                                    .child(format_duration(duration)),
                                             )
                                         }),
                                 ),

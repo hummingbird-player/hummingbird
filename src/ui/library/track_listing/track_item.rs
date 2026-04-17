@@ -11,6 +11,7 @@ use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
 use crate::ui::library::context_menus::play_track_next;
 use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::PlaylistEvent;
+use crate::ui::util::format_duration;
 use crate::{
     library::{
         db::{self, LibraryAccess},
@@ -388,11 +389,7 @@ impl Render for TrackItem {
                                             .pl(px(10.0))
                                             .border_color(theme.border_color)
                                             .text_align(TextAlign::Right)
-                                            .child(format!(
-                                                "{}:{:02}",
-                                                self.track.duration / 60,
-                                                self.track.duration % 60
-                                            )),
+                                            .child(format_duration(self.track.duration)),
                                     ),
                             ),
                     )
