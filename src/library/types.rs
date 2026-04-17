@@ -260,21 +260,6 @@ pub enum PlaylistType {
 }
 
 #[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
-pub struct Playlist {
-    pub id: i64,
-    pub name: DBString,
-    pub created_at: DateTime<Utc>,
-    #[sqlx(rename = "type")]
-    pub playlist_type: PlaylistType,
-}
-
-impl Playlist {
-    pub fn is_liked_songs(&self) -> bool {
-        self.playlist_type == PlaylistType::System && self.name.0.as_str() == "Liked Songs"
-    }
-}
-
-#[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
 pub struct PlaylistWithCount {
     pub id: i64,
     pub name: DBString,
