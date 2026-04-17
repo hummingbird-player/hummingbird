@@ -12,7 +12,7 @@ use crate::{
     library::{
         db::LibraryAccess,
         playlist::export_playlist,
-        types::{PlaylistType, Playlist},
+        types::{Playlist, PlaylistType},
     },
     playback::interface::PlaybackInterface,
     settings::SettingsGlobal,

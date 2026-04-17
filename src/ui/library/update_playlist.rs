@@ -11,7 +11,7 @@ use crate::{
     library::{
         db::LibraryAccess,
         playlist::import_playlist,
-        types::{PlaylistType, Playlist},
+        types::{Playlist, PlaylistType},
     },
     ui::components::{
         icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},

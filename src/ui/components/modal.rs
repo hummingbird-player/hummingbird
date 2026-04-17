@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::*;
 use prelude::FluentBuilder;
@@ -7,6 +8,9 @@ use crate::ui::{
     constants::{APP_ROUNDING, APP_SHADOW_SIZE},
     theme::Theme,
 };
+
+pub struct ModalActive(pub AtomicBool);
+impl Global for ModalActive {}
 
 pub type OnExitHandler = dyn Fn(&mut Window, &mut App);
 
@@ -44,6 +48,8 @@ impl ParentElement for Modal {
 
 impl RenderOnce for Modal {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        cx.global::<ModalActive>().0.store(true, Ordering::Relaxed);
+
         let decorations = window.window_decorations();
         let theme = cx.global::<Theme>();
         let mut size = window.viewport_size();

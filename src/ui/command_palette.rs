@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use cntp_i18n::tr;
 use gpui::{
@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 use tracing::error;
 
+use crate::ui::components::modal::ModalActive;
 #[cfg(feature = "update")]
 use crate::ui::global_actions::CheckForUpdates;
 use crate::ui::{
@@ -276,6 +277,10 @@ impl CommandPalette {
             let weak_self = cx.weak_entity();
             let show_clone = show.clone();
             App::on_action(cx, move |_: &OpenPalette, cx: &mut App| {
+                if cx.global::<ModalActive>().0.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 show_clone.update(cx, |show, cx| {
                     *show = true;
                     cx.notify();

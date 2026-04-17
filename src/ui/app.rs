@@ -1,6 +1,9 @@
 use std::{
     fs,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use cntp_i18n::{I18N_MANAGER, Locale, tr};
@@ -38,7 +41,12 @@ use crate::{
 use super::{
     about::about_dialog,
     arguments::parse_args_and_prepare,
-    components::{input, modal, popover, window_chrome::window_chrome},
+    components::{
+        input,
+        modal::{self, ModalActive},
+        popover,
+        window_chrome::window_chrome,
+    },
     controls::Controls,
     global_actions::register_actions,
     header::Header,
@@ -67,6 +75,8 @@ struct WindowShadow {
 
 impl Render for WindowShadow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
+
         let right_sidebar = self.right_sidebar.clone();
         let show_about = *self.show_about.clone().read(cx);
         let scan_state = cx.global::<Models>().scan_state.read(cx).clone();
@@ -233,6 +243,8 @@ pub fn run() -> anyhow::Result<()> {
             library::bind_actions(cx);
             dropdown::bind_actions(cx);
             popover::bind_actions(cx);
+
+            cx.set_global(modal::ModalActive(AtomicBool::new(false)));
 
             let settings_model = cx.global::<SettingsGlobal>().model.clone();
             cx.observe(&settings_model, |_, cx| cx.refresh_windows())
