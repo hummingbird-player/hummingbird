@@ -11,7 +11,24 @@ use super::{
 
 const ISSUES_URL: &str = "https://github.com/143mailliw/hummingbird/issues";
 const SOURCE_URL: &str = "https://github.com/143mailliw/hummingbird";
+const WEBSITE_URL: &str = "https://hummingbird.mailliw.org/";
+const DISCORD_URL: &str = "https://discord.gg/6tayc2vzs9";
 const LICENSE_URL: &str = "https://choosealicense.com/licenses/apache-2.0/";
+
+fn link_label(
+    id: impl Into<gpui::ElementId>,
+    url: &'static str,
+    link_color: gpui::Rgba,
+    child: impl IntoElement,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .text_color(link_color)
+        .hover(move |this| this.border_b_1().border_color(link_color))
+        .on_click(move |_, _, cx| cx.open_url(url))
+        .child(child)
+}
 
 #[derive(IntoElement)]
 pub struct AboutDialog {
@@ -23,6 +40,7 @@ impl RenderOnce for AboutDialog {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         self.focus_handle.focus(window, cx);
         let theme = cx.global::<Theme>();
+        let link_color = theme.text_link;
 
         modal().on_exit(self.on_exit).child(
             div()
@@ -75,41 +93,44 @@ impl RenderOnce for AboutDialog {
                                                     text. Use a zero-width space (U+200B) if a \
                                                     part isn't needed."
                                             ))
-                                            .child(
-                                                div()
-                                                    .id("about-bug-link")
-                                                    .cursor_pointer()
-                                                    .text_color(theme.text_link)
-                                                    .hover(|this| {
-                                                        this.border_b_1()
-                                                            .border_color(theme.text_link)
-                                                    })
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(ISSUES_URL);
-                                                    })
-                                                    .child(tr!("ABOUT_LINKS_BUG", "Report a bug")),
-                                            )
+                                            .child(link_label(
+                                                "about-bug-link",
+                                                ISSUES_URL,
+                                                link_color,
+                                                tr!("ABOUT_LINKS_BUG", "Report a bug"),
+                                            ))
                                             .child(tr!("ABOUT_LINKS_MIDDLE", " or "))
-                                            .child(
-                                                div()
-                                                    .id("about-source-link")
-                                                    .cursor_pointer()
-                                                    .text_color(theme.text_link)
-                                                    .hover(|this| {
-                                                        this.border_b_1()
-                                                            .border_color(theme.text_link)
-                                                    })
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(SOURCE_URL);
-                                                    })
-                                                    .child(tr!(
-                                                        "ABOUT_LINKS_CODE",
-                                                        "view the source code"
-                                                    )),
-                                            )
+                                            .child(link_label(
+                                                "about-source-link",
+                                                SOURCE_URL,
+                                                link_color,
+                                                tr!("ABOUT_LINKS_CODE", "view the source code"),
+                                            ))
                                             .child(tr!("ABOUT_LINKS_END", " on GitHub.")),
                                     )
-                                    .child(div().child(tr!(
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .child(tr!("ABOUT_COMMUNITY_BEFORE_LINKS", "\u{200B}"))
+                                            .child(link_label(
+                                                "about-website-link",
+                                                WEBSITE_URL,
+                                                link_color,
+                                                tr!("ABOUT_COMMUNITY_WEBSITE", "Visit our website"),
+                                            ))
+                                            .child(tr!("ABOUT_LINKS_MIDDLE", " or "))
+                                            .child(link_label(
+                                                "about-discord-link",
+                                                DISCORD_URL,
+                                                link_color,
+                                                tr!(
+                                                    "ABOUT_COMMUNITY_DISCORD",
+                                                    "join us on Discord"
+                                                ),
+                                            ))
+                                            .child(tr!("ABOUT_COMMUNITY_END", ".")),
+                                    )
+                                    .child(div().mt(px(10.0)).child(tr!(
                                         "ABOUT_COPYRIGHT",
                                         "Copyright © 2024 - 2026 William \
                                             Whittaker and contributors."
@@ -121,23 +142,15 @@ impl RenderOnce for AboutDialog {
                                                 "ABOUT_LICENSE_BEFORE_LINK",
                                                 "Licensed under the Apache License, version 2.0. "
                                             ))
-                                            .child(
-                                                div()
-                                                    .id("about-rights-link")
-                                                    .cursor_pointer()
-                                                    .text_color(theme.text_link)
-                                                    .hover(|this| {
-                                                        this.border_b_1()
-                                                            .border_color(theme.text_link)
-                                                    })
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(LICENSE_URL);
-                                                    })
-                                                    .child(tr!(
-                                                        "ABOUT_LICENSE_LINK",
-                                                        "Learn more about your rights."
-                                                    )),
-                                            )
+                                            .child(link_label(
+                                                "about-rights-link",
+                                                LICENSE_URL,
+                                                link_color,
+                                                tr!(
+                                                    "ABOUT_LICENSE_LINK",
+                                                    "Learn more about your rights."
+                                                ),
+                                            ))
                                             .child(tr!("ABOUT_LICENSE_AFTER_LINK", "\u{200B}")),
                                     ),
                             ),
