@@ -258,7 +258,7 @@ pub fn format_duration(secs: i64, pad_minutes: bool) -> String {
     } else if pad_minutes {
         format!("{minutes:02}:{seconds:02}")
     } else {
-        format!("{minutes:02}:{seconds:02}")
+        format!("{minutes}:{seconds:02}")
     }
 }
 
