@@ -13,6 +13,6 @@ pub fn format_collection_summary(track_count: i64, total_duration: i64) -> Share
 
     SharedString::from(format!(
         "{track_label} • {}",
-        format_duration(total_duration)
+        format_duration(total_duration, false)
     ))
 }

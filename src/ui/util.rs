@@ -247,7 +247,7 @@ where
     }
 }
 
-pub fn format_duration(secs: i64) -> String {
+pub fn format_duration(secs: i64, pad_minutes: bool) -> String {
     let secs = secs.max(0);
     let hours = secs / 3_600;
     let minutes = (secs % 3_600) / 60;
@@ -255,6 +255,8 @@ pub fn format_duration(secs: i64) -> String {
 
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
+    } else if pad_minutes {
+        format!("{minutes:02}:{seconds:02}")
     } else {
         format!("{minutes:02}:{seconds:02}")
     }

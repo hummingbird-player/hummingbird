@@ -389,7 +389,7 @@ impl Render for TrackItem {
                                             .pl(px(10.0))
                                             .border_color(theme.border_color)
                                             .text_align(TextAlign::Right)
-                                            .child(format_duration(self.track.duration)),
+                                            .child(format_duration(self.track.duration, false)),
                                     ),
                             ),
                     )

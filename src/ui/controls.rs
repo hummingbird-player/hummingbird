@@ -719,7 +719,7 @@ impl Render for Scrubber {
                         div()
                             .mr(px(6.0))
                             .line_height(rems(1.0))
-                            .child(format_duration(position_secs as i64)),
+                            .child(format_duration(position_secs as i64, true)),
                     )
                     .when(window_width > px(900.0), |this| {
                         this.child(
@@ -729,7 +729,7 @@ impl Render for Scrubber {
                                 .border_l(px(2.0))
                                 .pl(px(6.0))
                                 .text_color(rgb(0xcbd5e1))
-                                .child(format_duration(duration_secs as i64)),
+                                .child(format_duration(duration_secs as i64, true)),
                         )
                     })
                     .child(self.playback_section.clone())
@@ -738,7 +738,7 @@ impl Render for Scrubber {
                         div()
                             .ml(auto())
                             .line_height(rems(1.0))
-                            .child(format!("-{}", format_duration(remaining_secs as i64))),
+                            .child(format!("-{}", format_duration(remaining_secs as i64, true))),
                     ),
             )
             .child(
