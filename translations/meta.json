@@ -247,7 +247,7 @@
   },
   "COLLECTION_SUMMARY_TRACKS": {
     "context": "collection_summary.rs",
-    "definedIn": "src/ui/library/collection_summary.rs:7",
+    "definedIn": "src/ui/library/collection_summary.rs:6",
     "plural": true,
     "description": null
   },
