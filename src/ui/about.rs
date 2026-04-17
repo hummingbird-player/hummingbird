@@ -118,7 +118,7 @@ impl RenderOnce for AboutDialog {
                                                 link_color,
                                                 tr!("ABOUT_COMMUNITY_WEBSITE", "Visit our website"),
                                             ))
-                                            .child(tr!("ABOUT_LINKS_MIDDLE"))
+                                            .child(tr!("ABOUT_COMMUNITY_MIDDLE", " or "))
                                             .child(link_label(
                                                 "about-discord-link",
                                                 DISCORD_URL,

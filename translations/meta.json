@@ -23,6 +23,12 @@
     "plural": false,
     "description": null
   },
+  "ABOUT_COMMUNITY_MIDDLE": {
+    "context": "about.rs",
+    "definedIn": "src/ui/about.rs:121",
+    "plural": false,
+    "description": null
+  },
   "ABOUT_COMMUNITY_WEBSITE": {
     "context": "about.rs",
     "definedIn": "src/ui/about.rs:119",
