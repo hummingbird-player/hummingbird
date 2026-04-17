@@ -256,7 +256,7 @@ pub fn format_duration(secs: i64) -> String {
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
     } else {
-        format!("{minutes}:{seconds:02}")
+        format!("{minutes:02}:{seconds:02}")
     }
 }
 
