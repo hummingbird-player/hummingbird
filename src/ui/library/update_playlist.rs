@@ -11,7 +11,7 @@ use crate::{
     library::{
         db::LibraryAccess,
         playlist::import_playlist,
-        types::{PlaylistType, PlaylistWithCount},
+        types::{PlaylistType, Playlist},
     },
     ui::components::{
         icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-impl PaletteItem for PlaylistWithCount {
+impl PaletteItem for Playlist {
     fn left_content(&self, _: &mut App) -> Option<FinderItemLeft> {
         Some(FinderItemLeft::Icon(match self.playlist_type {
             PlaylistType::User => PLAYLIST.into(),
@@ -42,12 +42,12 @@ impl PaletteItem for PlaylistWithCount {
     }
 }
 
-type MatcherFunc = Box<dyn Fn(&Arc<PlaylistWithCount>, &mut App) -> Utf32String + 'static>;
-type OnAccept = Box<dyn Fn(&Arc<PlaylistWithCount>, &mut App) + 'static>;
+type MatcherFunc = Box<dyn Fn(&Arc<Playlist>, &mut App) -> Utf32String + 'static>;
+type OnAccept = Box<dyn Fn(&Arc<Playlist>, &mut App) + 'static>;
 
 pub struct UpdatePlaylist {
     show: Entity<bool>,
-    palette: Entity<Palette<PlaylistWithCount, MatcherFunc, OnAccept>>,
+    palette: Entity<Palette<Playlist, MatcherFunc, OnAccept>>,
 }
 
 impl UpdatePlaylist {

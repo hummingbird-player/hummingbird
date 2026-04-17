@@ -14,7 +14,7 @@ use crate::{
     library::{
         db::{LibraryAccess, PlaylistTrackSortMethod},
         playlist::export_playlist,
-        types::{PlaylistType, PlaylistWithCount},
+        types::{Playlist, PlaylistType},
     },
     playback::queue::QueueItemData,
     ui::{
@@ -179,7 +179,7 @@ impl Render for PlaylistTrackItem {
 }
 
 pub struct PlaylistView {
-    playlist: Arc<PlaylistWithCount>,
+    playlist: Arc<Playlist>,
     playlist_track_ids: Arc<Vec<(i64, i64, i64)>>,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
     render_counter: Entity<usize>,

@@ -12,7 +12,7 @@ use crate::{
     library::{
         db::LibraryAccess,
         playlist::export_playlist,
-        types::{PlaylistType, PlaylistWithCount},
+        types::{PlaylistType, Playlist},
     },
     playback::interface::PlaybackInterface,
     settings::SettingsGlobal,
@@ -34,7 +34,7 @@ use crate::{
 };
 
 pub struct PlaylistList {
-    playlists: Arc<Vec<PlaylistWithCount>>,
+    playlists: Arc<Vec<Playlist>>,
     nav_model: Entity<NavigationHistory>,
     scroll_handle: ScrollHandle,
     popover_open: bool,

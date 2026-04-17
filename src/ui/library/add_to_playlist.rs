@@ -11,7 +11,7 @@ use tracing::error;
 use crate::{
     library::{
         db::{self, LibraryAccess},
-        types::PlaylistWithCount,
+        types::Playlist,
     },
     ui::{
         app::Pool,
@@ -25,7 +25,7 @@ use crate::{
 };
 
 // i64 here is the track ID
-impl PaletteItem for (i64, PlaylistWithCount) {
+impl PaletteItem for (i64, Playlist) {
     fn left_content(&self, cx: &mut App) -> Option<FinderItemLeft> {
         self.1.left_content(cx)
     }
@@ -55,12 +55,12 @@ impl PaletteItem for (i64, PlaylistWithCount) {
     }
 }
 
-type MatcherFunc = Box<dyn Fn(&Arc<(i64, PlaylistWithCount)>, &mut App) -> Utf32String + 'static>;
-type OnAccept = Box<dyn Fn(&Arc<(i64, PlaylistWithCount)>, &mut App) + 'static>;
+type MatcherFunc = Box<dyn Fn(&Arc<(i64, Playlist)>, &mut App) -> Utf32String + 'static>;
+type OnAccept = Box<dyn Fn(&Arc<(i64, Playlist)>, &mut App) + 'static>;
 
 pub struct AddToPlaylist {
     show: Entity<bool>,
-    palette: Entity<Palette<(i64, PlaylistWithCount), MatcherFunc, OnAccept>>,
+    palette: Entity<Palette<(i64, Playlist), MatcherFunc, OnAccept>>,
 }
 
 impl AddToPlaylist {
