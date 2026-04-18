@@ -5,6 +5,7 @@ use gpui::{
 };
 
 use crate::{
+    power::PowerManager,
     settings::{Settings, SettingsGlobal, save_settings},
     ui::components::{
         checkbox::checkbox, label::label, labeled_slider::labeled_slider,
@@ -145,5 +146,29 @@ impl Render for PlaybackSettings {
                         }),
                 )
             })
+            .child(
+                label(
+                    "playback-prevent-idle",
+                    tr!("PLAYBACK_PREVENT_IDLE", "Prevent system idle when playing"),
+                )
+                .subtext(tr!(
+                    "PLAYBACK_PREVENT_IDLE_SUBTEXT",
+                    "Stops the screensaver and system sleep during playback."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let prevent_idle = !this.settings.read(cx).playback.prevent_idle;
+                    this.update_playback(cx, |playback| {
+                        playback.prevent_idle = prevent_idle;
+                    });
+                    let power = cx.global::<PowerManager>().clone();
+                    power.set_prevent_idle(cx, prevent_idle);
+                }))
+                .child(checkbox(
+                    "playback-prevent-idle-check",
+                    playback.prevent_idle,
+                )),
+            )
     }
 }

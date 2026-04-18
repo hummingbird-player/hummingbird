@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     playback::events::RepeatState,
+    power::PowerManager,
     settings::playback::PlaybackSettings,
     ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
 };
@@ -176,6 +177,7 @@ impl PlaybackInterface {
         let mmbs_model = app.global::<Models>().mmbs.clone();
 
         let playback_info = app.global::<PlaybackInfo>().clone();
+        let power_manager = app.global::<PowerManager>().clone();
 
         let Some(mut events_rx) = events_rx else {
             panic!("broadcast thread already started");
@@ -229,6 +231,8 @@ impl PlaybackInterface {
                                     cx.notify()
                                 });
                             }
+
+                            power_manager.set_state(cx, v);
 
                             mmbs_model.update(cx, |_, cx| {
                                 cx.emit(MMBSEvent::StateChanged(v));

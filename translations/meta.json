@@ -649,43 +649,55 @@
   },
   "PLAYBACK_ALWAYS_REPEAT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:55",
+    "definedIn": "src/ui/settings/playback.rs:56",
     "plural": false,
     "description": null
   },
   "PLAYBACK_ALWAYS_REPEAT_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:58",
+    "definedIn": "src/ui/settings/playback.rs:59",
     "plural": false,
     "description": null
   },
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:98",
+    "definedIn": "src/ui/settings/playback.rs:99",
     "plural": false,
     "description": null
   },
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:103",
+    "definedIn": "src/ui/settings/playback.rs:104",
+    "plural": false,
+    "description": null
+  },
+  "PLAYBACK_PREVENT_IDLE": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:152",
+    "plural": false,
+    "description": null
+  },
+  "PLAYBACK_PREVENT_IDLE_SUBTEXT": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:155",
     "plural": false,
     "description": null
   },
   "PLAYBACK_PREVIOUS_JUMPS": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:77",
+    "definedIn": "src/ui/settings/playback.rs:78",
     "plural": false,
     "description": null
   },
   "PLAYBACK_RG_FALLBACK_PREAMP": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:123",
+    "definedIn": "src/ui/settings/playback.rs:124",
     "plural": false,
     "description": null
   },
   "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:126",
+    "definedIn": "src/ui/settings/playback.rs:127",
     "plural": false,
     "description": null
   },

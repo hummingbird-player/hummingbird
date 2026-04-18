@@ -118,6 +118,7 @@ objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
 objc2-foundation = { version = "0.3", features = [
     "NSData",
     "NSDictionary",
+    "NSProcessInfo",
     "NSValue",
 ] }
 objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }

@@ -47,6 +47,9 @@ pub struct PlaybackSettings {
     /// ReplayGain settings.
     #[serde(default)]
     pub replaygain: ReplayGainSettings,
+
+    /// Whether to prevent the system screensaver and sleep while playing.
+    pub prevent_idle: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -57,6 +60,7 @@ impl Default for PlaybackSettings {
             prev_track_jump_first: false,
             keep_current_on_queue_clear: true,
             replaygain: ReplayGainSettings::default(),
+            prevent_idle: false,
         }
     }
 }

@@ -17,6 +17,7 @@ mod logging;
 mod media;
 mod paths;
 mod playback;
+mod power;
 mod services;
 mod settings;
 #[cfg(test)]

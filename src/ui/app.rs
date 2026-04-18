@@ -23,6 +23,7 @@ use crate::{
         interface::PlaybackInterface, queue::QueueItemData,
         session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
     },
+    power::PowerManager,
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
         SettingsGlobal, setup_settings,
@@ -259,6 +260,9 @@ pub fn run() -> anyhow::Result<()> {
             scan_interface.start_broadcast(cx);
 
             cx.set_global(scan_interface);
+
+            let power_manager = PowerManager::new(cx, playback_settings.prevent_idle);
+            cx.set_global(power_manager);
 
             register_actions(cx);
 
