@@ -184,6 +184,12 @@ impl Render for PlaylistList {
                 this.on_drag_move::<DragData>(cx.listener(
                     move |this: &mut PlaylistList, event: &DragMoveEvent<DragData>, _, cx| {
                         let scroll_handle: ScrollableHandle = this.scroll_handle.clone().into();
+                        let reduced_motion = cx
+                            .global::<SettingsGlobal>()
+                            .model
+                            .read(cx)
+                            .interface
+                            .reduced_motion;
 
                         handle_drag_move(
                             this.drag_drop_manager.clone(),
@@ -191,6 +197,7 @@ impl Render for PlaylistList {
                             event,
                             playlist_count,
                             cx,
+                            reduced_motion,
                         );
 
                         cx.notify();
