@@ -605,12 +605,15 @@ impl Render for Queue {
                                 .read(cx)
                                 .interface
                                 .reduced_motion;
-                            let scrolled = perform_edge_scroll(
-                                &scroll_handle,
-                                direction,
-                                &config.scroll_config,
-                                reduced_motion,
-                            );
+                            let scrolled = if reduced_motion {
+                                false
+                            } else {
+                                perform_edge_scroll(
+                                    &scroll_handle,
+                                    direction,
+                                    &config.scroll_config,
+                                )
+                            };
 
                             if scrolled {
                                 let entity = cx.entity().downgrade();
@@ -684,12 +687,15 @@ impl Render for Queue {
                                 .read(cx)
                                 .interface
                                 .reduced_motion;
-                            let scrolled = perform_edge_scroll(
-                                &scroll_handle,
-                                direction,
-                                &config.scroll_config,
-                                reduced_motion,
-                            );
+                            let scrolled = if reduced_motion {
+                                false
+                            } else {
+                                perform_edge_scroll(
+                                    &scroll_handle,
+                                    direction,
+                                    &config.scroll_config,
+                                )
+                            };
 
                             if scrolled {
                                 let entity = cx.entity().downgrade();
@@ -1012,8 +1018,7 @@ impl Queue {
             return;
         }
 
-        let should_continue =
-            continue_edge_scroll(manager.read(cx), &scroll_handle, reduced_motion);
+        let should_continue = continue_edge_scroll(manager.read(cx), &scroll_handle);
 
         if should_continue {
             let manager_clone = manager.clone();

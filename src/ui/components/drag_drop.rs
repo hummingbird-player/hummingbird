@@ -392,12 +392,7 @@ pub fn perform_edge_scroll(
     scroll_handle: &ScrollableHandle,
     direction: EdgeScrollDirection,
     config: &EdgeScrollConfig,
-    reduced_motion: bool,
 ) -> bool {
-    if reduced_motion {
-        return false;
-    }
-
     match direction {
         // remember GPUI scroll offsets are negative
         EdgeScrollDirection::Up => {
@@ -456,12 +451,11 @@ pub fn handle_drag_move<V: 'static>(
     });
 
     let direction = get_edge_scroll_direction(mouse_pos.y, container_bounds, &config.scroll_config);
-    let scrolled = perform_edge_scroll(
-        &scroll_handle,
-        direction,
-        &config.scroll_config,
-        reduced_motion,
-    );
+    let scrolled = if reduced_motion {
+        false
+    } else {
+        perform_edge_scroll(&scroll_handle, direction, &config.scroll_config)
+    };
 
     if !container_bounds.contains(&mouse_pos) {
         manager.update(cx, |m, _| m.state.clear_drop_target());
@@ -528,12 +522,11 @@ pub fn handle_track_drag_move<V: 'static>(
     });
 
     let direction = get_edge_scroll_direction(mouse_pos.y, container_bounds, &config.scroll_config);
-    let scrolled = perform_edge_scroll(
-        &scroll_handle,
-        direction,
-        &config.scroll_config,
-        reduced_motion,
-    );
+    let scrolled = if reduced_motion {
+        false
+    } else {
+        perform_edge_scroll(&scroll_handle, direction, &config.scroll_config)
+    };
 
     if !container_bounds.contains(&mouse_pos) {
         manager.update(cx, |m, _| m.state.clear_drop_target());
@@ -654,12 +647,7 @@ pub fn check_drag_cancelled<V: 'static>(
 pub fn continue_edge_scroll(
     manager: &DragDropListManager,
     scroll_handle: &ScrollableHandle,
-    reduced_motion: bool,
 ) -> bool {
-    if reduced_motion {
-        return false;
-    }
-
     if !manager.state.is_dragging {
         return false;
     }
@@ -673,10 +661,5 @@ pub fn continue_edge_scroll(
     };
 
     let direction = get_edge_scroll_direction(mouse_y, bounds, &manager.config.scroll_config);
-    perform_edge_scroll(
-        scroll_handle,
-        direction,
-        &manager.config.scroll_config,
-        reduced_motion,
-    )
+    perform_edge_scroll(scroll_handle, direction, &manager.config.scroll_config)
 }
