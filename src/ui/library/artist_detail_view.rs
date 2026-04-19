@@ -29,6 +29,7 @@ use crate::{
         },
         library::{
             context_menus::AlbumContextMenuContext,
+            nav_buttons::detail_close_button,
             track_listing::{
                 ArtistNameVisibility,
                 track_item::{TrackItem, TrackItemLeftField},
@@ -266,6 +267,7 @@ impl Render for ArtistDetailView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
+        let two_column = settings.interface.two_column_library;
         let grid_min_item_width = crate::settings::interface::clamp_grid_min_item_width(
             settings.interface.grid_min_item_width,
         );
@@ -446,6 +448,10 @@ impl Render for ArtistDetailView {
                                     .pt(px(52.0))
                                     .px(px(18.0))
                                     .w_full()
+                                    .relative()
+                                    .when(two_column, |this| {
+                                        this.child(detail_close_button("artist_detail_close"))
+                                    })
                                     .child(
                                         div()
                                             .font_weight(FontWeight::EXTRA_BOLD)

@@ -1,17 +1,19 @@
+use cntp_i18n::tr;
 use gpui::{
-    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, StatefulInteractiveElement,
-    Styled, Window, div, px,
+    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::ui::{
     components::{
-        icons::{ARROW_LEFT, ARROW_RIGHT},
+        icons::{ARROW_LEFT, ARROW_RIGHT, CROSS},
         nav_button::nav_button,
+        tooltip::build_tooltip,
     },
     models::Models,
 };
 
-use super::ViewSwitchMessage;
+use super::{EscapeBack, ViewSwitchMessage};
 
 #[derive(IntoElement)]
 pub struct NavButtons {}
@@ -57,4 +59,15 @@ impl RenderOnce for NavButtons {
 
 pub fn nav_buttons() -> impl IntoElement {
     NavButtons {}
+}
+
+pub fn detail_close_button(id: impl Into<ElementId>) -> impl IntoElement {
+    nav_button(id, CROSS)
+        .absolute()
+        .top(px(12.0))
+        .right(px(18.0))
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(EscapeBack), cx);
+        })
+        .tooltip(build_tooltip(tr!("CLOSE_RELEASE_DETAIL", "Close")))
 }

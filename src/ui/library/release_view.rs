@@ -17,16 +17,14 @@ use crate::{
         availability::{has_available_tracks, is_track_available},
         caching::hummingbird_cache,
         components::{
-            icons::CROSS,
-            nav_button::nav_button,
             playback_controls::playback_controls,
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
-            tooltip::build_tooltip,
         },
         library::{
             ViewSwitchMessage,
             collection_summary::format_collection_summary,
+            nav_buttons::detail_close_button,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{Models, PlaybackInfo},
@@ -134,6 +132,7 @@ impl ReleaseView {
         has_available_tracks: bool,
         current_track_in_album: bool,
         is_playing: bool,
+        show_close_button: bool,
     ) -> impl IntoElement {
         div()
             .pt(px(52.0))
@@ -143,19 +142,9 @@ impl ReleaseView {
             .px(px(18.0))
             .w_full()
             .relative()
-            .child(
-                nav_button("release_close", CROSS)
-                    .absolute()
-                    .top(px(12.0))
-                    .right(px(18.0))
-                    .on_click(|_, _, cx| {
-                        let model = cx.global::<Models>().switcher_model.clone();
-                        model.update(cx, |_, cx| {
-                            cx.emit(ViewSwitchMessage::Back);
-                        })
-                    })
-                    .tooltip(build_tooltip(tr!("CLOSE_RELEASE_DETAIL", "Close"))),
-            )
+            .when(show_close_button, |this| {
+                this.child(detail_close_button("release_close"))
+            })
             .child(
                 div()
                     .rounded(px(10.0))
@@ -411,6 +400,7 @@ impl Render for ReleaseView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
+        let two_column = settings.interface.two_column_library;
 
         div()
             .image_cache(hummingbird_cache(("release", self.album.id as u64), 1))
@@ -434,6 +424,7 @@ impl Render for ReleaseView {
                         has_available_tracks,
                         current_track_in_album,
                         is_playing,
+                        two_column,
                     ))
                     .children(self.track_listing.track_elements())
                     .when(
