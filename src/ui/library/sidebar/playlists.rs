@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use cntp_i18n::{tr, trn};
 use gpui::{
-    App, AppContext, Context, Entity, FontWeight, InteractiveElement, ParentElement, Render,
-    ScrollHandle, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    App, AppContext, Context, DragMoveEvent, Entity, FontWeight, InteractiveElement, ParentElement,
+    Render, ScrollHandle, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder, px, rgba,
 };
 use tracing::error;
 
@@ -20,10 +20,14 @@ use crate::{
         components::{
             button::{ButtonIntent, button},
             context::context,
+            drag_drop::{
+                DragData, DragDropItemState, DragDropListConfig, DragDropListManager, DragPreview,
+                DropIndicator, check_drag_cancelled, handle_drag_move, handle_drop,
+            },
             icons::{CROSS, FILE_EXPORT, PENCIL, PLAY, PLAYLIST, PLUS, SHUFFLE, STAR},
             menu::{menu, menu_item, menu_separator},
             popover::{PopoverPosition, popover},
-            scrollbar::{RightPad, floating_scrollbar},
+            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             sidebar::sidebar_item,
             textbox::Textbox,
         },
@@ -33,6 +37,9 @@ use crate::{
     },
 };
 
+const PLAYLIST_SIDEBAR_LIST_ID: &str = "sidebar-playlists";
+const PLAYLIST_SIDEBAR_ITEM_HEIGHT: f32 = 54.0;
+
 pub struct PlaylistList {
     playlists: Arc<Vec<Playlist>>,
     nav_model: Entity<NavigationHistory>,
@@ -41,6 +48,7 @@ pub struct PlaylistList {
     new_playlist_input: Entity<Textbox>,
     rename_popover_playlist: Option<i64>,
     rename_playlist_input: Entity<Textbox>,
+    drag_drop_manager: Entity<DragDropListManager>,
 }
 
 impl PlaylistList {
@@ -85,6 +93,13 @@ impl PlaylistList {
                     }
                 });
 
+            let drag_drop_config =
+                DragDropListConfig::new(PLAYLIST_SIDEBAR_LIST_ID, px(PLAYLIST_SIDEBAR_ITEM_HEIGHT));
+            let drag_drop_manager = DragDropListManager::new(cx, drag_drop_config);
+
+            cx.observe(&drag_drop_manager, |_, _, cx| cx.notify())
+                .detach();
+
             Self {
                 playlists: playlists.clone(),
                 nav_model,
@@ -93,6 +108,7 @@ impl PlaylistList {
                 new_playlist_input,
                 rename_popover_playlist: None,
                 rename_playlist_input,
+                drag_drop_manager,
             }
         })
     }
@@ -150,16 +166,74 @@ impl PlaylistList {
 
 impl Render for PlaylistList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        check_drag_cancelled(self.drag_drop_manager.clone(), cx);
+
         let theme = cx.global::<Theme>();
         let collapsed = *cx.global::<Models>().sidebar_collapsed.read(cx);
         let scroll_handle = self.scroll_handle.clone();
+        let playlist_count = self.playlists.len();
+        let allow_reorder = !collapsed;
         let mut main = div()
             .pt(px(6.0))
             .id("sidebar-playlist")
             .flex_grow()
             .min_h(px(0.0))
             .overflow_y_scroll()
-            .track_scroll(&scroll_handle);
+            .track_scroll(&scroll_handle)
+            .when(allow_reorder, |this| {
+                this.on_drag_move::<DragData>(cx.listener(
+                    move |this: &mut PlaylistList, event: &DragMoveEvent<DragData>, _, cx| {
+                        let scroll_handle: ScrollableHandle = this.scroll_handle.clone().into();
+
+                        handle_drag_move(
+                            this.drag_drop_manager.clone(),
+                            scroll_handle,
+                            event,
+                            playlist_count,
+                            cx,
+                        );
+
+                        cx.notify();
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |this: &mut PlaylistList, drag_data: &DragData, _, cx| {
+                        let playlists = this.playlists.clone();
+                        handle_drop(
+                            this.drag_drop_manager.clone(),
+                            drag_data,
+                            cx,
+                            move |from, to, cx| {
+                                if from >= playlists.len() {
+                                    return;
+                                }
+                                let source = &playlists[from];
+
+                                let new_position = if to < playlists.len() {
+                                    playlists[to].position
+                                } else {
+                                    playlists.iter().map(|p| p.position).max().unwrap_or(0) + 1
+                                };
+
+                                if source.position == new_position {
+                                    return;
+                                }
+
+                                if let Err(e) = cx.reorder_playlist(source.id, new_position) {
+                                    error!("Failed to reorder playlist: {}", e);
+                                    return;
+                                }
+
+                                let tracker = cx.global::<Models>().playlist_tracker.clone();
+                                tracker.update(cx, |_, cx| {
+                                    cx.emit(PlaylistEvent::PlaylistUpdated(source.id));
+                                });
+                            },
+                        );
+                        cx.notify();
+                    },
+                ))
+            });
 
         let current_view = self.nav_model.read(cx).current();
 
@@ -182,7 +256,7 @@ impl Render for PlaylistList {
         let rename_input = self.rename_playlist_input.clone();
         let weak_entity = cx.entity().downgrade();
 
-        for playlist in &*self.playlists {
+        for (idx, playlist) in self.playlists.iter().enumerate() {
             let pl_id = playlist.id;
 
             let playlist_label: String = if playlist.is_liked_songs() {
@@ -190,6 +264,8 @@ impl Render for PlaylistList {
             } else {
                 playlist.name.to_string()
             };
+
+            let item_state = DragDropItemState::for_index(self.drag_drop_manager.read(cx), idx);
 
             let mut item = sidebar_item(("main-sidebar-pl", playlist.id as u64)).icon(
                 if playlist.playlist_type == PlaylistType::System {
@@ -230,6 +306,8 @@ impl Render for PlaylistList {
                     );
             }
 
+            let is_system_playlist = playlist.playlist_type == PlaylistType::System;
+
             let item = item
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.nav_model.update(cx, move |_, cx| {
@@ -239,17 +317,25 @@ impl Render for PlaylistList {
                 .when(
                     sidebar_view == ViewSwitchMessage::Playlist(playlist.id),
                     |this| this.active(),
-                );
+                )
+                .when(allow_reorder, |this| {
+                    let drag_label = playlist_label.clone();
+                    this.on_drag(
+                        DragData::new(idx, PLAYLIST_SIDEBAR_LIST_ID),
+                        move |_, _, _, cx| DragPreview::new(cx, drag_label.clone()),
+                    )
+                    .drag_over::<DragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
+                });
 
             let rename_open = self.rename_popover_playlist == Some(pl_id);
             let weak_self = weak_entity.clone();
             let weak_self2 = weak_entity.clone();
-            let is_system_playlist = playlist.playlist_type == PlaylistType::System;
             let name = playlist.name.0.clone();
 
             main = main.child(
                 div()
                     .relative()
+                    .when(item_state.is_being_dragged, |this| this.opacity(0.5))
                     .child(
                         context(("playlist", pl_id as usize)).with(item).child(
                             div().bg(theme.elevated_background).child(
@@ -428,7 +514,12 @@ impl Render for PlaylistList {
                                         ),
                                 ),
                         )
-                    }),
+                    })
+                    .child(DropIndicator::with_state(
+                        item_state.is_drop_target_before,
+                        item_state.is_drop_target_after,
+                        theme.button_primary,
+                    )),
             );
         }
 

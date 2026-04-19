@@ -594,6 +594,39 @@ pub async fn get_playlist_tracks_sorted(
     Ok(Arc::new(tracks))
 }
 
+pub async fn reorder_playlist(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    new_position: i64,
+) -> sqlx::Result<()> {
+    let original_position: i64 = sqlx::query_scalar("SELECT position FROM playlist WHERE id = $1")
+        .bind(playlist_id)
+        .fetch_one(pool)
+        .await?;
+
+    if original_position < new_position {
+        let move_query = include_str!("../../queries/playlist/move_playlist_down.sql");
+
+        sqlx::query(move_query)
+            .bind(new_position)
+            .bind(original_position)
+            .bind(playlist_id)
+            .execute(pool)
+            .await?;
+    } else if original_position > new_position {
+        let move_query = include_str!("../../queries/playlist/move_playlist_up.sql");
+
+        sqlx::query(move_query)
+            .bind(new_position)
+            .bind(original_position)
+            .bind(playlist_id)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
 pub async fn move_playlist_item(
     pool: &SqlitePool,
     item_id: i64,
@@ -731,6 +764,7 @@ pub trait LibraryAccess {
         sort_method: PlaylistTrackSortMethod,
     ) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
     fn move_playlist_item(&self, item_id: i64, new_position: i64) -> sqlx::Result<()>;
+    fn reorder_playlist(&self, playlist_id: i64, new_position: i64) -> sqlx::Result<()>;
     fn get_playlist_item(&self, item_id: i64) -> sqlx::Result<PlaylistItem>;
     fn get_track_stats(&self) -> sqlx::Result<Arc<TrackStats>>;
     fn playlist_has_track(&self, playlist_id: i64, track_id: i64) -> sqlx::Result<Option<i64>>;
@@ -860,6 +894,11 @@ impl LibraryAccess for App {
     fn move_playlist_item(&self, item_id: i64, new_position: i64) -> sqlx::Result<()> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(move_playlist_item(&pool.0, item_id, new_position))
+    }
+
+    fn reorder_playlist(&self, playlist_id: i64, new_position: i64) -> sqlx::Result<()> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(reorder_playlist(&pool.0, playlist_id, new_position))
     }
 
     fn get_playlist_item(&self, item_id: i64) -> sqlx::Result<PlaylistItem> {

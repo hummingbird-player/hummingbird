@@ -3,6 +3,7 @@ SELECT
     playlist.name,
     playlist.created_at,
     playlist.type,
+    playlist.position,
     COUNT(playlist_item.id) as track_count,
     COALESCE(SUM(track.duration), 0) as total_duration
 FROM playlist

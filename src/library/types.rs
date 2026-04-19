@@ -266,6 +266,7 @@ pub struct Playlist {
     pub created_at: DateTime<Utc>,
     #[sqlx(rename = "type")]
     pub playlist_type: PlaylistType,
+    pub position: i64,
     pub track_count: i64,
     pub total_duration: i64,
 }
