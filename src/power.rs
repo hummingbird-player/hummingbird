@@ -2,8 +2,11 @@
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use gpui::{AppContext, Entity, Global};
+use tracing::info;
 
 use crate::playback::thread::PlaybackState;
 
@@ -11,11 +14,13 @@ use crate::playback::thread::PlaybackState;
 use linux::PlatformPower;
 #[cfg(target_os = "macos")]
 use macos::PlatformPower;
+#[cfg(target_os = "windows")]
+use windows::PlatformPower;
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 struct PlatformPower;
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 impl PlatformPower {
     fn new() -> Self {
         Self
