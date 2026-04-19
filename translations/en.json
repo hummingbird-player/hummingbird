@@ -44,6 +44,7 @@
   "CLEAR_QUEUE": "Clear",
   "CLICK_TO_CONFIRM": "Click to confirm sign in",
   "CLOSE": "Close",
+  "CLOSE_RELEASE_DETAIL": "Close",
   "COLLAPSE_SIDEBAR": "Collapse Sidebar",
   "COLLECTION_SUMMARY_TRACKS": {
     "one": "{{count}} track",

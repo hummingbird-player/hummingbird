@@ -57,10 +57,8 @@ impl ArtistView {
                     ScanEvent::ScanCompleteIdle => {
                         table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
                     }
-                    ScanEvent::ScanProgress { current, .. } => {
-                        if current % 100 == 0 {
-                            table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
-                        }
+                    ScanEvent::ScanProgress { current, .. } if current % 100 == 0 => {
+                        table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
                     }
                     _ => {}
                 }

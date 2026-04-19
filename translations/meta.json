@@ -269,6 +269,12 @@
     "plural": false,
     "description": null
   },
+  "CLOSE_RELEASE_DETAIL": {
+    "context": "release_view.rs",
+    "definedIn": "src/ui/library/release_view.rs:157",
+    "plural": false,
+    "description": null
+  },
   "COLLAPSE_SIDEBAR": {
     "context": "sidebar.rs",
     "definedIn": "src/ui/library/sidebar.rs:121",
@@ -721,13 +727,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:268",
+    "definedIn": "src/ui/library/release_view.rs:285",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:283",
+    "definedIn": "src/ui/library/release_view.rs:300",
     "plural": false,
     "description": null
   },
