@@ -306,11 +306,22 @@ impl ReleaseView {
         self.scroll_frame_scheduled = true;
         cx.on_next_frame(window, |this, window, cx| {
             this.scroll_frame_scheduled = false;
-            this.advance_scroll_animation(window, cx);
+            let reduced_motion = cx
+                .global::<crate::settings::SettingsGlobal>()
+                .model
+                .read(cx)
+                .interface
+                .reduced_motion;
+            this.advance_scroll_animation(window, cx, reduced_motion);
         });
     }
 
-    fn advance_scroll_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn advance_scroll_animation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        reduced_motion: bool,
+    ) {
         if let Some(pending_scroll) = self.pending_scroll {
             match self.compute_follow_target(pending_scroll) {
                 FollowTarget::PendingLayout => {
@@ -322,14 +333,26 @@ impl ReleaseView {
                 }
                 FollowTarget::Target(target_scroll_top) => {
                     let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
-                    self.scroll_follow
-                        .animate_to(&scroll_handle, target_scroll_top);
+                    if reduced_motion {
+                        self.scroll_follow
+                            .jump_to(&scroll_handle, target_scroll_top);
+                    } else {
+                        self.scroll_follow
+                            .animate_to(&scroll_handle, target_scroll_top);
+                    }
                     self.pending_scroll = None;
                 }
             }
         }
 
         let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+        if reduced_motion {
+            if self.scroll_follow.snap(&scroll_handle) {
+                cx.notify();
+            }
+            return;
+        }
+
         let changed = self.scroll_follow.advance(&scroll_handle);
 
         if self.scroll_follow.is_active() {
@@ -373,8 +396,17 @@ enum FollowTarget {
 
 impl Render for ReleaseView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = cx
+            .global::<crate::settings::SettingsGlobal>()
+            .model
+            .read(cx);
+        let reduced_motion = settings.interface.reduced_motion;
         if self.pending_scroll.is_some() || self.scroll_follow.is_active() {
-            self.schedule_scroll_frame(window, cx);
+            if reduced_motion {
+                self.advance_scroll_animation(window, cx, reduced_motion);
+            } else {
+                self.schedule_scroll_frame(window, cx);
+            }
         }
 
         let theme = cx.global::<Theme>();

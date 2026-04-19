@@ -433,13 +433,23 @@ impl Render for Queue {
         let scroll_handle = self.scroll_handle.clone();
         let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
+        let reduced_motion = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .reduced_motion;
         let is_dragging = self.drag_drop_manager.read(cx).state.is_dragging;
 
         if self.scroll_follow.is_active() && (self.queue_hovered || is_dragging) {
             self.scroll_follow.cancel();
         }
 
-        if (self.follow_current_pending || self.scroll_follow.is_active())
+        if reduced_motion {
+            if self.follow_current_pending || self.scroll_follow.is_active() {
+                self.advance_follow_animation(window, cx, reduced_motion);
+            }
+        } else if (self.follow_current_pending || self.scroll_follow.is_active())
             && !self.queue_hovered
             && !is_dragging
         {
@@ -530,12 +540,19 @@ impl Render for Queue {
                         move |this: &mut Queue, event: &DragMoveEvent<DragData>, window, cx| {
                             let scroll_handle: ScrollableHandle = this.scroll_handle.clone().into();
 
+                            let reduced_motion = cx
+                                .global::<SettingsGlobal>()
+                                .model
+                                .read(cx)
+                                .interface
+                                .reduced_motion;
                             let scrolled = handle_drag_move(
                                 this.drag_drop_manager.clone(),
                                 scroll_handle,
                                 event,
                                 queue_len,
                                 cx,
+                                reduced_motion,
                             );
 
                             if scrolled {
@@ -582,10 +599,17 @@ impl Render for Queue {
                                 container_bounds,
                                 &config.scroll_config,
                             );
+                            let reduced_motion = cx
+                                .global::<SettingsGlobal>()
+                                .model
+                                .read(cx)
+                                .interface
+                                .reduced_motion;
                             let scrolled = perform_edge_scroll(
                                 &scroll_handle,
                                 direction,
                                 &config.scroll_config,
+                                reduced_motion,
                             );
 
                             if scrolled {
@@ -654,10 +678,17 @@ impl Render for Queue {
                                 container_bounds,
                                 &config.scroll_config,
                             );
+                            let reduced_motion = cx
+                                .global::<SettingsGlobal>()
+                                .model
+                                .read(cx)
+                                .interface
+                                .reduced_motion;
                             let scrolled = perform_edge_scroll(
                                 &scroll_handle,
                                 direction,
                                 &config.scroll_config,
+                                reduced_motion,
                             );
 
                             if scrolled {
@@ -860,11 +891,22 @@ impl Queue {
         self.follow_frame_scheduled = true;
         cx.on_next_frame(window, |this, window, cx| {
             this.follow_frame_scheduled = false;
-            this.advance_follow_animation(window, cx);
+            let reduced_motion = cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .interface
+                .reduced_motion;
+            this.advance_follow_animation(window, cx, reduced_motion);
         });
     }
 
-    fn advance_follow_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn advance_follow_animation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        reduced_motion: bool,
+    ) {
         if self.queue_hovered || self.drag_drop_manager.read(cx).state.is_dragging {
             self.scroll_follow.cancel();
             return;
@@ -882,14 +924,26 @@ impl Queue {
                 }
                 FollowTarget::Target(target_scroll_top) => {
                     let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
-                    self.scroll_follow
-                        .animate_to(&scroll_handle, target_scroll_top);
+                    if reduced_motion {
+                        self.scroll_follow
+                            .jump_to(&scroll_handle, target_scroll_top);
+                    } else {
+                        self.scroll_follow
+                            .animate_to(&scroll_handle, target_scroll_top);
+                    }
                     self.follow_current_pending = false;
                 }
             }
         }
 
         let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+        if reduced_motion {
+            if self.scroll_follow.snap(&scroll_handle) {
+                cx.notify();
+            }
+            return;
+        }
+
         let changed = self.scroll_follow.advance(&scroll_handle);
 
         if !changed {
@@ -948,7 +1002,18 @@ impl Queue {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let should_continue = continue_edge_scroll(manager.read(cx), &scroll_handle);
+        let reduced_motion = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .reduced_motion;
+        if reduced_motion {
+            return;
+        }
+
+        let should_continue =
+            continue_edge_scroll(manager.read(cx), &scroll_handle, reduced_motion);
 
         if should_continue {
             let manager_clone = manager.clone();

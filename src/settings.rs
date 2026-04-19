@@ -280,6 +280,7 @@ mod tests {
                 "interface": {
                     "theme": "custom.json",
                     "full_width_library": true,
+                    "reduced_motion": true,
                     "always_show_scrollbars": true
                 },
                 "update": {
@@ -298,6 +299,7 @@ mod tests {
         assert!(!settings.playback.keep_current_on_queue_clear);
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);
+        assert!(settings.interface.reduced_motion);
         assert!(settings.interface.always_show_scrollbars);
         assert_eq!(
             settings.update.release_channel,

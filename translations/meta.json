@@ -253,7 +253,7 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:490",
+    "definedIn": "src/ui/queue.rs:500",
     "plural": false,
     "description": null
   },
@@ -265,7 +265,7 @@
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:475",
+    "definedIn": "src/ui/queue.rs:485",
     "plural": false,
     "description": null
   },
@@ -463,13 +463,13 @@
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:303",
+    "definedIn": "src/ui/settings/interface.rs:324",
     "plural": false,
     "description": null
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:306",
+    "definedIn": "src/ui/settings/interface.rs:327",
     "plural": false,
     "description": null
   },
@@ -494,6 +494,18 @@
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:277",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_REDUCED_MOTION": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:303",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_REDUCED_MOTION_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:306",
     "plural": false,
     "description": null
   },
@@ -613,7 +625,7 @@
   },
   "NO_LYRICS": {
     "context": "lyrics.rs",
-    "definedIn": "src/ui/lyrics.rs:152",
+    "definedIn": "src/ui/lyrics.rs:170",
     "plural": false,
     "description": null
   },
@@ -715,7 +727,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:468",
+    "definedIn": "src/ui/queue.rs:478",
     "plural": false,
     "description": null
   },
@@ -1045,13 +1057,13 @@
   },
   "SHUFFLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:503",
+    "definedIn": "src/ui/queue.rs:513",
     "plural": false,
     "description": null
   },
   "SHUFFLING": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:502",
+    "definedIn": "src/ui/queue.rs:512",
     "plural": false,
     "description": null
   },

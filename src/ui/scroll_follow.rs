@@ -26,6 +26,30 @@ impl SmoothScrollFollow {
         self.animation = None;
     }
 
+    pub fn jump_to(&mut self, scroll_handle: &ScrollableHandle, target_scroll_top: Pixels) {
+        self.cancel();
+
+        let current_offset = scroll_handle.offset();
+        scroll_handle.set_offset(gpui::Point {
+            x: current_offset.x,
+            y: -target_scroll_top,
+        });
+    }
+
+    pub fn snap(&mut self, scroll_handle: &ScrollableHandle) -> bool {
+        let Some(animation) = self.animation.as_ref() else {
+            return false;
+        };
+
+        let current_offset = scroll_handle.offset();
+        scroll_handle.set_offset(gpui::Point {
+            x: current_offset.x,
+            y: -animation.target_scroll_top,
+        });
+        self.animation = None;
+        true
+    }
+
     pub fn is_active(&self) -> bool {
         self.animation.is_some()
     }

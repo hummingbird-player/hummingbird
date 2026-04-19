@@ -41,6 +41,8 @@ pub struct InterfaceSettings {
     #[serde(default = "default_grid_min_item_width")]
     pub grid_min_item_width: f32,
     #[serde(default)]
+    pub reduced_motion: bool,
+    #[serde(default)]
     pub always_show_scrollbars: bool,
 }
 
@@ -63,6 +65,7 @@ impl Default for InterfaceSettings {
             two_column_library: false,
             startup_library_view: StartupLibraryView::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
+            reduced_motion: false,
             always_show_scrollbars: false,
         }
     }

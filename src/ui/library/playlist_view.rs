@@ -407,7 +407,14 @@ impl PlaylistView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let should_continue = continue_edge_scroll(manager.read(cx), &scroll_handle);
+        let reduced_motion = cx
+            .global::<crate::settings::SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .reduced_motion;
+        let should_continue =
+            continue_edge_scroll(manager.read(cx), &scroll_handle, reduced_motion);
 
         if should_continue {
             let manager_clone = manager.clone();
@@ -653,12 +660,19 @@ impl Render for PlaylistView {
                                         let scroll_handle: ScrollableHandle =
                                             this.scroll_handle.clone().into();
 
+                                        let reduced_motion = cx
+                                            .global::<crate::settings::SettingsGlobal>()
+                                            .model
+                                            .read(cx)
+                                            .interface
+                                            .reduced_motion;
                                         let scrolled = handle_track_drag_move(
                                             this.drag_drop_manager.clone(),
                                             scroll_handle,
                                             event,
                                             item_count,
                                             cx,
+                                            reduced_motion,
                                         );
 
                                         if scrolled {

@@ -273,7 +273,8 @@ impl Element for Scrollbar {
         let fade_duration = self.fade_duration;
         let always_visible = {
             let settings = cx.global::<SettingsGlobal>();
-            settings.model.read(cx).interface.always_show_scrollbars
+            let settings = settings.model.read(cx);
+            settings.interface.always_show_scrollbars || settings.interface.reduced_motion
         };
 
         window.with_optional_element_state(

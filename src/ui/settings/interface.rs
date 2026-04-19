@@ -299,6 +299,27 @@ impl Render for InterfaceSettings {
             )
             .child(
                 label(
+                    "interface-reduced-motion",
+                    tr!("INTERFACE_REDUCED_MOTION", "Reduced motion"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_REDUCED_MOTION_SUBTEXT",
+                    "Disables smooth scrolling, fades, and other motion-heavy UI animations."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_interface(cx, |interface| {
+                        interface.reduced_motion = !interface.reduced_motion;
+                    });
+                }))
+                .child(checkbox(
+                    "interface-reduced-motion-check",
+                    interface.reduced_motion,
+                )),
+            )
+            .child(
+                label(
                     "interface-always-show-scrollbars",
                     tr!("INTERFACE_ALWAYS_SHOW_SCROLLBARS", "Always show scrollbars"),
                 )

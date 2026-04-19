@@ -5,6 +5,7 @@ use lrc::{LrcLine, parse_lrc};
 use crate::{
     library::db::LibraryAccess,
     playback::interface::PlaybackInterface,
+    settings::SettingsGlobal,
     ui::{
         components::{
             icons::{MICROPHONE, icon},
@@ -81,7 +82,13 @@ impl Lyrics {
                     let idx = parsed.partition_point(|l| l.time_ms <= pos_ms);
                     let new_line = if idx == 0 { None } else { Some(idx - 1) };
                     if new_line != this.last_active_line {
-                        this.start_line_emphasis_animation(new_line);
+                        let reduced_motion = cx
+                            .global::<SettingsGlobal>()
+                            .model
+                            .read(cx)
+                            .interface
+                            .reduced_motion;
+                        this.start_line_emphasis_animation(new_line, reduced_motion);
                         this.last_active_line = new_line;
                         this.follow_pending = new_line.is_some();
 
@@ -127,11 +134,22 @@ impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
+        let reduced_motion = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .reduced_motion;
 
         let muted = theme.text_secondary;
         let normal = theme.text;
 
-        if self.needs_animation_frame() {
+        if reduced_motion {
+            if self.follow_pending || self.scroll_follow.is_active() || self.needs_animation_frame()
+            {
+                self.advance_animations(window, cx, true);
+            }
+        } else if self.needs_animation_frame() {
             self.schedule_follow_frame(window, cx);
         }
 
@@ -276,22 +294,33 @@ impl Lyrics {
         self.follow_frame_scheduled = true;
         cx.on_next_frame(window, |this, window, cx| {
             this.follow_frame_scheduled = false;
-            this.advance_animations(window, cx);
+            let reduced_motion = cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .interface
+                .reduced_motion;
+            this.advance_animations(window, cx, reduced_motion);
         });
     }
 
-    fn advance_animations(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn advance_animations(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        reduced_motion: bool,
+    ) {
         let mut changed = false;
 
         if self.has_recent_user_interaction() {
             self.scroll_follow.cancel();
         } else {
-            changed |= self.advance_follow_animation(window, cx);
+            changed |= self.advance_follow_animation(window, cx, reduced_motion);
         }
 
-        changed |= self.advance_line_emphasis_animation();
+        changed |= self.advance_line_emphasis_animation(reduced_motion);
 
-        if self.needs_animation_frame() {
+        if !reduced_motion && self.needs_animation_frame() {
             self.schedule_follow_frame(window, cx);
         }
 
@@ -300,7 +329,12 @@ impl Lyrics {
         }
     }
 
-    fn advance_follow_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn advance_follow_animation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        reduced_motion: bool,
+    ) -> bool {
         if self.follow_pending {
             match self.compute_follow_target() {
                 FollowTarget::PendingLayout => {
@@ -313,14 +347,23 @@ impl Lyrics {
                 }
                 FollowTarget::Target(target_scroll_top) => {
                     let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
-                    self.scroll_follow
-                        .animate_to(&scroll_handle, target_scroll_top);
+                    if reduced_motion {
+                        self.scroll_follow
+                            .jump_to(&scroll_handle, target_scroll_top);
+                    } else {
+                        self.scroll_follow
+                            .animate_to(&scroll_handle, target_scroll_top);
+                    }
                     self.follow_pending = false;
                 }
             }
         }
 
         let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+        if reduced_motion {
+            return self.scroll_follow.snap(&scroll_handle);
+        }
+
         self.scroll_follow.advance(&scroll_handle)
     }
 
@@ -351,7 +394,7 @@ impl Lyrics {
         }
     }
 
-    fn start_line_emphasis_animation(&mut self, active_line: Option<usize>) {
+    fn start_line_emphasis_animation(&mut self, active_line: Option<usize>, reduced_motion: bool) {
         let line_count = self.parsed.as_ref().map_or(0, Vec::len);
         if self.line_emphasis_target_values.len() != line_count {
             self.line_emphasis_target_values = vec![0.0; line_count];
@@ -374,10 +417,27 @@ impl Lyrics {
             .zip(self.line_emphasis_target_values.iter())
             .any(|(start, target)| (start - target).abs() > f32::EPSILON);
 
-        self.line_emphasis_started_at = has_change.then(Instant::now);
+        if reduced_motion {
+            self.line_emphasis_start_values = self.line_emphasis_target_values.clone();
+            self.line_emphasis_started_at = None;
+        } else {
+            self.line_emphasis_started_at = has_change.then(Instant::now);
+        }
     }
 
-    fn advance_line_emphasis_animation(&mut self) -> bool {
+    fn advance_line_emphasis_animation(&mut self, reduced_motion: bool) -> bool {
+        if reduced_motion {
+            let changed = self
+                .line_emphasis_start_values
+                .iter()
+                .zip(self.line_emphasis_target_values.iter())
+                .any(|(start, target)| (start - target).abs() > f32::EPSILON)
+                || self.line_emphasis_started_at.is_some();
+            self.line_emphasis_start_values = self.line_emphasis_target_values.clone();
+            self.line_emphasis_started_at = None;
+            return changed;
+        }
+
         let Some(started_at) = self.line_emphasis_started_at else {
             return false;
         };
