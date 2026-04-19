@@ -17,9 +17,12 @@ use crate::{
         availability::{has_available_tracks, is_track_available},
         caching::hummingbird_cache,
         components::{
+            icons::CROSS,
+            nav_button::nav_button,
             playback_controls::playback_controls,
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
+            tooltip::build_tooltip,
         },
         library::{
             ViewSwitchMessage,
@@ -139,6 +142,20 @@ impl ReleaseView {
             .overflow_x_hidden()
             .px(px(18.0))
             .w_full()
+            .relative()
+            .child(
+                nav_button("release_close", CROSS)
+                    .absolute()
+                    .top(px(12.0))
+                    .right(px(18.0))
+                    .on_click(|_, _, cx| {
+                        let model = cx.global::<Models>().switcher_model.clone();
+                        model.update(cx, |_, cx| {
+                            cx.emit(ViewSwitchMessage::Back);
+                        })
+                    })
+                    .tooltip(build_tooltip(tr!("CLOSE_RELEASE_DETAIL", "Close"))),
+            )
             .child(
                 div()
                     .rounded(px(10.0))
