@@ -403,6 +403,9 @@ impl Render for ReleaseView {
         let reduced_motion = settings.interface.reduced_motion;
         if self.pending_scroll.is_some() || self.scroll_follow.is_active() {
             if reduced_motion {
+                // Reduced motion still needs one pass to resolve pending layout and snap any
+                // in-flight scroll animation to its final position; we just skip scheduling
+                // another animated frame afterward.
                 self.advance_scroll_animation(window, cx, reduced_motion);
             } else {
                 self.schedule_scroll_frame(window, cx);
