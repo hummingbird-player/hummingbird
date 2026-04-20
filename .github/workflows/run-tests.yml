@@ -28,6 +28,5 @@ jobs:
           sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev
       - name: Update Rust
         run: rustup update
-      - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test
