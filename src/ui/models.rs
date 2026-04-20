@@ -486,8 +486,7 @@ pub(crate) async fn unlike_track<E: HasLikedState + 'static>(
     pool: sqlx::SqlitePool,
     cx: &mut AsyncApp,
 ) {
-    let task = crate::RUNTIME
-        .spawn(async move { db::remove_playlist_item(&pool, item_id).await });
+    let task = crate::RUNTIME.spawn(async move { db::remove_playlist_item(&pool, item_id).await });
 
     match task.await {
         Ok(Ok(())) => {}
