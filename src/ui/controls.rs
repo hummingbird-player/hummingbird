@@ -259,9 +259,10 @@ impl Render for InfoSection {
                     div()
                         .mx(px(12.0))
                         .mt(px(12.0))
-                        .mb(px(6.0))
+                        .mb(px(12.0))
                         .gap(px(10.0))
                         .flex()
+                        .w_full()
                         .overflow_x_hidden()
                         .child(
                             div()
@@ -379,6 +380,7 @@ impl Render for InfoSection {
                             .when(has_track, |e| {
                                 e.child(
                                     div()
+                                        .ml_auto()
                                         .id("info-like")
                                         .my_auto()
                                         .rounded_sm()
