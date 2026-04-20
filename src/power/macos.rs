@@ -17,10 +17,11 @@ impl PlatformPower {
         }
         let process_info = NSProcessInfo::processInfo();
         let reason = NSString::from_str("Hummingbird is playing media");
-        self.activity = Some(process_info.beginActivityWithOptions_reason(
-            NSActivityOptions::IdleDisplaySleepDisabled,
-            &reason,
-        ));
+        self.activity =
+            Some(process_info.beginActivityWithOptions_reason(
+                NSActivityOptions::IdleDisplaySleepDisabled,
+                &reason,
+            ));
     }
 
     pub fn uninhibit(&mut self) {
