@@ -360,7 +360,7 @@ impl Library {
             .interface
             .two_column_library;
 
-        self.section = library_section_from_history(&history);
+        self.section = library_section_from_history(history);
 
         if two_column {
             if current_msg.is_detail_page() {
@@ -395,7 +395,7 @@ impl Library {
             let scroll_state = ScrollStateStorage::default();
             let initial_message = switcher_model.read(cx).current();
             let view = make_view(&initial_message, cx, &switcher_model, &scroll_state);
-            let section = library_section_from_history(&switcher_model.read(cx));
+            let section = library_section_from_history(switcher_model.read(cx));
 
             cx.subscribe(
                 &switcher_model,
