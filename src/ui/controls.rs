@@ -433,6 +433,11 @@ impl Render for PlaybackSection {
             .read(cx)
             .playback
             .always_repeat;
+        let repeat_icon_color = match repeating {
+            RepeatState::NotRepeating => theme.text,
+            RepeatState::Repeating => theme.playback_button_toggled,
+            RepeatState::RepeatingOne => theme.playback_button_repeat_one,
+        };
 
         div()
             .mr(auto())
@@ -608,11 +613,7 @@ impl Render for PlaybackSection {
                                         RepeatState::RepeatingOne => REPEAT_ONCE,
                                     })
                                     .size(px(14.0))
-                                    .when(
-                                        repeating == RepeatState::Repeating
-                                            || repeating == RepeatState::RepeatingOne,
-                                        |this| this.text_color(theme.playback_button_toggled),
-                                    ),
+                                    .text_color(repeat_icon_color),
                                 ),
                         )
                         .child(

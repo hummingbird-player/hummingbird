@@ -583,13 +583,13 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:964",
+    "definedIn": "src/ui/controls.rs:965",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:899",
+    "definedIn": "src/ui/controls.rs:900",
     "plural": false,
     "description": null
   },
@@ -601,7 +601,7 @@
   },
   "NEXT_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:553",
+    "definedIn": "src/ui/controls.rs:558",
     "plural": false,
     "description": null
   },
@@ -703,7 +703,7 @@
   },
   "PREVIOUS_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:501",
+    "definedIn": "src/ui/controls.rs:506",
     "plural": false,
     "description": null
   },
@@ -775,19 +775,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:635",
+    "definedIn": "src/ui/controls.rs:636",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:625",
+    "definedIn": "src/ui/controls.rs:626",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:644",
+    "definedIn": "src/ui/controls.rs:645",
     "plural": false,
     "description": null
   },
@@ -1129,13 +1129,13 @@
   },
   "STOP_REPEATING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:599",
+    "definedIn": "src/ui/controls.rs:604",
     "plural": false,
     "description": null
   },
   "STOP_SHUFFLING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:471",
+    "definedIn": "src/ui/controls.rs:476",
     "plural": false,
     "description": null
   },
@@ -1207,7 +1207,7 @@
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:892",
+    "definedIn": "src/ui/controls.rs:893",
     "plural": false,
     "description": null
   },
