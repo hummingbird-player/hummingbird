@@ -55,6 +55,7 @@ use super::{
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     right_sidebar::RightSidebar,
     search::SearchView,
+    settings::close_last_settings_window,
     theme::setup_theme,
     util::drop_image_from_app,
 };
@@ -442,6 +443,11 @@ pub fn run() -> anyhow::Result<()> {
                     crate::logging::flush();
                 })
             }
+        })
+        .detach();
+
+        cx.on_window_closed(|cx, _window_id| {
+            close_last_settings_window(cx);
         })
         .detach();
 

@@ -66,6 +66,20 @@ pub fn open_settings_window(cx: &mut App) {
     .ok();
 }
 
+pub(super) fn close_last_settings_window(cx: &mut App) {
+    if let Some(existing_window) = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>())
+        && cx.windows().len() == 1
+    {
+        cx.update_window(*existing_window, |_, window, _| {
+            window.remove_window();
+        })
+        .ok();
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsSectionKind {
     Interface,
