@@ -16,6 +16,7 @@ use crate::media::{
 };
 
 mod devices;
+mod errors;
 mod library;
 mod logging;
 mod media;
