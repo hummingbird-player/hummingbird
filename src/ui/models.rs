@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{paths, services::mmb::discord::Discord, ui::library::NavigationHistory};
-use gpui::{App, AppContext, Entity, EventEmitter, Global, Pixels, RenderImage, Size};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, Global, Pixels, RenderImage, Size,
+};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -435,4 +437,132 @@ pub fn create_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: 
     mmbs_list.update(cx, |m, _| {
         m.0.insert("discord".to_string(), Arc::new(Mutex::new(mmbs)));
     });
+}
+
+pub(crate) const LIKED_SONGS_PLAYLIST_ID: i64 = 1;
+
+pub(crate) trait HasLikedState {
+    fn is_liked(&self) -> Option<i64>;
+    fn set_liked(&mut self, item_id: Option<i64>);
+}
+
+pub(crate) async fn like_track<E: HasLikedState + 'static>(
+    track_id: i64,
+    entity: Entity<E>,
+    playlist_tracker: Entity<PlaylistInfoTransfer>,
+    pool: sqlx::SqlitePool,
+    cx: &mut AsyncApp,
+) {
+    let task = crate::RUNTIME.spawn(async move {
+        crate::library::db::add_playlist_item(&pool, LIKED_SONGS_PLAYLIST_ID, track_id).await
+    });
+
+    let new_id = match task.await {
+        Ok(Ok(id)) => id,
+        Ok(Err(err)) => {
+            tracing::error!("could not like song: {err:?}");
+            return;
+        }
+        Err(err) => {
+            tracing::error!("like task panicked: {err:?}");
+            return;
+        }
+    };
+
+    entity.update(cx, |this, cx| {
+        this.set_liked(Some(new_id));
+        cx.notify();
+    });
+
+    playlist_tracker.update(cx, |_, cx| {
+        cx.emit(PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID));
+    });
+}
+
+pub(crate) async fn unlike_track<E: HasLikedState + 'static>(
+    item_id: i64,
+    entity: Entity<E>,
+    playlist_tracker: Entity<PlaylistInfoTransfer>,
+    pool: sqlx::SqlitePool,
+    cx: &mut AsyncApp,
+) {
+    let task = crate::RUNTIME
+        .spawn(async move { crate::library::db::remove_playlist_item(&pool, item_id).await });
+
+    match task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            tracing::error!("could not unlike song: {err:?}");
+            entity.update(cx, |this, cx| {
+                this.set_liked(Some(item_id));
+                cx.notify();
+            });
+            return;
+        }
+        Err(err) => {
+            tracing::error!("unlike task panicked: {err:?}");
+            return;
+        }
+    }
+
+    playlist_tracker.update(cx, |_, cx| {
+        cx.emit(PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID));
+    });
+}
+
+pub(crate) fn toggle_like<E: HasLikedState + 'static>(
+    track_id: i64,
+    entity: Entity<E>,
+    cx: &mut App,
+) {
+    use crate::ui::app::Pool;
+
+    let pool = cx.global::<Pool>().0.clone();
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+
+    // Defer so this is safe to call from inside a listener, where the entity
+    // is already leased and synchronous read/update would re-enter and panic.
+    cx.defer(move |cx| {
+        let is_liked = entity.read(cx).is_liked();
+        if let Some(item_id) = is_liked {
+            entity.update(cx, |this, cx| {
+                this.set_liked(None);
+                cx.notify();
+            });
+            cx.spawn(async move |cx| {
+                unlike_track(item_id, entity, playlist_tracker, pool, cx).await;
+            })
+            .detach();
+        } else {
+            cx.spawn(async move |cx| {
+                like_track(track_id, entity, playlist_tracker, pool, cx).await;
+            })
+            .detach();
+        }
+    });
+}
+
+pub(crate) fn subscribe_liked_updates<E>(
+    cx: &mut Context<E>,
+    get_track_id: impl Fn(&E) -> Option<i64> + 'static,
+) where
+    E: HasLikedState + 'static,
+{
+    use crate::library::db::LibraryAccess;
+
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+    cx.subscribe(&playlist_tracker, move |this, _, ev, cx| {
+        if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {
+            return;
+        }
+        let new_liked = get_track_id(this).and_then(|id| {
+            cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
+                .unwrap_or_default()
+        });
+        if new_liked != this.is_liked() {
+            this.set_liked(new_liked);
+            cx.notify();
+        }
+    })
+    .detach();
 }

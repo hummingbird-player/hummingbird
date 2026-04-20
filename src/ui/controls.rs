@@ -1,7 +1,7 @@
 mod replaygain;
 
 use crate::{
-    library::{db::LibraryAccess, types::Track},
+    library::db::LibraryAccess,
     playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
@@ -10,7 +10,7 @@ use crate::{
             context::context,
             icons::{
                 MENU, MICROPHONE, NEXT_TRACK, PAUSE, PLAY, PREV_TRACK, REPEAT, REPEAT_OFF,
-                REPEAT_ONCE, SHUFFLE, VOLUME, VOLUME_OFF, icon,
+                REPEAT_ONCE, SHUFFLE, STAR, STAR_FILLED, VOLUME, VOLUME_OFF, icon,
             },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item},
@@ -21,7 +21,10 @@ use crate::{
             info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
             navigate_to_track_artist, resolve_library_track_by_path,
         },
-        models::CurrentTrack,
+        models::{
+            CurrentTrack, HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates,
+            toggle_like,
+        },
     },
 };
 use cntp_i18n::tr;
@@ -41,6 +44,7 @@ use super::{
     theme::Theme,
 };
 
+use crate::library::types::Track;
 use crate::settings::storage::{DEFAULT_CONTROLS_LEFT_WIDTH, DEFAULT_CONTROLS_RIGHT_WIDTH};
 use crate::ui::util::format_duration;
 
@@ -129,6 +133,16 @@ pub struct InfoSection {
     can_navigate_to_album: bool,
     can_navigate_to_artist: bool,
     image_element_key: u64,
+    is_liked: Option<i64>,
+}
+
+impl HasLikedState for InfoSection {
+    fn is_liked(&self) -> Option<i64> {
+        self.is_liked
+    }
+    fn set_liked(&mut self, item_id: Option<i64>) {
+        self.is_liked = item_id;
+    }
 }
 
 impl InfoSection {
@@ -182,6 +196,15 @@ impl InfoSection {
                 .and_then(|track| track.album_id)
                 .is_some_and(|album_id| cx.artist_id_for_album(album_id).is_ok());
 
+            let is_liked = current_library_track.as_ref().and_then(|track| {
+                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
+                    .unwrap_or_default()
+            });
+
+            subscribe_liked_updates(cx, |this: &Self| {
+                this.current_library_track.as_ref().map(|t| t.id)
+            });
+
             Self {
                 artist_name: None,
                 track_name: None,
@@ -192,6 +215,7 @@ impl InfoSection {
                 can_navigate_to_album,
                 can_navigate_to_artist,
                 image_element_key: 0,
+                is_liked,
             }
         })
     }
@@ -223,133 +247,172 @@ impl Render for InfoSection {
             .can_navigate_to_artist
             .then(|| self.current_library_track.clone())
             .flatten();
-        let content = div()
-            .id("info-section")
-            .flex()
-            .w_full()
-            .h_full()
-            .overflow_x_hidden()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .mx(px(12.0))
-                    .mt(px(12.0))
-                    .mb(px(6.0))
-                    .gap(px(10.0))
-                    .flex()
-                    .overflow_x_hidden()
-                    .child(
-                        div()
-                            .image_cache(hummingbird_cache("infosection_cache", 1))
-                            .id("album-art")
-                            .rounded(px(4.0))
-                            .bg(theme.album_art_background)
-                            .shadow_sm()
-                            .w(px(36.0))
-                            .h(px(36.0))
-                            .mb(px(6.0))
-                            .flex_shrink_0()
-                            .on_hover(cx.listener(|this, is_hovering: &bool, _, cx| {
-                                if this.is_hovering_art != *is_hovering {
-                                    this.is_hovering_art = *is_hovering;
-                                    cx.notify();
-                                }
-                            }))
-                            .when_some(image_key, |this: Stateful<Div>, key| {
-                                this.when(self.is_hovering_art, |this: Stateful<Div>| {
-                                    this.child(
-                                        anchored().anchor(Corner::BottomRight).child(deferred(
-                                            div()
-                                                .id("album-art-preview")
-                                                .occlude()
-                                                .pb(px(26.0))
-                                                .child(
-                                                    managed_image(
-                                                        (
-                                                            "album-art-preview-img",
-                                                            image_element_key,
-                                                        ),
-                                                        key.clone(),
-                                                    )
-                                                    .w(px(256.0))
-                                                    .h(px(256.0))
-                                                    .rounded(px(10.0))
-                                                    .shadow_md(),
-                                                ),
-                                        )),
-                                    )
-                                })
-                                .child(
-                                    managed_image(("album-art-thumb", image_element_key), key)
-                                        .w(px(36.0))
-                                        .h(px(36.0))
-                                        .object_fit(ObjectFit::Fill)
-                                        .rounded(px(4.0))
-                                        .thumb(),
-                                )
-                            }),
-                    )
-                    .when(*state == PlaybackState::Stopped, |e| {
-                        e.child(
+        let content =
+            div()
+                .id("info-section")
+                .flex()
+                .w_full()
+                .h_full()
+                .overflow_x_hidden()
+                .flex_shrink_0()
+                .child(
+                    div()
+                        .mx(px(12.0))
+                        .mt(px(12.0))
+                        .mb(px(6.0))
+                        .gap(px(10.0))
+                        .flex()
+                        .overflow_x_hidden()
+                        .child(
                             div()
-                                .line_height(rems(1.0))
-                                .font_weight(FontWeight::EXTRA_BOLD)
-                                .text_size(px(15.0))
-                                .flex()
-                                .h_full()
-                                .items_center()
-                                .pb(px(6.0))
-                                .child(tr!(
+                                .image_cache(hummingbird_cache("infosection_cache", 1))
+                                .id("album-art")
+                                .rounded(px(4.0))
+                                .bg(theme.album_art_background)
+                                .shadow_sm()
+                                .w(px(36.0))
+                                .h(px(36.0))
+                                .mb(px(6.0))
+                                .flex_shrink_0()
+                                .on_hover(cx.listener(|this, is_hovering: &bool, _, cx| {
+                                    if this.is_hovering_art != *is_hovering {
+                                        this.is_hovering_art = *is_hovering;
+                                        cx.notify();
+                                    }
+                                }))
+                                .when_some(image_key, |this: Stateful<Div>, key| {
+                                    this.when(self.is_hovering_art, |this: Stateful<Div>| {
+                                        this.child(
+                                            anchored().anchor(Corner::BottomRight).child(deferred(
+                                                div()
+                                                    .id("album-art-preview")
+                                                    .occlude()
+                                                    .pb(px(26.0))
+                                                    .child(
+                                                        managed_image(
+                                                            (
+                                                                "album-art-preview-img",
+                                                                image_element_key,
+                                                            ),
+                                                            key.clone(),
+                                                        )
+                                                        .w(px(256.0))
+                                                        .h(px(256.0))
+                                                        .rounded(px(10.0))
+                                                        .shadow_md(),
+                                                    ),
+                                            )),
+                                        )
+                                    })
+                                    .child(
+                                        managed_image(("album-art-thumb", image_element_key), key)
+                                            .w(px(36.0))
+                                            .h(px(36.0))
+                                            .object_fit(ObjectFit::Fill)
+                                            .rounded(px(4.0))
+                                            .thumb(),
+                                    )
+                                }),
+                        )
+                        .when(*state == PlaybackState::Stopped, |e| {
+                            e.child(
+                                div()
+                                    .line_height(rems(1.0))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_size(px(15.0))
+                                    .flex()
+                                    .h_full()
+                                    .items_center()
+                                    .pb(px(6.0))
+                                    .child(tr!(
                                     "APP_NAME",
                                     "Hummingbird",
                                     #description="Use the english name everywhere unless this \
                                         is strictly disagreeable.
                                 ")),
-                        )
-                    })
-                    .when(*state != PlaybackState::Stopped, |e| {
-                        e.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .line_height(rems(1.0))
-                                .text_size(px(15.0))
-                                .gap_1()
-                                .w_full()
-                                .overflow_x_hidden()
-                                .w_full()
-                                .child(
-                                    div()
-                                        .id("info-section-track-name")
-                                        .font_weight(FontWeight::EXTRA_BOLD)
-                                        .text_ellipsis()
-                                        .w_full()
-                                        .when_some(album_navigation_track, |this, track| {
-                                            this.cursor_pointer().on_click(move |_, _, cx| {
-                                                navigate_to_track_album_and_reveal(cx, &track);
+                            )
+                        })
+                        .when(*state != PlaybackState::Stopped, |e| {
+                            let is_liked = self.is_liked;
+                            let track_id = self.current_library_track.as_ref().map(|t| t.id);
+                            let has_track = track_id.is_some();
+
+                            e.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .line_height(rems(1.0))
+                                    .text_size(px(15.0))
+                                    .gap_1()
+                                    .w_full()
+                                    .overflow_x_hidden()
+                                    .child(
+                                        div()
+                                            .id("info-section-track-name")
+                                            .font_weight(FontWeight::EXTRA_BOLD)
+                                            .text_ellipsis()
+                                            .w_full()
+                                            .when_some(album_navigation_track, |this, track| {
+                                                this.cursor_pointer().on_click(move |_, _, cx| {
+                                                    navigate_to_track_album_and_reveal(cx, &track);
+                                                })
                                             })
+                                            .child(self.track_name.clone().unwrap_or_else(|| {
+                                                tr!("UNKNOWN_TRACK", "Unknown Track").into()
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("info-section-artist-name")
+                                            .text_ellipsis()
+                                            .w_full()
+                                            .when_some(artist_navigation_track, |this, track| {
+                                                this.cursor_pointer().on_click(move |_, _, cx| {
+                                                    navigate_to_track_artist(cx, &track);
+                                                })
+                                            })
+                                            .child(self.artist_name.clone().unwrap_or_else(|| {
+                                                tr!("UNKNOWN_ARTIST", "Unknown Artist").into()
+                                            })),
+                                    ),
+                            )
+                            .when(has_track, |e| {
+                                e.child(
+                                    div()
+                                        .id("info-like")
+                                        .my_auto()
+                                        .rounded_sm()
+                                        .p(px(4.0))
+                                        .cursor_pointer()
+                                        .hover(|this| this.bg(theme.button_secondary_hover))
+                                        .active(|this| this.bg(theme.button_secondary_active))
+                                        .child(
+                                            icon(if is_liked.is_some() {
+                                                STAR_FILLED
+                                            } else {
+                                                STAR
+                                            })
+                                            .size(px(14.0))
+                                            .text_color(if is_liked.is_some() {
+                                                theme.liked_song
+                                            } else {
+                                                theme.text_secondary
+                                            }),
+                                        )
+                                        .when(is_liked.is_some(), |this| {
+                                            this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
                                         })
-                                        .child(self.track_name.clone().unwrap_or_else(|| {
-                                            tr!("UNKNOWN_TRACK", "Unknown Track").into()
+                                        .when(is_liked.is_none(), |this| {
+                                            this.tooltip(build_tooltip(tr!("LIKE", "Like")))
+                                        })
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            let Some(track_id) = track_id else { return };
+                                            toggle_like(track_id, cx.entity().clone(), cx);
                                         })),
                                 )
-                                .child(
-                                    div()
-                                        .id("info-section-artist-name")
-                                        .text_ellipsis()
-                                        .w_full()
-                                        .when_some(artist_navigation_track, |this, track| {
-                                            this.cursor_pointer().on_click(move |_, _, cx| {
-                                                navigate_to_track_artist(cx, &track);
-                                            })
-                                        })
-                                        .child(self.artist_name.clone().unwrap_or_else(|| {
-                                            tr!("UNKNOWN_ARTIST", "Unknown Artist").into()
-                                        })),
-                                ),
-                        )
-                    }),
-            );
+                            })
+                        }),
+                );
 
         if self.current_track_path.is_some() || self.current_library_track.is_some() {
             let show_add_to = add_to_state.as_ref().map(|(s, _)| s.clone());
@@ -392,6 +455,10 @@ fn update_current_track_state(
         .as_ref()
         .and_then(|track| track.album_id)
         .is_some_and(|album_id| cx.artist_id_for_album(album_id).is_ok());
+    this.is_liked = this.current_library_track.as_ref().and_then(|track| {
+        cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
+            .unwrap_or_default()
+    });
     this.image_element_key = this.image_element_key.wrapping_add(1);
 }
 

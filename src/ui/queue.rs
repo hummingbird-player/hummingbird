@@ -13,7 +13,7 @@ use crate::{
                 calculate_drop_target, check_drag_cancelled, continue_edge_scroll,
                 get_edge_scroll_direction, handle_drag_move, handle_drop, perform_edge_scroll,
             },
-            icons::{CROSS, DISC, PLAYLIST_ADD, SHUFFLE, TRASH, USERS, icon},
+            icons::{CROSS, DISC, PLAYLIST_ADD, SHUFFLE, STAR, STAR_FILLED, TRASH, USERS, icon},
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
@@ -31,7 +31,10 @@ use std::time::Duration;
 
 use super::{
     components::button::{ButtonSize, ButtonStyle, button},
-    models::{Models, PlaybackInfo},
+    models::{
+        HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, subscribe_liked_updates,
+        toggle_like,
+    },
     scroll_follow::SmoothScrollFollow,
     theme::Theme,
     util::{create_or_retrieve_view_keyed, retain_views},
@@ -52,6 +55,17 @@ pub struct QueueItem {
     scroll_handle: UniformListScrollHandle,
     add_to: Option<Entity<AddToPlaylist>>,
     show_add_to: Entity<bool>,
+    track_id: Option<i64>,
+    is_liked: Option<i64>,
+}
+
+impl HasLikedState for QueueItem {
+    fn is_liked(&self) -> Option<i64> {
+        self.is_liked
+    }
+    fn set_liked(&mut self, item_id: Option<i64>) {
+        self.is_liked = item_id;
+    }
 }
 
 impl QueueItem {
@@ -96,6 +110,13 @@ impl QueueItem {
             let add_to =
                 track_id.map(|track_id| AddToPlaylist::new(cx, show_add_to.clone(), track_id));
 
+            let is_liked = track_id.and_then(|id| {
+                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
+                    .unwrap_or_default()
+            });
+
+            subscribe_liked_updates(cx, |this: &QueueItem| this.track_id);
+
             Self {
                 item,
                 idx,
@@ -104,6 +125,8 @@ impl QueueItem {
                 scroll_handle,
                 add_to,
                 show_add_to,
+                track_id,
+                is_liked,
             }
         })
     }
@@ -316,6 +339,22 @@ impl Render for QueueItem {
                                     show_add_to.write(cx, true);
                                 },
                             ))
+                            .item(menu_separator())
+                            .when_some(self.track_id, |menu, track_id| {
+                                let entity = cx.entity().clone();
+                                let is_liked = self.is_liked.is_some();
+                                menu.item(
+                                    menu_item(
+                                        "toggle_like",
+                                        Some(if is_liked { STAR_FILLED } else { STAR }),
+                                        if is_liked { tr!("UNLIKE") } else { tr!("LIKE") },
+                                        move |_, _, cx| {
+                                            toggle_like(track_id, entity.clone(), cx);
+                                        },
+                                    )
+                                    .disabled(!is_available),
+                                )
+                            })
                             .item(menu_separator())
                         })
                         .item(menu_item(

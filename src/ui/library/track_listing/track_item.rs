@@ -1,8 +1,8 @@
 use cntp_i18n::tr;
 use gpui::prelude::{FluentBuilder, *};
 use gpui::{
-    App, AsyncApp, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun,
-    Window, div, img, px,
+    App, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun, Window, div,
+    img, px,
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -10,23 +10,18 @@ use crate::ui::components::drag_drop::{DragPreview, TrackDragData};
 use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
 use crate::ui::library::context_menus::play_track_next;
 use crate::ui::library::context_menus::track::TrackContextMenu;
-use crate::ui::models::PlaylistEvent;
+use crate::ui::models::{
+    HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates, toggle_like,
+};
 use crate::ui::util::format_duration;
-use crate::{
-    library::{
-        db::{self, LibraryAccess},
-        types::Track,
-    },
-    ui::{
-        app::Pool,
-        availability::is_track_available,
-        components::context::context,
-        library::context_menus::{
-            PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing,
-        },
-        models::{Models, PlaybackInfo},
-        theme::Theme,
-    },
+
+use crate::library::{db::LibraryAccess, types::Track};
+use crate::ui::{
+    availability::is_track_available,
+    components::context::context,
+    library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
+    models::PlaybackInfo,
+    theme::Theme,
 };
 
 use super::ArtistNameVisibility;
@@ -94,19 +89,13 @@ impl TrackItem {
         cx.new(|cx| {
             let track_id = track.id;
 
-            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-
-            cx.subscribe(&playlist_tracker, move |this: &mut Self, _, ev, cx| {
-                if PlaylistEvent::PlaylistUpdated(1) == *ev {
-                    this.is_liked = cx.playlist_has_track(1, track_id).unwrap_or_default();
-                    cx.notify();
-                }
-            })
-            .detach();
+            subscribe_liked_updates(cx, move |_| Some(track_id));
 
             Self {
                 hover_group: format!("track-{}", track.id).into(),
-                is_liked: cx.playlist_has_track(1, track.id).unwrap_or_default(),
+                is_liked: cx
+                    .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
+                    .unwrap_or_default(),
                 album_art: track
                     .album_id
                     .map(|v| format!("!db://album/{v}/thumb").into()),
@@ -369,14 +358,9 @@ impl Render for TrackItem {
                                                 .active(|this| {
                                                     this.bg(theme.button_secondary_active)
                                                 })
-                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                .on_click(cx.listener(move |_, _, _, cx| {
                                                     cx.stop_propagation();
-                                                    let is_liked = this.is_liked;
-                                                    let entity = cx.entity().clone();
-                                                    if is_liked.is_some() {
-                                                        this.is_liked = None;
-                                                    }
-                                                    toggle_like(is_liked, track_id, entity, cx);
+                                                    toggle_like(track_id, cx.entity().clone(), cx);
                                                 }))
                                             }),
                                     )
@@ -409,88 +393,11 @@ impl Render for TrackItem {
     }
 }
 
-fn toggle_like(
-    is_liked: Option<i64>,
-    track_id: i64,
-    entity: Entity<TrackItem>,
-    cx: &mut Context<TrackItem>,
-) {
-    let pool = cx.global::<Pool>().0.clone();
-    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-
-    if let Some(item_id) = is_liked {
-        // Optimistically clear liked state
-        cx.notify();
-
-        cx.spawn(async move |_, cx| {
-            unlike_track(item_id, entity, playlist_tracker, pool, cx).await;
-        })
-        .detach();
-    } else {
-        cx.spawn(async move |_, cx| {
-            like_track(track_id, entity, playlist_tracker, pool, cx).await;
-        })
-        .detach();
+impl HasLikedState for TrackItem {
+    fn is_liked(&self) -> Option<i64> {
+        self.is_liked
     }
-}
-
-async fn unlike_track(
-    item_id: i64,
-    entity: Entity<TrackItem>,
-    playlist_tracker: Entity<crate::ui::models::PlaylistInfoTransfer>,
-    pool: sqlx::SqlitePool,
-    cx: &mut AsyncApp,
-) {
-    let task = crate::RUNTIME.spawn(async move { db::remove_playlist_item(&pool, item_id).await });
-
-    match task.await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            tracing::error!("could not unlike song: {err:?}");
-            entity.update(cx, |this, cx| {
-                this.is_liked = Some(item_id);
-                cx.notify();
-            });
-            return;
-        }
-        Err(err) => {
-            tracing::error!("unlike task panicked: {err:?}");
-            return;
-        }
+    fn set_liked(&mut self, item_id: Option<i64>) {
+        self.is_liked = item_id;
     }
-
-    playlist_tracker.update(cx, |_, cx| {
-        cx.emit(PlaylistEvent::PlaylistUpdated(1));
-    });
-}
-
-async fn like_track(
-    track_id: i64,
-    entity: Entity<TrackItem>,
-    playlist_tracker: Entity<crate::ui::models::PlaylistInfoTransfer>,
-    pool: sqlx::SqlitePool,
-    cx: &mut AsyncApp,
-) {
-    let task = crate::RUNTIME.spawn(async move { db::add_playlist_item(&pool, 1, track_id).await });
-
-    let new_id = match task.await {
-        Ok(Ok(id)) => id,
-        Ok(Err(err)) => {
-            tracing::error!("could not like song: {err:?}");
-            return;
-        }
-        Err(err) => {
-            tracing::error!("like task panicked: {err:?}");
-            return;
-        }
-    };
-
-    entity.update(cx, |this, cx| {
-        this.is_liked = Some(new_id);
-        cx.notify();
-    });
-
-    playlist_tracker.update(cx, |_, cx| {
-        cx.emit(PlaylistEvent::PlaylistUpdated(1));
-    });
 }
