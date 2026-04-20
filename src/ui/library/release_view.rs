@@ -17,9 +17,11 @@ use crate::{
         availability::{has_available_tracks, is_track_available},
         caching::hummingbird_cache,
         components::{
+            icons::{STAR, STAR_FILLED, icon},
             playback_controls::playback_controls,
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
+            tooltip::build_tooltip,
         },
         library::{
             ViewSwitchMessage,
@@ -27,13 +29,22 @@ use crate::{
             nav_buttons::detail_close_button,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
-        models::{Models, PlaybackInfo},
+        models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
         scroll_follow::SmoothScrollFollow,
         theme::Theme,
     },
 };
 
 const RELEASE_SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(250);
+
+fn compute_all_liked(cx: &App, tracks: &[Track]) -> bool {
+    if tracks.is_empty() {
+        return false;
+    }
+    let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+    cx.playlist_contains_all_tracks(LIKED_SONGS_PLAYLIST_ID, &ids)
+        .unwrap_or(false)
+}
 
 pub struct ReleaseView {
     album: Arc<Album>,
@@ -47,6 +58,7 @@ pub struct ReleaseView {
     pending_scroll: Option<usize>,
     scroll_follow: SmoothScrollFollow,
     scroll_frame_scheduled: bool,
+    all_liked: bool,
 }
 
 impl ReleaseView {
@@ -110,6 +122,21 @@ impl ReleaseView {
                     .position(|track| track.id == track_id && is_track_available(track))
             });
 
+            let all_liked = compute_all_liked(cx, &tracks);
+
+            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+            cx.subscribe(&playlist_tracker, |this: &mut Self, _, ev, cx| {
+                if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {
+                    return;
+                }
+                let new_all_liked = compute_all_liked(cx, &this.tracks);
+                if new_all_liked != this.all_liked {
+                    this.all_liked = new_all_liked;
+                    cx.notify();
+                }
+            })
+            .detach();
+
             ReleaseView {
                 album,
                 artist_name,
@@ -122,6 +149,7 @@ impl ReleaseView {
                 pending_scroll,
                 scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
                 scroll_frame_scheduled: false,
+                all_liked,
             }
         })
     }
@@ -214,29 +242,71 @@ impl ReleaseView {
                             .text_color(theme.text_secondary)
                             .child(self.collection_summary.clone()),
                     )
-                    .child(playback_controls(
-                        "release",
-                        has_available_tracks,
-                        current_track_in_album,
-                        is_playing,
-                        {
-                            let tracks = self.track_listing.tracks().clone();
-                            move |cx| {
-                                tracks
-                                    .iter()
-                                    .filter(|track| is_track_available(track))
-                                    .map(|track| {
-                                        QueueItemData::new(
-                                            cx,
-                                            track.location.clone(),
-                                            Some(track.id),
-                                            track.album_id,
-                                        )
-                                    })
-                                    .collect()
-                            }
-                        },
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(playback_controls(
+                                "release",
+                                has_available_tracks,
+                                current_track_in_album,
+                                is_playing,
+                                {
+                                    let tracks = self.track_listing.tracks().clone();
+                                    move |cx| {
+                                        tracks
+                                            .iter()
+                                            .filter(|track| is_track_available(track))
+                                            .map(|track| {
+                                                QueueItemData::new(
+                                                    cx,
+                                                    track.location.clone(),
+                                                    Some(track.id),
+                                                    track.album_id,
+                                                )
+                                            })
+                                            .collect()
+                                    }
+                                },
+                            ))
+                            .child(self.render_like_button(theme)),
+                    ),
+            )
+    }
+
+    fn render_like_button(&self, theme: &Theme) -> impl IntoElement {
+        let all_liked = self.all_liked;
+        let has_tracks = !self.tracks.is_empty();
+        let track_ids: Vec<i64> = self.tracks.iter().map(|t| t.id).collect();
+
+        div()
+            .id("release-like")
+            .rounded_sm()
+            .p(px(8.0))
+            .when(has_tracks, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.button_secondary_hover))
+                    .active(|this| this.bg(theme.button_secondary_active))
+                    .tooltip(build_tooltip(if all_liked {
+                        tr!("UNLIKE_ALBUM", "Unlike Album")
+                    } else {
+                        tr!("LIKE_ALBUM", "Like Album")
+                    }))
+                    .on_click(move |_, _, cx| {
+                        toggle_album_like(track_ids.clone(), all_liked, cx);
+                    })
+            })
+            .when(!has_tracks, |this| this.opacity(0.5))
+            .child(
+                icon(if all_liked { STAR_FILLED } else { STAR })
+                    .size(px(16.0))
+                    .text_color(if all_liked {
+                        theme.liked_song
+                    } else {
+                        theme.text_secondary
+                    }),
             )
     }
 

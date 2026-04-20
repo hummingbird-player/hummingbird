@@ -14,6 +14,7 @@ use crate::{
             AlbumContextMenuContext, TrackContextMenuContext, add_to_playlist_state,
             album::AlbumContextMenu, play_album_next, play_track_next, track::TrackContextMenu,
         },
+        models::LIKED_SONGS_PLAYLIST_ID,
     },
 };
 
@@ -176,10 +177,14 @@ impl PaletteItem for SearchPaletteItem {
                     });
 
                 if let Ok(track) = track.read(cx) {
+                    let is_liked = cx
+                        .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
+                        .unwrap_or_default();
                     Some(
                         TrackContextMenu::new(
                             Rc::new((**track).clone()),
                             true,
+                            is_liked,
                             TrackContextMenuContext {
                                 show_go_to_album: true,
                                 show_go_to_artist: true,

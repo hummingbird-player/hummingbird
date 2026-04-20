@@ -23,7 +23,7 @@ use crate::{
             add_to_playlist::AddToPlaylist,
             context_menus::{album::AlbumContextMenu, track::TrackContextMenu},
         },
-        models::{Models, PlaybackInfo, PlaylistEvent},
+        models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent},
     },
 };
 
@@ -85,10 +85,14 @@ pub fn track_menu_for_table(
     cx: &mut App,
 ) -> (AnyElement, Option<AnyElement>) {
     let (show_add_to, add_to) = add_to_playlist_state("track-menu-state", track.id, window, cx);
+    let is_liked = cx
+        .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
+        .unwrap_or_default();
 
     let menu = TrackContextMenu::new(
         Rc::new(track.clone()),
         is_available,
+        is_liked,
         context.clone(),
         None,
         show_add_to,

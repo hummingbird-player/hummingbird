@@ -426,6 +426,7 @@ impl Render for InfoSection {
                             .child(InfoSectionContextMenu::new(
                                 self.current_track_path.clone(),
                                 self.current_library_track.clone(),
+                                self.is_liked,
                                 show_add_to,
                             )),
                     ),

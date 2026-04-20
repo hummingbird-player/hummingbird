@@ -703,6 +703,61 @@ pub async fn playlist_has_track(
     Ok(has_track)
 }
 
+pub async fn playlist_contains_all_tracks(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    track_ids: &[i64],
+) -> sqlx::Result<bool> {
+    if track_ids.is_empty() {
+        return Ok(true);
+    }
+
+    let placeholders = std::iter::repeat_n("?", track_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT COUNT(DISTINCT track_id) FROM playlist_item \
+         WHERE playlist_id = ? AND track_id IN ({placeholders})"
+    );
+
+    let mut query = sqlx::query_scalar::<_, i64>(&sql).bind(playlist_id);
+    for &id in track_ids {
+        query = query.bind(id);
+    }
+
+    let count: i64 = query.fetch_one(pool).await?;
+    Ok(count as usize == track_ids.len())
+}
+
+pub async fn add_tracks_to_playlist_if_missing(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    track_ids: &[i64],
+) -> sqlx::Result<()> {
+    for &track_id in track_ids {
+        if playlist_has_track(pool, playlist_id, track_id)
+            .await?
+            .is_none()
+        {
+            add_playlist_item(pool, playlist_id, track_id).await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn remove_tracks_from_playlist(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    track_ids: &[i64],
+) -> sqlx::Result<()> {
+    for &track_id in track_ids {
+        if let Some(item_id) = playlist_has_track(pool, playlist_id, track_id).await? {
+            remove_playlist_item(pool, item_id).await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn artist_id_for_album(pool: &SqlitePool, album_id: i64) -> sqlx::Result<i64> {
     let query = include_str!("../../queries/library/find_artist_id_for_album.sql");
 
@@ -768,6 +823,11 @@ pub trait LibraryAccess {
     fn get_playlist_item(&self, item_id: i64) -> sqlx::Result<PlaylistItem>;
     fn get_track_stats(&self) -> sqlx::Result<Arc<TrackStats>>;
     fn playlist_has_track(&self, playlist_id: i64, track_id: i64) -> sqlx::Result<Option<i64>>;
+    fn playlist_contains_all_tracks(
+        &self,
+        playlist_id: i64,
+        track_ids: &[i64],
+    ) -> sqlx::Result<bool>;
     fn list_artists(&self, sort_method: ArtistSortMethod) -> sqlx::Result<Vec<i64>>;
     fn list_albums_by_artist(&self, artist_id: i64) -> sqlx::Result<Vec<(u32, String)>>;
     fn get_artist_with_counts(&self, artist_id: i64) -> sqlx::Result<Arc<ArtistWithCounts>>;
@@ -914,6 +974,19 @@ impl LibraryAccess for App {
     fn playlist_has_track(&self, playlist_id: i64, track_id: i64) -> sqlx::Result<Option<i64>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(playlist_has_track(&pool.0, playlist_id, track_id))
+    }
+
+    fn playlist_contains_all_tracks(
+        &self,
+        playlist_id: i64,
+        track_ids: &[i64],
+    ) -> sqlx::Result<bool> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(playlist_contains_all_tracks(
+            &pool.0,
+            playlist_id,
+            track_ids,
+        ))
     }
 
     fn list_artists(&self, sort_method: ArtistSortMethod) -> sqlx::Result<Vec<i64>> {

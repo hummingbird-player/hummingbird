@@ -9,9 +9,10 @@ use crate::{
     ui::{
         availability::is_track_path_available,
         components::{
-            icons::{DISC, FOLDER_SEARCH, PLAYLIST_ADD, USERS},
+            icons::{DISC, FOLDER_SEARCH, PLAYLIST_ADD, STAR, STAR_FILLED, USERS},
             menu::{menu, menu_item, menu_separator},
         },
+        models::toggle_like_by_id,
     },
 };
 
@@ -24,6 +25,7 @@ use super::{
 pub struct InfoSectionContextMenu {
     current_path: Option<PathBuf>,
     track: Option<Rc<Track>>,
+    is_liked: Option<i64>,
     show_add_to: Option<Entity<bool>>,
 }
 
@@ -31,11 +33,13 @@ impl InfoSectionContextMenu {
     pub fn new(
         current_path: Option<PathBuf>,
         track: Option<Rc<Track>>,
+        is_liked: Option<i64>,
         show_add_to: Option<Entity<bool>>,
     ) -> Self {
         Self {
             current_path,
             track,
+            is_liked,
             show_add_to,
         }
     }
@@ -91,6 +95,26 @@ impl RenderOnce for InfoSectionContextMenu {
                 )
                 .disabled(!can_reveal_track),
             )
+            .when_some(track.clone(), |menu, track_for_like| {
+                let is_liked = self.is_liked;
+                let track_id = track_for_like.id;
+                menu.item(menu_separator()).item(menu_item(
+                    "info_section_toggle_like",
+                    Some(if is_liked.is_some() {
+                        STAR_FILLED
+                    } else {
+                        STAR
+                    }),
+                    if is_liked.is_some() {
+                        tr!("UNLIKE")
+                    } else {
+                        tr!("LIKE")
+                    },
+                    move |_, _, cx| {
+                        toggle_like_by_id(track_id, is_liked, cx);
+                    },
+                ))
+            })
             .when_some(self.show_add_to, |menu, show_add_to| {
                 menu.item(menu_separator()).item(menu_item(
                     "info_section_add_to_playlist",

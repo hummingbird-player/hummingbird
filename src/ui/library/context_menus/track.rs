@@ -9,10 +9,13 @@ use crate::{
     ui::{
         availability::is_track_path_available,
         components::{
-            icons::{DISC, FOLDER_SEARCH, PLAY, PLAYLIST_ADD, PLAYLIST_REMOVE, PLUS, USERS},
+            icons::{
+                DISC, FOLDER_SEARCH, PLAY, PLAYLIST_ADD, PLAYLIST_REMOVE, PLUS, STAR, STAR_FILLED,
+                USERS,
+            },
             menu::{menu, menu_item, menu_separator},
         },
-        models::Models,
+        models::{Models, toggle_like_by_id},
     },
 };
 
@@ -27,6 +30,7 @@ use crate::ui::app::Pool;
 pub struct TrackContextMenu {
     track: Rc<Track>,
     is_available: bool,
+    is_liked: Option<i64>,
     context: TrackContextMenuContext,
     playlist_info: Option<PlaylistMenuInfo>,
     show_add_to: Entity<bool>,
@@ -36,6 +40,7 @@ impl TrackContextMenu {
     pub fn new(
         track: Rc<Track>,
         is_available: bool,
+        is_liked: Option<i64>,
         context: TrackContextMenuContext,
         playlist_info: Option<PlaylistMenuInfo>,
         show_add_to: Entity<bool>,
@@ -43,6 +48,7 @@ impl TrackContextMenu {
         Self {
             track,
             is_available,
+            is_liked,
             context,
             playlist_info,
             show_add_to,
@@ -66,6 +72,8 @@ impl RenderOnce for TrackContextMenu {
         let play_from_here = self.context.play_from_here.clone();
         let playlist_info = self.playlist_info;
         let is_available = self.is_available;
+        let is_liked = self.is_liked;
+        let like_track_id = self.track.id;
 
         menu()
             .item(
@@ -150,6 +158,25 @@ impl RenderOnce for TrackContextMenu {
                 .disabled(!can_reveal_track),
             )
             .item(menu_separator())
+            .item(
+                menu_item(
+                    "track_toggle_like",
+                    Some(if is_liked.is_some() {
+                        STAR_FILLED
+                    } else {
+                        STAR
+                    }),
+                    if is_liked.is_some() {
+                        tr!("UNLIKE")
+                    } else {
+                        tr!("LIKE")
+                    },
+                    move |_, _, cx| {
+                        toggle_like_by_id(like_track_id, is_liked, cx);
+                    },
+                )
+                .disabled(!is_available),
+            )
             .item(
                 menu_item(
                     "track_add_to_playlist",

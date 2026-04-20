@@ -15,7 +15,7 @@ use tracing::{debug, error, warn};
 
 use crate::{
     library::{
-        db::{LibraryAccess, LikedTrackSortMethod, PlaylistTrackSortMethod},
+        db::{self, LibraryAccess, LikedTrackSortMethod, PlaylistTrackSortMethod},
         scan::ScanEvent,
     },
     media::metadata::Metadata,
@@ -36,7 +36,7 @@ use crate::{
             TableSettings,
         },
     },
-    ui::library::ViewSwitchMessage,
+    ui::{app::Pool, library::ViewSwitchMessage},
 };
 
 // yes this looks a little silly
@@ -454,7 +454,7 @@ pub(crate) async fn like_track<E: HasLikedState + 'static>(
     cx: &mut AsyncApp,
 ) {
     let task = crate::RUNTIME.spawn(async move {
-        crate::library::db::add_playlist_item(&pool, LIKED_SONGS_PLAYLIST_ID, track_id).await
+        db::add_playlist_item(&pool, LIKED_SONGS_PLAYLIST_ID, track_id).await
     });
 
     let new_id = match task.await {
@@ -487,7 +487,7 @@ pub(crate) async fn unlike_track<E: HasLikedState + 'static>(
     cx: &mut AsyncApp,
 ) {
     let task = crate::RUNTIME
-        .spawn(async move { crate::library::db::remove_playlist_item(&pool, item_id).await });
+        .spawn(async move { db::remove_playlist_item(&pool, item_id).await });
 
     match task.await {
         Ok(Ok(())) => {}
@@ -515,8 +515,6 @@ pub(crate) fn toggle_like<E: HasLikedState + 'static>(
     entity: Entity<E>,
     cx: &mut App,
 ) {
-    use crate::ui::app::Pool;
-
     let pool = cx.global::<Pool>().0.clone();
     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
@@ -542,14 +540,82 @@ pub(crate) fn toggle_like<E: HasLikedState + 'static>(
     });
 }
 
+pub(crate) fn toggle_like_by_id(track_id: i64, is_liked: Option<i64>, cx: &mut App) {
+    let pool = cx.global::<Pool>().0.clone();
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+
+    cx.spawn(async move |cx| {
+        let task = crate::RUNTIME.spawn(async move {
+            match is_liked {
+                Some(item_id) => db::remove_playlist_item(&pool, item_id).await,
+                None => db::add_playlist_item(&pool, LIKED_SONGS_PLAYLIST_ID, track_id)
+                    .await
+                    .map(|_| ()),
+            }
+        });
+
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!("could not toggle like: {err:?}");
+                return;
+            }
+            Err(err) => {
+                tracing::error!("like/unlike task panicked: {err:?}");
+                return;
+            }
+        }
+
+        playlist_tracker.update(cx, |_, cx| {
+            cx.emit(PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID));
+        });
+    })
+    .detach();
+}
+
+pub(crate) fn toggle_album_like(track_ids: Vec<i64>, all_liked: bool, cx: &mut App) {
+    if track_ids.is_empty() {
+        return;
+    }
+
+    let pool = cx.global::<Pool>().0.clone();
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+
+    cx.spawn(async move |cx| {
+        let task = crate::RUNTIME.spawn(async move {
+            if all_liked {
+                db::remove_tracks_from_playlist(&pool, LIKED_SONGS_PLAYLIST_ID, &track_ids).await
+            } else {
+                db::add_tracks_to_playlist_if_missing(&pool, LIKED_SONGS_PLAYLIST_ID, &track_ids)
+                    .await
+            }
+        });
+
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::error!("could not toggle album like: {err:?}");
+                return;
+            }
+            Err(err) => {
+                tracing::error!("album like task panicked: {err:?}");
+                return;
+            }
+        }
+
+        playlist_tracker.update(cx, |_, cx| {
+            cx.emit(PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID));
+        });
+    })
+    .detach();
+}
+
 pub(crate) fn subscribe_liked_updates<E>(
     cx: &mut Context<E>,
     get_track_id: impl Fn(&E) -> Option<i64> + 'static,
 ) where
     E: HasLikedState + 'static,
 {
-    use crate::library::db::LibraryAccess;
-
     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
     cx.subscribe(&playlist_tracker, move |this, _, ev, cx| {
         if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {

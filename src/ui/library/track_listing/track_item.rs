@@ -383,6 +383,7 @@ impl Render for TrackItem {
                             .child(TrackContextMenu::new(
                                 Rc::new(self.track.clone()),
                                 is_available,
+                                self.is_liked,
                                 track_menu_context,
                                 self.pl_info,
                                 show_add_to,
