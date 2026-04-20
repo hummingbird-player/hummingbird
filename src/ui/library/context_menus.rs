@@ -4,12 +4,14 @@ pub mod track;
 
 use std::{path::Path, process::Command, rc::Rc, sync::Arc};
 
+use camino::Utf8PathBuf;
 use cntp_i18n::tr;
 use gpui::{AnyElement, App, AppContext, Entity, IntoElement, SharedString, Window};
 
 use crate::{
     library::{
         db::{self, LibraryAccess},
+        scan::ScanInterface,
         types::{Album, Track},
     },
     playback::{
@@ -356,4 +358,29 @@ fn queue_album(cx: &mut App, album: &Album) {
     for item in available_album_queue_items(cx, album) {
         cx.global::<PlaybackInterface>().queue(item);
     }
+}
+
+pub(crate) fn rescan_album(cx: &App, album: &Album) {
+    let paths = match cx.list_album_paths(album.id) {
+        Ok(paths) => paths,
+        Err(err) => {
+            tracing::error!("could not list paths for album rescan: {err:?}");
+            return;
+        }
+    };
+
+    let utf8_paths: Vec<Utf8PathBuf> = paths.into_iter().map(Utf8PathBuf::from).collect();
+    cx.global::<ScanInterface>().rescan_paths(utf8_paths);
+}
+
+pub(crate) fn rescan_track(cx: &App, track: &Track) {
+    let path = match Utf8PathBuf::from_path_buf(track.location.clone()) {
+        Ok(path) => path,
+        Err(path) => {
+            tracing::error!("cannot rescan track with non-UTF-8 path: {:?}", path);
+            return;
+        }
+    };
+
+    cx.global::<ScanInterface>().rescan_paths(vec![path]);
 }

@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     PlaylistMenuInfo, TrackContextMenuContext, navigate_to_track_album, navigate_to_track_artist,
-    play_track_next, play_track_now, queue_track, remove_from_playlist,
+    play_track_next, play_track_now, queue_track, remove_from_playlist, rescan_track,
     reveal_track_in_file_manager, track_show_in_file_manager_label,
 };
 use crate::ui::app::Pool;
@@ -65,6 +65,7 @@ impl RenderOnce for TrackContextMenu {
         let track_for_artist = self.track.clone();
         let track_for_album = self.track.clone();
         let track_for_reveal = self.track.clone();
+        let track_for_rescan = self.track.clone();
         let can_go_to_artist = track_for_artist.album_id.is_some();
         let can_go_to_album = track_for_album.album_id.is_some();
         let can_reveal_track = is_track_path_available(track_for_reveal.location.as_path());
@@ -157,6 +158,14 @@ impl RenderOnce for TrackContextMenu {
                 )
                 .disabled(!can_reveal_track),
             )
+            .item(menu_item(
+                "track_rescan",
+                None::<SharedString>,
+                tr!("RESCAN_TRACK", "Rescan Track"),
+                move |_, _, cx| {
+                    rescan_track(cx, &track_for_rescan);
+                },
+            ))
             .item(menu_separator())
             .item(
                 menu_item(

@@ -49,6 +49,18 @@ fn file_scan_timestamp(path: &Utf8Path) -> Option<SystemTime> {
         .or(Some(base_timestamp))
 }
 
+/// Returns the file's scan timestamp if it exists on disk and is a supported media file,
+/// otherwise `None`.
+fn file_scan_timestamp_if_supported(path: &Utf8Path) -> Option<SystemTime> {
+    let timestamp = file_scan_timestamp(path)?;
+    can_be_read(
+        path.as_std_path(),
+        MediaProviderFeatures::PROVIDES_METADATA | MediaProviderFeatures::ALLOWS_INDEXING,
+    )
+    .unwrap_or(false)
+    .then_some(timestamp)
+}
+
 /// Check if a file should be scanned.
 /// Returns `Some(timestamp)` if the file should be scanned (not in scan_record or modified since last scan).
 /// Returns `None` if the file should be skipped or cannot be scanned.
@@ -56,16 +68,7 @@ fn file_is_scannable(
     path: &Utf8Path,
     scan_record: &FxHashMap<Utf8PathBuf, SystemTime>,
 ) -> Option<SystemTime> {
-    let timestamp = file_scan_timestamp(path)?;
-
-    if !can_be_read(
-        path.as_std_path(),
-        MediaProviderFeatures::PROVIDES_METADATA | MediaProviderFeatures::ALLOWS_INDEXING,
-    )
-    .unwrap_or(false)
-    {
-        return None;
-    }
+    let timestamp = file_scan_timestamp_if_supported(path)?;
 
     if let Some(last_scan) = scan_record.get(path)
         && *last_scan == timestamp
@@ -262,6 +265,126 @@ pub async fn cleanup_with_exclusions(
 
     updated_playlists
 }
+
+/// Performs a targeted rescan of specific files and directories without recursing into subfolders.
+/// Files are always emitted regardless of their scan_record state — this is used for
+/// user-initiated rescans where the user has explicitly asked to re-process the given items.
+/// Directories are expanded one level (immediate children only) and subdirectories are ignored.
+///
+/// Returns the total number of discovered files once the walk is complete.
+pub fn rescan_discover(
+    paths: Vec<Utf8PathBuf>,
+    path_tx: Sender<(Utf8PathBuf, SystemTime)>,
+    cancel_flag: Arc<AtomicBool>,
+) -> u64 {
+    let mut visited: FxHashSet<Utf8PathBuf> = FxHashSet::default();
+    let mut discovered_total: u64 = 0;
+
+    for entry in paths {
+        if cancel_flag.load(Ordering::Relaxed) {
+            return discovered_total;
+        }
+
+        let canonical = match entry.canonicalize_utf8() {
+            Ok(p) => p,
+            Err(e) => {
+                error!("Failed to canonicalize rescan path {:?}: {:?}", entry, e);
+                continue;
+            }
+        };
+
+        if !visited.insert(canonical.clone()) {
+            continue;
+        }
+
+        if canonical.is_dir() {
+            let dir_entries = match std::fs::read_dir(&canonical) {
+                Ok(e) => e,
+                Err(e) => {
+                    error!("Failed to read directory {:?}: {:?}", canonical, e);
+                    continue;
+                }
+            };
+
+            for dir_entry in dir_entries {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    return discovered_total;
+                }
+
+                let Some(file_path) = canonicalize_dir_entry(dir_entry) else {
+                    continue;
+                };
+
+                if !file_path.is_file() {
+                    continue;
+                }
+
+                if !visited.insert(file_path.clone()) {
+                    continue;
+                }
+
+                if emit_rescan_file(&file_path, &path_tx, &cancel_flag).is_some() {
+                    discovered_total += 1;
+                } else if cancel_flag.load(Ordering::Relaxed) {
+                    return discovered_total;
+                }
+            }
+        } else if canonical.is_file() {
+            if emit_rescan_file(&canonical, &path_tx, &cancel_flag).is_some() {
+                discovered_total += 1;
+            } else if cancel_flag.load(Ordering::Relaxed) {
+                return discovered_total;
+            }
+        }
+    }
+
+    discovered_total
+}
+
+/// Canonicalizes a directory entry and converts it to `Utf8PathBuf`, logging any failure.
+fn canonicalize_dir_entry(entry: std::io::Result<std::fs::DirEntry>) -> Option<Utf8PathBuf> {
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(e) => {
+            error!("Failed to read directory entry: {:?}", e);
+            return None;
+        }
+    };
+    let raw_path = entry.path();
+    match raw_path.canonicalize() {
+        Ok(canonical) => match Utf8PathBuf::try_from(canonical) {
+            Ok(utf8) => Some(utf8),
+            Err(e) => {
+                error!("Failed to convert path {:?} to UTF-8: {:?}", raw_path, e);
+                None
+            }
+        },
+        Err(e) => {
+            error!("Failed to canonicalize path {:?}: {:?}", raw_path, e);
+            None
+        }
+    }
+}
+
+/// Emits `path` on `path_tx` if it's a scannable media file. Returns `Some` on successful
+/// emission; `None` if the file was skipped, cancelled, or the channel closed.
+fn emit_rescan_file(
+    path: &Utf8Path,
+    path_tx: &Sender<(Utf8PathBuf, SystemTime)>,
+    cancel_flag: &Arc<AtomicBool>,
+) -> Option<SystemTime> {
+    let timestamp = file_scan_timestamp_if_supported(path)?;
+
+    if cancel_flag.load(Ordering::Relaxed) {
+        return None;
+    }
+
+    path_tx
+        .blocking_send((path.to_path_buf(), timestamp))
+        .ok()
+        .map(|_| timestamp)
+}
+
 /// Performs a full recursive directory walk, streaming discovered file paths through `path_tx`
 /// as they are found so that downstream pipeline stages can begin processing immediately.
 ///
@@ -298,28 +421,8 @@ pub fn discover(
                 return discovered_total;
             }
 
-            let path = match entry {
-                Ok(entry) => match entry.path().canonicalize() {
-                    Ok(p) => match Utf8PathBuf::try_from(p) {
-                        Ok(u) => u,
-                        Err(e) => {
-                            error!(
-                                "Failed to convert path {:?} to UTF-8: {:?}",
-                                entry.path(),
-                                e
-                            );
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        error!("Failed to canonicalize path {:?}: {:?}", entry.path(), e);
-                        continue;
-                    }
-                },
-                Err(e) => {
-                    error!("Failed to read directory entry: {:?}", e);
-                    continue;
-                }
+            let Some(path) = canonicalize_dir_entry(entry) else {
+                continue;
             };
 
             if path.is_dir() {

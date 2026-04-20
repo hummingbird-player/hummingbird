@@ -109,7 +109,9 @@ impl Render for ScanStatus {
             .when(
                 !matches!(
                     status,
-                    ScanEvent::ScanCompleteIdle | ScanEvent::ScanCompleteWatching
+                    ScanEvent::ScanCompleteIdle
+                        | ScanEvent::ScanCompleteWatching
+                        | ScanEvent::TargetedRescanComplete
                 ),
                 |this| {
                     this.child(
@@ -130,7 +132,9 @@ impl Render for ScanStatus {
             )
             .text_color(theme.text_secondary)
             .child(match status {
-                ScanEvent::ScanCompleteIdle => SharedString::from(""),
+                ScanEvent::ScanCompleteIdle | ScanEvent::TargetedRescanComplete => {
+                    SharedString::from("")
+                }
                 ScanEvent::ScanProgress { current, total } => {
                     if *total == u64::MAX {
                         // Total unknown (discovery still ongoing)

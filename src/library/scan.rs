@@ -30,7 +30,9 @@ use crate::{
     library::scan::{
         database::{AlbumCacheKey, AlbumPathCacheKey, update_metadata},
         decode::{FileInformation, read_metadata_for_path},
-        discover::{cleanup_removed_directories, cleanup_with_exclusions, discover},
+        discover::{
+            cleanup_removed_directories, cleanup_with_exclusions, discover, rescan_discover,
+        },
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_checkpoint, write_scan_record},
     },
     paths,
@@ -49,6 +51,7 @@ pub enum ScanEvent {
     ScanProgress { current: u64, total: u64 },
     ScanCompleteWatching,
     ScanCompleteIdle,
+    TargetedRescanComplete,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -65,9 +68,41 @@ enum ScanCommand {
     /// database schema has been changed, or a bug has been fixed with in the scanning proccess,
     /// and is usually triggered by the scan version changing (see [SCAN_VERSION]).
     ForceScan,
+    /// Rescan a specific set of files or directories without touching the rest of the library.
+    RescanPaths(Vec<Utf8PathBuf>),
     ResolveMissingFolders(MissingFolderAction),
     UpdateSettings(ScanSettings),
     Stop,
+}
+
+/// Mode determining how a single scan iteration operates.
+#[derive(Debug, Clone)]
+enum ScanMode {
+    /// Full library scan using the configured scan settings.
+    Full { is_force: bool },
+    /// Targeted rescan of a specific set of paths (files or directories).
+    Targeted { paths: Vec<Utf8PathBuf> },
+}
+
+impl ScanMode {
+    fn is_targeted(&self) -> bool {
+        matches!(self, ScanMode::Targeted { .. })
+    }
+
+    /// Whether encountered albums should be re-created from scratch during `update_metadata`.
+    /// Targeted rescans return false so non-track-1 files don't overwrite existing album art
+    /// with NULL.
+    fn force_albums(&self) -> bool {
+        matches!(self, ScanMode::Full { is_force: true })
+    }
+
+    fn completion_event(&self) -> ScanEvent {
+        if self.is_targeted() {
+            ScanEvent::TargetedRescanComplete
+        } else {
+            ScanEvent::ScanCompleteIdle
+        }
+    }
 }
 
 pub struct ScanInterface {
@@ -93,6 +128,15 @@ impl ScanInterface {
         self.cmd_tx
             .blocking_send(ScanCommand::ForceScan)
             .expect("could not send force re-scan start command");
+    }
+
+    pub fn rescan_paths(&self, paths: Vec<Utf8PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.cmd_tx
+            .blocking_send(ScanCommand::RescanPaths(paths))
+            .expect("could not send rescan-paths command");
     }
 
     pub fn stop(&self) {
@@ -180,7 +224,9 @@ async fn resolve_missing_folder_action(
                         }
                     }
                     Some(ScanCommand::Stop) => break MissingFolderAction::KeepInLibrary,
-                    Some(ScanCommand::Scan) | Some(ScanCommand::ForceScan) => {}
+                    Some(ScanCommand::Scan)
+                    | Some(ScanCommand::ForceScan)
+                    | Some(ScanCommand::RescanPaths(_)) => {}
                     None => break MissingFolderAction::KeepInLibrary,
                 }
             }
@@ -283,18 +329,27 @@ async fn run_scanner(
 
     let mut scan_record_slot = Some(scan_record_state);
     let mut pending_start: Option<bool> = None;
+    let mut pending_rescan: Option<Vec<Utf8PathBuf>> = None;
 
     loop {
         let mut scan_record = scan_record_slot
             .take()
             .expect("scan record should always be present between scan iterations");
-        let mut is_force = if let Some(force) = pending_start.take() {
-            force
+        let mut mode = if let Some(paths) = pending_rescan.take() {
+            ScanMode::Targeted { paths }
+        } else if let Some(force) = pending_start.take() {
+            ScanMode::Full { is_force: force }
         } else {
             loop {
                 match command_rx.recv().await {
-                    Some(ScanCommand::Scan) => break false,
-                    Some(ScanCommand::ForceScan) => break true,
+                    Some(ScanCommand::Scan) => break ScanMode::Full { is_force: false },
+                    Some(ScanCommand::ForceScan) => break ScanMode::Full { is_force: true },
+                    Some(ScanCommand::RescanPaths(paths)) => {
+                        if paths.is_empty() {
+                            continue;
+                        }
+                        break ScanMode::Targeted { paths };
+                    }
                     Some(ScanCommand::ResolveMissingFolders(_)) => {}
                     Some(ScanCommand::UpdateSettings(s)) => {
                         scan_settings = s;
@@ -305,69 +360,81 @@ async fn run_scanner(
             }
         };
 
-        if scan_record.is_version_mismatch() {
+        if let ScanMode::Full { is_force } = &mut mode
+            && scan_record.is_version_mismatch()
+        {
             info!(
                 "Scan record version mismatch (found {}, expected {}), forcing full scan",
                 scan_record.version, SCAN_VERSION
             );
-            is_force = true;
+            *is_force = true;
         }
 
         scan_record.version = SCAN_VERSION;
 
         info!(
-            "Starting scan (force: {}) with settings: {:?}",
-            is_force, scan_settings
+            "Starting scan (mode: {:?}) with settings: {:?}",
+            mode, scan_settings
         );
 
-        let (available_paths, missing_paths): (Vec<Utf8PathBuf>, Vec<Utf8PathBuf>) = scan_settings
-            .paths
-            .iter()
-            .cloned()
-            .partition(|path| path.exists());
-
-        let missing_action = if missing_paths.is_empty() {
-            MissingFolderAction::DeleteFromLibrary
-        } else {
-            resolve_missing_folder_action(
-                &mut command_rx,
-                &event_tx,
-                &mut scan_settings,
-                missing_paths.clone(),
-            )
-            .await
-        };
-
-        let excluded_missing_roots: &[_] = if missing_action == MissingFolderAction::KeepInLibrary {
-            &missing_paths
-        } else {
-            &[]
-        };
-
         let time_start = std::time::Instant::now();
-        let cleanup_start = std::time::Instant::now();
 
-        let _ = event_tx.send(ScanEvent::Cleaning);
+        let full_available_paths: Vec<Utf8PathBuf> = if let ScanMode::Full { is_force } = &mode {
+            let (available_paths, missing_paths): (Vec<Utf8PathBuf>, Vec<Utf8PathBuf>) =
+                scan_settings
+                    .paths
+                    .iter()
+                    .cloned()
+                    .partition(|path| path.exists());
 
-        let mut updated_playlists =
-            cleanup_removed_directories(&pool, &mut scan_record, &scan_settings.paths).await;
-        updated_playlists
-            .extend(cleanup_with_exclusions(&pool, &mut scan_record, excluded_missing_roots).await);
-        if !updated_playlists.is_empty() {
-            let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
-                updated_playlists.into_iter().collect(),
-            ));
-        }
+            let missing_action = if missing_paths.is_empty() {
+                MissingFolderAction::DeleteFromLibrary
+            } else {
+                resolve_missing_folder_action(
+                    &mut command_rx,
+                    &event_tx,
+                    &mut scan_settings,
+                    missing_paths.clone(),
+                )
+                .await
+            };
 
-        let cleanup_duration = std::time::Instant::now() - cleanup_start;
-        info!("Cleanup took {:?}", cleanup_duration);
+            let excluded_missing_roots: &[_] =
+                if missing_action == MissingFolderAction::KeepInLibrary {
+                    &missing_paths
+                } else {
+                    &[]
+                };
 
-        scan_record.directories = scan_settings.paths.clone();
+            let cleanup_start = std::time::Instant::now();
+            let _ = event_tx.send(ScanEvent::Cleaning);
+
+            let mut updated_playlists =
+                cleanup_removed_directories(&pool, &mut scan_record, &scan_settings.paths).await;
+            updated_playlists.extend(
+                cleanup_with_exclusions(&pool, &mut scan_record, excluded_missing_roots).await,
+            );
+            if !updated_playlists.is_empty() {
+                let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
+                    updated_playlists.into_iter().collect(),
+                ));
+            }
+
+            let cleanup_duration = std::time::Instant::now() - cleanup_start;
+            info!("Cleanup took {:?}", cleanup_duration);
+
+            scan_record.directories = scan_settings.paths.clone();
+
+            if *is_force {
+                scan_record.records.clear();
+            }
+
+            available_paths
+        } else {
+            Vec::new()
+        };
+
         let checkpoint_dirs = scan_record.directories.clone();
-
-        if is_force {
-            scan_record.records.clear();
-        }
 
         let scan_record_shared = Arc::new(Mutex::new(scan_record));
 
@@ -393,18 +460,26 @@ async fn run_scanner(
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Discovery
-        let mut settings_for_discover = scan_settings.clone();
-        settings_for_discover.paths = available_paths;
-        let scan_record_for_discover = scan_record_shared.clone();
         let cancel_for_discover = Arc::clone(&cancel_flag);
-        let discover_handle = spawn_blocking(move || {
-            discover(
-                settings_for_discover,
-                scan_record_for_discover,
-                path_tx,
-                cancel_for_discover,
-            )
-        });
+        let discover_handle = match &mode {
+            ScanMode::Full { .. } => {
+                let mut settings_for_discover = scan_settings.clone();
+                settings_for_discover.paths = full_available_paths;
+                let scan_record_for_discover = scan_record_shared.clone();
+                spawn_blocking(move || {
+                    discover(
+                        settings_for_discover,
+                        scan_record_for_discover,
+                        path_tx,
+                        cancel_for_discover,
+                    )
+                })
+            }
+            ScanMode::Targeted { paths } => {
+                let paths = paths.clone();
+                spawn_blocking(move || rescan_discover(paths, path_tx, cancel_for_discover))
+            }
+        };
 
         let path_rx_shared = Arc::new(Mutex::new(path_rx));
 
@@ -493,6 +568,13 @@ async fn run_scanner(
                         Some(ScanCommand::ForceScan) => {
                             pending_start = Some(true);
                         }
+                        Some(ScanCommand::RescanPaths(paths)) => {
+                            if !paths.is_empty() {
+                                pending_rescan
+                                    .get_or_insert_with(Vec::new)
+                                    .extend(paths);
+                            }
+                        }
                         Some(ScanCommand::UpdateSettings(s)) => {
                             scan_settings = s;
                         }
@@ -548,7 +630,7 @@ async fn run_scanner(
                         &path,
                         length,
                         &image,
-                        is_force,
+                        mode.force_albums(),
                         &mut force_encountered_albums,
                         &mut artist_cache,
                         &mut album_cache,
@@ -686,7 +768,7 @@ async fn run_scanner(
                     .into_inner(),
             );
 
-            let _ = event_tx.send(ScanEvent::ScanCompleteIdle);
+            let _ = event_tx.send(mode.completion_event());
             continue;
         }
 
@@ -721,7 +803,7 @@ async fn run_scanner(
             warn!("Failed to delete scan record checkpoint: {:?}", e);
         }
 
-        let _ = event_tx.send(ScanEvent::ScanCompleteIdle);
+        let _ = event_tx.send(mode.completion_event());
     }
 }
 

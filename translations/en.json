@@ -148,6 +148,8 @@
   "REPEAT_OFF": "Off",
   "REPEAT_ONE": "Repeat One",
   "REPLAY_GAIN": "ReplayGain",
+  "RESCAN_ALBUM": "Rescan Album",
+  "RESCAN_TRACK": "Rescan Track",
   "RG_ALBUM": "Album",
   "RG_AUTO": "Auto",
   "RG_MODE_LABEL": "ReplayGain Mode",

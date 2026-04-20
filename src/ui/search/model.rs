@@ -105,6 +105,7 @@ impl SearchModel {
 
                 if *state == ScanEvent::ScanCompleteIdle
                     || *state == ScanEvent::ScanCompleteWatching
+                    || *state == ScanEvent::TargetedRescanComplete
                 {
                     debug!("Scan complete, refreshing search items");
 
