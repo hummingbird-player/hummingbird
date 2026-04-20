@@ -339,15 +339,63 @@ fn make_view(
     }
 }
 
+fn library_section_from_history(history: &NavigationHistory) -> LibrarySection {
+    LibrarySection::from_message(&history.current())
+        .or_else(|| {
+            history
+                .last_matching(ViewSwitchMessage::is_key_page)
+                .and_then(|message| LibrarySection::from_message(&message))
+        })
+        .unwrap_or(LibrarySection::Albums)
+}
+
 impl Library {
+    fn sync_visible_views(&mut self, model: &Entity<NavigationHistory>, cx: &mut App) {
+        let history = model.read(cx);
+        let current_msg = history.current();
+        let two_column = cx
+            .global::<crate::settings::SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .two_column_library;
+
+        self.section = library_section_from_history(&history);
+
+        if two_column {
+            if current_msg.is_detail_page() {
+                self.right_view = Some(self.view.clone());
+
+                let left_msg = history.last_matching(ViewSwitchMessage::is_key_page);
+
+                let needs_new_left = match (&self.left_view, &left_msg) {
+                    (None, Some(_)) | (Some(_), None) => true,
+                    (Some(lv), Some(msg)) => !msg.library_view_matches(lv),
+                    (None, None) => false,
+                };
+
+                if needs_new_left {
+                    self.left_view = left_msg
+                        .as_ref()
+                        .map(|message| make_view(message, cx, model, &self.scroll_state));
+                }
+            } else {
+                self.left_view = Some(self.view.clone());
+                self.right_view = None;
+            }
+        } else {
+            self.left_view = None;
+            self.right_view = None;
+        }
+    }
+
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let switcher_model = cx.global::<Models>().switcher_model.clone();
             let scroll_state = ScrollStateStorage::default();
             let initial_message = switcher_model.read(cx).current();
             let view = make_view(&initial_message, cx, &switcher_model, &scroll_state);
-            let section =
-                LibrarySection::from_message(&initial_message).unwrap_or(LibrarySection::Albums);
+            let section = library_section_from_history(&switcher_model.read(cx));
 
             cx.subscribe(
                 &switcher_model,
@@ -380,9 +428,6 @@ impl Library {
 
                             if let Some(dest) = destination {
                                 debug!("back → {:?}", dest);
-                                if let Some(s) = LibrarySection::from_message(&dest) {
-                                    this.section = s;
-                                }
                                 make_view(&dest, cx, &m, &this.scroll_state)
                             } else {
                                 this.view.clone()
@@ -399,9 +444,6 @@ impl Library {
 
                             if let Some(dest) = destination {
                                 debug!("forward → {:?}", dest);
-                                if let Some(s) = LibrarySection::from_message(&dest) {
-                                    this.section = s;
-                                }
                                 make_view(&dest, cx, &m, &this.scroll_state)
                             } else {
                                 this.view.clone()
@@ -414,10 +456,6 @@ impl Library {
                         }
 
                         _ => {
-                            if let Some(s) = LibrarySection::from_message(message) {
-                                this.section = s;
-                            }
-
                             m.update(cx, |history, cx| {
                                 history.navigate(*message);
                                 cx.notify();
@@ -427,41 +465,7 @@ impl Library {
                         }
                     };
 
-                    let two_column = cx
-                        .global::<crate::settings::SettingsGlobal>()
-                        .model
-                        .read(cx)
-                        .interface
-                        .two_column_library;
-
-                    if two_column {
-                        let current_msg = m.read(cx).current();
-                        if current_msg.is_detail_page() {
-                            this.right_view = Some(this.view.clone());
-
-                            let left_msg = m.read(cx).last_matching(ViewSwitchMessage::is_key_page);
-
-                            let needs_new_left = match (&this.left_view, &left_msg) {
-                                (None, Some(_)) | (Some(_), None) => true,
-
-                                (Some(lv), Some(msg)) => !msg.library_view_matches(lv),
-                                (None, None) => false,
-                            };
-
-                            if needs_new_left {
-                                this.left_view = left_msg
-                                    .as_ref()
-                                    .map(|lm| make_view(lm, cx, &m, &this.scroll_state));
-                            }
-                        } else {
-                            // Key page: show full-width in left pane, clear right
-                            this.left_view = Some(this.view.clone());
-                            this.right_view = None;
-                        }
-                    } else {
-                        this.left_view = None;
-                        this.right_view = None;
-                    }
+                    this.sync_visible_views(&m, cx);
 
                     cx.notify();
                 },
@@ -498,9 +502,16 @@ impl Library {
             let show_update_playlist = cx.new(|_| false);
 
             let settings = cx.global::<crate::settings::SettingsGlobal>().model.clone();
-            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            cx.observe(&settings, {
+                let switcher_model = switcher_model.clone();
+                move |this: &mut Library, _, cx| {
+                    this.sync_visible_views(&switcher_model, cx);
+                    cx.notify();
+                }
+            })
+            .detach();
 
-            Library {
+            let mut library = Library {
                 sidebar: Sidebar::new(cx, switcher_model.clone()),
                 view,
                 left_view: None,
@@ -512,7 +523,9 @@ impl Library {
                 scroll_state,
                 reclaim_focus: false,
                 _focus_lost_sub: None,
-            }
+            };
+            library.sync_visible_views(&switcher_model, cx);
+            library
         })
     }
 }
