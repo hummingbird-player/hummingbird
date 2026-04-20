@@ -12,15 +12,22 @@ env:
 jobs:
   test:
     name: Run Cargo Tests
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev
       - name: Update Rust
         run: rustup update
+      - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test
