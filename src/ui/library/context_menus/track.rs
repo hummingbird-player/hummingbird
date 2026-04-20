@@ -161,7 +161,7 @@ impl RenderOnce for TrackContextMenu {
             .item(menu_item(
                 "track_rescan",
                 None::<SharedString>,
-                tr!("RESCAN_TRACK", "Rescan Track"),
+                tr!("RESCAN_TRACK", "Rescan track"),
                 move |_, _, cx| {
                     rescan_track(cx, &track_for_rescan);
                 },

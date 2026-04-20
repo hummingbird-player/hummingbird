@@ -85,7 +85,7 @@ impl RenderOnce for AlbumContextMenu {
             .item(menu_item(
                 "album_rescan",
                 None::<gpui::SharedString>,
-                tr!("RESCAN_ALBUM", "Rescan Album"),
+                tr!("RESCAN_ALBUM", "Rescan album"),
                 move |_, _, cx| {
                     rescan_album(cx, &album_for_rescan);
                 },
