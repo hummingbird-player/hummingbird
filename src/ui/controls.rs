@@ -145,6 +145,15 @@ impl HasLikedState for InfoSection {
     }
 }
 
+fn update_track_metadata(this: &mut InfoSection, metadata: &crate::media::metadata::Metadata) {
+    this.track_name = metadata.name.clone().map(SharedString::from);
+    this.artist_name = metadata
+        .artist
+        .clone()
+        .or(metadata.album_artist.clone())
+        .map(SharedString::from);
+}
+
 impl InfoSection {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
@@ -158,15 +167,7 @@ impl InfoSection {
             .detach();
 
             cx.observe(&metadata_model, |this: &mut Self, m, cx| {
-                let metadata = m.read(cx);
-
-                this.track_name = metadata.name.clone().map(SharedString::from);
-                this.artist_name = metadata
-                    .artist
-                    .clone()
-                    .or(metadata.album_artist.clone())
-                    .map(SharedString::from);
-
+                update_track_metadata(this, m.read(cx));
                 cx.notify();
             })
             .detach();
@@ -200,12 +201,13 @@ impl InfoSection {
                 cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
                     .unwrap_or_default()
             });
+            let initial_metadata = metadata_model.read(cx).clone();
 
             subscribe_liked_updates(cx, |this: &Self| {
                 this.current_library_track.as_ref().map(|t| t.id)
             });
 
-            Self {
+            let mut info_section = Self {
                 artist_name: None,
                 track_name: None,
                 playback_info,
@@ -216,7 +218,10 @@ impl InfoSection {
                 can_navigate_to_artist,
                 image_element_key: 0,
                 is_liked,
-            }
+            };
+            update_track_metadata(&mut info_section, &initial_metadata);
+
+            info_section
         })
     }
 }
