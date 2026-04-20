@@ -43,7 +43,7 @@ use super::{
     about::about_dialog,
     arguments::parse_args_and_prepare,
     components::{
-        input,
+        context, input,
         modal::{self, ModalActive},
         popover,
         window_chrome::window_chrome,
@@ -244,6 +244,7 @@ pub fn run() -> anyhow::Result<()> {
             library::bind_actions(cx);
             dropdown::bind_actions(cx);
             popover::bind_actions(cx);
+            context::bind_actions(cx);
 
             cx.set_global(modal::ModalActive(AtomicBool::new(false)));
 

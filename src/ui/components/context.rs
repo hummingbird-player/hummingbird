@@ -2,6 +2,12 @@ use gpui::*;
 
 use crate::ui::theme::Theme;
 
+actions!(context, [CloseContextMenu]);
+
+pub fn bind_actions(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new("escape", CloseContextMenu, None)]);
+}
+
 #[derive(IntoElement)]
 pub struct ContextMenu {
     pub(self) id: ElementId,
@@ -32,12 +38,18 @@ impl ParentElement for ContextMenu {
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, _| None::<Point<Pixels>>);
+        let focus_handle = window
+            .use_keyed_state((self.id.clone(), "focus"), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
 
         let position = *state.read(cx);
 
         let state_open = state.clone();
         let state_click = state.clone();
         let state_out = state.clone();
+        let state_esc = state.clone();
+        let focus_open = focus_handle.clone();
 
         let theme = cx.global::<Theme>();
 
@@ -51,6 +63,7 @@ impl RenderOnce for ContextMenu {
                         .border_color(theme.elevated_border_color)
                         .bg(theme.elevated_background)
                         .id("menu")
+                        .track_focus(&focus_handle)
                         .on_click(move |_, _, cx| {
                             state_click.update(cx, |pos, cx| {
                                 *pos = None;
@@ -59,6 +72,12 @@ impl RenderOnce for ContextMenu {
                         })
                         .on_mouse_down_out(move |_, _, cx| {
                             state_out.update(cx, |pos, cx| {
+                                *pos = None;
+                                cx.notify();
+                            });
+                        })
+                        .on_action(move |_: &CloseContextMenu, _, cx| {
+                            state_esc.update(cx, |pos, cx| {
                                 *pos = None;
                                 cx.notify();
                             });
@@ -71,12 +90,13 @@ impl RenderOnce for ContextMenu {
 
         self.div
             .id(self.id)
-            .on_aux_click(move |ev, _, cx| {
+            .on_aux_click(move |ev, window, cx| {
                 if ev.is_right_click() {
                     state_open.update(cx, |pos, cx| {
                         *pos = Some(ev.position());
                         cx.notify();
                     });
+                    focus_open.focus(window, cx);
                 }
             })
             .children(self.element)
