@@ -222,8 +222,6 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<WindowShadow> 
     let window_title = tr!("APP_NAME").to_string();
     window.set_window_title(&window_title);
 
-    init_pbc_task(cx, window);
-
     let palette = CommandPalette::new(cx, window);
     cx.set_global(CommandPaletteHolder::new(palette.clone()));
 
@@ -467,7 +465,12 @@ pub fn run() -> anyhow::Result<()> {
                 .write(cx, Some(window_information.clone()));
         }
 
-        ensure_main_window(cx).unwrap();
+        let main_window = ensure_main_window(cx).unwrap();
+        main_window
+            .update(cx, |_, window, cx| {
+                init_pbc_task(cx, window);
+            })
+            .unwrap();
         register_pbc_event_handlers(cx);
     });
 
