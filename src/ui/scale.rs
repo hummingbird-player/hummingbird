@@ -142,9 +142,9 @@ mod tests {
 
     #[test]
     fn density_comes_from_settings() {
-        let resolved = resolve_density(&interface(UiDensity::COMFORTABLE));
+        let resolved = resolve_density(&interface(UiDensity::from(1.0)));
 
-        assert_eq!(resolved, UiDensity::COMFORTABLE);
+        assert_eq!(resolved, UiDensity::from(1.0));
     }
 
     #[test]
@@ -172,8 +172,8 @@ mod tests {
 
     #[test]
     fn scale_px_offsets_from_default() {
-        assert_eq!(scale_px(UiDensity::COMPACT, 36.0, 2.0), 34.0);
-        assert_eq!(scale_px(UiDensity::DEFAULT, 36.0, 2.0), 36.0);
-        assert_eq!(scale_px(UiDensity::COMFORTABLE, 36.0, 2.0), 38.0);
+        assert_eq!(scale_px(UiDensity::from(-1.0), 36.0, 2.0), 34.0);
+        assert_eq!(scale_px(UiDensity::from(0.0), 36.0, 2.0), 36.0);
+        assert_eq!(scale_px(UiDensity::from(1.0), 36.0, 2.0), 38.0);
     }
 }

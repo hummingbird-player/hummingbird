@@ -22,10 +22,6 @@ pub const MAX_UI_DENSITY: f32 = 1.0;
 pub struct UiDensity(f32);
 
 impl UiDensity {
-    pub const COMPACT: Self = Self(MIN_UI_DENSITY);
-    pub const DEFAULT: Self = Self(DEFAULT_UI_DENSITY);
-    pub const COMFORTABLE: Self = Self(MAX_UI_DENSITY);
-
     pub fn new(value: f32) -> Self {
         Self(clamp_ui_density(value))
     }
@@ -101,8 +97,8 @@ pub struct InterfaceSettings {
     pub two_column_library: bool,
     #[serde(default)]
     pub startup_library_view: StartupLibraryView,
-    #[serde(default, alias = "layout_preset")]
-    pub ui_preset: Option<String>,
+    #[serde(default)]
+    pub ui_config: Option<String>,
     #[serde(default)]
     pub ui_density: UiDensity,
     #[serde(default = "default_grid_min_item_width")]
@@ -131,7 +127,7 @@ impl Default for InterfaceSettings {
             full_width_library: false,
             two_column_library: false,
             startup_library_view: StartupLibraryView::default(),
-            ui_preset: None,
+            ui_config: None,
             ui_density: UiDensity::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,

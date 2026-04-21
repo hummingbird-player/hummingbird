@@ -4,32 +4,9 @@ use serde::{
     de::{MapAccess, Visitor, value::MapAccessDeserializer},
 };
 
-use crate::{
-    settings::{SettingsGlobal, interface::InterfaceSettings},
-    ui::layout::{
-        defaults::{default_shell_layout, stage_shell_layout},
-        schema::ShellLayout,
-    },
-};
+use crate::ui::layout::{defaults::default_shell_layout, schema::ShellLayout};
 
-pub const STAGE_UI_PRESET_ID: &str = "stage";
-pub const SEEDED_UI_PRESET_ID: &str = "layouts/custom.ron";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UiPresetKind<'a> {
-    Default,
-    Stage,
-    File(&'a str),
-}
-
-pub fn classify_ui_preset_id(id: Option<&str>) -> UiPresetKind<'_> {
-    match id {
-        None | Some("") | Some("default") => UiPresetKind::Default,
-        Some(STAGE_UI_PRESET_ID) => UiPresetKind::Stage,
-        Some("custom") => UiPresetKind::File(SEEDED_UI_PRESET_ID),
-        Some(path) => UiPresetKind::File(path),
-    }
-}
+pub const SEEDED_UI_CONFIG_PATH: &str = "layouts/custom.ron";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlatOptionalLayout(pub Option<ShellLayout>);
@@ -179,7 +156,7 @@ impl<'de> Deserialize<'de> for FlatOptionalString {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct UiPresetConfig {
+pub struct UiConfig {
     #[serde(default, skip_serializing_if = "FlatOptionalLayout::is_none")]
     pub layout: FlatOptionalLayout,
     #[serde(default, skip_serializing_if = "FlatOptionalString::is_none")]
@@ -188,83 +165,40 @@ pub struct UiPresetConfig {
     pub mono_font: FlatOptionalString,
 }
 
-pub struct UiPresetConfigGlobal(pub UiPresetConfig);
+pub struct UiConfigGlobal(pub UiConfig);
 
-impl Global for UiPresetConfigGlobal {}
+impl Global for UiConfigGlobal {}
 
-pub fn resolve_shell_layout(
-    interface: &InterfaceSettings,
-    preset: Option<&UiPresetConfig>,
-) -> ShellLayout {
-    match classify_ui_preset_id(interface.ui_preset.as_deref()) {
-        UiPresetKind::Default => default_shell_layout(),
-        UiPresetKind::Stage => stage_shell_layout(),
-        UiPresetKind::File(_) => preset
-            .and_then(|config| config.layout.0.clone())
-            .unwrap_or_else(default_shell_layout),
-    }
+pub fn resolve_shell_layout(config: &UiConfig) -> ShellLayout {
+    config.layout.0.clone().unwrap_or_else(default_shell_layout)
 }
 
 pub fn active_shell_layout(cx: &App) -> ShellLayout {
-    let interface = cx
-        .global::<SettingsGlobal>()
-        .model
-        .read(cx)
-        .interface
-        .clone();
-    let preset = cx.global::<UiPresetConfigGlobal>().0.clone();
-    resolve_shell_layout(&interface, Some(&preset))
+    let config = cx.global::<UiConfigGlobal>().0.clone();
+    resolve_shell_layout(&config)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        settings::interface::UiDensity,
-        ui::layout::defaults::{default_shell_layout, stage_shell_layout},
-    };
+    use crate::ui::layout::defaults::default_shell_layout;
 
-    use super::{
-        SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID, UiPresetConfig, UiPresetKind,
-        classify_ui_preset_id, resolve_shell_layout,
-    };
-
-    fn interface(
-        ui_preset: Option<&str>,
-        ui_density: UiDensity,
-    ) -> crate::settings::interface::InterfaceSettings {
-        crate::settings::interface::InterfaceSettings {
-            ui_preset: ui_preset.map(str::to_string),
-            ui_density,
-            ..Default::default()
-        }
-    }
+    use super::{FlatOptionalLayout, UiConfig, resolve_shell_layout};
 
     #[test]
-    fn file_preset_falls_back_to_default_shell_layout_when_missing() {
-        let resolved = resolve_shell_layout(
-            &interface(Some("layouts/custom.ron"), UiDensity::DEFAULT),
-            Some(&UiPresetConfig::default()),
-        );
+    fn empty_ui_config_falls_back_to_default_shell_layout() {
+        let resolved = resolve_shell_layout(&UiConfig::default());
 
         assert_eq!(resolved, default_shell_layout());
     }
 
     #[test]
-    fn stage_preset_uses_builtin_stage_shell_layout() {
-        let resolved = resolve_shell_layout(&interface(Some("stage"), UiDensity::DEFAULT), None);
+    fn ui_config_uses_explicit_shell_layout() {
+        let layout = default_shell_layout();
+        let resolved = resolve_shell_layout(&UiConfig {
+            layout: FlatOptionalLayout::from(layout.clone()),
+            ..Default::default()
+        });
 
-        assert_eq!(resolved, stage_shell_layout());
-    }
-
-    #[test]
-    fn preset_classifier_maps_old_custom_alias_to_seeded_file() {
-        assert_eq!(
-            classify_ui_preset_id(Some("custom")),
-            UiPresetKind::File(SEEDED_UI_PRESET_ID)
-        );
-        assert_eq!(
-            classify_ui_preset_id(Some(STAGE_UI_PRESET_ID)),
-            UiPresetKind::Stage
-        );
+        assert_eq!(resolved, layout);
     }
 }

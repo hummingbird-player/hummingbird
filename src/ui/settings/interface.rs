@@ -20,13 +20,12 @@ use crate::{
         checkbox::checkbox, dropdown::dropdown, label::label, labeled_slider::labeled_slider,
         section_header::section_header,
     },
-    ui::layout::{discover_ui_preset_options, resolve_ui_preset_relative_path},
-    ui::presets::PresetOption,
+    ui::file_options::SelectionOption,
+    ui::layout::{discover_ui_config_options, resolve_ui_config_relative_path},
     ui::styling::{
         StyledExt,
         theme::{Theme, ThemeOptionsGlobal, resolve_theme_relative_path},
     },
-    ui::ui_preset::STAGE_UI_PRESET_ID,
 };
 
 #[derive(Clone)]
@@ -83,7 +82,7 @@ fn get_available_languages() -> Vec<LanguageOption> {
 pub struct InterfaceSettings {
     settings: Entity<crate::settings::Settings>,
     data_dir: PathBuf,
-    theme_options: Entity<Vec<PresetOption>>,
+    theme_options: Entity<Vec<SelectionOption>>,
 }
 
 struct InterfaceSettingsLayout {
@@ -220,25 +219,25 @@ impl Render for InterfaceSettings {
         let layout_dropdown = {
             let settings_c = settings.clone();
             let resolved =
-                resolve_ui_preset_relative_path(&self.data_dir, interface.ui_preset.as_deref());
-            let mut dd = dropdown::<Option<String>>("layout-preset-dropdown")
+                resolve_ui_config_relative_path(&self.data_dir, interface.ui_config.as_deref());
+            let mut dd = dropdown::<Option<String>>("layout-config-dropdown")
                 .w(px(layout.control_width))
                 .selected(resolved)
-                .on_change(move |preset, _, cx| {
+                .on_change(move |config, _, cx| {
                     settings_c.update(cx, |s, cx| {
-                        s.interface.ui_preset = preset.clone();
+                        s.interface.ui_config = config.clone();
                         save_settings(cx, s);
                         cx.notify();
                     });
                 });
 
-            for preset in discover_ui_preset_options(&self.data_dir) {
-                let label: SharedString = match preset.id.as_deref() {
-                    None => tr!("LAYOUT_PRESET_DEFAULT", "Default").into(),
-                    Some(STAGE_UI_PRESET_ID) => tr!("LAYOUT_PRESET_STAGE", "Stage").into(),
-                    Some(_) => preset.label.into(),
+            for config in discover_ui_config_options(&self.data_dir) {
+                let label: SharedString = if config.id.is_none() {
+                    tr!("LAYOUT_PRESET_DEFAULT", "Default").into()
+                } else {
+                    config.label.into()
                 };
-                dd = dd.option(preset.id, label);
+                dd = dd.option(config.id, label);
             }
 
             dd
@@ -288,16 +287,16 @@ impl Render for InterfaceSettings {
                     .child(theme_dropdown),
             )
             .child(
-                label("layout-preset-selector", tr!("INTERFACE_LAYOUT", "Layout"))
+                label("layout-config-selector", tr!("INTERFACE_LAYOUT", "Layout"))
                     .subtext(tr!(
                         "INTERFACE_LAYOUT_SUBTEXT",
-                        "Choose a built-in shell arrangement or a preset from the layouts folder. Switching presets applies immediately. Editing a .ron preset still requires restarting Hummingbird."
+                        "Use the built-in layout or choose a .ron file from the layouts folder. Switching files applies immediately. Editing a selected .ron file still requires restarting Hummingbird."
                     ))
                     .w_full()
                     .child(layout_dropdown),
             )
             .child(
-                label("density-preset-selector", tr!("INTERFACE_DENSITY", "Density"))
+                label("density-slider-selector", tr!("INTERFACE_DENSITY", "Density"))
                     .subtext(tr!(
                         "INTERFACE_DENSITY_SUBTEXT",
                         "Adjust the default interface scale for text and component sizing."

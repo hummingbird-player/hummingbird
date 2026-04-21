@@ -2,10 +2,7 @@ use std::collections::HashSet;
 
 use gpui::{App, Global, SharedString};
 
-use crate::{
-    settings::{SettingsGlobal, interface::InterfaceSettings},
-    ui::ui_preset::{UiPresetConfig, UiPresetConfigGlobal, UiPresetKind, classify_ui_preset_id},
-};
+use crate::ui::ui_config::{UiConfig, UiConfigGlobal};
 
 const DEFAULT_UI_FONT_FAMILY: &str = "Inter";
 const DEFAULT_MONO_FONT_FAMILY: &str = "Roboto Mono";
@@ -38,30 +35,19 @@ pub fn capture_available_fonts(cx: &App) -> HashSet<String> {
     cx.text_system().all_font_names().into_iter().collect()
 }
 
-pub fn resolve_fonts(
-    interface: &InterfaceSettings,
-    preset: Option<&UiPresetConfig>,
-    available_fonts: &HashSet<String>,
-) -> ResolvedFonts {
-    if !matches!(
-        classify_ui_preset_id(interface.ui_preset.as_deref()),
-        UiPresetKind::File(_)
-    ) {
-        return ResolvedFonts::default();
-    }
-
+pub fn resolve_fonts(config: &UiConfig, available_fonts: &HashSet<String>) -> ResolvedFonts {
     let default_fonts = ResolvedFonts::default();
 
     ResolvedFonts {
         font: resolve_font_family(
             "font",
-            preset.and_then(|config| config.font.as_deref()),
+            config.font.as_deref(),
             &default_fonts.font,
             available_fonts,
         ),
         mono_font: resolve_font_family(
             "mono_font",
-            preset.and_then(|config| config.mono_font.as_deref()),
+            config.mono_font.as_deref(),
             &default_fonts.mono_font,
             available_fonts,
         ),
@@ -69,17 +55,10 @@ pub fn resolve_fonts(
 }
 
 pub fn refresh_resolved_fonts(cx: &mut App) {
-    let interface = cx
-        .global::<SettingsGlobal>()
-        .model
-        .read(cx)
-        .interface
-        .clone();
-    let preset = cx.global::<UiPresetConfigGlobal>().0.clone();
+    let config = cx.global::<UiConfigGlobal>().0.clone();
     let available_fonts = cx.global::<AvailableFontsGlobal>().0.clone();
 
-    cx.global_mut::<ResolvedFontsGlobal>().0 =
-        resolve_fonts(&interface, Some(&preset), &available_fonts);
+    cx.global_mut::<ResolvedFontsGlobal>().0 = resolve_fonts(&config, &available_fonts);
 }
 
 pub fn active_fonts(cx: &App) -> ResolvedFonts {
@@ -118,20 +97,9 @@ fn font_family_available(family: &str, available_fonts: &HashSet<String>) -> boo
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{
-        settings::interface::{InterfaceSettings, UiDensity},
-        ui::ui_preset::{FlatOptionalString, UiPresetConfig},
-    };
+    use crate::ui::ui_config::{FlatOptionalString, UiConfig};
 
     use super::{ResolvedFonts, resolve_fonts};
-
-    fn interface(ui_preset: Option<&str>) -> InterfaceSettings {
-        InterfaceSettings {
-            ui_preset: ui_preset.map(str::to_string),
-            ui_density: UiDensity::DEFAULT,
-            ..Default::default()
-        }
-    }
 
     fn available_fonts() -> HashSet<String> {
         ["Inter", "Roboto Mono", "Lexend"]
@@ -141,29 +109,20 @@ mod tests {
     }
 
     #[test]
-    fn non_custom_layout_ignores_font_overrides() {
-        let resolved = resolve_fonts(
-            &interface(None),
-            Some(&UiPresetConfig {
-                font: FlatOptionalString::from("Lexend"),
-                mono_font: FlatOptionalString::from("Inter"),
-                ..Default::default()
-            }),
-            &available_fonts(),
-        );
+    fn empty_ui_config_uses_default_fonts() {
+        let resolved = resolve_fonts(&UiConfig::default(), &available_fonts());
 
         assert_eq!(resolved, ResolvedFonts::default());
     }
 
     #[test]
-    fn custom_layout_uses_configured_fonts() {
+    fn ui_config_uses_configured_fonts() {
         let resolved = resolve_fonts(
-            &interface(Some("layouts/ophelia.ron")),
-            Some(&UiPresetConfig {
+            &UiConfig {
                 font: FlatOptionalString::from("Lexend"),
                 mono_font: FlatOptionalString::from("Roboto Mono"),
                 ..Default::default()
-            }),
+            },
             &available_fonts(),
         );
 
@@ -174,12 +133,11 @@ mod tests {
     #[test]
     fn invalid_custom_fonts_fall_back_to_defaults() {
         let resolved = resolve_fonts(
-            &interface(Some("layouts/ophelia.ron")),
-            Some(&UiPresetConfig {
+            &UiConfig {
                 font: FlatOptionalString::from("Missing UI Font"),
                 mono_font: FlatOptionalString::from("Missing Mono Font"),
                 ..Default::default()
-            }),
+            },
             &available_fonts(),
         );
 
@@ -189,12 +147,11 @@ mod tests {
     #[test]
     fn system_font_aliases_are_allowed() {
         let resolved = resolve_fonts(
-            &interface(Some("layouts/ophelia.ron")),
-            Some(&UiPresetConfig {
+            &UiConfig {
                 font: FlatOptionalString::from(".SystemUIFont"),
                 mono_font: FlatOptionalString::from(".SystemUIFont"),
                 ..Default::default()
-            }),
+            },
             &available_fonts(),
         );
 

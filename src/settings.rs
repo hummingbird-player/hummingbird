@@ -280,7 +280,7 @@ mod tests {
                 "interface": {
                     "theme": "custom.json",
                     "full_width_library": true,
-                    "ui_preset": "stage",
+                    "ui_config": "layouts/ophelia.ron",
                     "ui_density": 1.0,
                     "reduced_motion": true,
                     "always_show_scrollbars": true
@@ -301,10 +301,13 @@ mod tests {
         assert!(!settings.playback.keep_current_on_queue_clear);
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);
-        assert_eq!(settings.interface.ui_preset.as_deref(), Some("stage"));
+        assert_eq!(
+            settings.interface.ui_config.as_deref(),
+            Some("layouts/ophelia.ron")
+        );
         assert_eq!(
             settings.interface.ui_density,
-            super::interface::UiDensity::COMFORTABLE
+            super::interface::UiDensity::from(1.0)
         );
         assert!(settings.interface.reduced_motion);
         assert!(settings.interface.always_show_scrollbars);
@@ -332,10 +335,10 @@ mod tests {
 
         let settings = create_settings(&settings_path(&dir));
 
-        assert_eq!(settings.interface.ui_preset, None);
+        assert_eq!(settings.interface.ui_config, None);
         assert_eq!(
             settings.interface.ui_density,
-            super::interface::UiDensity::DEFAULT
+            super::interface::UiDensity::from(0.0)
         );
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);

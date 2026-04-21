@@ -40,12 +40,12 @@ use crate::{
             refresh_resolved_fonts,
         },
         header::Header,
-        layout::{ensure_seeded_ui_preset, load_selected_ui_preset},
+        layout::{ensure_seeded_ui_config, load_selected_ui_config},
         library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
         models::WindowInformation,
         right_sidebar::RightSidebar,
         shell::Shell,
-        ui_preset::{UiPresetConfigGlobal, active_shell_layout},
+        ui_config::{UiConfigGlobal, active_shell_layout},
     },
 };
 
@@ -371,34 +371,34 @@ pub fn run() -> anyhow::Result<()> {
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
         cx.set_global(Pool(pool.clone()));
-        ensure_seeded_ui_preset(&data_dir);
-        let selected_ui_preset = cx
+        ensure_seeded_ui_config(&data_dir);
+        let selected_ui_config = cx
             .global::<SettingsGlobal>()
             .model
             .read(cx)
             .interface
-            .ui_preset
+            .ui_config
             .clone();
-        cx.set_global(UiPresetConfigGlobal(load_selected_ui_preset(
+        cx.set_global(UiConfigGlobal(load_selected_ui_config(
             &data_dir,
-            selected_ui_preset.as_deref(),
+            selected_ui_config.as_deref(),
         )));
         cx.set_global(AvailableFontsGlobal(capture_available_fonts(cx)));
         cx.set_global(ResolvedFontsGlobal(Default::default()));
         refresh_resolved_fonts(cx);
 
         let settings_model = cx.global::<SettingsGlobal>().model.clone();
-        let data_dir_for_ui_presets = data_dir.clone();
+        let data_dir_for_ui_configs = data_dir.clone();
         cx.observe(&settings_model, move |_, cx| {
-            let selected_ui_preset = cx
+            let selected_ui_config = cx
                 .global::<SettingsGlobal>()
                 .model
                 .read(cx)
                 .interface
-                .ui_preset
+                .ui_config
                 .clone();
-            cx.global_mut::<UiPresetConfigGlobal>().0 =
-                load_selected_ui_preset(&data_dir_for_ui_presets, selected_ui_preset.as_deref());
+            cx.global_mut::<UiConfigGlobal>().0 =
+                load_selected_ui_config(&data_dir_for_ui_configs, selected_ui_config.as_deref());
             refresh_resolved_fonts(cx);
             cx.refresh_windows();
         })

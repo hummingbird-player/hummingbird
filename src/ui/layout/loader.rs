@@ -1,7 +1,7 @@
-//! Disk loading for advanced UI presets.
+//! Disk loading for advanced UI config files.
 //!
-//! Hummingbird exposes built-in presets alongside `layouts/*.ron` files in the
-//! app data directory. File presets can override shell layout and UI font
+//! Hummingbird exposes a built-in default shell plus `layouts/*.ron` files in
+//! the app data directory. File configs can override shell layout and UI font
 //! roles. Bare layout-only files are still accepted.
 
 use std::{
@@ -10,28 +10,22 @@ use std::{
 };
 
 use crate::ui::{
-    layout::{
-        defaults::{default_shell_layout, stage_shell_layout},
-        schema::ShellLayout,
+    file_options::{
+        SelectionOption, discover_file_options, relative_file_path,
+        resolve_relative_file_option_path, seed_relative_file_if_missing,
     },
-    presets::{
-        PresetOption, discover_file_preset_options, relative_file_path,
-        resolve_relative_file_preset_path, seed_relative_file_if_missing,
-    },
-    ui_preset::{
-        FlatOptionalLayout, FlatOptionalString, SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID,
-        UiPresetConfig, UiPresetKind, classify_ui_preset_id,
-    },
+    layout::{defaults::default_shell_layout, schema::ShellLayout},
+    ui_config::{FlatOptionalLayout, FlatOptionalString, SEEDED_UI_CONFIG_PATH, UiConfig},
 };
 
-pub const UI_PRESETS_DIR_NAME: &str = "layouts";
+pub const UI_CONFIGS_DIR_NAME: &str = "layouts";
 
-pub fn seeded_ui_preset_path(data_dir: &Path) -> PathBuf {
-    relative_file_path(data_dir, SEEDED_UI_PRESET_ID)
+pub fn seeded_ui_config_path(data_dir: &Path) -> PathBuf {
+    relative_file_path(data_dir, SEEDED_UI_CONFIG_PATH)
 }
 
-pub fn ensure_seeded_ui_preset(data_dir: &Path) {
-    let starter = UiPresetConfig {
+pub fn ensure_seeded_ui_config(data_dir: &Path) {
+    let starter = UiConfig {
         layout: FlatOptionalLayout::from(default_shell_layout()),
         font: FlatOptionalString::default(),
         mono_font: FlatOptionalString::default(),
@@ -39,113 +33,88 @@ pub fn ensure_seeded_ui_preset(data_dir: &Path) {
     let serialized = match serialize_config(&starter) {
         Ok(serialized) => serialized,
         Err(err) => {
-            tracing::warn!(error = %err, "couldn't serialize starter ui preset on first run");
+            tracing::warn!(error = %err, "couldn't serialize starter ui config on first run");
             return;
         }
     };
 
-    match seed_relative_file_if_missing(data_dir, SEEDED_UI_PRESET_ID, &serialized) {
+    match seed_relative_file_if_missing(data_dir, SEEDED_UI_CONFIG_PATH, &serialized) {
         Err(err) => {
-            let file_path = seeded_ui_preset_path(data_dir);
+            let file_path = seeded_ui_config_path(data_dir);
             tracing::warn!(
                 error = %err,
                 path = %file_path.display(),
-                "couldn't seed starter ui preset on first run",
+                "couldn't seed starter ui config on first run",
             );
         }
         Ok(false) => {}
         Ok(true) => {
-            let file_path = seeded_ui_preset_path(data_dir);
-            tracing::info!("seeded starter ui preset at {}", file_path.display());
+            let file_path = seeded_ui_config_path(data_dir);
+            tracing::info!("seeded starter ui config at {}", file_path.display());
         }
     }
 }
 
-pub fn discover_ui_preset_options(data_dir: &Path) -> Vec<PresetOption> {
-    let mut presets = vec![
-        PresetOption {
-            id: None,
-            label: "Default".to_string(),
-        },
-        PresetOption {
-            id: Some(STAGE_UI_PRESET_ID.to_string()),
-            label: "Stage".to_string(),
-        },
-    ];
-
-    presets.extend(discover_file_preset_options(
-        data_dir,
-        UI_PRESETS_DIR_NAME,
-        "ron",
-    ));
-    presets
+pub fn discover_ui_config_options(data_dir: &Path) -> Vec<SelectionOption> {
+    let mut configs = vec![SelectionOption {
+        id: None,
+        label: "Default".to_string(),
+    }];
+    configs.extend(discover_file_options(data_dir, UI_CONFIGS_DIR_NAME, "ron"));
+    configs
 }
 
-pub fn resolve_ui_preset_relative_path(
+pub fn resolve_ui_config_relative_path(
     data_dir: &Path,
-    selected_preset: Option<&str>,
+    selected_config: Option<&str>,
 ) -> Option<String> {
-    match classify_ui_preset_id(selected_preset) {
-        UiPresetKind::Default => None,
-        UiPresetKind::Stage => Some(STAGE_UI_PRESET_ID.to_string()),
-        UiPresetKind::File(path) => resolve_relative_file_preset_path(data_dir, Some(path)),
-    }
+    resolve_relative_file_option_path(data_dir, selected_config)
 }
 
-pub fn load_selected_ui_preset(data_dir: &Path, selected_preset: Option<&str>) -> UiPresetConfig {
-    match classify_ui_preset_id(selected_preset) {
-        UiPresetKind::Default => builtin_default_ui_preset(),
-        UiPresetKind::Stage => builtin_stage_ui_preset(),
-        UiPresetKind::File(path) => {
-            let file_path = relative_file_path(data_dir, path);
-            let builtin = builtin_default_ui_preset();
+pub fn load_selected_ui_config(data_dir: &Path, selected_config: Option<&str>) -> UiConfig {
+    let Some(relative_path) = resolve_ui_config_relative_path(data_dir, selected_config) else {
+        return default_ui_config();
+    };
 
-            if !file_path.is_file() {
-                tracing::warn!(
-                    path = %file_path.display(),
-                    "selected ui preset file is missing; using built-in default",
-                );
-                return builtin;
-            }
+    let file_path = relative_file_path(data_dir, &relative_path);
+    let default_config = default_ui_config();
 
-            match read_and_parse(&file_path) {
-                Ok(config) => {
-                    tracing::info!("loaded ui preset from {}", file_path.display());
-                    config
-                }
-                Err(err) => {
-                    tracing::error!(
-                        error = %err,
-                        path = %file_path.display(),
-                        "failed to parse ui preset; using built-in default",
-                    );
-                    builtin
-                }
-            }
+    if !file_path.is_file() {
+        tracing::warn!(
+            path = %file_path.display(),
+            "selected ui config file is missing; using built-in default",
+        );
+        return default_config;
+    }
+
+    match read_and_parse(&file_path) {
+        Ok(config) => {
+            tracing::info!("loaded ui config from {}", file_path.display());
+            config
+        }
+        Err(err) => {
+            tracing::error!(
+                error = %err,
+                path = %file_path.display(),
+                "failed to parse ui config; using built-in default",
+            );
+            default_config
         }
     }
 }
 
-fn builtin_default_ui_preset() -> UiPresetConfig {
-    UiPresetConfig {
+fn default_ui_config() -> UiConfig {
+    UiConfig {
         layout: FlatOptionalLayout::from(default_shell_layout()),
         font: FlatOptionalString::default(),
         mono_font: FlatOptionalString::default(),
     }
 }
 
-fn builtin_stage_ui_preset() -> UiPresetConfig {
-    UiPresetConfig {
-        layout: FlatOptionalLayout::from(stage_shell_layout()),
-        font: FlatOptionalString::default(),
-        mono_font: FlatOptionalString::default(),
-    }
-}
-
-fn read_and_parse(path: &Path) -> Result<UiPresetConfig, LoadError> {
+fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
     let raw = fs::read_to_string(path)?;
 
-    match ron::from_str::<UiPresetConfig>(&raw) {
+    match ron::from_str::<UiConfig>(&raw) {
         Ok(config) => {
             let config = validate_config(config)?;
             if config.layout.is_none()
@@ -153,7 +122,7 @@ fn read_and_parse(path: &Path) -> Result<UiPresetConfig, LoadError> {
                 && config.mono_font.is_none()
                 && let Ok(layout) = ron::from_str::<ShellLayout>(&raw)
             {
-                return Ok(UiPresetConfig {
+                return Ok(UiConfig {
                     layout: FlatOptionalLayout::from(
                         layout
                             .validated()
@@ -167,7 +136,7 @@ fn read_and_parse(path: &Path) -> Result<UiPresetConfig, LoadError> {
             Ok(config)
         }
         Err(config_err) => match ron::from_str::<ShellLayout>(&raw) {
-            Ok(layout) => Ok(UiPresetConfig {
+            Ok(layout) => Ok(UiConfig {
                 layout: FlatOptionalLayout::from(
                     layout
                         .validated()
@@ -184,7 +153,7 @@ fn read_and_parse(path: &Path) -> Result<UiPresetConfig, LoadError> {
     }
 }
 
-fn validate_config(config: UiPresetConfig) -> Result<UiPresetConfig, LoadError> {
+fn validate_config(config: UiConfig) -> Result<UiConfig, LoadError> {
     if let Some(layout) = config.layout.as_ref()
         && layout.clone().validated().is_none()
     {
@@ -195,14 +164,14 @@ fn validate_config(config: UiPresetConfig) -> Result<UiPresetConfig, LoadError> 
 }
 
 #[cfg(test)]
-fn write_config(dir: &Path, path: &Path, config: &UiPresetConfig) -> Result<(), LoadError> {
+fn write_config(dir: &Path, path: &Path, config: &UiConfig) -> Result<(), LoadError> {
     fs::create_dir_all(dir)?;
     let serialized = serialize_config(config)?;
     fs::write(path, serialized)?;
     Ok(())
 }
 
-fn serialize_config(config: &UiPresetConfig) -> Result<String, LoadError> {
+fn serialize_config(config: &UiConfig) -> Result<String, LoadError> {
     let pretty = ron::ser::PrettyConfig::new()
         .depth_limit(8)
         .indentor("  ")
@@ -265,21 +234,18 @@ mod tests {
     use crate::{
         test_support::TestDir,
         ui::{
+            file_options::SelectionOption,
             layout::{
                 defaults::default_shell_layout,
                 schema::{MainRegion, OuterBand, ShellLayout},
             },
-            presets::PresetOption,
-            ui_preset::{
-                FlatOptionalLayout, FlatOptionalString, SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID,
-                UiPresetConfig,
-            },
+            ui_config::{FlatOptionalLayout, FlatOptionalString, SEEDED_UI_CONFIG_PATH, UiConfig},
         },
     };
 
     use super::{
-        discover_ui_preset_options, ensure_seeded_ui_preset, load_selected_ui_preset,
-        seeded_ui_preset_path, write_config,
+        discover_ui_config_options, ensure_seeded_ui_config, load_selected_ui_config,
+        seeded_ui_config_path, write_config,
     };
 
     fn create_test_dir() -> TestDir {
@@ -287,15 +253,15 @@ mod tests {
     }
 
     #[test]
-    fn ensure_seeded_ui_preset_creates_starter_file() {
+    fn ensure_seeded_ui_config_creates_starter_file() {
         let dir = create_test_dir();
-        ensure_seeded_ui_preset(dir.path());
-        let path = seeded_ui_preset_path(dir.path());
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        ensure_seeded_ui_config(dir.path());
+        let path = seeded_ui_config_path(dir.path());
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
@@ -305,10 +271,10 @@ mod tests {
     }
 
     #[test]
-    fn valid_new_style_custom_config_is_loaded() {
+    fn valid_ui_config_file_is_loaded() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
-        let expected = UiPresetConfig {
+        let path = seeded_ui_config_path(dir.path());
+        let expected = UiConfig {
             layout: FlatOptionalLayout::from(ShellLayout {
                 outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                 main_order: [
@@ -322,7 +288,7 @@ mod tests {
         };
         write_config(path.parent().unwrap(), &path, &expected).unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(config, expected);
     }
@@ -330,7 +296,7 @@ mod tests {
     #[test]
     fn bare_layout_only_config_is_loaded() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
         let layout = ShellLayout {
             outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
             main_order: [
@@ -354,11 +320,11 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(layout),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
@@ -369,15 +335,15 @@ mod tests {
     #[test]
     fn invalid_ron_falls_back_to_default() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{ definitely not ron").unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
@@ -388,11 +354,11 @@ mod tests {
     #[test]
     fn invalid_layout_permutation_falls_back_to_default() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
         write_config(
             path.parent().unwrap(),
             &path,
-            &UiPresetConfig {
+            &UiConfig {
                 layout: FlatOptionalLayout::from(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Header, OuterBand::Controls],
                     main_order: [
@@ -407,11 +373,11 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
@@ -422,7 +388,7 @@ mod tests {
     #[test]
     fn font_only_config_is_loaded() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
 
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
@@ -434,11 +400,11 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::default(),
                 font: FlatOptionalString::from("Inter"),
                 mono_font: FlatOptionalString::from("Roboto Mono"),
@@ -449,7 +415,7 @@ mod tests {
     #[test]
     fn bare_layout_block_in_new_style_config_is_loaded() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
 
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
@@ -471,11 +437,11 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                     main_order: [
@@ -493,7 +459,7 @@ mod tests {
     #[test]
     fn unknown_field_in_config_is_ignored() {
         let dir = create_test_dir();
-        let path = seeded_ui_preset_path(dir.path());
+        let path = seeded_ui_config_path(dir.path());
 
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
@@ -518,11 +484,11 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_selected_ui_preset(dir.path(), Some(SEEDED_UI_PRESET_ID));
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
-            UiPresetConfig {
+            UiConfig {
                 layout: FlatOptionalLayout::from(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                     main_order: [
@@ -538,70 +504,26 @@ mod tests {
     }
 
     #[test]
-    fn stage_preset_uses_builtin_stage_layout() {
+    fn discover_ui_config_options_lists_default_and_files() {
         let dir = create_test_dir();
-
-        let config = load_selected_ui_preset(dir.path(), Some(STAGE_UI_PRESET_ID));
-
-        assert_eq!(
-            config,
-            UiPresetConfig {
-                layout: FlatOptionalLayout::from(ShellLayout {
-                    outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
-                    main_order: [
-                        MainRegion::LibrarySidebar,
-                        MainRegion::LibraryContent,
-                        MainRegion::RightSidebar,
-                    ],
-                }),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn old_custom_alias_uses_seeded_file_preset() {
-        let dir = create_test_dir();
-        ensure_seeded_ui_preset(dir.path());
-
-        let config = load_selected_ui_preset(dir.path(), Some("custom"));
-
-        assert_eq!(
-            config,
-            UiPresetConfig {
-                layout: FlatOptionalLayout::from(default_shell_layout()),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn discover_ui_preset_options_lists_builtins_and_files() {
-        let dir = create_test_dir();
-        ensure_seeded_ui_preset(dir.path());
+        ensure_seeded_ui_config(dir.path());
         let ophelia_path = dir.join("layouts").join("ophelia.ron");
         fs::write(&ophelia_path, "()").unwrap();
 
-        let presets = discover_ui_preset_options(dir.path());
+        let configs = discover_ui_config_options(dir.path());
 
         assert_eq!(
-            presets,
+            configs,
             vec![
-                PresetOption {
+                SelectionOption {
                     id: None,
                     label: "Default".to_string(),
                 },
-                PresetOption {
-                    id: Some(STAGE_UI_PRESET_ID.to_string()),
-                    label: "Stage".to_string(),
-                },
-                PresetOption {
+                SelectionOption {
                     id: Some("layouts/custom.ron".to_string()),
                     label: "custom".to_string(),
                 },
-                PresetOption {
+                SelectionOption {
                     id: Some("layouts/ophelia.ron".to_string()),
                     label: "ophelia".to_string(),
                 },

@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::settings::SettingsGlobal;
-use crate::ui::presets::{
-    PresetOption, discover_file_preset_options, relative_file_preset_path_for_event,
-    resolve_relative_file_preset_path,
+use crate::ui::file_options::{
+    SelectionOption, discover_file_options, relative_file_option_path_for_event,
+    resolve_relative_file_option_path,
 };
 use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
@@ -272,7 +272,7 @@ pub const LEGACY_THEME_PATH: &str = "theme.json";
 pub const THEMES_DIR_NAME: &str = "themes";
 
 pub struct ThemeOptionsGlobal {
-    pub model: Entity<Vec<PresetOption>>,
+    pub model: Entity<Vec<SelectionOption>>,
 }
 
 impl Global for ThemeOptionsGlobal {}
@@ -302,25 +302,21 @@ pub fn create_theme(path: &Path) -> Theme {
 /// Discovers all available theme options in the data directory.
 /// Returns a vector containing the default theme, legacy theme (if present),
 /// and any custom themes found in the themes subdirectory.
-pub fn discover_theme_options(data_dir: &Path) -> Vec<PresetOption> {
-    let mut themes = vec![PresetOption {
+pub fn discover_theme_options(data_dir: &Path) -> Vec<SelectionOption> {
+    let mut themes = vec![SelectionOption {
         id: None,
         label: "Default".to_string(),
     }];
 
     let legacy_theme = data_dir.join(LEGACY_THEME_PATH);
     if legacy_theme.is_file() {
-        themes.push(PresetOption {
+        themes.push(SelectionOption {
             id: Some(LEGACY_THEME_PATH.to_string()),
             label: "Legacy".to_string(),
         });
     }
 
-    themes.extend(discover_file_preset_options(
-        data_dir,
-        THEMES_DIR_NAME,
-        "json",
-    ));
+    themes.extend(discover_file_options(data_dir, THEMES_DIR_NAME, "json"));
     themes
 }
 
@@ -335,7 +331,7 @@ pub fn resolve_theme_relative_path(
         return path.is_file().then(|| LEGACY_THEME_PATH.to_string());
     }
 
-    resolve_relative_file_preset_path(data_dir, selected_theme)
+    resolve_relative_file_option_path(data_dir, selected_theme)
 }
 
 /// Resolves a theme identifier to its full filesystem path.
@@ -358,7 +354,7 @@ fn theme_relative_path_for_event(data_dir: &Path, path: &Path) -> Option<String>
         return Some(LEGACY_THEME_PATH.to_string());
     }
 
-    relative_file_preset_path_for_event(data_dir, THEMES_DIR_NAME, "json", path)
+    relative_file_option_path_for_event(data_dir, THEMES_DIR_NAME, "json", path)
 }
 
 /// Checks if any of the paths in a filesystem event affect the currently selected theme.
