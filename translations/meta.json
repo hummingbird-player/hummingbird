@@ -1,7 +1,7 @@
 {
   "ABOUT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:82",
+    "definedIn": "src/ui/global_actions.rs:83",
     "plural": false,
     "description": null
   },
@@ -349,7 +349,7 @@
   },
   "COMMAND_PALETTE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:188",
+    "definedIn": "src/ui/global_actions.rs:189",
     "plural": false,
     "description": null
   },
@@ -379,7 +379,7 @@
   },
   "DISCORD": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:151",
+    "definedIn": "src/ui/global_actions.rs:152",
     "plural": false,
     "description": null
   },
@@ -409,13 +409,13 @@
   },
   "FILE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:176",
+    "definedIn": "src/ui/global_actions.rs:177",
     "plural": false,
     "description": null
   },
   "GITHUB_ISSUES": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:146",
+    "definedIn": "src/ui/global_actions.rs:147",
     "plural": false,
     "description": null
   },
@@ -439,19 +439,19 @@
   },
   "HELP": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:128",
+    "definedIn": "src/ui/global_actions.rs:129",
     "plural": false,
     "description": null
   },
   "HIDE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:107",
+    "definedIn": "src/ui/global_actions.rs:108",
     "plural": false,
     "description": null
   },
   "HIDE_OTHERS": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:112",
+    "definedIn": "src/ui/global_actions.rs:113",
     "plural": false,
     "description": null
   },
@@ -571,19 +571,19 @@
   },
   "LIBRARY_FORCE_RESCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:212",
+    "definedIn": "src/ui/global_actions.rs:213",
     "plural": false,
     "description": null
   },
   "LIBRARY_SCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:207",
+    "definedIn": "src/ui/global_actions.rs:208",
     "plural": false,
     "description": null
   },
   "LIBRARY_SHUFFLE_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:201",
+    "definedIn": "src/ui/global_actions.rs:202",
     "plural": false,
     "description": null
   },
@@ -649,7 +649,7 @@
   },
   "PATREON": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:168",
+    "definedIn": "src/ui/global_actions.rs:169",
     "plural": false,
     "description": null
   },
@@ -757,7 +757,7 @@
   },
   "QUIT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:123",
+    "definedIn": "src/ui/global_actions.rs:124",
     "plural": false,
     "description": null
   },
@@ -1033,7 +1033,7 @@
   },
   "SEARCH": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:193",
+    "definedIn": "src/ui/global_actions.rs:194",
     "plural": false,
     "description": null
   },
@@ -1069,7 +1069,7 @@
   },
   "SHOW_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:117",
+    "definedIn": "src/ui/global_actions.rs:118",
     "plural": false,
     "description": null
   },
@@ -1297,13 +1297,13 @@
   },
   "VIEW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:183",
+    "definedIn": "src/ui/global_actions.rs:184",
     "plural": false,
     "description": "The View menu. Must *exactly* match the text required by macOS."
   },
   "WINDOW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:224",
+    "definedIn": "src/ui/global_actions.rs:225",
     "plural": false,
     "description": "The Window menu. Must *exactly* match the text required by macOS."
   }
