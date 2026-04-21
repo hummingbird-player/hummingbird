@@ -17,9 +17,9 @@ use crate::{
 };
 
 use super::{
-    navigate_to_track_album, navigate_to_track_artist, reveal_path_in_file_manager,
-    track_show_in_file_manager_label,
+    navigate_to_track_album, navigate_to_track_artist, track_show_in_file_manager_label,
 };
+use crate::ui::util::reveal_path_in_file_manager;
 
 #[derive(IntoElement)]
 pub struct InfoSectionContextMenu {

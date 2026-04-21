@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use gpui::{App, AppContext, AsyncApp, Entity, Global};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Global};
 use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -55,34 +55,57 @@ fn apply_legacy_theme_selection(path: &Path, settings: &mut Settings, has_theme_
     }
 }
 
-pub fn create_settings(path: &PathBuf) -> Settings {
+#[derive(Debug)]
+pub enum SettingsLoadOutcome {
+    Loaded(Settings),
+    Corrupt { settings: Settings, path: PathBuf },
+}
+
+impl SettingsLoadOutcome {
+    pub fn into_settings(self) -> Settings {
+        match self {
+            SettingsLoadOutcome::Loaded(settings) => settings,
+            SettingsLoadOutcome::Corrupt { settings, .. } => settings,
+        }
+    }
+}
+
+pub fn create_settings(path: &PathBuf) -> SettingsLoadOutcome {
     let Ok(contents) = fs::read_to_string(path) else {
         let mut settings = Settings::default();
         apply_legacy_theme_selection(path, &mut settings, false);
-        return settings;
+        return SettingsLoadOutcome::Loaded(settings);
     };
 
     let value: serde_json::Value = match serde_json::from_str(&contents) {
         Ok(value) => value,
-        Err(_) => {
-            warn!("Failed to parse settings file, using default settings");
+        Err(e) => {
+            warn!("Failed to parse settings file ({e}), scanner will wait for recovery");
             let mut settings = Settings::default();
             apply_legacy_theme_selection(path, &mut settings, false);
-            return settings;
+            return SettingsLoadOutcome::Corrupt {
+                settings,
+                path: path.clone(),
+            };
         }
     };
 
     let has_theme_setting = has_stored_theme_setting(&value);
     let mut settings: Settings = match serde_json::from_value(value) {
         Ok(settings) => settings,
-        Err(_) => {
-            warn!("Failed to parse settings file, using default settings");
-            Settings::default()
+        Err(e) => {
+            warn!("Failed to deserialize settings file ({e}), scanner will wait for recovery");
+            let mut defaults = Settings::default();
+            apply_legacy_theme_selection(path, &mut defaults, has_theme_setting);
+            return SettingsLoadOutcome::Corrupt {
+                settings: defaults,
+                path: path.clone(),
+            };
         }
     };
 
     apply_legacy_theme_selection(path, &mut settings, has_theme_setting);
-    settings
+    SettingsLoadOutcome::Loaded(settings)
 }
 
 pub fn save_settings(cx: &mut App, settings: &Settings) {
@@ -104,6 +127,9 @@ pub fn save_settings(cx: &mut App, settings: &Settings) {
 pub struct SettingsGlobal {
     pub model: Entity<Settings>,
     pub path: PathBuf,
+    /// `Some(path)` when the initial load at startup found a corrupt settings file.
+    /// Consumed by `build_models` to set up `SettingsHealth`, is `None` afterwards.
+    pub initial_corrupt_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub watcher: Option<Box<dyn Watcher>>,
 }
@@ -111,7 +137,12 @@ pub struct SettingsGlobal {
 impl Global for SettingsGlobal {}
 
 pub fn setup_settings(cx: &mut App, path: PathBuf) {
-    let settings = cx.new(|_| create_settings(&path));
+    let outcome = create_settings(&path);
+    let initial_corrupt_path = match &outcome {
+        SettingsLoadOutcome::Corrupt { path, .. } => Some(path.clone()),
+        SettingsLoadOutcome::Loaded(_) => None,
+    };
+    let settings = cx.new(|_| outcome.into_settings());
     let settings_model = settings.clone(); // for the closure
 
     // create and setup file watcher
@@ -125,6 +156,7 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
         let global = SettingsGlobal {
             model: settings,
             path: path.clone(),
+            initial_corrupt_path,
             watcher: None,
         };
 
@@ -147,19 +179,15 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
                             continue;
                         }
                         match v.kind {
-                            notify::EventKind::Create(_) | notify::EventKind::Modify(_) => {
-                                let settings = create_settings(&path_for_watcher);
+                            notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(_)
+                            | notify::EventKind::Remove(_) => {
+                                if matches!(v.kind, notify::EventKind::Remove(_)) {
+                                    info!("Settings file removed, using default settings");
+                                }
+                                let outcome = create_settings(&path_for_watcher);
                                 settings_model.update(app, |v, cx| {
-                                    *v = settings;
-                                    cx.notify();
-                                });
-                            }
-                            notify::EventKind::Remove(_) => {
-                                info!("Settings file removed, using default settings");
-                                let settings = create_settings(&path_for_watcher);
-                                settings_model.update(app, |v, cx| {
-                                    *v = settings;
-                                    cx.notify();
+                                    apply_settings_outcome(cx, v, outcome);
                                 });
                             }
                             _ => (),
@@ -179,16 +207,49 @@ pub fn setup_settings(cx: &mut App, path: PathBuf) {
     let global = SettingsGlobal {
         model: settings,
         path: settings_path,
+        initial_corrupt_path,
         watcher: Some(Box::new(watcher)),
     };
 
     cx.set_global(global);
 }
 
+/// Applies a fresh [`SettingsLoadOutcome`] produced by the file watcher. When the file parses
+/// cleanly the in-memory `Settings` is replaced and health is marked `Ok`; when the file is
+/// corrupt the existing `Settings` is preserved (so the scanner keeps using the last known-good
+/// configuration) and health is flipped to `Corrupt`.
+fn apply_settings_outcome(
+    cx: &mut Context<Settings>,
+    current: &mut Settings,
+    outcome: SettingsLoadOutcome,
+) {
+    use crate::ui::models::{Models, SettingsHealth};
+
+    let next_health = match outcome {
+        SettingsLoadOutcome::Loaded(settings) => {
+            *current = settings;
+            cx.notify();
+            SettingsHealth::Ok
+        }
+        SettingsLoadOutcome::Corrupt { path, .. } => SettingsHealth::Corrupt { path },
+    };
+
+    if cx.has_global::<Models>() {
+        let health = cx.global::<Models>().settings_health.clone();
+        health.update(cx, |h, cx| {
+            if *h != next_health {
+                *h = next_health;
+                cx.notify();
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Settings, apply_legacy_theme_selection, create_settings, has_stored_theme_setting,
+        Settings, SettingsLoadOutcome, apply_legacy_theme_selection, create_settings,
+        has_stored_theme_setting,
     };
     use crate::test_support::TestDir;
     use serde_json::json;
@@ -235,11 +296,14 @@ mod tests {
     }
 
     #[test]
-    fn create_settings_missing_file_uses_defaults() {
+    fn create_settings_missing_file_reports_loaded() {
         let dir = create_test_dir();
-        let settings = create_settings(&settings_path(&dir));
-        let defaults = Settings::default();
+        let outcome = create_settings(&settings_path(&dir));
 
+        assert!(matches!(outcome, SettingsLoadOutcome::Loaded(_)));
+
+        let settings = outcome.into_settings();
+        let defaults = Settings::default();
         assert_eq!(settings.interface, defaults.interface);
         assert_eq!(settings.playback, defaults.playback);
         assert_eq!(
@@ -250,20 +314,44 @@ mod tests {
     }
 
     #[test]
-    fn create_settings_invalid_json_uses_defaults() {
+    fn create_settings_invalid_json_reports_corrupt() {
         let dir = create_test_dir();
-        fs::write(settings_path(&dir), "{not valid json").unwrap();
+        let path = settings_path(&dir);
+        fs::write(&path, "{not valid json").unwrap();
 
-        let settings = create_settings(&settings_path(&dir));
-        let defaults = Settings::default();
+        let outcome = create_settings(&path);
 
-        assert_eq!(settings.interface, defaults.interface);
-        assert_eq!(settings.playback, defaults.playback);
-        assert_eq!(
-            settings.update.release_channel,
-            defaults.update.release_channel
-        );
-        assert_eq!(settings.update.auto_update, defaults.update.auto_update);
+        match outcome {
+            SettingsLoadOutcome::Corrupt {
+                settings,
+                path: reported,
+            } => {
+                assert_eq!(reported, path);
+                let defaults = Settings::default();
+                assert_eq!(settings.interface, defaults.interface);
+                assert_eq!(settings.playback, defaults.playback);
+                assert_eq!(
+                    settings.update.release_channel,
+                    defaults.update.release_channel
+                );
+                assert_eq!(settings.update.auto_update, defaults.update.auto_update);
+            }
+            SettingsLoadOutcome::Loaded(_) => {
+                panic!("expected corrupt outcome for malformed settings file")
+            }
+        }
+    }
+
+    #[test]
+    fn create_settings_type_mismatch_reports_corrupt() {
+        let dir = create_test_dir();
+        let path = settings_path(&dir);
+        fs::write(&path, r#"{"playback": "not an object"}"#).unwrap();
+
+        assert!(matches!(
+            create_settings(&path),
+            SettingsLoadOutcome::Corrupt { .. }
+        ));
     }
 
     #[test]
@@ -292,7 +380,9 @@ mod tests {
         )
         .unwrap();
 
-        let settings = create_settings(&settings_path(&dir));
+        let outcome = create_settings(&settings_path(&dir));
+        assert!(matches!(outcome, SettingsLoadOutcome::Loaded(_)));
+        let settings = outcome.into_settings();
 
         assert!(settings.playback.always_repeat);
         assert!(settings.playback.prev_track_jump_first);

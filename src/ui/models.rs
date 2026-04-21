@@ -62,12 +62,19 @@ pub struct WindowInformation {
     pub size: Size<Pixels>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingsHealth {
+    Ok,
+    Corrupt { path: PathBuf },
+}
+
 pub struct Models {
     pub metadata: Entity<Metadata>,
     pub albumart: Entity<Option<Arc<RenderImage>>>,
     pub albumart_original: Entity<Option<Arc<RenderImage>>>,
     pub queue: Entity<Queue>,
     pub scan_state: Entity<ScanEvent>,
+    pub settings_health: Entity<SettingsHealth>,
     pub mmbs: Entity<MMBSList>,
     pub lastfm: Entity<LastFMState>,
     pub switcher_model: Entity<NavigationHistory>,
@@ -223,6 +230,11 @@ pub fn build_models(
     let albumart_original: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
     let queue: Entity<Queue> = cx.new(move |_| queue);
     let scan_state: Entity<ScanEvent> = cx.new(|_| ScanEvent::ScanCompleteIdle);
+    let initial_corrupt_path = cx.global::<SettingsGlobal>().initial_corrupt_path.clone();
+    let settings_health: Entity<SettingsHealth> = cx.new(|_| match initial_corrupt_path {
+        Some(path) => SettingsHealth::Corrupt { path },
+        None => SettingsHealth::Ok,
+    });
     let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList(FxHashMap::default()));
     let show_about: Entity<bool> = cx.new(|_| false);
     let lastfm: Entity<LastFMState> = cx.new(|cx| {
@@ -382,6 +394,7 @@ pub fn build_models(
         albumart_original,
         queue,
         scan_state,
+        settings_health,
         mmbs,
         lastfm,
         switcher_model,

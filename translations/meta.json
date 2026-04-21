@@ -457,7 +457,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:123",
+    "definedIn": "src/ui/settings.rs:124",
     "plural": false,
     "description": null
   },
@@ -565,7 +565,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:124",
+    "definedIn": "src/ui/settings.rs:125",
     "plural": false,
     "description": null
   },
@@ -667,7 +667,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:125",
+    "definedIn": "src/ui/settings.rs:126",
     "plural": false,
     "description": null
   },
@@ -907,49 +907,49 @@
   },
   "SCANNING_MISSING_DIALOG_BODY": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:172",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:80",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DELETE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:244",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:107",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DELETE_SUBTITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:246",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:114",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DONT_ASK_AGAIN": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:279",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:64",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DONT_ASK_HINT": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:290",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:72",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_KEEP": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:228",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:90",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_KEEP_SUBTITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:230",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:97",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_TITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:154",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:78",
     "plural": false,
     "description": null
   },
@@ -1045,7 +1045,7 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:126",
+    "definedIn": "src/ui/settings.rs:127",
     "plural": false,
     "description": null
   },
@@ -1063,7 +1063,43 @@
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:51",
+    "definedIn": "src/ui/settings.rs:52",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_BODY": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:37",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_QUIT": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:63",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_QUIT_SUBTITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:68",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_SHOW": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:49",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_SHOW_SUBTITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:54",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_TITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:33",
     "plural": false,
     "description": null
   },
@@ -1075,19 +1111,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:186",
+    "definedIn": "src/ui/library/context_menus.rs:187",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:188",
+    "definedIn": "src/ui/library/context_menus.rs:189",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:184",
+    "definedIn": "src/ui/library/context_menus.rs:185",
     "plural": false,
     "description": null
   },
@@ -1279,7 +1315,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:128",
+    "definedIn": "src/ui/settings.rs:129",
     "plural": false,
     "description": null
   },
