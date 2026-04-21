@@ -11,8 +11,8 @@ use crate::{
         SettingsGlobal,
         interface::{
             DEFAULT_GRID_MIN_ITEM_WIDTH, DEFAULT_UI_DENSITY, MAX_GRID_MIN_ITEM_WIDTH,
-            MAX_UI_DENSITY, MIN_GRID_MIN_ITEM_WIDTH, MIN_UI_DENSITY, STAGE_UI_PRESET_ID,
-            StartupLibraryView, UiDensity, clamp_grid_min_item_width,
+            MAX_UI_DENSITY, MIN_GRID_MIN_ITEM_WIDTH, MIN_UI_DENSITY, StartupLibraryView, UiDensity,
+            clamp_grid_min_item_width,
         },
         save_settings,
     },
@@ -22,7 +22,11 @@ use crate::{
     },
     ui::layout::{discover_ui_preset_options, resolve_ui_preset_relative_path},
     ui::presets::PresetOption,
-    ui::styling::theme::{Theme, ThemeOptionsGlobal, resolve_theme_relative_path},
+    ui::styling::{
+        StyledExt,
+        theme::{Theme, ThemeOptionsGlobal, resolve_theme_relative_path},
+    },
+    ui::ui_preset::STAGE_UI_PRESET_ID,
 };
 
 #[derive(Clone)]
@@ -260,8 +264,7 @@ impl Render for InterfaceSettings {
         };
 
         div()
-            .flex()
-            .flex_col()
+            .v_flex()
             .gap(px(layout.section_gap))
             .child(section_header(tr!("INTERFACE")))
             .child(
@@ -297,7 +300,7 @@ impl Render for InterfaceSettings {
                 label("density-preset-selector", tr!("INTERFACE_DENSITY", "Density"))
                     .subtext(tr!(
                         "INTERFACE_DENSITY_SUBTEXT",
-                        "Adjust the default interface typography scale."
+                        "Adjust the default interface scale for text and component sizing."
                     ))
                     .w_full()
                     .child(density_slider),

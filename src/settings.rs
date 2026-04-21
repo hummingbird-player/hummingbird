@@ -82,8 +82,6 @@ pub fn create_settings(path: &PathBuf) -> Settings {
     };
 
     apply_legacy_theme_selection(path, &mut settings, has_theme_setting);
-    settings.interface.ui_preset =
-        interface::normalize_ui_preset_id(settings.interface.ui_preset.take());
     settings
 }
 
@@ -366,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn create_settings_migrates_old_custom_layout_preset_to_seeded_file() {
+    fn create_settings_preserves_old_custom_layout_preset_id() {
         let dir = create_test_dir();
         fs::write(
             settings_path(&dir),
@@ -381,10 +379,7 @@ mod tests {
 
         let settings = create_settings(&settings_path(&dir));
 
-        assert_eq!(
-            settings.interface.ui_preset.as_deref(),
-            Some(super::interface::SEEDED_UI_PRESET_ID)
-        );
+        assert_eq!(settings.interface.ui_preset.as_deref(), Some("custom"));
     }
 
     #[test]

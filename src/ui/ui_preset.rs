@@ -5,15 +5,31 @@ use serde::{
 };
 
 use crate::{
-    settings::{
-        SettingsGlobal,
-        interface::{InterfaceSettings, UiPresetKind, classify_ui_preset_id},
-    },
+    settings::{SettingsGlobal, interface::InterfaceSettings},
     ui::layout::{
         defaults::{default_shell_layout, stage_shell_layout},
         schema::ShellLayout,
     },
 };
+
+pub const STAGE_UI_PRESET_ID: &str = "stage";
+pub const SEEDED_UI_PRESET_ID: &str = "layouts/custom.ron";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiPresetKind<'a> {
+    Default,
+    Stage,
+    File(&'a str),
+}
+
+pub fn classify_ui_preset_id(id: Option<&str>) -> UiPresetKind<'_> {
+    match id {
+        None | Some("") | Some("default") => UiPresetKind::Default,
+        Some(STAGE_UI_PRESET_ID) => UiPresetKind::Stage,
+        Some("custom") => UiPresetKind::File(SEEDED_UI_PRESET_ID),
+        Some(path) => UiPresetKind::File(path),
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlatOptionalLayout(pub Option<ShellLayout>);
@@ -207,7 +223,10 @@ mod tests {
         ui::layout::defaults::{default_shell_layout, stage_shell_layout},
     };
 
-    use super::{UiPresetConfig, resolve_shell_layout};
+    use super::{
+        SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID, UiPresetConfig, UiPresetKind,
+        classify_ui_preset_id, resolve_shell_layout,
+    };
 
     fn interface(
         ui_preset: Option<&str>,
@@ -235,5 +254,17 @@ mod tests {
         let resolved = resolve_shell_layout(&interface(Some("stage"), UiDensity::DEFAULT), None);
 
         assert_eq!(resolved, stage_shell_layout());
+    }
+
+    #[test]
+    fn preset_classifier_maps_old_custom_alias_to_seeded_file() {
+        assert_eq!(
+            classify_ui_preset_id(Some("custom")),
+            UiPresetKind::File(SEEDED_UI_PRESET_ID)
+        );
+        assert_eq!(
+            classify_ui_preset_id(Some(STAGE_UI_PRESET_ID)),
+            UiPresetKind::Stage
+        );
     }
 }

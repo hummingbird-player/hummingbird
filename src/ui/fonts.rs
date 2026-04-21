@@ -3,11 +3,8 @@ use std::collections::HashSet;
 use gpui::{App, Global, SharedString};
 
 use crate::{
-    settings::{
-        SettingsGlobal,
-        interface::{InterfaceSettings, UiPresetKind, classify_ui_preset_id},
-    },
-    ui::ui_preset::{UiPresetConfig, UiPresetConfigGlobal},
+    settings::{SettingsGlobal, interface::InterfaceSettings},
+    ui::ui_preset::{UiPresetConfig, UiPresetConfigGlobal, UiPresetKind, classify_ui_preset_id},
 };
 
 const DEFAULT_UI_FONT_FAMILY: &str = "Inter";

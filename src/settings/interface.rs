@@ -14,33 +14,6 @@ pub enum StartupLibraryView {
     LikedSongs,
 }
 
-pub const STAGE_UI_PRESET_ID: &str = "stage";
-pub const SEEDED_UI_PRESET_ID: &str = "layouts/custom.ron";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UiPresetKind<'a> {
-    Default,
-    Stage,
-    File(&'a str),
-}
-
-pub fn classify_ui_preset_id(id: Option<&str>) -> UiPresetKind<'_> {
-    match id {
-        None | Some("") | Some("default") => UiPresetKind::Default,
-        Some(STAGE_UI_PRESET_ID) => UiPresetKind::Stage,
-        Some("custom") => UiPresetKind::File(SEEDED_UI_PRESET_ID),
-        Some(path) => UiPresetKind::File(path),
-    }
-}
-
-pub fn normalize_ui_preset_id(id: Option<String>) -> Option<String> {
-    match classify_ui_preset_id(id.as_deref()) {
-        UiPresetKind::Default => None,
-        UiPresetKind::Stage => Some(STAGE_UI_PRESET_ID.to_string()),
-        UiPresetKind::File(path) => Some(path.to_string()),
-    }
-}
-
 pub const DEFAULT_UI_DENSITY: f32 = 0.0;
 pub const MIN_UI_DENSITY: f32 = -1.0;
 pub const MAX_UI_DENSITY: f32 = 1.0;

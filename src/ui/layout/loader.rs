@@ -9,20 +9,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    settings::interface::{
-        SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID, UiPresetKind, classify_ui_preset_id,
+use crate::ui::{
+    layout::{
+        defaults::{default_shell_layout, stage_shell_layout},
+        schema::ShellLayout,
     },
-    ui::{
-        layout::{
-            defaults::{default_shell_layout, stage_shell_layout},
-            schema::ShellLayout,
-        },
-        presets::{
-            PresetOption, discover_file_preset_options, relative_file_path,
-            resolve_relative_file_preset_path, seed_relative_file_if_missing,
-        },
-        ui_preset::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
+    presets::{
+        PresetOption, discover_file_preset_options, relative_file_path,
+        resolve_relative_file_preset_path, seed_relative_file_if_missing,
+    },
+    ui_preset::{
+        FlatOptionalLayout, FlatOptionalString, SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID,
+        UiPresetConfig, UiPresetKind, classify_ui_preset_id,
     },
 };
 
@@ -265,7 +263,6 @@ mod tests {
     use std::fs;
 
     use crate::{
-        settings::interface::{SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID},
         test_support::TestDir,
         ui::{
             layout::{
@@ -273,7 +270,10 @@ mod tests {
                 schema::{MainRegion, OuterBand, ShellLayout},
             },
             presets::PresetOption,
-            ui_preset::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
+            ui_preset::{
+                FlatOptionalLayout, FlatOptionalString, SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID,
+                UiPresetConfig,
+            },
         },
     };
 
@@ -554,6 +554,23 @@ mod tests {
                         MainRegion::RightSidebar,
                     ],
                 }),
+                font: FlatOptionalString::default(),
+                mono_font: FlatOptionalString::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn old_custom_alias_uses_seeded_file_preset() {
+        let dir = create_test_dir();
+        ensure_seeded_ui_preset(dir.path());
+
+        let config = load_selected_ui_preset(dir.path(), Some("custom"));
+
+        assert_eq!(
+            config,
+            UiPresetConfig {
+                layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
             }
