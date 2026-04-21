@@ -55,7 +55,7 @@ use super::{
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     right_sidebar::RightSidebar,
     search::SearchView,
-    settings::close_last_settings_window,
+    settings::close_orphaned_settings_windows,
     theme::setup_theme,
     util::drop_image_from_app,
 };
@@ -169,6 +169,10 @@ fn find_main_window(cx: &App) -> Option<WindowHandle<WindowShadow>> {
     cx.windows()
         .into_iter()
         .find_map(|window| window.downcast::<WindowShadow>())
+}
+
+pub(super) fn has_main_window(cx: &App) -> bool {
+    find_main_window(cx).is_some()
 }
 
 fn focus_main_window(window: WindowHandle<WindowShadow>, cx: &mut App) {
@@ -447,7 +451,7 @@ pub fn run() -> anyhow::Result<()> {
         .detach();
 
         cx.on_window_closed(|cx, _window_id| {
-            close_last_settings_window(cx);
+            close_orphaned_settings_windows(cx);
         })
         .detach();
 
