@@ -284,6 +284,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
             show_about,
             about_focus,
             missing_folder_dialog: MissingFolderDialog::new(cx),
+            corrupt_settings_dialog: CorruptSettingsDialog::new(cx),
             palette,
             // use a really small global image cache
             // this is literally just to ensure that images are *always* removed
@@ -430,30 +431,6 @@ pub fn run() -> anyhow::Result<()> {
             }
         })
         .detach();
-
-        let power_manager = PowerManager::new(cx, playback_settings.prevent_idle);
-        cx.set_global(power_manager);
-
-        register_actions(cx);
-
-        let drop_model = cx.new(|_| DropImageDummyModel);
-
-        cx.subscribe(&drop_model, |_, vec, cx| {
-            for image in vec.clone() {
-                drop_image_from_app(cx, image);
-            }
-        })
-        .detach();
-
-        if !language.is_empty() {
-            I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
-        }
-
-        let mut scan_interface: ScanInterface = start_scanner(pool.clone(), scanning_settings);
-        scan_interface.scan();
-        scan_interface.start_broadcast(cx);
-
-        cx.set_global(scan_interface);
 
         let power_manager = PowerManager::new(cx, playback_settings.prevent_idle);
         cx.set_global(power_manager);
