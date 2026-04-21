@@ -457,7 +457,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:118",
+    "definedIn": "src/ui/settings.rs:123",
     "plural": false,
     "description": null
   },
@@ -565,7 +565,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:119",
+    "definedIn": "src/ui/settings.rs:124",
     "plural": false,
     "description": null
   },
@@ -667,7 +667,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:120",
+    "definedIn": "src/ui/settings.rs:125",
     "plural": false,
     "description": null
   },
@@ -1045,7 +1045,7 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:121",
+    "definedIn": "src/ui/settings.rs:126",
     "plural": false,
     "description": null
   },
@@ -1285,7 +1285,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:123",
+    "definedIn": "src/ui/settings.rs:128",
     "plural": false,
     "description": null
   },

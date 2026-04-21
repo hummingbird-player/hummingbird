@@ -60,7 +60,7 @@ use super::{
     util::drop_image_from_app,
 };
 
-struct WindowShadow {
+struct MainWindow {
     pub controls: Entity<Controls>,
     pub right_sidebar: Entity<RightSidebar>,
     pub library: Entity<Library>,
@@ -75,7 +75,7 @@ struct WindowShadow {
     pub image_cache: Entity<HummingbirdImageCache>,
 }
 
-impl Render for WindowShadow {
+impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
 
@@ -165,17 +165,17 @@ pub struct DropImageDummyModel;
 
 impl EventEmitter<Vec<Arc<RenderImage>>> for DropImageDummyModel {}
 
-fn find_main_window(cx: &App) -> Option<WindowHandle<WindowShadow>> {
+fn find_main_window(cx: &App) -> Option<WindowHandle<MainWindow>> {
     cx.windows()
         .into_iter()
-        .find_map(|window| window.downcast::<WindowShadow>())
+        .find_map(|window| window.downcast::<MainWindow>())
 }
 
 pub(super) fn has_main_window(cx: &App) -> bool {
     find_main_window(cx).is_some()
 }
 
-fn focus_main_window(window: WindowHandle<WindowShadow>, cx: &mut App) {
+fn focus_main_window(window: WindowHandle<MainWindow>, cx: &mut App) {
     cx.activate(true);
     cx.defer(move |cx| {
         let _ = window.update(cx, |_, window, _| {
@@ -218,7 +218,7 @@ fn main_window_options(window_bounds: WindowBounds) -> WindowOptions {
     }
 }
 
-fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<WindowShadow> {
+fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
     let window_title = tr!("APP_NAME").to_string();
     window.set_window_title(&window_title);
 
@@ -263,7 +263,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<WindowShadow> 
         })
         .detach();
 
-        WindowShadow {
+        MainWindow {
             controls: Controls::new(cx, show_queue.clone(), show_lyrics.clone()),
             right_sidebar: RightSidebar::new(cx, show_queue.clone(), show_lyrics.clone()),
             library: Library::new(cx),
@@ -286,7 +286,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<WindowShadow> 
     })
 }
 
-fn ensure_main_window(cx: &mut App) -> gpui::Result<WindowHandle<WindowShadow>> {
+fn ensure_main_window(cx: &mut App) -> gpui::Result<WindowHandle<MainWindow>> {
     if let Some(window) = find_main_window(cx) {
         focus_main_window(window, cx);
         return Ok(window);
