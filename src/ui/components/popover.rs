@@ -91,9 +91,8 @@ impl RenderOnce for Popover {
             .bg(theme.elevated_background)
             .border_1()
             .border_color(theme.elevated_border_color)
-            .rounded(px(4.0))
+            .rounded(px(6.0))
             .shadow_md()
-            .p(px(6.0))
             .when_some(self.on_dismiss, |this, on_dismiss| {
                 this.on_action(move |_: &ClosePopover, window, cx| {
                     on_dismiss(window, cx);
@@ -161,7 +160,7 @@ fn anchor(position: PopoverPosition, edge_offset: Pixels, content: Div) -> Div {
 
 pub fn popover() -> Popover {
     Popover {
-        div: div(),
+        div: div().p(px(6.0)),
         position: PopoverPosition::BottomCenter,
         edge_offset: px(0.0),
         on_dismiss: None,

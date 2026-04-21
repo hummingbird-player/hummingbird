@@ -358,6 +358,7 @@ impl ReleaseView {
                     popover()
                         .position(PopoverPosition::BottomRight)
                         .edge_offset(px(4.0))
+                        .p(px(0.0))
                         .on_dismiss(move |_, cx| close_for_dismiss(cx))
                         .on_mouse_down_out(move |_, _, cx| close_for_out(cx))
                         .child(
