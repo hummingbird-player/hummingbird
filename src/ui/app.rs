@@ -38,7 +38,6 @@ use crate::{
             resizable::{ResizeEdge, resizable},
         },
         controls::Controls,
-        density::{UiPresetConfigGlobal, active_shell_layout},
         fonts::{
             AvailableFontsGlobal, ResolvedFontsGlobal, capture_available_fonts,
             refresh_resolved_fonts,
@@ -54,6 +53,7 @@ use crate::{
         },
         models::WindowInformation,
         right_sidebar::RightSidebar,
+        ui_preset::{UiPresetConfigGlobal, active_shell_layout},
     },
 };
 

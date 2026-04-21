@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
-    density::{active_density, scale_px},
+    scale::{active_density, scale_px},
     styling::constants::APP_ROUNDING,
     styling::{ActiveTheme, StyledExt},
 };

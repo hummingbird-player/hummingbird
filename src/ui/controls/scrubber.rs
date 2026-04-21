@@ -1,6 +1,6 @@
 use super::playback_section::PlaybackSection;
 use super::*;
-use crate::ui::density::{TextStyle, active_density, interpolate_text_style, scale_px};
+use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px};
 
 struct ScrubberMetrics {
     horizontal_padding: f32,

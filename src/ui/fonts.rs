@@ -7,7 +7,7 @@ use crate::{
         SettingsGlobal,
         interface::{InterfaceSettings, UiPresetKind, classify_ui_preset_id},
     },
-    ui::density::{UiPresetConfig, UiPresetConfigGlobal},
+    ui::ui_preset::{UiPresetConfig, UiPresetConfigGlobal},
 };
 
 const DEFAULT_UI_FONT_FAMILY: &str = "Inter";
@@ -123,7 +123,7 @@ mod tests {
 
     use crate::{
         settings::interface::{InterfaceSettings, UiDensity},
-        ui::density::{FlatOptionalString, UiPresetConfig},
+        ui::ui_preset::{FlatOptionalString, UiPresetConfig},
     };
 
     use super::{ResolvedFonts, resolve_fonts};

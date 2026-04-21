@@ -14,7 +14,6 @@ use crate::{
         SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID, UiPresetKind, classify_ui_preset_id,
     },
     ui::{
-        density::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
         layout::{
             defaults::{default_shell_layout, stage_shell_layout},
             schema::ShellLayout,
@@ -23,6 +22,7 @@ use crate::{
             PresetOption, discover_file_preset_options, relative_file_path,
             resolve_relative_file_preset_path, seed_relative_file_if_missing,
         },
+        ui_preset::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
     },
 };
 
@@ -268,12 +268,12 @@ mod tests {
         settings::interface::{SEEDED_UI_PRESET_ID, STAGE_UI_PRESET_ID},
         test_support::TestDir,
         ui::{
-            density::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
             layout::{
                 defaults::default_shell_layout,
                 schema::{MainRegion, OuterBand, ShellLayout},
             },
             presets::PresetOption,
+            ui_preset::{FlatOptionalLayout, FlatOptionalString, UiPresetConfig},
         },
     };
 

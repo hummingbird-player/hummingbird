@@ -1,7 +1,7 @@
 use gpui::*;
 
 use crate::ui::{
-    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
     styling::theme::Theme,
 };
 

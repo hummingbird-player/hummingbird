@@ -8,8 +8,8 @@ use crate::{
     services::mmb::lastfm::LASTFM_CREDS,
     ui::{
         components::icons::{UPDATE, icon},
-        density::{TextStyle, active_typography, apply_text_style},
         models::Models,
+        scale::{TextStyle, active_typography, apply_text_style},
         styling::ActiveTheme,
     },
     update::complete_update,

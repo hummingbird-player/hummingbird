@@ -20,8 +20,8 @@ use crate::{
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             tooltip::build_tooltip,
         },
-        density::{TextStyle, active_density, interpolate_text_style, scale_px, typography_roles},
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
+        scale::{TextStyle, active_density, interpolate_text_style, scale_px, typography_roles},
     },
 };
 use cntp_i18n::tr;

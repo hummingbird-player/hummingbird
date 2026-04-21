@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::density::{active_density, scale_px};
+use crate::ui::scale::{active_density, scale_px};
 
 struct PlaybackButtonMetrics {
     width: f32,

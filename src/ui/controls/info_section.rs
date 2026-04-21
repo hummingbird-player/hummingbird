@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::density::{TextStyle, active_density, interpolate_text_style, scale_px};
+use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px};
 
 struct InfoSectionMetrics {
     outer_margin_x: f32,

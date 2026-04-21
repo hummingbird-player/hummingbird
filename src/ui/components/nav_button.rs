@@ -5,7 +5,7 @@ use gpui::{
 
 use crate::ui::{
     components::icons::icon,
-    density::{active_density, scale_px},
+    scale::{active_density, scale_px},
     styling::ActiveTheme,
 };
 

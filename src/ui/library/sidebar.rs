@@ -19,10 +19,10 @@ use crate::{
             nav_button::nav_button,
             sidebar::{sidebar, sidebar_item, sidebar_separator},
         },
-        density::{TextStyle, active_density, apply_text_style, scale_px, typography_roles},
         global_actions::Search,
         library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
         models::Models,
+        scale::{TextStyle, active_density, apply_text_style, scale_px, typography_roles},
         styling::theme::Theme,
     },
 };
