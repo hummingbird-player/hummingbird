@@ -763,13 +763,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:409",
+    "definedIn": "src/ui/library/release_view.rs:407",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:424",
+    "definedIn": "src/ui/library/release_view.rs:422",
     "plural": false,
     "description": null
   },
