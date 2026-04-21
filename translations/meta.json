@@ -521,6 +521,18 @@
     "plural": false,
     "description": null
   },
+  "INTERFACE_SWAP_MENU_AND_NAV": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:348",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:353",
+    "plural": false,
+    "description": null
+  },
   "INTERFACE_THEME": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:203",
@@ -1015,19 +1027,19 @@
   },
   "SCAN_COMPLETE_WATCHING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:163",
+    "definedIn": "src/ui/header.rs:180",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:142",
+    "definedIn": "src/ui/header.rs:159",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:150",
+    "definedIn": "src/ui/header.rs:167",
     "plural": false,
     "description": null
   },

@@ -89,6 +89,8 @@
   "INTERFACE_REDUCED_MOTION_SUBTEXT": "Disables smooth scrolling, fades, and other motion-heavy UI animations.",
   "INTERFACE_STARTUP_LIBRARY_VIEW": "Default startup view",
   "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": "Choose which library page opens when Hummingbird launches.",
+  "INTERFACE_SWAP_MENU_AND_NAV": "Swap menu and navigation buttons",
+  "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": "Place the menu before the back/forward buttons so navigation sits closer to the center of the window.",
   "INTERFACE_THEME": "Theme",
   "INTERFACE_THEME_SUBTEXT": "Choose a built-in theme or add your own. Place custom theme files in the themes folder. Changes apply immediately.",
   "INTERFACE_TWO_COLUMN_LIBRARY": "Two-column library",
