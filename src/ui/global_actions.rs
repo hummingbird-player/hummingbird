@@ -59,7 +59,7 @@ pub fn register_actions(cx: &mut App) {
         cx.bind_keys([KeyBinding::new("cmd-alt-h", HideOthers, None)]);
     } else {
         cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
-        cx.bind_keys([KeyBinding::new("ctrl-w", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("ctrl-w", CloseWindow, None)]);
     }
 
     cx.bind_keys([KeyBinding::new("secondary-right", Next, None)]);
