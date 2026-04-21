@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tracing::info;
 
@@ -32,11 +32,15 @@ pub struct CompleteMetadata {
 /// including opening/closing files, decoding audio, and retrieving metadata.
 pub struct MediaController {
     media_stream: Option<Box<dyn MediaStream>>,
+    current_path: Option<PathBuf>,
 }
 
 impl MediaController {
     pub fn new() -> Self {
-        Self { media_stream: None }
+        Self {
+            media_stream: None,
+            current_path: None,
+        }
     }
 
     /// Check if a media stream is currently open.
@@ -80,6 +84,7 @@ impl MediaController {
         let duration_secs = media_stream.duration_secs().ok();
 
         self.media_stream = Some(media_stream);
+        self.current_path = Some(path.to_path_buf());
 
         Ok(MediaInfo {
             channels,
@@ -93,6 +98,12 @@ impl MediaController {
             stream.stop_playback().ok();
             stream.close().ok();
         }
+
+        self.current_path = None;
+    }
+
+    pub fn current_path(&self) -> Option<&Path> {
+        self.current_path.as_deref()
     }
 
     /// Seek to the specified time in seconds.

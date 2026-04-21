@@ -77,6 +77,8 @@ pub enum PlaybackCommand {
     /// Requests that an item be moved from one position to another in the queue.
     /// The first usize is the source index, the second is the destination index.
     MoveItem { from: usize, to: usize },
+    /// Requests that the last queue mutation be undone.
+    Undo,
     /// Informs the playback thread that the playback settings have changed.
     SettingsChanged(PlaybackSettings),
     /// Informs the playback thread whether the app window is currently focused.

@@ -34,7 +34,7 @@ use super::{
 use audio_engine::{AudioEngine, EngineCycleResult, EngineState};
 use queue_manager::{
     DequeueResult, InsertResult, JumpResult, MoveResult, QueueManager, QueueNavigationResult,
-    ReplaceResult, Reshuffled, ShuffleResult,
+    ReplaceResult, Reshuffled, ShuffleResult, UndoResult,
 };
 
 // throttle position broadcasts to prevent excees CPU utilization, especially while the application isn't
@@ -194,6 +194,7 @@ impl PlaybackThread {
                 PlaybackCommand::SetRepeat(v) => self.set_repeat(v),
                 PlaybackCommand::RemoveItem(idx) => self.remove(idx),
                 PlaybackCommand::MoveItem { from, to } => self.move_item(from, to),
+                PlaybackCommand::Undo => self.undo(),
                 PlaybackCommand::SettingsChanged(settings) => self.settings_changed(settings),
                 PlaybackCommand::SetPositionBroadcastActive(active) => {
                     self.set_position_broadcast_active(active)
@@ -472,7 +473,7 @@ impl PlaybackThread {
 
     /// Move an item from one position to another in the queue.
     fn move_item(&mut self, from: usize, to: usize) {
-        match self.queue.move_item(from, to) {
+        match self.queue.move_item(from, to, true) {
             MoveResult::Moved => {
                 self.send_event(PlaybackEvent::QueueUpdated);
             }
@@ -481,6 +482,65 @@ impl PlaybackThread {
                 self.send_event(PlaybackEvent::QueueUpdated);
             }
             MoveResult::Unchanged => {}
+        }
+    }
+
+    /// Undo the most recent queue mutation.
+    fn undo(&mut self) {
+        let previous_state = self.state();
+        let previous_shuffle = self.queue.is_shuffle_enabled();
+        let previous_position = self.queue.current_position();
+
+        match self.queue.undo_last_action() {
+            UndoResult::Ok {
+                current_idx,
+                current_path,
+                shuffle,
+            } => {
+                self.refresh_rg_auto_hint();
+
+                if previous_state != PlaybackState::Stopped {
+                    let should_reopen = self.engine.current_path() != Some(current_path.as_path());
+
+                    if should_reopen {
+                        if let Err(err) = self.open(&current_path) {
+                            error!(path = %current_path.display(), ?err, "Unable to open file: {err}");
+                        }
+
+                        if previous_state == PlaybackState::Paused {
+                            self.pause();
+                        }
+                    }
+                }
+
+                if previous_shuffle != shuffle {
+                    self.send_event(PlaybackEvent::ShuffleToggled(shuffle, current_idx));
+                }
+
+                self.send_event(PlaybackEvent::QueueUpdated);
+
+                if previous_position != Some(current_idx) {
+                    self.send_event(PlaybackEvent::QueuePositionChanged(current_idx));
+                }
+            }
+            UndoResult::OkNoCurrent { shuffle } => {
+                self.refresh_rg_auto_hint();
+
+                if previous_state != PlaybackState::Stopped {
+                    self.stop();
+                }
+
+                if previous_shuffle != shuffle {
+                    self.send_event(PlaybackEvent::ShuffleToggled(shuffle, 0));
+                }
+
+                self.send_event(PlaybackEvent::QueueUpdated);
+
+                if previous_position.is_some() {
+                    self.send_event(PlaybackEvent::QueuePositionChanged(0));
+                }
+            }
+            UndoResult::None => {}
         }
     }
 

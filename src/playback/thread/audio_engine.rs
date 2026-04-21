@@ -297,6 +297,11 @@ impl AudioEngine {
         self.media.position_ms().ok()
     }
 
+    /// Get the currently loaded track path, if any.
+    pub fn current_path(&self) -> Option<&Path> {
+        self.media.current_path()
+    }
+
     /// Check for metadata updates and return them if available.
     pub fn check_metadata_update(&mut self) -> Option<CompleteMetadata> {
         self.media.check_metadata_update()

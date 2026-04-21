@@ -145,6 +145,10 @@ impl PlaybackInterface {
             .unwrap();
     }
 
+    pub fn undo(&self) {
+        self.cmd_tx.send(PlaybackCommand::Undo).unwrap();
+    }
+
     pub fn update_settings(&self, settings: PlaybackSettings) {
         self.cmd_tx
             .send(PlaybackCommand::SettingsChanged(settings))
