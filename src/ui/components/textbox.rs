@@ -7,8 +7,27 @@ use gpui::{
 
 use crate::ui::{
     components::input::{EnrichedInputAction, TextInput},
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
     styling::theme::Theme,
 };
+
+struct TextboxMetrics {
+    inline_padding: f32,
+    block_padding: f32,
+    radius: f32,
+    text: TextStyle,
+}
+
+fn textbox_metrics(cx: &App) -> TextboxMetrics {
+    let density = active_density(cx);
+
+    TextboxMetrics {
+        inline_padding: scale_px(density, 8.0, 1.5),
+        block_padding: scale_px(density, 6.0, 1.0),
+        radius: 4.0,
+        text: active_typography(cx).body,
+    }
+}
 
 pub struct Textbox {
     input: Entity<TextInput>,
@@ -65,19 +84,21 @@ impl Textbox {
 impl Render for Textbox {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
+        let metrics = textbox_metrics(cx);
         let mut main = div();
 
         main.style().refine(&self.style);
 
-        main.track_focus(&self.handle)
-            .border_1()
-            .text_sm()
-            .border_color(theme.textbox_border)
-            .rounded(px(4.0))
-            .bg(theme.textbox_background)
-            .px(px(8.0))
-            .py(px(6.0))
-            .line_height(px(14.0))
-            .child(self.input.clone())
+        apply_text_style(
+            main.track_focus(&self.handle)
+                .border_1()
+                .border_color(theme.textbox_border)
+                .rounded(px(metrics.radius))
+                .bg(theme.textbox_background)
+                .px(px(metrics.inline_padding))
+                .py(px(metrics.block_padding))
+                .child(self.input.clone()),
+            metrics.text,
+        )
     }
 }

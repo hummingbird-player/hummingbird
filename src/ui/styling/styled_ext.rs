@@ -1,14 +1,6 @@
-use gpui::{App, Div, Styled, div};
+use gpui::{App, Styled};
 
 use super::theme::Theme;
-
-pub fn h_flex() -> Div {
-    div().flex().flex_row().items_center()
-}
-
-pub fn v_flex() -> Div {
-    div().flex().flex_col()
-}
 
 pub trait StyledExt: Styled + Sized {
     fn h_flex(self) -> Self {

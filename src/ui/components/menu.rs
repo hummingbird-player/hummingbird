@@ -2,10 +2,35 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::icons::{CHECK, LOCK, icon},
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
     styling::theme::Theme,
 };
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+struct MenuMetrics {
+    item_inline_padding: f32,
+    item_block_padding: f32,
+    item_gap: f32,
+    text: TextStyle,
+    icon_size: f32,
+    radius: f32,
+    separator_block_margin: f32,
+}
+
+fn menu_metrics(cx: &App) -> MenuMetrics {
+    let density = active_density(cx);
+
+    MenuMetrics {
+        item_inline_padding: scale_px(density, 6.0, 1.0),
+        item_block_padding: scale_px(density, 5.0, 1.0),
+        item_gap: scale_px(density, 7.0, 1.0),
+        text: active_typography(cx).body,
+        icon_size: scale_px(density, 18.0, 2.0),
+        radius: 4.0,
+        separator_block_margin: scale_px(density, 4.0, 1.0),
+    }
+}
 
 #[derive(IntoElement)]
 pub struct MenuItem {
@@ -48,51 +73,54 @@ impl MenuItem {
 impl RenderOnce for MenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let metrics = menu_metrics(cx);
 
-        let base = div()
-            .id(self.id)
-            .rounded(px(4.0))
-            .flex()
-            .when_else(
-                self.never_icon,
-                |this| this.px(px(8.0)),
-                |this| this.px(px(6.0)),
-            )
-            .pt(px(5.0))
-            .pb(px(5.0))
-            .line_height(rems(1.25))
-            .min_w_full()
-            .bg(theme.menu_item)
-            .border_1()
-            .text_sm()
-            .font_weight(FontWeight::MEDIUM)
-            .when(!self.never_icon, |this| {
-                this.child(
-                    div()
-                        .w(px(18.0))
-                        .h(px(18.0))
-                        .mr(px(7.0))
-                        .pt(px(0.5))
-                        .my_auto()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when_some(self.icon_path, |this, icon_path| {
-                            this.child(icon(icon_path).size(px(18.0)).text_color(
-                                if self.disabled {
-                                    theme.text_disabled
-                                } else {
-                                    theme.text_secondary
-                                },
-                            ))
-                        }),
+        let base = apply_text_style(
+            div()
+                .id(self.id)
+                .rounded(px(metrics.radius))
+                .flex()
+                .when_else(
+                    self.never_icon,
+                    |this| this.px(px(metrics.item_inline_padding + 2.0)),
+                    |this| this.px(px(metrics.item_inline_padding)),
                 )
-            })
-            .child(
-                div()
-                    .child(self.name)
-                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
-            );
+                .pt(px(metrics.item_block_padding))
+                .pb(px(metrics.item_block_padding))
+                .items_center()
+                .min_w_full()
+                .bg(theme.menu_item)
+                .border_1()
+                .font_weight(FontWeight::MEDIUM)
+                .when(!self.never_icon, |this| {
+                    this.child(
+                        div()
+                            .w(px(metrics.icon_size))
+                            .h(px(metrics.icon_size))
+                            .mr(px(metrics.item_gap))
+                            .pt(px(0.5))
+                            .my_auto()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when_some(self.icon_path, |this, icon_path| {
+                                this.child(icon(icon_path).size(px(metrics.icon_size)).text_color(
+                                    if self.disabled {
+                                        theme.text_disabled
+                                    } else {
+                                        theme.text_secondary
+                                    },
+                                ))
+                            }),
+                    )
+                })
+                .child(
+                    div()
+                        .child(self.name)
+                        .when(self.disabled, |this| this.text_color(theme.text_disabled)),
+                ),
+            metrics.text,
+        );
 
         if self.disabled {
             base.cursor_default()
@@ -144,6 +172,7 @@ impl CheckMenuItem {
 impl RenderOnce for CheckMenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let metrics = menu_metrics(cx);
 
         let icon_path = if self.disabled {
             Some(LOCK)
@@ -153,42 +182,46 @@ impl RenderOnce for CheckMenuItem {
             None
         };
 
-        let base = div()
-            .id(self.id)
-            .rounded(px(4.0))
-            .flex()
-            .px(px(6.0))
-            .pt(px(5.0))
-            .pb(px(5.0))
-            .line_height(rems(1.25))
-            .min_w_full()
-            .bg(theme.menu_item)
-            .border_1()
-            .text_sm()
-            .font_weight(FontWeight::MEDIUM)
-            .child(
-                div()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .mr(px(7.0))
-                    .pt(px(0.5))
-                    .my_auto()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(icon_path, |this, path| {
-                        this.child(icon(path).size(px(18.0)).text_color(if self.disabled {
-                            theme.text_disabled
-                        } else {
-                            theme.text_secondary
-                        }))
-                    }),
-            )
-            .child(
-                div()
-                    .child(self.name)
-                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
-            );
+        let base = apply_text_style(
+            div()
+                .id(self.id)
+                .rounded(px(metrics.radius))
+                .flex()
+                .px(px(metrics.item_inline_padding))
+                .pt(px(metrics.item_block_padding))
+                .pb(px(metrics.item_block_padding))
+                .items_center()
+                .min_w_full()
+                .bg(theme.menu_item)
+                .border_1()
+                .font_weight(FontWeight::MEDIUM)
+                .child(
+                    div()
+                        .w(px(metrics.icon_size))
+                        .h(px(metrics.icon_size))
+                        .mr(px(metrics.item_gap))
+                        .pt(px(0.5))
+                        .my_auto()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when_some(icon_path, |this, path| {
+                            this.child(icon(path).size(px(metrics.icon_size)).text_color(
+                                if self.disabled {
+                                    theme.text_disabled
+                                } else {
+                                    theme.text_secondary
+                                },
+                            ))
+                        }),
+                )
+                .child(
+                    div()
+                        .child(self.name)
+                        .when(self.disabled, |this| this.text_color(theme.text_disabled)),
+                ),
+            metrics.text,
+        );
 
         if self.disabled {
             base.cursor_default()
@@ -213,11 +246,13 @@ pub struct MenuSeparator;
 impl RenderOnce for MenuSeparator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let metrics = menu_metrics(cx);
 
         div()
             .min_w_full()
             .h(px(1.0))
             .flex_shrink_0()
+            .my(px(metrics.separator_block_margin))
             .bg(theme.elevated_border_color)
             .mx(px(4.0))
             .my(px(2.0))

@@ -5,9 +5,28 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::styling::{ActiveTheme, v_flex};
+use crate::ui::{
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    styling::{ActiveTheme, StyledExt},
+};
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+struct LabelMetrics {
+    content_gap: f32,
+    text: TextStyle,
+    subtext: TextStyle,
+}
+
+fn label_metrics(cx: &App) -> LabelMetrics {
+    let density = active_density(cx);
+    let typography = active_typography(cx);
+    LabelMetrics {
+        content_gap: scale_px(density, 6.0, 1.0),
+        text: typography.label,
+        subtext: typography.secondary_body,
+    }
+}
 
 #[derive(IntoElement)]
 pub struct Label {
@@ -48,28 +67,33 @@ impl ParentElement for Label {
 
 impl RenderOnce for Label {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let metrics = label_metrics(cx);
         let theme = cx.theme();
 
         self.div
             .id(self.id)
             .flex()
             .overflow_hidden()
-            .text_sm()
-            .gap(px(6.0))
+            .gap(px(metrics.content_gap))
             .child(
-                v_flex()
+                div()
+                    .v_flex()
                     .overflow_hidden()
                     .w_full()
                     .flex_shrink()
                     .my_auto()
-                    .child(div().overflow_hidden().child(self.text))
+                    .child(apply_text_style(
+                        div().overflow_hidden().child(self.text),
+                        metrics.text,
+                    ))
                     .when_some(self.subtext, |this, that| {
-                        this.child(
+                        this.child(apply_text_style(
                             div()
                                 .overflow_hidden()
                                 .text_color(theme.text_secondary)
                                 .child(that),
-                        )
+                            metrics.subtext,
+                        ))
                     }),
             )
             .child(div().my_auto().flex().children(self.children))

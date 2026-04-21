@@ -18,6 +18,7 @@ use crate::{
             menu_bar::MenuBar,
             window_header::header,
         },
+        density::active_typography,
         library::nav_buttons::nav_buttons,
         styling::ActiveTheme,
     },
@@ -101,11 +102,13 @@ impl ScanStatus {
 impl Render for ScanStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let text = active_typography(cx).body;
         let status = self.scan_model.read(cx);
 
         div()
             .flex()
-            .text_sm()
+            .text_size(px(text.size))
+            .line_height(px(text.line_height))
             .when(
                 !matches!(
                     status,

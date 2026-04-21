@@ -1,6 +1,9 @@
 use gpui::*;
 
-use crate::ui::styling::theme::Theme;
+use crate::ui::{
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    styling::theme::Theme,
+};
 
 use super::styling::AdditionalStyleUtil;
 
@@ -24,16 +27,44 @@ pub enum ButtonStyle {
     Minimal,
 }
 
+struct ButtonMetrics {
+    regular_inline_padding: f32,
+    regular_block_padding_start: f32,
+    regular_block_padding_end: f32,
+    large_inline_padding: f32,
+    large_block_padding_start: f32,
+    large_block_padding_end: f32,
+    content_gap: f32,
+    text: TextStyle,
+    radius: f32,
+}
+
+fn button_metrics(cx: &App) -> ButtonMetrics {
+    let density = active_density(cx);
+
+    ButtonMetrics {
+        regular_inline_padding: scale_px(density, 10.0, 1.0),
+        regular_block_padding_start: scale_px(density, 3.0, 0.75),
+        regular_block_padding_end: scale_px(density, 3.0, 0.75),
+        large_inline_padding: scale_px(density, 12.0, 1.5),
+        large_block_padding_start: scale_px(density, 4.0, 1.0),
+        large_block_padding_end: scale_px(density, 3.0, 1.0),
+        content_gap: scale_px(density, 8.0, 1.0),
+        text: active_typography(cx).label,
+        radius: 4.0,
+    }
+}
+
 impl ButtonStyle {
-    fn base<T>(&self, dest: T) -> T
+    fn base<T>(&self, dest: T, metrics: &ButtonMetrics) -> T
     where
         T: Styled,
     {
         let div = dest.cursor_pointer().flex();
 
         match self {
-            ButtonStyle::Regular => div.shadow_md().rounded(px(4.0)).border_1(),
-            ButtonStyle::Minimal => div.background_opacity(0.0).rounded(px(4.0)),
+            ButtonStyle::Regular => div.shadow_md().rounded(px(metrics.radius)).border_1(),
+            ButtonStyle::Minimal => div.background_opacity(0.0).rounded(px(metrics.radius)),
         }
     }
 
@@ -59,18 +90,25 @@ impl ButtonStyle {
 }
 
 impl ButtonSize {
-    fn base<T>(&self, dest: T) -> T
+    fn base<T>(&self, dest: T, metrics: &ButtonMetrics) -> T
     where
         T: Styled,
     {
         match self {
-            ButtonSize::Regular => dest.px(px(10.0)).py(px(3.0)).text_sm().gap(px(8.0)),
-            ButtonSize::Large => dest
-                .px(px(12.0))
-                .pt(px(4.0))
-                .pb(px(3.0))
-                .text_sm()
-                .gap(px(8.0)),
+            ButtonSize::Regular => apply_text_style(
+                dest.px(px(metrics.regular_inline_padding))
+                    .pt(px(metrics.regular_block_padding_start))
+                    .pb(px(metrics.regular_block_padding_end))
+                    .gap(px(metrics.content_gap)),
+                metrics.text,
+            ),
+            ButtonSize::Large => apply_text_style(
+                dest.px(px(metrics.large_inline_padding))
+                    .pt(px(metrics.large_block_padding_start))
+                    .pb(px(metrics.large_block_padding_end))
+                    .gap(px(metrics.content_gap)),
+                metrics.text,
+            ),
         }
     }
 
@@ -210,9 +248,15 @@ impl RenderOnce for Button {
         let style = self.style;
         let size = self.size;
         let intent = self.intent;
+        let metrics = button_metrics(cx);
 
-        let mut div = style
-            .base(size.base(intent.base(self.div.hover(|v| style.hover(intent.hover(v, cx))), cx)));
+        let mut div = style.base(
+            size.base(
+                intent.base(self.div.hover(|v| style.hover(intent.hover(v, cx))), cx),
+                &metrics,
+            ),
+            &metrics,
+        );
         div.style().refine(&self.refinement);
         div
     }
@@ -271,6 +315,7 @@ impl RenderOnce for InteractiveButton {
         let style = self.style;
         let size = self.size;
         let intent = self.intent;
+        let metrics = button_metrics(cx);
 
         let mut div = style.base(
             size.base(
@@ -280,7 +325,9 @@ impl RenderOnce for InteractiveButton {
                         .active(|v| style.active(size.active(intent.active(v, cx)))),
                     cx,
                 ),
+                &metrics,
             ),
+            &metrics,
         );
 
         div.style().refine(&self.refinement);

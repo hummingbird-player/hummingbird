@@ -11,6 +11,7 @@ use crate::{
             icons::{MICROPHONE, icon},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
         },
+        density::{TextStyle, active_density, interpolate_text_style, scale_px},
         models::{CurrentTrack, Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         styling::ActiveTheme,
@@ -23,12 +24,52 @@ use std::time::{Duration, Instant};
 const LYRICS_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 const LYRICS_ACTIVE_LINE_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 const LYRICS_USER_INTERACTION_TIMEOUT: Duration = Duration::from_secs(2);
-const LYRICS_BASE_TEXT_SIZE: f32 = 22.0;
-const LYRICS_ACTIVE_TEXT_SIZE: f32 = 25.0;
-const LYRICS_BASE_VERTICAL_PADDING: f32 = 7.0;
-const LYRICS_ACTIVE_VERTICAL_PADDING: f32 = 9.0;
-const LYRICS_BASE_LINE_HEIGHT: f32 = 1.5;
-const LYRICS_ACTIVE_LINE_HEIGHT: f32 = 1.65;
+struct LyricsMetrics {
+    empty_icon_size: f32,
+    empty_line_height: f32,
+    blank_line_height: f32,
+    line_horizontal_padding: f32,
+    scroll_vertical_padding: f32,
+    plain_text_padding_x: f32,
+    plain_text_padding_y: f32,
+    plain_text: TextStyle,
+    base_line: TextStyle,
+    active_line: TextStyle,
+    base_vertical_padding: f32,
+    active_vertical_padding: f32,
+}
+
+fn lyrics_metrics(density: crate::settings::interface::UiDensity) -> LyricsMetrics {
+    LyricsMetrics {
+        empty_icon_size: scale_px(density, 16.0, 2.0),
+        empty_line_height: scale_px(density, 16.0, 2.0),
+        blank_line_height: scale_px(density, 16.0, 2.0),
+        line_horizontal_padding: scale_px(density, 20.0, 2.0),
+        scroll_vertical_padding: scale_px(density, 9.0, 1.0),
+        plain_text_padding_x: scale_px(density, 16.0, 2.0),
+        plain_text_padding_y: scale_px(density, 14.0, 2.0),
+        plain_text: interpolate_text_style(
+            density,
+            TextStyle::new(18.0, 28.0),
+            TextStyle::new(20.0, 32.0),
+            TextStyle::new(22.0, 34.0),
+        ),
+        base_line: interpolate_text_style(
+            density,
+            TextStyle::new(20.0, 28.0),
+            TextStyle::new(22.0, 33.0),
+            TextStyle::new(24.0, 36.0),
+        ),
+        active_line: interpolate_text_style(
+            density,
+            TextStyle::new(23.0, 31.0),
+            TextStyle::new(25.0, 36.0),
+            TextStyle::new(27.0, 39.0),
+        ),
+        base_vertical_padding: scale_px(density, 7.0, 1.0),
+        active_vertical_padding: scale_px(density, 9.0, 1.0),
+    }
+}
 pub struct Lyrics {
     content: Option<String>,
     parsed: Option<Vec<LrcLine>>,
@@ -144,6 +185,7 @@ impl Lyrics {
 
 impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let metrics = lyrics_metrics(active_density(cx));
         let theme = cx.theme().clone();
         let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
         let playback_state = *self.playback_state.read(cx);
@@ -179,7 +221,8 @@ impl Render for Lyrics {
                         .gap_2()
                         .items_center()
                         .text_color(muted)
-                        .child(icon(MICROPHONE).size(px(16.0)))
+                        .line_height(px(metrics.empty_line_height))
+                        .child(icon(MICROPHONE).size(px(metrics.empty_icon_size)))
                         .child(tr!("NO_LYRICS", "No lyrics")),
                 )
                 .into_any_element()
@@ -192,13 +235,17 @@ impl Render for Lyrics {
             let items = parsed.iter().enumerate().map(|(idx, line)| {
                 let time_ms = line.time_ms;
                 if line.text.is_empty() {
-                    div().h(px(16.0)).w_full().into_any_element()
+                    div()
+                        .h(px(metrics.blank_line_height))
+                        .w_full()
+                        .into_any_element()
                 } else {
                     let emphasis = self.line_emphasis_for(idx);
                     let is_active = emphasis > 0.0 || Some(idx) == active_line;
                     let text_color = lerp_color(muted, normal, emphasis);
-                    let font_size = lerp(LYRICS_BASE_TEXT_SIZE, LYRICS_ACTIVE_TEXT_SIZE, emphasis);
-                    let width = (font_size / LYRICS_ACTIVE_TEXT_SIZE) * queue;
+                    let font_size =
+                        lerp(metrics.base_line.size, metrics.active_line.size, emphasis);
+                    let width = (font_size / metrics.active_line.size) * queue;
 
                     div()
                         .id(("lyric", idx))
@@ -210,16 +257,16 @@ impl Render for Lyrics {
                         .cursor_pointer()
                         .max_w(px(width))
                         .overflow_x_hidden()
-                        .px(px(20.0))
+                        .px(px(metrics.line_horizontal_padding))
                         .py(px(lerp(
-                            LYRICS_BASE_VERTICAL_PADDING,
-                            LYRICS_ACTIVE_VERTICAL_PADDING,
+                            metrics.base_vertical_padding,
+                            metrics.active_vertical_padding,
                             emphasis,
                         )))
                         .text_size(px(font_size))
-                        .line_height(rems(lerp(
-                            LYRICS_BASE_LINE_HEIGHT,
-                            LYRICS_ACTIVE_LINE_HEIGHT,
+                        .line_height(px(lerp(
+                            metrics.base_line.line_height,
+                            metrics.active_line.line_height,
                             emphasis,
                         )))
                         .font_weight(if is_active {
@@ -258,7 +305,7 @@ impl Render for Lyrics {
                         .id("lyrics-scroll")
                         .h_full()
                         .w_full()
-                        .py(px(9.0))
+                        .py(px(metrics.scroll_vertical_padding))
                         .flex()
                         .flex_col()
                         .overflow_y_scroll()
@@ -288,10 +335,10 @@ impl Render for Lyrics {
                 .h_full()
                 .w_full()
                 .overflow_y_scroll()
-                .px(px(16.0))
-                .py(px(14.0))
-                .text_size(px(20.0))
-                .line_height(rems(1.6))
+                .px(px(metrics.plain_text_padding_x))
+                .py(px(metrics.plain_text_padding_y))
+                .text_size(px(metrics.plain_text.size))
+                .line_height(px(metrics.plain_text.line_height))
                 .font_weight(FontWeight::BOLD)
                 .text_color(normal)
                 .child(SharedString::from(text))

@@ -13,6 +13,7 @@ use crate::ui::{
         icons::{CHECK, CHEVRON_DOWN, icon},
         segmented_control::ChangeHandler,
     },
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
     styling::theme::Theme,
 };
 
@@ -40,6 +41,40 @@ pub fn bind_actions(cx: &mut App) {
         KeyBinding::new("home", SelectFirst, None),
         KeyBinding::new("end", SelectLast, None),
     ]);
+}
+
+struct DropdownMetrics {
+    control_inline_padding: f32,
+    control_block_padding_start: f32,
+    control_block_padding_end: f32,
+    control_gap: f32,
+    text: TextStyle,
+    icon_size: f32,
+    popup_padding: f32,
+    popup_margin_block_start: f32,
+    option_inline_padding: f32,
+    option_block_padding: f32,
+    option_gap: f32,
+    option_indicator_size: f32,
+}
+
+fn dropdown_metrics(cx: &App) -> DropdownMetrics {
+    let density = active_density(cx);
+
+    DropdownMetrics {
+        control_inline_padding: scale_px(density, 12.0, 2.0),
+        control_block_padding_start: scale_px(density, 4.0, 1.0),
+        control_block_padding_end: scale_px(density, 3.0, 1.0),
+        control_gap: scale_px(density, 8.0, 1.0),
+        text: active_typography(cx).body,
+        icon_size: scale_px(density, 16.0, 2.0),
+        popup_padding: scale_px(density, 3.0, 1.0),
+        popup_margin_block_start: scale_px(density, 4.0, 1.0),
+        option_inline_padding: scale_px(density, 6.0, 1.0),
+        option_block_padding: scale_px(density, 5.0, 1.0),
+        option_gap: scale_px(density, 7.0, 1.0),
+        option_indicator_size: scale_px(density, 18.0, 2.0),
+    }
 }
 
 #[derive(IntoElement)]
@@ -84,6 +119,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .read(cx);
 
         let theme = cx.global::<Theme>();
+        let metrics = dropdown_metrics(cx);
 
         let display_text = if let Some(option) = &self.selected {
             self.options
@@ -102,19 +138,23 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .bg(theme.button_secondary)
             .border_color(theme.button_secondary_border)
             .id(self.id)
-            .child(
+            .px(px(metrics.control_inline_padding))
+            .pt(px(metrics.control_block_padding_start))
+            .pb(px(metrics.control_block_padding_end))
+            .gap(px(metrics.control_gap))
+            .child(apply_text_style(
                 div()
                     .flex_grow()
                     .flex_shrink()
-                    .text_sm()
                     .text_color(theme.text)
                     .overflow_hidden()
                     .text_ellipsis()
                     .child(display_text),
-            )
+                metrics.text,
+            ))
             .child(
                 icon(CHEVRON_DOWN)
-                    .size(px(16.0))
+                    .size(px(metrics.icon_size))
                     .flex_shrink_0()
                     .text_color(theme.text_secondary),
             )
@@ -163,8 +203,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 .border_color(theme.elevated_border_color)
                 .rounded(px(6.0))
                 .shadow_md()
-                .p(px(3.0))
-                .mt(px(4.0))
+                .p(px(metrics.popup_padding))
+                .mt(px(metrics.popup_margin_block_start))
                 .track_focus(focus_handle)
                 .key_context("Dropdown")
                 .on_action({
@@ -251,14 +291,13 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
 
                     div()
                         .id(ElementId::Name(format!("option-{}", idx).into()))
-                        .px(px(6.0))
-                        .py(px(5.0))
+                        .px(px(metrics.option_inline_padding))
+                        .py(px(metrics.option_block_padding))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .flex()
                         .items_center()
-                        .gap(px(7.0))
-                        .text_sm()
+                        .gap(px(metrics.option_gap))
                         .when(is_highlighted, |this| {
                             this.bg(theme.menu_item_hover)
                                 .border_1()
@@ -267,26 +306,29 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                         .when(!is_highlighted, |this| this.border_1())
                         .child(
                             div()
-                                .w(px(18.0))
-                                .h(px(18.0))
+                                .w(px(metrics.option_indicator_size))
+                                .h(px(metrics.option_indicator_size))
                                 .pt(px(0.5))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .when(is_selected, |this| {
                                     this.child(
-                                        icon(CHECK).size(px(18.0)).text_color(theme.text_secondary),
+                                        icon(CHECK)
+                                            .size(px(metrics.option_indicator_size))
+                                            .text_color(theme.text_secondary),
                                     )
                                 }),
                         )
-                        .child(
+                        .child(apply_text_style(
                             div()
                                 .flex_grow()
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .text_color(theme.text)
                                 .child(label),
-                        )
+                            metrics.text,
+                        ))
                         .on_click({
                             let highlighted = highlighted_index.clone();
                             let on_change = self.on_change.clone();
@@ -326,17 +368,12 @@ pub fn dropdown<T: Clone + PartialEq + 'static>(id: impl Into<ElementId>) -> Dro
         selected: None,
         on_change: None,
         div: div()
-            .px(px(12.0))
-            .pt(px(4.0))
-            .pb(px(3.0))
-            .text_sm()
             .border_1()
             .rounded(px(4.0))
             .cursor_pointer()
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(8.0))
             .w(px(150.0)),
     }
 }

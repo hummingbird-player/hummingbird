@@ -1,12 +1,29 @@
 use gpui::{
-    Div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Stateful,
-    StatefulInteractiveElement, StyleRefinement, Styled, div, prelude::FluentBuilder,
+    Div, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, Stateful,
+    StatefulInteractiveElement, StyleRefinement, Styled, div, prelude::FluentBuilder, px,
 };
 
 use crate::ui::{
     components::icons::icon,
-    styling::{ActiveTheme, ActiveTokens},
+    density::{active_density, scale_px},
+    styling::ActiveTheme,
 };
+
+struct NavButtonMetrics {
+    button_size: Pixels,
+    icon_size: Pixels,
+    radius: Pixels,
+    border_width: Pixels,
+}
+
+fn nav_button_metrics(density: crate::settings::interface::UiDensity) -> NavButtonMetrics {
+    NavButtonMetrics {
+        button_size: px(scale_px(density, 28.0, 2.0)),
+        icon_size: px(scale_px(density, 16.0, 2.0)),
+        radius: px(scale_px(density, 3.0, 0.5)),
+        border_width: px(1.0),
+    }
+}
 
 #[derive(IntoElement)]
 pub struct NavButton {
@@ -39,17 +56,15 @@ impl NavButton {
 impl RenderOnce for NavButton {
     fn render(self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let theme = cx.theme();
-        let tokens = cx.tokens();
-        let button_size = tokens.choose_px(26.0, 28.0, 32.0);
-        let icon_size = tokens.choose_px(14.0, 16.0, 18.0);
+        let metrics = nav_button_metrics(active_density(cx));
 
         self.div
-            .size(button_size)
+            .size(metrics.button_size)
             .flex()
             .justify_center()
             .items_center()
-            .rounded(tokens.radius("sm"))
-            .border(tokens.border_width("hairline"))
+            .rounded(metrics.radius)
+            .border(metrics.border_width)
             .when(self.enabled, |this: Stateful<Div>| {
                 this.hover(|style: gpui::StyleRefinement| {
                     style
@@ -64,7 +79,7 @@ impl RenderOnce for NavButton {
                 .cursor_pointer()
             })
             .when(!self.enabled, |this: Stateful<Div>| this.opacity(0.35))
-            .child(icon(self.icon).size(icon_size))
+            .child(icon(self.icon).size(metrics.icon_size))
     }
 }
 

@@ -20,6 +20,7 @@ use crate::{
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             tooltip::build_tooltip,
         },
+        density::{TextStyle, active_density, interpolate_text_style, scale_px, typography_roles},
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
     },
 };
@@ -46,6 +47,61 @@ const QUEUE_LIST_ID: &str = "queue";
 const QUEUE_ITEM_HEIGHT: f32 = 60.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
+
+struct QueueItemMetrics {
+    height: f32,
+    gap: f32,
+    padding_x: f32,
+    padding_y: f32,
+    scrollbar_right_padding: f32,
+    border_width: f32,
+    art_size: f32,
+    art_radius: f32,
+    metadata: TextStyle,
+    duration_gap: f32,
+}
+
+struct QueueHeaderMetrics {
+    padding_y: f32,
+    padding_left: f32,
+    padding_right: f32,
+    title: TextStyle,
+    clear_icon_size: f32,
+}
+
+struct QueueMetrics {
+    item: QueueItemMetrics,
+    header: QueueHeaderMetrics,
+}
+
+fn queue_metrics(density: crate::settings::interface::UiDensity) -> QueueMetrics {
+    QueueMetrics {
+        item: QueueItemMetrics {
+            height: scale_px(density, QUEUE_ITEM_HEIGHT, 4.0),
+            gap: scale_px(density, 11.0, 1.0),
+            padding_x: scale_px(density, 17.0, 2.0),
+            padding_y: scale_px(density, 11.0, 2.0),
+            scrollbar_right_padding: scale_px(density, 25.0, 2.0),
+            border_width: 1.0,
+            art_size: scale_px(density, 36.0, 3.0),
+            art_radius: 4.0,
+            metadata: interpolate_text_style(
+                density,
+                TextStyle::new(14.0, 16.0),
+                TextStyle::new(15.0, 16.0),
+                TextStyle::new(16.0, 18.0),
+            ),
+            duration_gap: scale_px(density, 6.0, 1.0),
+        },
+        header: QueueHeaderMetrics {
+            padding_y: scale_px(density, 11.0, 1.0),
+            padding_left: scale_px(density, 18.0, 2.0),
+            padding_right: scale_px(density, 12.0, 1.0),
+            title: typography_roles(density).panel_title,
+            clear_icon_size: scale_px(density, 14.0, 1.0),
+        },
+    }
+}
 
 pub struct QueueItem {
     item: Option<QueueItemData>,
@@ -138,6 +194,8 @@ impl QueueItem {
 
 impl Render for QueueItem {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let density = active_density(cx);
+        let metrics = queue_metrics(density);
         let data = self.item.as_mut();
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
@@ -180,18 +238,20 @@ impl Render for QueueItem {
                         .flex()
                         .flex_shrink_0()
                         .overflow_x_hidden()
-                        .gap(px(11.0))
-                        .h(px(QUEUE_ITEM_HEIGHT))
-                        .px(px(17.0))
-                        .py(px(11.0))
+                        .gap(px(metrics.item.gap))
+                        .h(px(metrics.item.height))
+                        .px(px(metrics.item.padding_x))
+                        .py(px(metrics.item.padding_y))
                         // add extra padding when the scrollbar is always drawn
                         // 11px queue item pad + 4px scrollbar + 10px buffer
-                        .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
+                        .when(scrollbar_always_visible, |div| {
+                            div.pr(px(metrics.item.scrollbar_right_padding))
+                        })
                         .when(is_available, |div| div.cursor_pointer())
                         .when(!is_available, |div| div.cursor_default().opacity(0.5))
                         .relative()
                         // Default bottom border - always present
-                        .border_b(px(1.0))
+                        .border_b(px(metrics.item.border_width))
                         .border_color(theme.border_color)
                         .when(item_state.is_being_dragged, |div| div.opacity(0.5))
                         .when(is_current && !item_state.is_being_dragged, |div| {
@@ -223,19 +283,19 @@ impl Render for QueueItem {
                         .child(
                             div()
                                 .id("album-art")
-                                .rounded(px(4.0))
+                                .rounded(px(metrics.item.art_radius))
                                 .bg(theme.album_art_background)
                                 .shadow_sm()
-                                .w(px(36.0))
-                                .h(px(36.0))
+                                .w(px(metrics.item.art_size))
+                                .h(px(metrics.item.art_size))
                                 .flex_shrink_0()
                                 .when_some(image_key, |div, key| {
                                     div.child(
                                         managed_image(("queue-art", idx), key)
-                                            .w(px(36.0))
-                                            .h(px(36.0))
+                                            .w(px(metrics.item.art_size))
+                                            .h(px(metrics.item.art_size))
                                             .object_fit(ObjectFit::Fill)
-                                            .rounded(px(4.0))
+                                            .rounded(px(metrics.item.art_radius))
                                             .thumb(),
                                     )
                                 }),
@@ -244,8 +304,8 @@ impl Render for QueueItem {
                             div()
                                 .flex()
                                 .flex_col()
-                                .line_height(rems(1.0))
-                                .text_size(px(15.0))
+                                .line_height(px(metrics.item.metadata.line_height))
+                                .text_size(px(metrics.item.metadata.size))
                                 .gap_1()
                                 .w_full()
                                 .overflow_x_hidden()
@@ -280,7 +340,7 @@ impl Render for QueueItem {
                                             child.child(
                                                 div()
                                                     .flex_shrink_0()
-                                                    .ml(px(6.0))
+                                                    .ml(px(metrics.item.duration_gap))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(theme.text_secondary)
                                                     .child(format_duration(duration, true)),
@@ -372,8 +432,8 @@ impl Render for QueueItem {
         } else {
             // TODO: Skeleton for this
             div()
-                .h(px(QUEUE_ITEM_HEIGHT))
-                .border_t(px(1.0))
+                .h(px(metrics.item.height))
+                .border_t(px(metrics.item.border_width))
                 .border_color(theme.border_color)
                 .w_full()
                 .id(ElementId::View(cx.entity_id()))
@@ -404,7 +464,9 @@ impl Queue {
             let initial_has_current_track =
                 cx.global::<PlaybackInfo>().current_track.read(cx).is_some();
 
-            let config = DragDropListConfig::new(QUEUE_LIST_ID, px(QUEUE_ITEM_HEIGHT));
+            let density = active_density(cx);
+            let config =
+                DragDropListConfig::new(QUEUE_LIST_ID, px(queue_metrics(density).item.height));
             let drag_drop_manager = DragDropListManager::new(cx, config);
 
             cx.observe(&items, move |this: &mut Queue, _, cx| {
@@ -448,6 +510,11 @@ impl Queue {
 
 impl Render for Queue {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let density = active_density(cx);
+        let metrics = queue_metrics(density);
+        self.drag_drop_manager.update(cx, |manager, _| {
+            manager.config.item_height = px(metrics.item.height);
+        });
         check_drag_cancelled(self.drag_drop_manager.clone(), cx);
 
         let theme = cx.theme().clone();
@@ -495,18 +562,18 @@ impl Render for Queue {
             .child(
                 div()
                     .w_full()
-                    .py(px(11.0))
-                    .pl(px(18.0))
-                    .pr(px(12.0))
+                    .py(px(metrics.header.padding_y))
+                    .pl(px(metrics.header.padding_left))
+                    .pr(px(metrics.header.padding_right))
                     .flex()
                     .items_center()
                     .border_b_1()
                     .border_color(theme.border_color)
                     .child(
                         div()
-                            .line_height(px(26.0))
+                            .line_height(px(metrics.header.title.line_height))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(22.0))
+                            .text_size(px(metrics.header.title.size))
                             .child(tr!("QUEUE_TITLE", "Queue")),
                     )
                     .child(
@@ -514,7 +581,11 @@ impl Render for Queue {
                             .ml_auto()
                             .style(ButtonStyle::Minimal)
                             .size(ButtonSize::Large)
-                            .child(icon(TRASH).size(px(14.0)).my_auto())
+                            .child(
+                                icon(TRASH)
+                                    .size(px(metrics.header.clear_icon_size))
+                                    .my_auto(),
+                            )
                             .child(tr!("CLEAR_QUEUE", "Clear"))
                             .id("clear-queue")
                             .on_click(|_, _, cx| {
@@ -997,8 +1068,10 @@ impl Queue {
         let current_scroll_bottom = current_scroll_top + viewport_height;
         let max_scroll_top = scroll_handle.max_offset().y.max(px(0.0));
 
-        let item_top = px(position as f32 * QUEUE_ITEM_HEIGHT);
-        let item_bottom = item_top + px(QUEUE_ITEM_HEIGHT);
+        let density = active_density(cx);
+        let item_height = queue_metrics(density).item.height;
+        let item_top = px(position as f32 * item_height);
+        let item_bottom = item_top + px(item_height);
 
         let target_scroll_top = if item_top < current_scroll_top {
             item_top

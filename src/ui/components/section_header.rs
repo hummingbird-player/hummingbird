@@ -3,7 +3,28 @@ use gpui::{
     Styled, Window, div, prelude::FluentBuilder, px,
 };
 
-use crate::ui::styling::{ActiveTheme, StyledExt};
+use crate::ui::{
+    density::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    styling::{ActiveTheme, StyledExt},
+};
+
+struct SectionHeaderMetrics {
+    group_gap: f32,
+    title_height: f32,
+    title: TextStyle,
+    subtitle: TextStyle,
+}
+
+fn section_header_metrics(cx: &App) -> SectionHeaderMetrics {
+    let density = active_density(cx);
+    let typography = active_typography(cx);
+    SectionHeaderMetrics {
+        group_gap: scale_px(density, 4.0, 1.0),
+        title_height: scale_px(density, 30.0, 2.0),
+        title: typography.section_title,
+        subtitle: typography.body,
+    }
+}
 
 #[derive(IntoElement)]
 pub struct SectionHeader {
@@ -34,32 +55,31 @@ impl ParentElement for SectionHeader {
 
 impl RenderOnce for SectionHeader {
     fn render(self, _: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        let metrics = section_header_metrics(cx);
         let theme = cx.theme();
 
         self.parent_div
             .v_flex()
-            .gap(px(4.0))
+            .gap(px(metrics.group_gap))
             .child(
                 div()
                     .flex()
-                    .child(
+                    .child(apply_text_style(
                         div()
-                            .h(px(30.0))
+                            .h(px(metrics.title_height))
                             .flex()
                             .items_center()
-                            .text_lg()
                             .font_weight(FontWeight::BOLD)
                             .child(self.title),
-                    )
+                        metrics.title,
+                    ))
                     .child(self.child_div.ml_auto().flex().items_center()),
             )
             .when_some(self.subtitle, |this, subtitle| {
-                this.child(
-                    div()
-                        .text_color(theme.text_secondary)
-                        .text_sm()
-                        .child(subtitle),
-                )
+                this.child(apply_text_style(
+                    div().text_color(theme.text_secondary).child(subtitle),
+                    metrics.subtitle,
+                ))
             })
     }
 }
