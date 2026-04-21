@@ -26,7 +26,6 @@ use crate::{
             context_menus::{album::AlbumContextMenu, track::TrackContextMenu},
         },
         models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent},
-        util::reveal_path_in_file_manager,
     },
 };
 
@@ -290,10 +289,6 @@ fn navigate_to_artist(cx: &mut App, artist_id: i64) {
     switcher.update(cx, |_, cx| {
         cx.emit(ViewSwitchMessage::Artist(artist_id));
     });
-}
-
-fn reveal_track_in_file_manager(track: &Track) {
-    reveal_path_in_file_manager(track.location.as_path());
 }
 
 fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData> {

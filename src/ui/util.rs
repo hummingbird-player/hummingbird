@@ -1,4 +1,4 @@
-use std::{path::Path, process::Command, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use globwalk::GlobWalkerBuilder;
 use gpui::{
@@ -260,23 +260,6 @@ pub fn format_duration(secs: i64, pad_minutes: bool) -> String {
     } else {
         format!("{minutes}:{seconds:02}")
     }
-}
-
-pub fn reveal_path_in_file_manager(path: &Path) {
-    if !path.exists() {
-        return;
-    }
-
-    #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg("-R").arg(path).spawn();
-
-    #[cfg(target_os = "windows")]
-    let _ = Command::new("explorer").arg("/select,").arg(path).spawn();
-
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let _ = path
-        .parent()
-        .map(|parent| Command::new("xdg-open").arg(parent).spawn());
 }
 
 pub fn find_art_file_for_path(path: &Path) -> Option<Arc<Path>> {

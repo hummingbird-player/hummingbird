@@ -17,7 +17,6 @@ use crate::{
 };
 
 use super::{navigate_to_track_album, navigate_to_track_artist, track_show_in_file_manager_label};
-use crate::ui::util::reveal_path_in_file_manager;
 
 #[derive(IntoElement)]
 pub struct InfoSectionContextMenu {
@@ -85,9 +84,9 @@ impl RenderOnce for InfoSectionContextMenu {
                     "info_section_show_in_file_manager",
                     Some(FOLDER_SEARCH),
                     track_show_in_file_manager_label(),
-                    move |_, _, _| {
+                    move |_, _, cx| {
                         if let Some(path) = reveal_path.as_ref() {
-                            reveal_path_in_file_manager(path);
+                            cx.open_with_system(path);
                         }
                     },
                 )
