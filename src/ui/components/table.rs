@@ -23,7 +23,7 @@ use crate::{
             uniform_grid::uniform_grid,
         },
         models::Models,
-        theme::Theme,
+        styling::theme::Theme,
         util::{create_or_retrieve_view, prune_views},
     },
 };

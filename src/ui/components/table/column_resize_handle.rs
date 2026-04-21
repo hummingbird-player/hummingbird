@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
 use super::table_data::{COLUMN_MIN_WIDTH, COLUMN_RESIZE_HANDLE_WIDTH, Column, TABLE_HEADER_GROUP};
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 #[derive(Default)]
 struct ResizeState {

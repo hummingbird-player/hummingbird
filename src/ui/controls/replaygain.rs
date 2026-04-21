@@ -11,7 +11,7 @@ use crate::{
 use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 pub struct ReplayGainButton {
     settings: Entity<Settings>,

@@ -2,7 +2,7 @@ use gpui::{OwnedMenu, OwnedMenuItem, prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::menu::{menu, menu_item, menu_separator},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 pub struct MenuBar {

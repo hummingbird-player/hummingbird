@@ -5,7 +5,7 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::{ActiveTheme, v_flex};
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -48,7 +48,7 @@ impl ParentElement for Label {
 
 impl RenderOnce for Label {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         self.div
             .id(self.id)
@@ -57,12 +57,10 @@ impl RenderOnce for Label {
             .text_sm()
             .gap(px(6.0))
             .child(
-                div()
-                    .flex()
+                v_flex()
                     .overflow_hidden()
                     .w_full()
                     .flex_shrink()
-                    .flex_col()
                     .my_auto()
                     .child(div().overflow_hidden().child(self.text))
                     .when_some(self.subtext, |this, that| {

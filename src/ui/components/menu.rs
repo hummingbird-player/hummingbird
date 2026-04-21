@@ -2,7 +2,7 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::icons::{CHECK, LOCK, icon},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;

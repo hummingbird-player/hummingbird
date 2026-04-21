@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
-    constants::APP_ROUNDING,
-    theme::Theme,
+    styling::constants::APP_ROUNDING,
+    styling::{ActiveTheme, h_flex},
 };
 
 #[derive(IntoElement)]
@@ -50,23 +50,16 @@ impl Styled for WindowHeader {
 impl RenderOnce for WindowHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let decorations = window.window_decorations();
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
-        let left_container = div()
+        let left_container = h_flex()
             .pl(px(12.0))
             .pb(px(8.0))
             .pt(px(7.0))
-            .flex()
-            .items_center()
             .gap(px(8.0))
             .children(self.left);
 
-        let right_container = div()
-            .ml_auto()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .children(self.right);
+        let right_container = h_flex().ml_auto().gap(px(8.0)).children(self.right);
 
         self.div
             .flex()
@@ -133,7 +126,7 @@ pub enum WindowButton {
 
 impl RenderOnce for WindowButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         let (bg, hover, active) = if matches!(self, WindowButton::Close(_)) {
             (

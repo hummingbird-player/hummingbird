@@ -6,7 +6,7 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 pub type ChangeHandler<T> = dyn Fn(&T, &mut Window, &mut App);
 

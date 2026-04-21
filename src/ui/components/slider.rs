@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 type ClickHandler = dyn FnMut(f32, &mut Window, &mut App);
 type DoubleClickHandler = dyn FnMut(&mut Window, &mut App);

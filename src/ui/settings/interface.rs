@@ -10,8 +10,8 @@ use crate::{
     settings::{
         SettingsGlobal,
         interface::{
-            DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
-            StartupLibraryView, clamp_grid_min_item_width,
+            DEFAULT_GRID_MIN_ITEM_WIDTH, LayoutPreset, MAX_GRID_MIN_ITEM_WIDTH,
+            MIN_GRID_MIN_ITEM_WIDTH, StartupLibraryView, UiDensity, clamp_grid_min_item_width,
         },
         save_settings,
     },
@@ -19,7 +19,7 @@ use crate::{
         checkbox::checkbox, dropdown::dropdown, label::label, labeled_slider::labeled_slider,
         section_header::section_header,
     },
-    ui::theme::{Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path},
+    ui::styling::theme::{Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path},
 };
 
 #[derive(Clone)]
@@ -184,6 +184,46 @@ impl Render for InterfaceSettings {
                 })
         };
 
+        let layout_dropdown = {
+            let settings_c = settings.clone();
+            dropdown::<LayoutPreset>("layout-preset-dropdown")
+                .w(px(250.0))
+                .selected(interface.layout_preset)
+                .option(
+                    LayoutPreset::Default,
+                    tr!("LAYOUT_PRESET_DEFAULT", "Default"),
+                )
+                .option(LayoutPreset::Stage, tr!("LAYOUT_PRESET_STAGE", "Stage"))
+                .option(LayoutPreset::Custom, tr!("LAYOUT_PRESET_CUSTOM", "Custom"))
+                .on_change(move |preset, _, cx| {
+                    settings_c.update(cx, |s, cx| {
+                        s.interface.layout_preset = *preset;
+                        save_settings(cx, s);
+                        cx.notify();
+                    });
+                })
+        };
+
+        let density_dropdown = {
+            let settings_c = settings.clone();
+            dropdown::<UiDensity>("density-preset-dropdown")
+                .w(px(250.0))
+                .selected(interface.ui_density)
+                .option(UiDensity::Compact, tr!("UI_DENSITY_COMPACT", "Compact"))
+                .option(UiDensity::Default, tr!("UI_DENSITY_DEFAULT", "Default"))
+                .option(
+                    UiDensity::Comfortable,
+                    tr!("UI_DENSITY_COMFORTABLE", "Comfortable"),
+                )
+                .on_change(move |density, _, cx| {
+                    settings_c.update(cx, |s, cx| {
+                        s.interface.ui_density = *density;
+                        save_settings(cx, s);
+                        cx.notify();
+                    });
+                })
+        };
+
         div()
             .flex()
             .flex_col()
@@ -208,6 +248,24 @@ impl Render for InterfaceSettings {
                     ))
                     .w_full()
                     .child(theme_dropdown),
+            )
+            .child(
+                label("layout-preset-selector", tr!("INTERFACE_LAYOUT", "Layout"))
+                    .subtext(tr!(
+                        "INTERFACE_LAYOUT_SUBTEXT",
+                        "Choose how the main shell is arranged. Presets apply immediately. Custom uses layouts/custom.ron and is reloaded the next time Hummingbird starts."
+                    ))
+                    .w_full()
+                    .child(layout_dropdown),
+            )
+            .child(
+                label("density-preset-selector", tr!("INTERFACE_DENSITY", "Density"))
+                    .subtext(tr!(
+                        "INTERFACE_DENSITY_SUBTEXT",
+                        "Adjust the overall type and spacing scale of the main interface. Changes apply immediately."
+                    ))
+                    .w_full()
+                    .child(density_dropdown),
             )
             .child(
                 label(

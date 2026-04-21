@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     settings::storage::DEFAULT_SIDEBAR_WIDTH,
-    ui::{components::icons::icon, theme::Theme, util::MaybeStateful},
+    ui::{components::icons::icon, styling::ActiveTheme, util::MaybeStateful},
 };
 
 #[derive(IntoElement)]
@@ -49,6 +49,7 @@ impl RenderOnce for Sidebar {
             Some(w) => w,
             None => DEFAULT_SIDEBAR_WIDTH,
         };
+
         self.div.w(width).flex().gap(px(2.0)).flex_col()
     }
 }
@@ -115,7 +116,7 @@ impl InteractiveElement for SidebarItem {
 impl RenderOnce for SidebarItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.state_id.clone(), cx, |_, _| false);
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         let item = self
             .parent_div
@@ -241,7 +242,7 @@ pub struct SidebarSeparator {}
 
 impl RenderOnce for SidebarSeparator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         div()
             .w_full()

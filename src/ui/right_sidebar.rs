@@ -21,9 +21,12 @@ pub struct RightSidebar {
 }
 
 impl RightSidebar {
-    pub fn new(cx: &mut App, show_queue: Entity<bool>, show_lyrics: Entity<bool>) -> Entity<Self> {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        let models = cx.global::<Models>();
+        let show_queue = models.show_queue.clone();
+        let show_lyrics = models.show_lyrics.clone();
         cx.new(|cx| {
-            let queue = Queue::new(cx, show_queue.clone());
+            let queue = Queue::new(cx);
             let lyrics = Lyrics::new(cx);
 
             let queue_width = cx.global::<Models>().queue_width.clone();
@@ -31,6 +34,9 @@ impl RightSidebar {
 
             let lyrics_height = cx.global::<Models>().lyrics_height.clone();
             cx.observe(&lyrics_height, |_, _, cx| cx.notify()).detach();
+
+            cx.observe(&show_queue, |_, _, cx| cx.notify()).detach();
+            cx.observe(&show_lyrics, |_, _, cx| cx.notify()).detach();
 
             Self {
                 queue,

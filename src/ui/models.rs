@@ -72,6 +72,8 @@ pub struct Models {
     pub lastfm: Entity<LastFMState>,
     pub switcher_model: Entity<NavigationHistory>,
     pub show_about: Entity<bool>,
+    pub show_queue: Entity<bool>,
+    pub show_lyrics: Entity<bool>,
     pub playlist_tracker: Entity<PlaylistInfoTransfer>,
     pub sidebar_width: Entity<Pixels>,
     pub queue_width: Entity<Pixels>,
@@ -225,6 +227,8 @@ pub fn build_models(
     let scan_state: Entity<ScanEvent> = cx.new(|_| ScanEvent::ScanCompleteIdle);
     let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList(FxHashMap::default()));
     let show_about: Entity<bool> = cx.new(|_| false);
+    let show_queue: Entity<bool> = cx.new(|_| true);
+    let show_lyrics: Entity<bool> = cx.new(|_| false);
     let lastfm: Entity<LastFMState> = cx.new(|cx| {
         let directory = paths::data_dir();
         let path = directory.join("lastfm.json");
@@ -386,6 +390,8 @@ pub fn build_models(
         lastfm,
         switcher_model,
         show_about,
+        show_queue,
+        show_lyrics,
         playlist_tracker,
         sidebar_width,
         queue_width,

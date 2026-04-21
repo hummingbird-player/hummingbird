@@ -11,7 +11,7 @@ use gpui::{
 };
 use unicode_segmentation::*;
 
-use crate::ui::{global_actions::PlayPause, theme::Theme};
+use crate::ui::{global_actions::PlayPause, styling::theme::Theme};
 
 actions!(
     text_input,

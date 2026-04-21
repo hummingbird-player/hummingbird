@@ -11,7 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 #[derive(Clone)]

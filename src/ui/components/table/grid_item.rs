@@ -12,7 +12,7 @@ use crate::ui::{
         drag_drop::{AlbumDragData, DragPreview, TrackDragData},
         managed_image::{ManagedImageKey, managed_image},
     },
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 #[derive(Clone)]

@@ -36,7 +36,7 @@ use crate::{
             label::label,
             section_header::section_header,
         },
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

@@ -14,7 +14,7 @@ use gpui::{
 };
 
 use crate::settings::SettingsGlobal;
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 #[derive(Clone)]
 pub enum ScrollableHandle {

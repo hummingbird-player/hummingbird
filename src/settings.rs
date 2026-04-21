@@ -280,6 +280,8 @@ mod tests {
                 "interface": {
                     "theme": "custom.json",
                     "full_width_library": true,
+                    "layout_preset": "stage",
+                    "ui_density": "comfortable",
                     "reduced_motion": true,
                     "always_show_scrollbars": true
                 },
@@ -299,6 +301,14 @@ mod tests {
         assert!(!settings.playback.keep_current_on_queue_clear);
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);
+        assert_eq!(
+            settings.interface.layout_preset,
+            super::interface::LayoutPreset::Stage
+        );
+        assert_eq!(
+            settings.interface.ui_density,
+            super::interface::UiDensity::Comfortable
+        );
         assert!(settings.interface.reduced_motion);
         assert!(settings.interface.always_show_scrollbars);
         assert_eq!(
@@ -306,6 +316,35 @@ mod tests {
             super::update::ReleaseChannel::Stable
         );
         assert!(!settings.update.auto_update);
+    }
+
+    #[test]
+    fn create_settings_defaults_new_interface_fields_for_older_files() {
+        let dir = create_test_dir();
+        fs::write(
+            settings_path(&dir),
+            serde_json::to_vec(&json!({
+                "interface": {
+                    "theme": "custom.json",
+                    "full_width_library": true
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let settings = create_settings(&settings_path(&dir));
+
+        assert_eq!(
+            settings.interface.layout_preset,
+            super::interface::LayoutPreset::Default
+        );
+        assert_eq!(
+            settings.interface.ui_density,
+            super::interface::UiDensity::Default
+        );
+        assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
+        assert!(settings.interface.full_width_library);
     }
 
     #[test]

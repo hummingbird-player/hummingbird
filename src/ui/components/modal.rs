@@ -5,8 +5,8 @@ use gpui::*;
 use prelude::FluentBuilder;
 
 use crate::ui::{
-    constants::{APP_ROUNDING, APP_SHADOW_SIZE},
-    theme::Theme,
+    styling::constants::{APP_ROUNDING, APP_SHADOW_SIZE},
+    styling::theme::Theme,
 };
 
 pub struct ModalActive(pub AtomicBool);

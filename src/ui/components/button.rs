@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 use super::styling::AdditionalStyleUtil;
 

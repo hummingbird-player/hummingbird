@@ -26,7 +26,7 @@ use crate::{
         global_actions::Search,
         library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
         models::Models,
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

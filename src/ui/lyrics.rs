@@ -13,7 +13,7 @@ use crate::{
         },
         models::{CurrentTrack, Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
-        theme::Theme,
+        styling::ActiveTheme,
     },
 };
 use cntp_i18n::tr;
@@ -29,7 +29,6 @@ const LYRICS_BASE_VERTICAL_PADDING: f32 = 7.0;
 const LYRICS_ACTIVE_VERTICAL_PADDING: f32 = 9.0;
 const LYRICS_BASE_LINE_HEIGHT: f32 = 1.5;
 const LYRICS_ACTIVE_LINE_HEIGHT: f32 = 1.65;
-
 pub struct Lyrics {
     content: Option<String>,
     parsed: Option<Vec<LrcLine>>,
@@ -145,7 +144,7 @@ impl Lyrics {
 
 impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme().clone();
         let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
         let playback_state = *self.playback_state.read(cx);
         let reduced_motion = cx

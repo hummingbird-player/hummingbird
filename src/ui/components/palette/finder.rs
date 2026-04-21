@@ -17,7 +17,7 @@ use tracing::{debug, trace};
 
 use crate::ui::{
     components::{context::context, input::EnrichedInputAction},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 const MAX_VISIBLE_PER_CATEGORY: usize = 5;

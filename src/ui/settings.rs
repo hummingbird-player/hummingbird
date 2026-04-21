@@ -27,7 +27,7 @@ use crate::{
             interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
             services::ServicesSettings,
         },
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

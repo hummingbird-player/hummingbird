@@ -40,7 +40,7 @@ use crate::{
             track_item::{TrackItem, TrackItemLeftField},
         },
         models::{Models, PlaylistEvent},
-        theme::Theme,
+        styling::theme::Theme,
         util::{create_or_retrieve_view, prune_views},
     },
 };

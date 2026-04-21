@@ -33,7 +33,7 @@ use crate::{
         },
         library::{NavigationHistory, ViewSwitchMessage, playlist_view::find_playlist_tracks},
         models::{Models, PlaybackInfo, PlaylistEvent},
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

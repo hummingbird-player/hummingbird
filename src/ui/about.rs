@@ -6,7 +6,7 @@ use gpui::{
 
 use super::{
     components::modal::{OnExitHandler, modal},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 const ISSUES_URL: &str = "https://github.com/143mailliw/hummingbird/issues";

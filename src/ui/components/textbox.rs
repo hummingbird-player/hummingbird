@@ -7,7 +7,7 @@ use gpui::{
 
 use crate::ui::{
     components::input::{EnrichedInputAction, TextInput},
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 pub struct Textbox {

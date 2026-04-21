@@ -3,7 +3,7 @@ use gpui::{
     Styled, Window, div, prelude::FluentBuilder, px,
 };
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::{ActiveTheme, StyledExt};
 
 #[derive(IntoElement)]
 pub struct SectionHeader {
@@ -34,11 +34,10 @@ impl ParentElement for SectionHeader {
 
 impl RenderOnce for SectionHeader {
     fn render(self, _: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         self.parent_div
-            .flex()
-            .flex_col()
+            .v_flex()
             .gap(px(4.0))
             .child(
                 div()

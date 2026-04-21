@@ -14,6 +14,24 @@ pub enum StartupLibraryView {
     LikedSongs,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutPreset {
+    #[default]
+    Default,
+    Stage,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDensity {
+    Compact,
+    #[default]
+    Default,
+    Comfortable,
+}
+
 fn default_grid_min_item_width() -> f32 {
     DEFAULT_GRID_MIN_ITEM_WIDTH
 }
@@ -38,6 +56,10 @@ pub struct InterfaceSettings {
     pub two_column_library: bool,
     #[serde(default)]
     pub startup_library_view: StartupLibraryView,
+    #[serde(default)]
+    pub layout_preset: LayoutPreset,
+    #[serde(default)]
+    pub ui_density: UiDensity,
     #[serde(default = "default_grid_min_item_width")]
     pub grid_min_item_width: f32,
     #[serde(default)]
@@ -64,6 +86,8 @@ impl Default for InterfaceSettings {
             full_width_library: false,
             two_column_library: false,
             startup_library_view: StartupLibraryView::default(),
+            layout_preset: LayoutPreset::default(),
+            ui_density: UiDensity::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,
             always_show_scrollbars: false,

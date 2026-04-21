@@ -8,7 +8,7 @@ use crate::ui::{
         table::{Table, TableViewMode},
         tooltip::build_tooltip,
     },
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 use cntp_i18n::tr;

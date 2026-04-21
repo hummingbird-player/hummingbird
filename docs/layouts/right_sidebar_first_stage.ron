@@ -1,0 +1,17 @@
+// A more dramatic layout:
+// - controls sit above the main content
+// - the queue/lyrics sidebar comes first
+// - library content stays centered
+// - navigation moves to the far right
+(
+  outer_order: (
+    header,
+    controls,
+    main,
+  ),
+  main_order: (
+    right_sidebar,
+    library_content,
+    library_sidebar,
+  ),
+)

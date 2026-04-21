@@ -25,7 +25,6 @@ use crate::{
         },
         library::{
             playlist_view::{Import, PlaylistView},
-            sidebar::Sidebar,
             update_playlist::UpdatePlaylist,
         },
     },
@@ -43,7 +42,7 @@ pub mod missing_folder_dialog;
 pub mod nav_buttons;
 pub mod playlist_view;
 mod release_view;
-mod sidebar;
+pub mod sidebar;
 mod table_view_header;
 mod track_listing;
 mod track_view;
@@ -256,7 +255,6 @@ pub struct Library {
     left_view: Option<LibraryView>,
     right_view: Option<LibraryView>,
     section: LibrarySection,
-    sidebar: Entity<Sidebar>,
     show_update_playlist: Entity<bool>,
     update_playlist: Entity<UpdatePlaylist>,
     focus_handle: FocusHandle,
@@ -512,7 +510,6 @@ impl Library {
             .detach();
 
             let mut library = Library {
-                sidebar: Sidebar::new(cx, switcher_model.clone()),
                 view,
                 left_view: None,
                 right_view: None,
@@ -711,13 +708,6 @@ impl Render for Library {
             .max_w_full()
             .max_h_full()
             .overflow_hidden()
-            .child(
-                div()
-                    .mr_auto()
-                    .flex()
-                    .flex_shrink_0()
-                    .child(self.sidebar.clone()),
-            )
             .child(content)
             .child(self.update_playlist.clone())
     }

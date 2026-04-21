@@ -1,11 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::*;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ResizeEdge {
     Left,
     Right,

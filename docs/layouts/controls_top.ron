@@ -1,0 +1,14 @@
+// Moves the playback controls above the main content area.
+// This is effectively the same arrangement as the built-in "Stage" preset.
+(
+  outer_order: (
+    header,
+    controls,
+    main,
+  ),
+  main_order: (
+    library_sidebar,
+    library_content,
+    right_sidebar,
+  ),
+)

@@ -15,7 +15,7 @@ use crate::ui::components::{
     input::{EnrichedInputAction, TextInput},
     palette::finder::Finder,
 };
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 pub struct Palette<T, MatcherFunc, OnAccept>
 where

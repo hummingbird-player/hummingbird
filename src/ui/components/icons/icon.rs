@@ -1,6 +1,6 @@
 use gpui::{IntoElement, RenderOnce, SharedString, StyleRefinement, Styled, Svg, svg};
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 #[derive(IntoElement)]
 pub struct Icon {

@@ -127,7 +127,7 @@
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:490",
+    "definedIn": "src/ui/library.rs:488",
     "plural": false,
     "description": null
   },
@@ -139,7 +139,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:491",
+    "definedIn": "src/ui/library.rs:489",
     "plural": false,
     "description": null
   },
@@ -253,7 +253,7 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:517",
+    "definedIn": "src/ui/queue.rs:518",
     "plural": false,
     "description": null
   },
@@ -265,7 +265,7 @@
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:528",
+    "definedIn": "src/ui/queue.rs:529",
     "plural": false,
     "description": null
   },
@@ -463,103 +463,145 @@
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:324",
+    "definedIn": "src/ui/settings/interface.rs:382",
     "plural": false,
     "description": null
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:327",
+    "definedIn": "src/ui/settings/interface.rs:385",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_DENSITY": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:262",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_DENSITY_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:264",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:227",
+    "definedIn": "src/ui/settings/interface.rs:285",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:230",
+    "definedIn": "src/ui/settings/interface.rs:288",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:274",
+    "definedIn": "src/ui/settings/interface.rs:332",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:277",
+    "definedIn": "src/ui/settings/interface.rs:335",
     "plural": false,
     "description": null
   },
-  "INTERFACE_REDUCED_MOTION": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:303",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_REDUCED_MOTION_SUBTEXT": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:306",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_STARTUP_LIBRARY_VIEW": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:215",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:218",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_THEME": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:203",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_THEME_SUBTEXT": {
-    "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:205",
-    "plural": false,
-    "description": null
-  },
-  "INTERFACE_TWO_COLUMN_LIBRARY": {
+  "INTERFACE_LAYOUT": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:253",
     "plural": false,
     "description": null
   },
+  "INTERFACE_LAYOUT_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:255",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_REDUCED_MOTION": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:361",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_REDUCED_MOTION_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:364",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_STARTUP_LIBRARY_VIEW": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:273",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:276",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_THEME": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:243",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_THEME_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:245",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_TWO_COLUMN_LIBRARY": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:311",
+    "plural": false,
+    "description": null
+  },
   "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:256",
+    "definedIn": "src/ui/settings/interface.rs:314",
     "plural": false,
     "description": null
   },
   "LANGUAGE": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:193",
+    "definedIn": "src/ui/settings/interface.rs:233",
     "plural": false,
     "description": null
   },
   "LANGUAGE_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:195",
+    "definedIn": "src/ui/settings/interface.rs:235",
     "plural": false,
     "description": null
   },
   "LANGUAGE_SYSTEM_DEFAULT": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:35",
+    "plural": false,
+    "description": null
+  },
+  "LAYOUT_PRESET_CUSTOM": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:197",
+    "plural": false,
+    "description": null
+  },
+  "LAYOUT_PRESET_DEFAULT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:194",
+    "plural": false,
+    "description": null
+  },
+  "LAYOUT_PRESET_STAGE": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:196",
     "plural": false,
     "description": null
   },
@@ -613,13 +655,13 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1040",
+    "definedIn": "src/ui/controls.rs:1053",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:975",
+    "definedIn": "src/ui/controls.rs:988",
     "plural": false,
     "description": null
   },
@@ -637,7 +679,7 @@
   },
   "NO_LYRICS": {
     "context": "lyrics.rs",
-    "definedIn": "src/ui/lyrics.rs:184",
+    "definedIn": "src/ui/lyrics.rs:183",
     "plural": false,
     "description": null
   },
@@ -751,7 +793,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:509",
+    "definedIn": "src/ui/queue.rs:510",
     "plural": false,
     "description": null
   },
@@ -1241,6 +1283,24 @@
     "plural": false,
     "description": null
   },
+  "UI_DENSITY_COMFORTABLE": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:216",
+    "plural": false,
+    "description": null
+  },
+  "UI_DENSITY_COMPACT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:212",
+    "plural": false,
+    "description": null
+  },
+  "UI_DENSITY_DEFAULT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:213",
+    "plural": false,
+    "description": null
+  },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
     "definedIn": "src/ui/controls.rs:380",
@@ -1267,7 +1327,7 @@
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:968",
+    "definedIn": "src/ui/controls.rs:981",
     "plural": false,
     "description": null
   },

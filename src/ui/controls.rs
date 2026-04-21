@@ -38,10 +38,10 @@ use super::{
         resizable::{ResizeEdge, resizable},
         slider::slider,
     },
-    constants::APP_ROUNDING,
     global_actions::{Next, PlayPause, Previous},
     models::{Models, PlaybackInfo},
-    theme::Theme,
+    styling::ActiveTheme,
+    styling::constants::APP_ROUNDING,
 };
 
 use crate::library::types::Track;
@@ -57,14 +57,14 @@ pub struct Controls {
 }
 
 impl Controls {
-    pub fn new(cx: &mut App, show_queue: Entity<bool>, show_lyrics: Entity<bool>) -> Entity<Self> {
+    pub fn new(cx: &mut App) -> Entity<Self> {
         let models = cx.global::<Models>();
         let left_width = models.controls_left_width.clone();
         let right_width = models.controls_right_width.clone();
         cx.new(|cx| Self {
             info_section: InfoSection::new(cx),
             scrubber: Scrubber::new(cx),
-            secondary_controls: SecondaryControls::new(cx, show_queue, show_lyrics),
+            secondary_controls: SecondaryControls::new(cx),
             left_width,
             right_width,
         })
@@ -74,7 +74,7 @@ impl Controls {
 impl Render for Controls {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let decorations = window.window_decorations();
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
 
         div()
             .w_full()
@@ -242,7 +242,7 @@ impl Render for InfoSection {
             .as_ref()
             .map(|p| ManagedImageKey::TrackFile(p.clone()));
         let image_element_key = self.image_element_key;
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let state = self.playback_info.playback_state.read(cx);
         let album_navigation_track = self
             .can_navigate_to_album
@@ -501,7 +501,7 @@ impl Render for PlaybackSection {
         let state = self.info.playback_state.read(cx);
         let shuffling = self.info.shuffling.read(cx);
         let repeating = *self.info.repeating.read(cx);
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let always_repeat = cx
             .global::<SettingsGlobal>()
             .model
@@ -763,7 +763,7 @@ impl Scrubber {
 
 impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let position_ms = *self.position.read(cx);
         let duration_secs = *self.duration.read(cx);
         let position_secs = position_ms / 1_000;
@@ -865,7 +865,7 @@ impl Styled for SidebarToggleButton {
 
 impl RenderOnce for SidebarToggleButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let icon_color = if self.active {
             theme.playback_button_toggled
         } else {
@@ -909,12 +909,25 @@ pub struct SecondaryControls {
 }
 
 impl SecondaryControls {
-    pub fn new(cx: &mut App, show_queue: Entity<bool>, show_lyrics: Entity<bool>) -> Entity<Self> {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        let models = cx.global::<Models>();
+        let show_queue = models.show_queue.clone();
+        let show_lyrics = models.show_lyrics.clone();
         cx.new(|cx| {
             let info = cx.global::<PlaybackInfo>().clone();
             let volume = info.volume.clone();
 
             cx.observe(&volume, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            cx.observe(&show_queue, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            cx.observe(&show_lyrics, |_, _, cx| {
                 cx.notify();
             })
             .detach();
@@ -931,7 +944,7 @@ impl SecondaryControls {
 
 impl Render for SecondaryControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let volume = *self.info.volume.read(cx);
         let prev_volume = *self.info.prev_volume.read(cx);
         let show_queue = self.show_queue.clone();

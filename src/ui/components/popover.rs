@@ -7,7 +7,7 @@ use gpui::{
 };
 use gpui::{actions, prelude::FluentBuilder};
 
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 pub type OnDismissHandler = dyn Fn(&mut Window, &mut App);
 

@@ -26,7 +26,9 @@ use crate::{
     power::PowerManager,
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
-        SettingsGlobal, setup_settings,
+        SettingsGlobal,
+        interface::LayoutPreset,
+        setup_settings,
         storage::{Storage, StorageData},
     },
     ui::{
@@ -34,8 +36,15 @@ use crate::{
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
         components::dropdown,
-        library::{self, missing_folder_dialog::MissingFolderDialog},
+        controls::Controls,
+        header::Header,
+        layout::{
+            CustomShellLayout, MainRegion, OuterBand, ShellLayout, default_shell_layout,
+            load_custom_shell_layout, stage_shell_layout,
+        },
+        library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
         models::WindowInformation,
+        right_sidebar::RightSidebar,
     },
 };
 
@@ -48,26 +57,22 @@ use super::{
         popover,
         window_chrome::window_chrome,
     },
-    controls::Controls,
     global_actions::register_actions,
-    header::Header,
-    library::Library,
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
-    right_sidebar::RightSidebar,
     search::SearchView,
     settings::close_orphaned_settings_windows,
-    theme::setup_theme,
+    styling::theme::setup_theme,
+    styling::tokens::Tokens,
     util::drop_image_from_app,
 };
 
 struct MainWindow {
     pub controls: Entity<Controls>,
     pub right_sidebar: Entity<RightSidebar>,
+    pub library_sidebar: Entity<Sidebar>,
     pub library: Entity<Library>,
     pub header: Entity<Header>,
     pub search: Entity<SearchView>,
-    pub show_queue: Entity<bool>,
-    pub show_lyrics: Entity<bool>,
     pub show_about: Entity<bool>,
     pub about_focus: FocusHandle,
     pub missing_folder_dialog: Entity<MissingFolderDialog>,
@@ -75,18 +80,84 @@ struct MainWindow {
     pub image_cache: Entity<HummingbirdImageCache>,
 }
 
+impl MainWindow {
+    fn active_shell_layout(&self, cx: &App) -> ShellLayout {
+        match cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .layout_preset
+        {
+            LayoutPreset::Default => default_shell_layout(),
+            LayoutPreset::Stage => stage_shell_layout(),
+            LayoutPreset::Custom => cx.global::<CustomShellLayout>().0.clone(),
+        }
+    }
+
+    fn render_main_region(&self, region: MainRegion, show_sidebar: bool) -> Option<AnyElement> {
+        match region {
+            MainRegion::LibrarySidebar => Some(self.library_sidebar.clone().into_any_element()),
+            MainRegion::LibraryContent => Some(self.library.clone().into_any_element()),
+            MainRegion::RightSidebar => {
+                show_sidebar.then(|| self.right_sidebar.clone().into_any_element())
+            }
+        }
+    }
+
+    fn render_main_band(&self, layout: &ShellLayout, show_sidebar: bool) -> Div {
+        let children = layout
+            .main_order
+            .iter()
+            .filter_map(|region| self.render_main_region(*region, show_sidebar))
+            .collect::<Vec<_>>();
+
+        div()
+            .w_full()
+            .h_full()
+            .flex()
+            .max_w_full()
+            .max_h_full()
+            .overflow_hidden()
+            .children(children)
+    }
+
+    fn render_shell_band(
+        &self,
+        band: OuterBand,
+        layout: &ShellLayout,
+        show_sidebar: bool,
+    ) -> AnyElement {
+        match band {
+            OuterBand::Header => self.header.clone().into_any_element(),
+            OuterBand::Main => self
+                .render_main_band(layout, show_sidebar)
+                .into_any_element(),
+            OuterBand::Controls => self.controls.clone().into_any_element(),
+        }
+    }
+}
+
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
 
-        let right_sidebar = self.right_sidebar.clone();
         let show_about = *self.show_about.clone().read(cx);
         let scan_state = cx.global::<Models>().scan_state.read(cx).clone();
         let show_missing_folder_dialog = matches!(
             scan_state,
             ScanEvent::WaitingForMissingFolderDecision { .. }
         );
-        let show_sidebar = *self.show_queue.read(cx) || *self.show_lyrics.read(cx);
+        let show_queue = cx.global::<Models>().show_queue.clone();
+        let show_lyrics = cx.global::<Models>().show_lyrics.clone();
+        let show_sidebar = *show_queue.read(cx) || *show_lyrics.read(cx);
+        let shell_layout = self.active_shell_layout(cx);
+        let shell_children = shell_layout
+            .outer_order
+            .iter()
+            .rev()
+            .map(|band| self.render_shell_band(*band, &shell_layout, show_sidebar))
+            .collect::<Vec<_>>();
 
         div()
             .image_cache(self.image_cache.clone())
@@ -113,19 +184,7 @@ impl Render for MainWindow {
                     .flex_col_reverse()
                     .max_w_full()
                     .max_h_full()
-                    .child(self.controls.clone())
-                    .child(
-                        div()
-                            .w_full()
-                            .h_full()
-                            .flex()
-                            .max_w_full()
-                            .max_h_full()
-                            .overflow_hidden()
-                            .child(self.library.clone())
-                            .when(show_sidebar, |this| this.child(right_sidebar)),
-                    )
-                    .child(self.header.clone())
+                    .children(shell_children)
                     .child(self.search.clone())
                     .child(self.palette.clone())
                     .when(show_about, |this| {
@@ -252,9 +311,9 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
         })
         .detach();
 
-        let show_queue = cx.new(|_| true);
-        let show_lyrics = cx.new(|_| false);
         let show_about = cx.global::<Models>().show_about.clone();
+        let show_queue = cx.global::<Models>().show_queue.clone();
+        let show_lyrics = cx.global::<Models>().show_lyrics.clone();
         let about_focus = cx.focus_handle();
 
         cx.observe(&show_about, |_, _, cx| {
@@ -262,14 +321,26 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
         })
         .detach();
 
+        cx.observe(&show_queue, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        cx.observe(&show_lyrics, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
         MainWindow {
-            controls: Controls::new(cx, show_queue.clone(), show_lyrics.clone()),
-            right_sidebar: RightSidebar::new(cx, show_queue.clone(), show_lyrics.clone()),
+            library_sidebar: {
+                let nav_model = cx.global::<Models>().switcher_model.clone();
+                Sidebar::new(cx, nav_model)
+            },
+            controls: Controls::new(cx),
+            right_sidebar: RightSidebar::new(cx),
             library: Library::new(cx),
             header: Header::new(cx),
             search: SearchView::new(cx),
-            show_queue,
-            show_lyrics,
             show_about,
             about_focus,
             missing_folder_dialog: MissingFolderDialog::new(cx),
@@ -349,7 +420,15 @@ pub fn run() -> anyhow::Result<()> {
 
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
+        let ui_density = cx
+            .global::<SettingsGlobal>()
+            .model
+            .read(cx)
+            .interface
+            .ui_density;
+        cx.set_global(Tokens::for_density(ui_density));
         cx.set_global(Pool(pool.clone()));
+        cx.set_global(CustomShellLayout(load_custom_shell_layout(&data_dir)));
 
         let settings = cx.global::<SettingsGlobal>().model.read(cx);
         let language = settings.interface.language.clone();
@@ -386,8 +465,12 @@ pub fn run() -> anyhow::Result<()> {
         cx.set_global(modal::ModalActive(AtomicBool::new(false)));
 
         let settings_model = cx.global::<SettingsGlobal>().model.clone();
-        cx.observe(&settings_model, |_, cx| cx.refresh_windows())
-            .detach();
+        cx.observe(&settings_model, |settings, cx| {
+            let density = settings.read(cx).interface.ui_density;
+            cx.set_global(Tokens::for_density(density));
+            cx.refresh_windows();
+        })
+        .detach();
 
         if !language.is_empty() {
             I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);

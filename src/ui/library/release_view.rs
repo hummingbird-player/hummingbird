@@ -31,7 +31,7 @@ use crate::{
         },
         models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
         scroll_follow::SmoothScrollFollow,
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

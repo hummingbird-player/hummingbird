@@ -8,7 +8,7 @@ use crate::{
     ui::{
         components::icons::{LAST_FM, icon},
         models::{LastFMState, Models},
-        theme::Theme,
+        styling::ActiveTheme,
     },
 };
 
@@ -44,7 +44,7 @@ impl LastFM {
 
 impl Render for LastFM {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let state = self.state.clone();
 
         div()

@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::{components::tooltip::tooltip_container, theme::Theme};
+use crate::ui::{components::tooltip::tooltip_container, styling::theme::Theme};
 
 pub struct VolumeTooltip {
     volume: Entity<f64>,

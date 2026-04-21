@@ -1,7 +1,7 @@
 use cntp_i18n::tr;
 use gpui::{
     InteractiveElement, IntoElement, ParentElement, RenderOnce, StatefulInteractiveElement, Styled,
-    div, prelude::FluentBuilder, px,
+    div, prelude::FluentBuilder,
 };
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     ui::{
         components::icons::{UPDATE, icon},
         models::Models,
-        theme::Theme,
+        styling::ActiveTheme,
     },
     update::complete_update,
 };
@@ -19,7 +19,7 @@ pub struct Update;
 
 impl RenderOnce for Update {
     fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let update_model = cx.global::<Models>().pending_update.clone();
         let update = update_model.read(cx).is_some();
 

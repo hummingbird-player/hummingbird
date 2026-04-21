@@ -274,7 +274,7 @@ impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui::FontWeight;
 
-        let theme = cx.global::<crate::ui::theme::Theme>();
+        let theme = cx.global::<crate::ui::styling::theme::Theme>();
         let position = window.mouse_position();
 
         anchored()

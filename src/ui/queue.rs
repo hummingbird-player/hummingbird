@@ -36,7 +36,7 @@ use super::{
         toggle_like,
     },
     scroll_follow::SmoothScrollFollow,
-    theme::Theme,
+    styling::ActiveTheme,
     util::{create_or_retrieve_view_keyed, retain_views},
 };
 
@@ -141,7 +141,7 @@ impl Render for QueueItem {
         let data = self.item.as_mut();
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
-        let theme = cx.global::<Theme>().clone();
+        let theme = cx.theme().clone();
         let show_add_to = self.show_add_to.clone();
         let is_available = self
             .item
@@ -395,7 +395,8 @@ pub struct Queue {
 }
 
 impl Queue {
-    pub fn new(cx: &mut App, show_queue: Entity<bool>) -> Entity<Self> {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        let show_queue = cx.global::<Models>().show_queue.clone();
         cx.new(|cx| {
             let views_model = cx.new(|_| FxHashMap::default());
             let items = cx.global::<Models>().queue.clone();
@@ -449,7 +450,7 @@ impl Render for Queue {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         check_drag_cancelled(self.drag_drop_manager.clone(), cx);
 
-        let theme = cx.global::<Theme>().clone();
+        let theme = cx.theme().clone();
         let queue_len = cx
             .global::<Models>()
             .queue

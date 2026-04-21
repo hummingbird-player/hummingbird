@@ -5,7 +5,7 @@ use gpui::{
     StyleRefinement, Styled, Window, div, px, relative,
 };
 
-use crate::ui::{components::slider::slider, theme::Theme};
+use crate::ui::{components::slider::slider, styling::theme::Theme};
 
 type ChangeHandler = dyn FnMut(f32, &mut Window, &mut App);
 type ValueFormatter = dyn Fn(f32) -> SharedString;

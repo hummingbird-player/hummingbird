@@ -1,7 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::components::icons::{CHECK, icon};
-use crate::ui::theme::Theme;
+use crate::ui::styling::theme::Theme;
 
 #[derive(IntoElement)]
 pub struct Checkbox {

@@ -21,7 +21,7 @@ use crate::ui::{
     components::context::context,
     library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
     models::PlaybackInfo,
-    theme::Theme,
+    styling::theme::Theme,
 };
 
 use super::ArtistNameVisibility;

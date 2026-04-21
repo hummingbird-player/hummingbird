@@ -4,7 +4,7 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::{components::icons::icon, theme::Theme};
+use crate::ui::{components::icons::icon, styling::theme::Theme};
 
 #[derive(IntoElement)]
 pub struct Callout {

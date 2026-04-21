@@ -8,6 +8,7 @@ use gpui::{prelude::FluentBuilder, *};
 
 use tracing::{info, warn};
 
+use super::models::Models;
 use crate::{
     library::scan::ScanEvent,
     services::mmb::lastfm::LASTFM_CREDS,
@@ -18,10 +19,9 @@ use crate::{
             window_header::header,
         },
         library::nav_buttons::nav_buttons,
+        styling::ActiveTheme,
     },
 };
-
-use super::{models::Models, theme::Theme};
 
 pub struct Header {
     scan_status: Entity<ScanStatus>,
@@ -100,7 +100,7 @@ impl ScanStatus {
 
 impl Render for ScanStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.theme();
         let status = self.scan_model.read(cx);
 
         div()

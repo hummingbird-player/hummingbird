@@ -16,7 +16,7 @@ use crate::{
             modal,
         },
         models::Models,
-        theme::Theme,
+        styling::theme::Theme,
     },
 };
 

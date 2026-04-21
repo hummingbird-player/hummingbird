@@ -36,7 +36,7 @@ use crate::{
             },
         },
         models::{Models, PlaybackInfo, PlaylistEvent},
-        theme::Theme,
+        styling::theme::Theme,
         util::{create_or_retrieve_view, prune_views},
     },
 };
