@@ -152,7 +152,7 @@ impl RenderOnce for TrackContextMenu {
                     {
                         let track_for_reveal = track_for_reveal.clone();
                         move |_, _, cx| {
-                            cx.open_with_system(track_for_reveal.location.as_path());
+                            cx.reveal_path(track_for_reveal.location.as_path());
                         }
                     },
                 )

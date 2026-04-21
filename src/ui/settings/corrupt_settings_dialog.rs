@@ -47,7 +47,7 @@ impl Render for CorruptSettingsDialog {
                 FOLDER_SEARCH,
                 tr!("SETTINGS_CORRUPT_DIALOG_SHOW", "Show settings file"),
                 ButtonIntent::Secondary,
-                move |_, _, cx| cx.open_with_system(path_for_reveal.as_path()),
+                move |_, _, cx| cx.reveal_path(path_for_reveal.as_path()),
             )
             .subtitle(tr!(
                 "SETTINGS_CORRUPT_DIALOG_SHOW_SUBTITLE",

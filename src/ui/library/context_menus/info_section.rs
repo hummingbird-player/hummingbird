@@ -86,7 +86,7 @@ impl RenderOnce for InfoSectionContextMenu {
                     track_show_in_file_manager_label(),
                     move |_, _, cx| {
                         if let Some(path) = reveal_path.as_ref() {
-                            cx.open_with_system(path);
+                            cx.reveal_path(path);
                         }
                     },
                 )
