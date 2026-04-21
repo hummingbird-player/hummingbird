@@ -85,7 +85,7 @@
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": "Always show scrollbars",
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": "Keeps scrollbars visible instead of hiding them automatically.",
   "INTERFACE_DENSITY": "Density",
-  "INTERFACE_DENSITY_SUBTEXT": "Adjust the default interface typography scale.",
+  "INTERFACE_DENSITY_SUBTEXT": "Adjust the default interface scale for text and component sizing.",
   "INTERFACE_FULL_WIDTH_LIBRARY": "Full-width library",
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": "Allows the library to take up the full width of the screen.",
   "INTERFACE_GRID_MIN_ITEM_WIDTH": "Grid item width",

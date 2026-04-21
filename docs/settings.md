@@ -55,6 +55,27 @@ Controls the selected theme.
 You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
+### `interface.ui_preset`
+
+Controls the selected UI preset.
+
+- `null` or omitted: the built-in default Hummingbird layout
+- `"stage"`: the built-in Stage preset, which moves playback controls above the main content
+- `"layouts/<name>.ron"`: a file-based preset from the `layouts/` directory
+
+File-based presets are loaded immediately when selected from **Settings > Interface > Layout**. Editing the file still requires restarting Hummingbird.
+
+### `interface.ui_density`
+
+Controls the default interface scale.
+
+- stored as a signed number from `-1.0` to `1.0`
+- `-1.0` = compact
+- `0.0` = default
+- `1.0` = comfortable
+
+This affects both text rhythm and component sizing. For advanced shell and font customization, see [Advanced Customization](customization.md).
+
 ## Logs
 Hummingbird writes logs to stderr and also saves them to `hummingbird.log`.
 You can open the current log from the command palette with the **Hummingbird: Open Log** action.

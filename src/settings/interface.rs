@@ -65,25 +65,7 @@ impl<'de> Deserialize<'de> for UiDensity {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Repr {
-            Number(f32),
-            String(String),
-        }
-
-        match Repr::deserialize(deserializer)? {
-            Repr::Number(value) => Ok(UiDensity::new(value)),
-            Repr::String(value) => match value.as_str() {
-                "compact" => Ok(UiDensity::COMPACT),
-                "default" => Ok(UiDensity::DEFAULT),
-                "comfortable" => Ok(UiDensity::COMFORTABLE),
-                _ => Err(serde::de::Error::unknown_variant(
-                    &value,
-                    &["compact", "default", "comfortable"],
-                )),
-            },
-        }
+        Ok(UiDensity::new(f32::deserialize(deserializer)?))
     }
 }
 

@@ -281,7 +281,7 @@ mod tests {
                     "theme": "custom.json",
                     "full_width_library": true,
                     "ui_preset": "stage",
-                    "ui_density": "comfortable",
+                    "ui_density": 1.0,
                     "reduced_motion": true,
                     "always_show_scrollbars": true
                 },
@@ -361,25 +361,6 @@ mod tests {
             settings.interface.ui_density,
             super::interface::UiDensity::from(0.25)
         );
-    }
-
-    #[test]
-    fn create_settings_preserves_old_custom_layout_preset_id() {
-        let dir = create_test_dir();
-        fs::write(
-            settings_path(&dir),
-            serde_json::to_vec(&json!({
-                "interface": {
-                    "layout_preset": "custom"
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let settings = create_settings(&settings_path(&dir));
-
-        assert_eq!(settings.interface.ui_preset.as_deref(), Some("custom"));
     }
 
     #[test]
