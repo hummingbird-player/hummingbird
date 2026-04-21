@@ -111,7 +111,7 @@ impl RenderOnce for PlaybackControls {
             .child(Self::icon_button_with_tooltip(
                 (self.id_prefix.clone(), 2),
                 SHUFFLE,
-                tr!("SHUFFLE").into(),
+                tr!("SHUFFLE", "Shuffle").into(),
                 !has_tracks,
                 move |_, _, cx| {
                     if !(*cx.global::<PlaybackInfo>().shuffling.read(cx)) {

@@ -66,14 +66,19 @@ pub fn open_settings_window(cx: &mut App) {
     .ok();
 }
 
-pub(super) fn close_last_settings_window(cx: &mut App) {
-    if let Some(existing_window) = cx
+pub(super) fn close_orphaned_settings_windows(cx: &mut App) {
+    if super::app::has_main_window(cx) {
+        return;
+    }
+
+    let settings_windows = cx
         .windows()
         .into_iter()
-        .find_map(|window| window.downcast::<SettingsWindow>())
-        && cx.windows().len() == 1
-    {
-        cx.update_window(*existing_window, |_, window, _| {
+        .filter_map(|window| window.downcast::<SettingsWindow>())
+        .collect::<Vec<_>>();
+
+    for settings_window in settings_windows {
+        cx.update_window(*settings_window, |_, window, _| {
             window.remove_window();
         })
         .ok();

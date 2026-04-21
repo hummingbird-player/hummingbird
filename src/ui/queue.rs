@@ -13,7 +13,7 @@ use crate::{
                 calculate_drop_target, check_drag_cancelled, continue_edge_scroll,
                 get_edge_scroll_direction, handle_drag_move, handle_drop, perform_edge_scroll,
             },
-            icons::{CROSS, DISC, PLAYLIST_ADD, SHUFFLE, STAR, STAR_FILLED, TRASH, USERS, icon},
+            icons::{CROSS, DISC, PLAYLIST_ADD, STAR, STAR_FILLED, TRASH, USERS, icon},
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
@@ -182,7 +182,8 @@ impl Render for QueueItem {
                         .overflow_x_hidden()
                         .gap(px(11.0))
                         .h(px(QUEUE_ITEM_HEIGHT))
-                        .p(px(11.0))
+                        .px(px(17.0))
+                        .py(px(11.0))
                         // add extra padding when the scrollbar is always drawn
                         // 11px queue item pad + 4px scrollbar + 10px buffer
                         .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
@@ -383,7 +384,6 @@ impl Render for QueueItem {
 
 pub struct Queue {
     views_model: Entity<FxHashMap<usize, Entity<QueueItem>>>,
-    shuffling: Entity<bool>,
     show_queue: Entity<bool>,
     scroll_handle: UniformListScrollHandle,
     drag_drop_manager: Entity<DragDropListManager>,
@@ -430,16 +430,8 @@ impl Queue {
             })
             .detach();
 
-            let shuffling = cx.global::<PlaybackInfo>().shuffling.clone();
-
-            cx.observe(&shuffling, |_, _, cx| {
-                cx.notify();
-            })
-            .detach();
-
             Self {
                 views_model,
-                shuffling,
                 show_queue,
                 scroll_handle: UniformListScrollHandle::new(),
                 drag_drop_manager,
@@ -467,7 +459,6 @@ impl Render for Queue {
             .read()
             .expect("could not read queue")
             .len();
-        let shuffling = *self.shuffling.read(cx);
         let views_model = self.views_model.clone();
         let scroll_handle = self.scroll_handle.clone();
         let item_scroll_handle = scroll_handle.clone();
@@ -503,12 +494,13 @@ impl Render for Queue {
             .child(
                 div()
                     .w_full()
-                    .py(px(12.0))
-                    .pl(px(12.0))
+                    .py(px(11.0))
+                    .pl(px(18.0))
                     .pr(px(12.0))
                     .flex()
-                    .justify_between()
                     .items_center()
+                    .border_b_1()
+                    .border_color(theme.border_color)
                     .child(
                         div()
                             .line_height(px(26.0))
@@ -517,42 +509,23 @@ impl Render for Queue {
                             .child(tr!("QUEUE_TITLE", "Queue")),
                     )
                     .child(
-                        nav_button("close", CROSS)
-                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
-                                this.show_queue.update(cx, |v, _| *v = !(*v))
-                            }))
-                            .tooltip(build_tooltip(tr!("CLOSE", "Close"))),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .border_t_1()
-                    .border_b_1()
-                    .border_color(theme.border_color)
-                    .child(
                         button()
-                            .style(ButtonStyle::MinimalNoRounding)
+                            .ml_auto()
+                            .style(ButtonStyle::Minimal)
                             .size(ButtonSize::Large)
                             .child(icon(TRASH).size(px(14.0)).my_auto())
                             .child(tr!("CLEAR_QUEUE", "Clear"))
-                            .w_full()
                             .id("clear-queue")
                             .on_click(|_, _, cx| {
                                 cx.global::<PlaybackInterface>().clear_queue();
                             }),
                     )
                     .child(
-                        button()
-                            .style(ButtonStyle::MinimalNoRounding)
-                            .size(ButtonSize::Large)
-                            .child(icon(SHUFFLE).size(px(14.0)).my_auto())
-                            .when(shuffling, |this| this.child(tr!("SHUFFLING", "Shuffling")))
-                            .when(!shuffling, |this| this.child(tr!("SHUFFLE", "Shuffle")))
-                            .w_full()
-                            .id("queue-shuffle")
-                            .on_click(|_, _, cx| cx.global::<PlaybackInterface>().toggle_shuffle()),
+                        nav_button("close", CROSS)
+                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                this.show_queue.update(cx, |v, _| *v = !(*v))
+                            }))
+                            .tooltip(build_tooltip(tr!("CLOSE", "Close"))),
                     ),
             )
             .child(

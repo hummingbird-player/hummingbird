@@ -22,7 +22,6 @@ pub enum ButtonIntent {
 pub enum ButtonStyle {
     Regular,
     Minimal,
-    MinimalNoRounding,
 }
 
 impl ButtonStyle {
@@ -35,7 +34,6 @@ impl ButtonStyle {
         match self {
             ButtonStyle::Regular => div.shadow_md().rounded(px(4.0)).border_1(),
             ButtonStyle::Minimal => div.background_opacity(0.0).rounded(px(4.0)),
-            ButtonStyle::MinimalNoRounding => div.background_opacity(0.0),
         }
     }
 
@@ -45,7 +43,7 @@ impl ButtonStyle {
     {
         match self {
             ButtonStyle::Regular => dest,
-            ButtonStyle::Minimal | ButtonStyle::MinimalNoRounding => dest.background_opacity(0.5),
+            ButtonStyle::Minimal => dest.background_opacity(0.5),
         }
     }
 
@@ -55,7 +53,7 @@ impl ButtonStyle {
     {
         match self {
             ButtonStyle::Regular => dest,
-            ButtonStyle::Minimal | ButtonStyle::MinimalNoRounding => dest.background_opacity(0.5),
+            ButtonStyle::Minimal => dest.background_opacity(0.5),
         }
     }
 }

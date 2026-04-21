@@ -4,7 +4,7 @@ use lrc::{LrcLine, parse_lrc};
 
 use crate::{
     library::db::LibraryAccess,
-    playback::interface::PlaybackInterface,
+    playback::{interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
         components::{
@@ -42,6 +42,7 @@ pub struct Lyrics {
     line_emphasis_start_values: Vec<f32>,
     line_emphasis_target_values: Vec<f32>,
     line_emphasis_started_at: Option<Instant>,
+    playback_state: Entity<PlaybackState>,
 }
 
 impl Lyrics {
@@ -102,6 +103,17 @@ impl Lyrics {
             })
             .detach();
 
+            let playback_state = cx.global::<PlaybackInfo>().playback_state.clone();
+
+            cx.observe(&playback_state, |this, state, cx| {
+                if *state.read(cx) == PlaybackState::Playing {
+                    this.register_user_interaction();
+                }
+
+                cx.notify();
+            })
+            .detach();
+
             Self {
                 content,
                 parsed,
@@ -114,6 +126,7 @@ impl Lyrics {
                 line_emphasis_start_values: vec![0.0; initial_line_count],
                 line_emphasis_target_values: vec![0.0; initial_line_count],
                 line_emphasis_started_at: None,
+                playback_state,
             }
         })
     }
@@ -134,6 +147,7 @@ impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
+        let playback_state = *self.playback_state.read(cx);
         let reduced_motion = cx
             .global::<SettingsGlobal>()
             .model
@@ -227,13 +241,17 @@ impl Render for Lyrics {
                 .relative()
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.register_user_interaction();
+                    cx.listener(move |this, _, _, cx| {
+                        if playback_state == PlaybackState::Playing {
+                            this.register_user_interaction();
+                        }
                         cx.notify();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|this, _, _, cx| {
-                    this.register_user_interaction();
+                .on_scroll_wheel(cx.listener(move |this, _, _, cx| {
+                    if playback_state == PlaybackState::Playing {
+                        this.register_user_interaction();
+                    }
                     cx.notify();
                 }))
                 .child(

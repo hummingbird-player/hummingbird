@@ -253,7 +253,7 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:539",
+    "definedIn": "src/ui/queue.rs:517",
     "plural": false,
     "description": null
   },
@@ -265,7 +265,7 @@
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:524",
+    "definedIn": "src/ui/queue.rs:528",
     "plural": false,
     "description": null
   },
@@ -421,13 +421,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:298",
+    "definedIn": "src/ui/queue.rs:299",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:315",
+    "definedIn": "src/ui/queue.rs:316",
     "plural": false,
     "description": null
   },
@@ -457,7 +457,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:118",
+    "definedIn": "src/ui/settings.rs:123",
     "plural": false,
     "description": null
   },
@@ -565,7 +565,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:119",
+    "definedIn": "src/ui/settings.rs:124",
     "plural": false,
     "description": null
   },
@@ -637,7 +637,7 @@
   },
   "NO_LYRICS": {
     "context": "lyrics.rs",
-    "definedIn": "src/ui/lyrics.rs:170",
+    "definedIn": "src/ui/lyrics.rs:184",
     "plural": false,
     "description": null
   },
@@ -667,7 +667,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:120",
+    "definedIn": "src/ui/settings.rs:125",
     "plural": false,
     "description": null
   },
@@ -751,7 +751,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:517",
+    "definedIn": "src/ui/queue.rs:509",
     "plural": false,
     "description": null
   },
@@ -793,7 +793,7 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:363",
+    "definedIn": "src/ui/queue.rs:364",
     "plural": false,
     "description": null
   },
@@ -1045,7 +1045,7 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:121",
+    "definedIn": "src/ui/settings.rs:126",
     "plural": false,
     "description": null
   },
@@ -1092,14 +1092,8 @@
     "description": null
   },
   "SHUFFLE": {
-    "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:552",
-    "plural": false,
-    "description": null
-  },
-  "SHUFFLING": {
-    "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:551",
+    "context": "playback_controls.rs",
+    "definedIn": "src/ui/components/playback_controls.rs:114",
     "plural": false,
     "description": null
   },
@@ -1285,7 +1279,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:123",
+    "definedIn": "src/ui/settings.rs:128",
     "plural": false,
     "description": null
   },
