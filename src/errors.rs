@@ -1,5 +1,7 @@
 use cntp_i18n::I18nString;
 
+use crate::toasts::{Toast, emit_toast};
+
 pub trait EmittableError {
     /// Retrieve the user-friendly string for this error. **Must be an `I18nString`.**
     fn friendly(&self) -> Option<I18nString> {
@@ -10,6 +12,7 @@ pub trait EmittableError {
     fn log(&self);
 }
 
+#[macro_export]
 macro_rules! define_error {
     ($name:ident { $($field:ident: $ty:ty),* $(,)? }, None, $log:expr) => {
         #[derive(Debug)]
@@ -17,7 +20,7 @@ macro_rules! define_error {
             $($field: $ty,)*
         }
 
-        impl EmittableError for $name {
+        impl $crate::errors::EmittableError for $name {
             fn log(&self) {
                 let Self { $($field),* } = self;
 
@@ -31,14 +34,16 @@ macro_rules! define_error {
             $($field: $ty,)*
         }
 
-        impl EmittableError for $name {
+        impl $crate::errors::EmittableError for $name {
             fn log(&self) {
                 let Self { $($field),* } = self;
 
                 tracing::error!($log)
             }
 
-            fn friendly(&self) -> Option<I18nString> {
+            fn friendly(&self) -> Option<cntp_i18n::I18nString> {
+                let Self { $($field),* } = self;
+
                 Some($friendly)
             }
         }
@@ -48,5 +53,7 @@ macro_rules! define_error {
 pub fn emit_error(err: impl EmittableError) {
     err.log();
 
-    // TODO: send error toasts
+    if let Some(message) = err.friendly() {
+        emit_toast(Toast::error(message));
+    }
 }

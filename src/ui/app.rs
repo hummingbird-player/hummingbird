@@ -32,6 +32,7 @@ use crate::{
         SettingsGlobal, setup_settings,
         storage::{Storage, StorageData},
     },
+    toasts,
     ui::{
         assets::HummingbirdAssetSource,
         caching::HummingbirdImageCache,
@@ -39,6 +40,7 @@ use crate::{
         library::missing_folder_dialog::MissingFolderDialog,
         models::WindowInformation,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
+        toasts::ToastLayer,
     },
 };
 
@@ -75,6 +77,7 @@ struct MainWindow {
     pub corrupt_settings_dialog: Entity<CorruptSettingsDialog>,
     pub palette: Entity<CommandPalette>,
     pub image_cache: Entity<HummingbirdImageCache>,
+    pub toast_layer: Entity<ToastLayer>,
 }
 
 impl Render for MainWindow {
@@ -146,7 +149,8 @@ impl Render for MainWindow {
                     })
                     .when(show_corrupt_settings_dialog, |this| {
                         this.child(self.corrupt_settings_dialog.clone())
-                    }),
+                    })
+                    .child(self.toast_layer.clone()),
             ))
     }
 }
@@ -174,6 +178,10 @@ impl Global for Pool {}
 pub struct DropImageDummyModel;
 
 impl EventEmitter<Vec<Arc<RenderImage>>> for DropImageDummyModel {}
+
+struct ToastLayerHolder(Entity<ToastLayer>);
+
+impl Global for ToastLayerHolder {}
 
 fn find_main_window(cx: &App) -> Option<WindowHandle<MainWindow>> {
     cx.windows()
@@ -234,6 +242,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
 
     let palette = CommandPalette::new(cx, window);
     cx.set_global(CommandPaletteHolder::new(palette.clone()));
+    let toast_layer = cx.global::<ToastLayerHolder>().0.clone();
 
     cx.new(|cx| {
         cx.observe_window_activation(window, |_, window, cx| {
@@ -293,6 +302,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
             // if your view uses a lot of images you need to have your own image
             // cache
             image_cache: HummingbirdImageCache::new(20, cx),
+            toast_layer,
         }
     })
 }
@@ -311,6 +321,7 @@ fn ensure_main_window(cx: &mut App) -> gpui::Result<WindowHandle<MainWindow>> {
 }
 
 pub fn run() -> anyhow::Result<()> {
+    let toast_receiver = toasts::init();
     let data_dir = paths::data_dir();
     fs::create_dir_all(&data_dir).inspect_err(|error| {
         tracing::error!(
@@ -467,6 +478,9 @@ pub fn run() -> anyhow::Result<()> {
             playback_interface.pause();
         }
         cx.set_global(playback_interface);
+
+        let toast_layer = ToastLayer::new(cx, toast_receiver);
+        cx.set_global(ToastLayerHolder(toast_layer));
 
         // Update `StorageData` and save it to file system while quitting the app.
         cx.on_app_quit({

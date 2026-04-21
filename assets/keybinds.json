@@ -20,6 +20,7 @@
     { "key": "alt-shift-s", "action": "scan::ForceScan" },
     { "key": "alt-s", "action": "scan::Scan" },
     { "key": "space", "action": "player::PlayPause" },
+    { "key": "alt-shift-t", "action": "debug::TestToast" },
     { "key": "ctrl-shift-space", "action": "player::StopAfterCurrent", "context": "!TextInput" },
 
     { "key": "backspace", "action": "library::NavigateBack", "context": "Library" },

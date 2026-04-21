@@ -1,10 +1,15 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use cntp_i18n::tr;
 use gpui::{App, AppContext, MenuItem, actions};
 use tracing::{debug, info, warn};
 
 use crate::{
+    define_error,
+    errors::emit_error,
     library::{db::LibraryAccess, scan::ScanInterface},
     playback::{interface::PlaybackInterface, queue::QueueItemData, thread::PlaybackState},
+    toasts::{Toast, emit_toast},
     ui::{
         command_palette::OpenPalette,
         components::menus_builder::{
@@ -27,6 +32,7 @@ actions!(
     [PlayPause, Next, Previous, ShuffleAll, StopAfterCurrent]
 );
 actions!(scan, [ForceScan, Scan]);
+actions!(debug, [TestToast]);
 actions!(hummingbird, [HideSelf, HideOthers, ShowAll]);
 actions!(help, [Discord, Patreon, Issues]);
 actions!(queue, [Undo]);
@@ -56,6 +62,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(open_log);
     cx.on_action(copy_troubleshooting_info);
     cx.on_action(open_theme_folder);
+    cx.on_action(test_toast);
 
     debug!("actions: {:?}", cx.all_action_names());
     debug!("action available: {:?}", cx.is_action_available(&Quit));
@@ -287,6 +294,50 @@ fn force_scan(_: &ForceScan, cx: &mut App) {
 fn scan(_: &Scan, cx: &mut App) {
     let scanner = cx.global::<ScanInterface>();
     scanner.scan();
+}
+
+fn test_toast(_: &TestToast, _cx: &mut App) {
+    define_error!(
+        TestError { n: usize },
+        tr!(
+            "TEST_TOAST_EMIT_ERROR",
+            "Error via emit_error (n={{n}})",
+            n = n
+        ),
+        "test emit_error, n={n}"
+    );
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    match n % 5 {
+        0 => emit_toast(Toast::info(tr!(
+            "TEST_TOAST_INFO",
+            "Info toast #{{n}}",
+            n = n
+        ))),
+        1 => emit_toast(Toast::success(tr!(
+            "TEST_TOAST_SUCCESS",
+            "Success toast #{{n}}",
+            n = n
+        ))),
+        2 => emit_toast(Toast::warning(tr!(
+            "TEST_TOAST_WARNING",
+            "Warning toast #{{n}}",
+            n = n
+        ))),
+        3 => emit_toast(
+            Toast::error(tr!(
+                "TEST_TOAST_ERROR",
+                "Error toast #{{n}} (with action)",
+                n = n
+            ))
+            .with_action(tr!("TEST_TOAST_RETRY", "Retry").into(), |_cx| {
+                info!("test toast action clicked");
+            }),
+        ),
+        _ => emit_error(TestError { n }),
+    }
 }
 
 fn open_settings(_: &Settings, cx: &mut App) {
