@@ -1,5 +1,6 @@
 use super::*;
 use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px};
+use crate::ui::styling::StyledExt;
 
 struct InfoSectionMetrics {
     outer_margin_x: f32,
@@ -22,7 +23,7 @@ fn info_section_metrics(density: crate::settings::interface::UiDensity) -> InfoS
         outer_margin_x: scale_px(density, 12.0, 2.0),
         outer_margin_top: scale_px(density, 12.0, 2.0),
         outer_margin_bottom: scale_px(density, 6.0, 1.0),
-        row_gap: scale_px(density, 10.0, 2.0),
+        row_gap: 10.0,
         art_size: scale_px(density, 36.0, 3.0),
         art_radius: 4.0,
         art_bottom_inset: scale_px(density, 6.0, 1.0),
@@ -289,7 +290,7 @@ impl Render for InfoSection {
                         e.child(
                             div()
                                 .flex()
-                                .flex_col()
+                                .v_flex()
                                 .line_height(px(metrics.metadata_text.line_height))
                                 .text_size(px(metrics.metadata_text.size))
                                 .gap_1()
