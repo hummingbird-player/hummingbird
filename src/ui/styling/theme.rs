@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::File,
     io::BufReader,
     path::{Path, PathBuf},
     sync::{Arc, RwLock, mpsc::channel},
@@ -7,6 +7,10 @@ use std::{
 };
 
 use crate::settings::SettingsGlobal;
+use crate::ui::presets::{
+    PresetOption, discover_file_preset_options, relative_file_preset_path_for_event,
+    resolve_relative_file_preset_path,
+};
 use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
 use serde::Deserialize;
@@ -267,14 +271,8 @@ impl Global for Theme {}
 pub const LEGACY_THEME_PATH: &str = "theme.json";
 pub const THEMES_DIR_NAME: &str = "themes";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThemeOption {
-    pub id: Option<String>,
-    pub label: String,
-}
-
 pub struct ThemeOptionsGlobal {
-    pub model: Entity<Vec<ThemeOption>>,
+    pub model: Entity<Vec<PresetOption>>,
 }
 
 impl Global for ThemeOptionsGlobal {}
@@ -304,46 +302,25 @@ pub fn create_theme(path: &Path) -> Theme {
 /// Discovers all available theme options in the data directory.
 /// Returns a vector containing the default theme, legacy theme (if present),
 /// and any custom themes found in the themes subdirectory.
-pub fn discover_theme_options(data_dir: &Path) -> Vec<ThemeOption> {
-    let mut themes = vec![ThemeOption {
+pub fn discover_theme_options(data_dir: &Path) -> Vec<PresetOption> {
+    let mut themes = vec![PresetOption {
         id: None,
         label: "Default".to_string(),
     }];
 
     let legacy_theme = data_dir.join(LEGACY_THEME_PATH);
     if legacy_theme.is_file() {
-        themes.push(ThemeOption {
+        themes.push(PresetOption {
             id: Some(LEGACY_THEME_PATH.to_string()),
             label: "Legacy".to_string(),
         });
     }
 
-    let themes_dir = data_dir.join(THEMES_DIR_NAME);
-    let mut custom_themes = fs::read_dir(themes_dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(Result::ok))
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        })
-        .filter_map(|path| {
-            let file_name = path.file_name()?.to_string_lossy().into_owned();
-            let label = file_name
-                .strip_suffix(".json")
-                .map(|s| s.to_string())
-                .unwrap_or(file_name.clone());
-            Some(ThemeOption {
-                id: Some(format!("{THEMES_DIR_NAME}/{file_name}")),
-                label,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    custom_themes.sort_by(|a, b| a.id.cmp(&b.id));
-    themes.extend(custom_themes);
+    themes.extend(discover_file_preset_options(
+        data_dir,
+        THEMES_DIR_NAME,
+        "json",
+    ));
     themes
 }
 
@@ -353,12 +330,12 @@ pub fn resolve_theme_relative_path(
     data_dir: &Path,
     selected_theme: Option<&str>,
 ) -> Option<String> {
-    if let Some(selected_theme) = selected_theme {
-        let path = data_dir.join(selected_theme);
-        return path.is_file().then(|| selected_theme.to_string());
+    if selected_theme == Some(LEGACY_THEME_PATH) {
+        let path = data_dir.join(LEGACY_THEME_PATH);
+        return path.is_file().then(|| LEGACY_THEME_PATH.to_string());
     }
 
-    None
+    resolve_relative_file_preset_path(data_dir, selected_theme)
 }
 
 /// Resolves a theme identifier to its full filesystem path.
@@ -381,17 +358,7 @@ fn theme_relative_path_for_event(data_dir: &Path, path: &Path) -> Option<String>
         return Some(LEGACY_THEME_PATH.to_string());
     }
 
-    let themes_dir = data_dir.join(THEMES_DIR_NAME);
-    if path.parent() == Some(themes_dir.as_path())
-        && path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-    {
-        let file_name = path.file_name()?.to_string_lossy();
-        return Some(format!("{THEMES_DIR_NAME}/{file_name}"));
-    }
-
-    None
+    relative_file_preset_path_for_event(data_dir, THEMES_DIR_NAME, "json", path)
 }
 
 /// Checks if any of the paths in a filesystem event affect the currently selected theme.

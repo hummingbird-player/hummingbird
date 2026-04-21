@@ -11,6 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    fonts::active_fonts,
     styling::theme::Theme,
 };
 
@@ -184,6 +185,7 @@ where
 
         if let Some(data) = self.data.as_ref() {
             let column_count = self.columns.len();
+            let fonts = active_fonts(cx);
 
             for (i, column_data) in data.iter().enumerate() {
                 let col = self
@@ -201,7 +203,7 @@ where
                         .px(px(12.0))
                         .py(px(6.0))
                         .when(!T::has_images() && i == 0, |div| div.pl(px(17.0)))
-                        .when(monospace, |div| div.font_family("Roboto Mono"))
+                        .when(monospace, |div| div.font_family(fonts.mono_font.clone()))
                         .text_sm()
                         .flex_shrink_0()
                         .overflow_hidden()

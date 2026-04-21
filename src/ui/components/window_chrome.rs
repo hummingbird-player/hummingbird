@@ -3,6 +3,7 @@ use std::sync::Arc;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
+    fonts::active_fonts,
     styling::constants::{APP_ROUNDING, APP_SHADOW_SIZE},
     styling::theme::Theme,
 };
@@ -31,6 +32,7 @@ impl Styled for WindowChrome {
 impl RenderOnce for WindowChrome {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let fonts = active_fonts(cx);
         let decorations = window.window_decorations();
         let rounding = APP_ROUNDING;
         let shadow_size = APP_SHADOW_SIZE;
@@ -112,7 +114,7 @@ impl RenderOnce for WindowChrome {
             .size_full()
             .child(
                 div()
-                    .font_family("Inter")
+                    .font_family(fonts.font.clone())
                     .text_color(theme.text)
                     .cursor(CursorStyle::Arrow)
                     .map(|div| match decorations {

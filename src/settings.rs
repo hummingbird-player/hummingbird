@@ -82,6 +82,8 @@ pub fn create_settings(path: &PathBuf) -> Settings {
     };
 
     apply_legacy_theme_selection(path, &mut settings, has_theme_setting);
+    settings.interface.ui_preset =
+        interface::normalize_ui_preset_id(settings.interface.ui_preset.take());
     settings
 }
 
@@ -280,7 +282,7 @@ mod tests {
                 "interface": {
                     "theme": "custom.json",
                     "full_width_library": true,
-                    "layout_preset": "stage",
+                    "ui_preset": "stage",
                     "ui_density": "comfortable",
                     "reduced_motion": true,
                     "always_show_scrollbars": true
@@ -301,13 +303,10 @@ mod tests {
         assert!(!settings.playback.keep_current_on_queue_clear);
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);
-        assert_eq!(
-            settings.interface.layout_preset,
-            super::interface::LayoutPreset::Stage
-        );
+        assert_eq!(settings.interface.ui_preset.as_deref(), Some("stage"));
         assert_eq!(
             settings.interface.ui_density,
-            super::interface::UiDensity::Comfortable
+            super::interface::UiDensity::COMFORTABLE
         );
         assert!(settings.interface.reduced_motion);
         assert!(settings.interface.always_show_scrollbars);
@@ -335,16 +334,57 @@ mod tests {
 
         let settings = create_settings(&settings_path(&dir));
 
-        assert_eq!(
-            settings.interface.layout_preset,
-            super::interface::LayoutPreset::Default
-        );
+        assert_eq!(settings.interface.ui_preset, None);
         assert_eq!(
             settings.interface.ui_density,
-            super::interface::UiDensity::Default
+            super::interface::UiDensity::DEFAULT
         );
         assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
         assert!(settings.interface.full_width_library);
+    }
+
+    #[test]
+    fn create_settings_deserializes_numeric_density_values() {
+        let dir = create_test_dir();
+        fs::write(
+            settings_path(&dir),
+            serde_json::to_vec(&json!({
+                "interface": {
+                    "ui_density": 0.25
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let settings = create_settings(&settings_path(&dir));
+
+        assert_eq!(
+            settings.interface.ui_density,
+            super::interface::UiDensity::from(0.25)
+        );
+    }
+
+    #[test]
+    fn create_settings_migrates_old_custom_layout_preset_to_seeded_file() {
+        let dir = create_test_dir();
+        fs::write(
+            settings_path(&dir),
+            serde_json::to_vec(&json!({
+                "interface": {
+                    "layout_preset": "custom"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let settings = create_settings(&settings_path(&dir));
+
+        assert_eq!(
+            settings.interface.ui_preset.as_deref(),
+            Some(super::interface::SEEDED_UI_PRESET_ID)
+        );
     }
 
     #[test]

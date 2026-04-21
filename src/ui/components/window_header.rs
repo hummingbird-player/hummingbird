@@ -3,9 +3,46 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
+    density::{active_density, scale_px},
     styling::constants::APP_ROUNDING,
-    styling::{ActiveTheme, h_flex},
+    styling::{ActiveTheme, StyledExt},
 };
+
+struct WindowHeaderMetrics {
+    height: f32,
+    left_padding: f32,
+    top_padding: f32,
+    bottom_padding: f32,
+    item_gap: f32,
+    macos_drag_spacer: f32,
+}
+
+struct WindowButtonMetrics {
+    width: f32,
+    height: f32,
+    icon_size: f32,
+    icon_text_size: f32,
+}
+
+fn window_header_metrics(density: crate::settings::interface::UiDensity) -> WindowHeaderMetrics {
+    WindowHeaderMetrics {
+        height: scale_px(density, 37.0, 2.0),
+        left_padding: scale_px(density, 12.0, 2.0),
+        top_padding: scale_px(density, 7.0, 1.0),
+        bottom_padding: scale_px(density, 8.0, 1.0),
+        item_gap: scale_px(density, 8.0, 1.0),
+        macos_drag_spacer: scale_px(density, 72.0, 4.0),
+    }
+}
+
+fn window_button_metrics(density: crate::settings::interface::UiDensity) -> WindowButtonMetrics {
+    WindowButtonMetrics {
+        width: scale_px(density, 36.0, 2.0),
+        height: scale_px(density, 37.0, 2.0),
+        icon_size: scale_px(density, 14.0, 1.0),
+        icon_text_size: scale_px(density, 11.0, 1.0),
+    }
+}
 
 #[derive(IntoElement)]
 pub struct WindowHeader {
@@ -48,30 +85,33 @@ impl Styled for WindowHeader {
 }
 
 impl RenderOnce for WindowHeader {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let decorations = window.window_decorations();
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let metrics = window_header_metrics(active_density(cx));
         let theme = cx.theme();
 
-        let left_container = h_flex()
-            .pl(px(12.0))
-            .pb(px(8.0))
-            .pt(px(7.0))
-            .gap(px(8.0))
+        let left_container = div()
+            .h_flex()
+            .pl(px(metrics.left_padding))
+            .pb(px(metrics.bottom_padding))
+            .pt(px(metrics.top_padding))
+            .gap(px(metrics.item_gap))
             .children(self.left);
 
-        let right_container = h_flex().ml_auto().gap(px(8.0)).children(self.right);
+        let right_container = div()
+            .h_flex()
+            .ml_auto()
+            .gap(px(metrics.item_gap))
+            .children(self.right);
 
         self.div
             .flex()
             .items_center()
             .w_full()
             .text_sm()
-            .min_h(px(37.0))
-            .max_h(px(37.0))
+            .min_h(px(metrics.height))
+            .max_h(px(metrics.height))
             .bg(theme.background_secondary)
-            .border_b_1()
             .id("titlebar")
-            .border_color(theme.border_color)
             .window_control_area(WindowControlArea::Drag)
             .when(cfg!(not(target_os = "windows")), |this| {
                 this.on_mouse_down(MouseButton::Left, move |ev, window, _| {
@@ -85,18 +125,8 @@ impl RenderOnce for WindowHeader {
                     }
                 })
             })
-            .map(|div| match decorations {
-                Decorations::Server => div,
-                Decorations::Client { tiling } => div
-                    .when(!(tiling.top || tiling.left), |div| {
-                        div.rounded_tl(APP_ROUNDING)
-                    })
-                    .when(!(tiling.top || tiling.right), |div| {
-                        div.rounded_tr(APP_ROUNDING)
-                    }),
-            })
             .when(cfg!(target_os = "macos"), |this| {
-                this.child(div().w(px(72.0)))
+                this.child(div().w(px(metrics.macos_drag_spacer)))
             })
             .child(left_container)
             .child(right_container)
@@ -126,6 +156,7 @@ pub enum WindowButton {
 
 impl RenderOnce for WindowButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let metrics = window_button_metrics(active_density(cx));
         let theme = cx.theme();
 
         let (bg, hover, active) = if matches!(self, WindowButton::Close(_)) {
@@ -144,8 +175,8 @@ impl RenderOnce for WindowButton {
 
         div()
             .flex()
-            .w(px(36.0))
-            .h(px(37.0))
+            .w(px(metrics.width))
+            .h(px(metrics.height))
             .items_center()
             .justify_center()
             .cursor_pointer()
@@ -162,7 +193,7 @@ impl RenderOnce for WindowButton {
                 WindowButton::Minimize => WindowControlArea::Min,
                 WindowButton::Maximize => WindowControlArea::Max,
             })
-            .text_size(px(11.0))
+            .text_size(px(metrics.icon_text_size))
             .occlude()
             .child(
                 icon(match self {
@@ -176,7 +207,7 @@ impl RenderOnce for WindowButton {
                         }
                     }
                 })
-                .size(px(14.0)),
+                .size(px(metrics.icon_size)),
             )
             .when(matches!(self, WindowButton::Close(_)), |this| {
                 this.rounded_tr(APP_ROUNDING)

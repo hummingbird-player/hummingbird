@@ -26,23 +26,32 @@ use crate::{
     power::PowerManager,
     services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
-        SettingsGlobal,
-        interface::LayoutPreset,
-        setup_settings,
-        storage::{Storage, StorageData},
+        SettingsGlobal, setup_settings,
+        storage::{DEFAULT_QUEUE_WIDTH, DEFAULT_SIDEBAR_WIDTH, Storage, StorageData},
     },
     ui::{
         assets::HummingbirdAssetSource,
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
-        components::dropdown,
+        components::{
+            dropdown,
+            resizable::{ResizeEdge, resizable},
+        },
         controls::Controls,
+        density::{UiPresetConfigGlobal, active_shell_layout},
+        fonts::{
+            AvailableFontsGlobal, ResolvedFontsGlobal, capture_available_fonts,
+            refresh_resolved_fonts,
+        },
         header::Header,
         layout::{
-            CustomShellLayout, MainRegion, OuterBand, ShellLayout, default_shell_layout,
-            load_custom_shell_layout, stage_shell_layout,
+            MainRegion, OuterBand, ShellLayout, ensure_seeded_ui_preset, load_selected_ui_preset,
         },
-        library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
+        library::{
+            self, Library,
+            missing_folder_dialog::MissingFolderDialog,
+            sidebar::{COLLAPSED_SIDEBAR_WIDTH, Sidebar},
+        },
         models::WindowInformation,
         right_sidebar::RightSidebar,
     },
@@ -61,8 +70,7 @@ use super::{
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     search::SearchView,
     settings::close_orphaned_settings_windows,
-    styling::theme::setup_theme,
-    styling::tokens::Tokens,
+    styling::{ActiveTheme, constants::APP_ROUNDING, theme::setup_theme},
     util::drop_image_from_app,
 };
 
@@ -81,35 +89,156 @@ struct MainWindow {
 }
 
 impl MainWindow {
+    fn visible_main_regions(&self, layout: &ShellLayout, show_sidebar: bool) -> Vec<MainRegion> {
+        layout
+            .main_order
+            .iter()
+            .copied()
+            .filter(|region| *region != MainRegion::RightSidebar || show_sidebar)
+            .collect()
+    }
+
     fn active_shell_layout(&self, cx: &App) -> ShellLayout {
-        match cx
-            .global::<SettingsGlobal>()
-            .model
-            .read(cx)
-            .interface
-            .layout_preset
-        {
-            LayoutPreset::Default => default_shell_layout(),
-            LayoutPreset::Stage => stage_shell_layout(),
-            LayoutPreset::Custom => cx.global::<CustomShellLayout>().0.clone(),
+        active_shell_layout(cx)
+    }
+
+    fn render_main_region_content(&self, region: MainRegion) -> AnyElement {
+        match region {
+            MainRegion::LibrarySidebar => self.library_sidebar.clone().into_any_element(),
+            MainRegion::LibraryContent => self.library.clone().into_any_element(),
+            MainRegion::RightSidebar => self.right_sidebar.clone().into_any_element(),
         }
     }
 
-    fn render_main_region(&self, region: MainRegion, show_sidebar: bool) -> Option<AnyElement> {
+    fn main_region_resize_edge(
+        visible_regions: &[MainRegion],
+        index: usize,
+        region: MainRegion,
+    ) -> Option<ResizeEdge> {
+        if !matches!(
+            region,
+            MainRegion::LibrarySidebar | MainRegion::RightSidebar
+        ) {
+            return None;
+        }
+
+        if index > 0 && visible_regions[index - 1] == MainRegion::LibraryContent {
+            return Some(ResizeEdge::Left);
+        }
+
+        if index + 1 < visible_regions.len()
+            && visible_regions[index + 1] == MainRegion::LibraryContent
+        {
+            return Some(ResizeEdge::Right);
+        }
+
+        None
+    }
+
+    fn boundary_has_handle(visible_regions: &[MainRegion], left_index: usize) -> bool {
+        let left_region = visible_regions[left_index];
+        let right_region = visible_regions[left_index + 1];
+
+        matches!(
+            Self::main_region_resize_edge(visible_regions, left_index, left_region),
+            Some(ResizeEdge::Right)
+        ) || matches!(
+            Self::main_region_resize_edge(visible_regions, left_index + 1, right_region),
+            Some(ResizeEdge::Left)
+        )
+    }
+
+    fn render_main_region_slot(
+        &self,
+        visible_regions: &[MainRegion],
+        index: usize,
+        cx: &App,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let region = visible_regions[index];
+        let has_left_separator =
+            index > 0 && !Self::boundary_has_handle(visible_regions, index - 1);
+        let has_right_separator =
+            index + 1 < visible_regions.len() && !Self::boundary_has_handle(visible_regions, index);
+        let resize_edge = Self::main_region_resize_edge(visible_regions, index, region);
+
+        let content = div()
+            .h_full()
+            .w_full()
+            .overflow_hidden()
+            .when(has_left_separator, |div| {
+                div.border_l_1().border_color(theme.border_color)
+            })
+            .when(has_right_separator, |div| {
+                div.border_r_1().border_color(theme.border_color)
+            })
+            .child(self.render_main_region_content(region));
+
         match region {
-            MainRegion::LibrarySidebar => Some(self.library_sidebar.clone().into_any_element()),
-            MainRegion::LibraryContent => Some(self.library.clone().into_any_element()),
+            MainRegion::LibraryContent => div()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .child(content)
+                .into_any_element(),
+            MainRegion::LibrarySidebar => {
+                let models = cx.global::<Models>();
+                let collapsed = *models.sidebar_collapsed.read(cx);
+                let sidebar_width = models.sidebar_width.clone();
+
+                if collapsed {
+                    div()
+                        .w(COLLAPSED_SIDEBAR_WIDTH)
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(content)
+                        .into_any_element()
+                } else if let Some(edge) = resize_edge {
+                    resizable("main-sidebar-resizable", sidebar_width.clone(), edge)
+                        .min_size(px(175.0))
+                        .max_size(px(350.0))
+                        .default_size(DEFAULT_SIDEBAR_WIDTH)
+                        .h_full()
+                        .child(content)
+                        .into_any_element()
+                } else {
+                    div()
+                        .w(*sidebar_width.read(cx))
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(content)
+                        .into_any_element()
+                }
+            }
             MainRegion::RightSidebar => {
-                show_sidebar.then(|| self.right_sidebar.clone().into_any_element())
+                let queue_width = cx.global::<Models>().queue_width.clone();
+
+                if let Some(edge) = resize_edge {
+                    resizable("queue-resizable", queue_width.clone(), edge)
+                        .min_size(px(225.0))
+                        .max_size(px(800.0))
+                        .default_size(DEFAULT_QUEUE_WIDTH)
+                        .h_full()
+                        .child(content)
+                        .into_any_element()
+                } else {
+                    div()
+                        .w(*queue_width.read(cx))
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(content)
+                        .into_any_element()
+                }
             }
         }
     }
 
-    fn render_main_band(&self, layout: &ShellLayout, show_sidebar: bool) -> Div {
-        let children = layout
-            .main_order
+    fn render_main_band(&self, layout: &ShellLayout, show_sidebar: bool, cx: &App) -> Div {
+        let visible_regions = self.visible_main_regions(layout, show_sidebar);
+        let children = visible_regions
             .iter()
-            .filter_map(|region| self.render_main_region(*region, show_sidebar))
+            .enumerate()
+            .map(|(index, _)| self.render_main_region_slot(&visible_regions, index, cx))
             .collect::<Vec<_>>();
 
         div()
@@ -127,14 +256,59 @@ impl MainWindow {
         band: OuterBand,
         layout: &ShellLayout,
         show_sidebar: bool,
+        cx: &App,
     ) -> AnyElement {
         match band {
             OuterBand::Header => self.header.clone().into_any_element(),
             OuterBand::Main => self
-                .render_main_band(layout, show_sidebar)
+                .render_main_band(layout, show_sidebar, cx)
                 .into_any_element(),
             OuterBand::Controls => self.controls.clone().into_any_element(),
         }
+    }
+
+    fn render_shell_band_slot(
+        &self,
+        band: OuterBand,
+        layout: &ShellLayout,
+        index: usize,
+        show_sidebar: bool,
+        window: &Window,
+        cx: &App,
+    ) -> AnyElement {
+        let is_top = index == 0;
+        let is_bottom = index + 1 == layout.outer_order.len();
+        let theme = cx.theme();
+        let decorations = window.window_decorations();
+
+        let slot = div()
+            .w_full()
+            .overflow_hidden()
+            .when(matches!(band, OuterBand::Main), |div| {
+                div.flex_1().min_h(px(0.0))
+            })
+            .when(!is_bottom, |div| {
+                div.border_b_1().border_color(theme.border_color)
+            })
+            .child(self.render_shell_band(band, layout, show_sidebar, cx))
+            .map(|div| match decorations {
+                Decorations::Server => div,
+                Decorations::Client { tiling } => div
+                    .when(is_top && !(tiling.top || tiling.left), |div| {
+                        div.rounded_tl(APP_ROUNDING)
+                    })
+                    .when(is_top && !(tiling.top || tiling.right), |div| {
+                        div.rounded_tr(APP_ROUNDING)
+                    })
+                    .when(is_bottom && !(tiling.bottom || tiling.left), |div| {
+                        div.rounded_bl(APP_ROUNDING)
+                    })
+                    .when(is_bottom && !(tiling.bottom || tiling.right), |div| {
+                        div.rounded_br(APP_ROUNDING)
+                    }),
+            });
+
+        slot.into_any_element()
     }
 }
 
@@ -155,8 +329,11 @@ impl Render for MainWindow {
         let shell_children = shell_layout
             .outer_order
             .iter()
+            .enumerate()
+            .map(|(index, band)| {
+                self.render_shell_band_slot(*band, &shell_layout, index, show_sidebar, _window, cx)
+            })
             .rev()
-            .map(|band| self.render_shell_band(*band, &shell_layout, show_sidebar))
             .collect::<Vec<_>>();
 
         div()
@@ -420,15 +597,39 @@ pub fn run() -> anyhow::Result<()> {
 
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
-        let ui_density = cx
+        cx.set_global(Pool(pool.clone()));
+        ensure_seeded_ui_preset(&data_dir);
+        let selected_ui_preset = cx
             .global::<SettingsGlobal>()
             .model
             .read(cx)
             .interface
-            .ui_density;
-        cx.set_global(Tokens::for_density(ui_density));
-        cx.set_global(Pool(pool.clone()));
-        cx.set_global(CustomShellLayout(load_custom_shell_layout(&data_dir)));
+            .ui_preset
+            .clone();
+        cx.set_global(UiPresetConfigGlobal(load_selected_ui_preset(
+            &data_dir,
+            selected_ui_preset.as_deref(),
+        )));
+        cx.set_global(AvailableFontsGlobal(capture_available_fonts(cx)));
+        cx.set_global(ResolvedFontsGlobal(Default::default()));
+        refresh_resolved_fonts(cx);
+
+        let settings_model = cx.global::<SettingsGlobal>().model.clone();
+        let data_dir_for_ui_presets = data_dir.clone();
+        cx.observe(&settings_model, move |_, cx| {
+            let selected_ui_preset = cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .interface
+                .ui_preset
+                .clone();
+            cx.global_mut::<UiPresetConfigGlobal>().0 =
+                load_selected_ui_preset(&data_dir_for_ui_presets, selected_ui_preset.as_deref());
+            refresh_resolved_fonts(cx);
+            cx.refresh_windows();
+        })
+        .detach();
 
         let settings = cx.global::<SettingsGlobal>().model.read(cx);
         let language = settings.interface.language.clone();
@@ -463,14 +664,6 @@ pub fn run() -> anyhow::Result<()> {
         context::bind_actions(cx);
 
         cx.set_global(modal::ModalActive(AtomicBool::new(false)));
-
-        let settings_model = cx.global::<SettingsGlobal>().model.clone();
-        cx.observe(&settings_model, |settings, cx| {
-            let density = settings.read(cx).interface.ui_density;
-            cx.set_global(Tokens::for_density(density));
-            cx.refresh_windows();
-        })
-        .detach();
 
         if !language.is_empty() {
             I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);

@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::styling::theme::Theme;
+use crate::ui::{fonts::active_fonts, styling::theme::Theme};
 
 /// Shared styling for all tooltip containers.
 pub fn tooltip_container(theme: &Theme) -> Div {
@@ -8,7 +8,6 @@ pub fn tooltip_container(theme: &Theme) -> Div {
         .text_sm()
         .rounded(px(6.0))
         .border_1()
-        .font_family("Inter")
         .border_color(theme.elevated_border_color)
         .bg(theme.elevated_background)
         .text_color(theme.text_secondary)
@@ -26,7 +25,10 @@ pub struct TooltipContent {
 impl Render for TooltipContent {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        tooltip_container(theme).child(self.text.clone())
+        let fonts = active_fonts(cx);
+        tooltip_container(theme)
+            .font_family(fonts.font)
+            .child(self.text.clone())
     }
 }
 
