@@ -601,7 +601,7 @@
   },
   "LIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:295",
+    "definedIn": "src/ui/library/release_view.rs:305",
     "plural": false,
     "description": null
   },
@@ -655,13 +655,13 @@
   },
   "PAUSE": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:96",
+    "definedIn": "src/ui/components/playback_controls.rs:109",
     "plural": false,
     "description": null
   },
   "PLAY": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:98",
+    "definedIn": "src/ui/components/playback_controls.rs:111",
     "plural": false,
     "description": null
   },
@@ -763,13 +763,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:344",
+    "definedIn": "src/ui/library/release_view.rs:409",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:359",
+    "definedIn": "src/ui/library/release_view.rs:424",
     "plural": false,
     "description": null
   },
@@ -1093,7 +1093,7 @@
   },
   "SHUFFLE": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:114",
+    "definedIn": "src/ui/components/playback_controls.rs:129",
     "plural": false,
     "description": null
   },
@@ -1261,7 +1261,7 @@
   },
   "UNLIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:293",
+    "definedIn": "src/ui/library/release_view.rs:303",
     "plural": false,
     "description": null
   },
