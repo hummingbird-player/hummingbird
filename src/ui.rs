@@ -22,6 +22,7 @@ mod scale;
 mod scroll_follow;
 mod search;
 mod settings;
+mod shell;
 pub mod styling;
 mod troubleshooting;
 mod ui_preset;
