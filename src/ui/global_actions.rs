@@ -74,7 +74,7 @@ pub fn register_actions(cx: &mut App) {
         CloseWindow,
         Some("SettingsWindow && !TextInput"),
     )]);
-    cx.bind_keys([KeyBinding::new("secondary-z", Undo, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-z", Undo, Some("!TextInput"))]);
 
     cx.bind_keys([KeyBinding::new("alt-shift-s", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("alt-s", Scan, None)]);
