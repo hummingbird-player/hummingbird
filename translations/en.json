@@ -91,7 +91,7 @@
   "INTERFACE_GRID_MIN_ITEM_WIDTH": "Grid item width",
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": "Adjusts the minimum width of items in grid view.",
   "INTERFACE_LAYOUT": "Layout",
-  "INTERFACE_LAYOUT_SUBTEXT": "Use the built-in layout or choose a .ron file from the layouts folder. Switching files applies immediately. Editing a selected .ron file still requires restarting Hummingbird.",
+  "INTERFACE_LAYOUT_SUBTEXT": "Use the built-in layout or choose a .json file from the ui folder. Switching files applies immediately. Editing a selected .json file still requires restarting Hummingbird.",
   "INTERFACE_REDUCED_MOTION": "Reduced motion",
   "INTERFACE_REDUCED_MOTION_SUBTEXT": "Disables smooth scrolling, fades, and other motion-heavy UI animations.",
   "INTERFACE_STARTUP_LIBRARY_VIEW": "Default startup view",
