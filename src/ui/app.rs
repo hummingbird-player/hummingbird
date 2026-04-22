@@ -36,16 +36,16 @@ use crate::{
         components::dropdown,
         controls::Controls,
         customization::{
-            AvailableFontsGlobal, ResolvedUiConfigGlobal, active_shell_layout,
+            AvailableFontsGlobal, ResolvedUiConfigGlobal, active_ui_layout,
             capture_available_fonts, ensure_seeded_ui_config, load_selected_ui_config,
             resolve_ui_config,
         },
         header::Header,
         library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
         models::WindowInformation,
-        right_sidebar::RightSidebar,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
         shell::Shell,
+        side_panel::SidePanel,
     },
 };
 
@@ -68,7 +68,7 @@ use super::{
 
 struct MainWindow {
     pub controls: Entity<Controls>,
-    pub right_sidebar: Entity<RightSidebar>,
+    pub side_panel: Entity<SidePanel>,
     pub library_sidebar: Entity<Sidebar>,
     pub library: Entity<Library>,
     pub header: Entity<Header>,
@@ -85,7 +85,7 @@ impl MainWindow {
     fn shell(&self) -> Shell {
         Shell {
             controls: self.controls.clone(),
-            right_sidebar: self.right_sidebar.clone(),
+            side_panel: self.side_panel.clone(),
             library_sidebar: self.library_sidebar.clone(),
             library: self.library.clone(),
             header: self.header.clone(),
@@ -105,10 +105,10 @@ impl Render for MainWindow {
         );
         let show_queue = cx.global::<Models>().show_queue.clone();
         let show_lyrics = cx.global::<Models>().show_lyrics.clone();
-        let show_sidebar = *show_queue.read(cx) || *show_lyrics.read(cx);
-        let shell_layout = active_shell_layout(cx);
+        let show_side_panel = *show_queue.read(cx) || *show_lyrics.read(cx);
+        let ui_layout = active_ui_layout(cx);
         let shell = self.shell();
-        let shell_children = shell.render_children(&shell_layout, show_sidebar, window, cx);
+        let shell_children = shell.render_children(&ui_layout, show_side_panel, window, cx);
         let show_missing_folder_dialog = !show_corrupt_settings_dialog
             && matches!(
                 scan_state,
@@ -296,7 +296,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
                 Sidebar::new(cx, nav_model)
             },
             controls: Controls::new(cx),
-            right_sidebar: RightSidebar::new(cx),
+            side_panel: SidePanel::new(cx),
             library: Library::new(cx),
             header: Header::new(cx),
             search: SearchView::new(cx),

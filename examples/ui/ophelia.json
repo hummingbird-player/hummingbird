@@ -1,7 +1,10 @@
 {
     "layout": {
-        "outer_order": ["header", "main", "controls"],
-        "main_order": ["library_sidebar", "library_content", "right_sidebar"]
+        "outer_order": ["main", "controls"],
+        "main_order": ["library_sidebar", "library_content", "side_panel"],
+        "library": {
+            "two_column_order": ["browse", "detail"]
+        }
     },
     "font": "Spotify Mix UI Title Var"
 }

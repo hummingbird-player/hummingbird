@@ -6,16 +6,16 @@ use crate::{
     ui::{lyrics::Lyrics, models::Models, queue::Queue},
 };
 
-// ─── RightSidebar component ───────────────────────────────────────────────────
+// ─── SidePanel component ──────────────────────────────────────────────────────
 
-pub struct RightSidebar {
+pub struct SidePanel {
     queue: Entity<Queue>,
     lyrics: Entity<Lyrics>,
     pub show_queue: Entity<bool>,
     pub show_lyrics: Entity<bool>,
 }
 
-impl RightSidebar {
+impl SidePanel {
     pub fn new(cx: &mut App) -> Entity<Self> {
         let models = cx.global::<Models>();
         let show_queue = models.show_queue.clone();
@@ -43,7 +43,7 @@ impl RightSidebar {
     }
 }
 
-impl Render for RightSidebar {
+impl Render for SidePanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let show_queue = *self.show_queue.read(cx);
         let show_lyrics = *self.show_lyrics.read(cx);

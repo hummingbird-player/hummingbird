@@ -7,33 +7,39 @@ use crate::{
         components::resizable::{ResizeEdge, resizable},
         controls::Controls,
         header::Header,
-        layout::{MainRegion, OuterBand, ShellLayout},
+        layout::{MainRegion, OuterBand, UiLayout},
         library::{
             Library,
             sidebar::{COLLAPSED_SIDEBAR_WIDTH, Sidebar},
         },
         models::Models,
-        right_sidebar::RightSidebar,
+        side_panel::SidePanel,
         styling::{ActiveTheme, constants::APP_ROUNDING},
     },
 };
 
+#[derive(Clone, Copy)]
+enum ShellBand {
+    Header,
+    Body(OuterBand),
+}
+
 #[derive(Clone)]
 pub(crate) struct Shell {
     pub controls: Entity<Controls>,
-    pub right_sidebar: Entity<RightSidebar>,
+    pub side_panel: Entity<SidePanel>,
     pub library_sidebar: Entity<Sidebar>,
     pub library: Entity<Library>,
     pub header: Entity<Header>,
 }
 
 impl Shell {
-    fn visible_main_regions(&self, layout: &ShellLayout, show_sidebar: bool) -> Vec<MainRegion> {
+    fn visible_main_regions(&self, layout: &UiLayout, show_side_panel: bool) -> Vec<MainRegion> {
         layout
             .main_order
             .iter()
             .copied()
-            .filter(|region| *region != MainRegion::RightSidebar || show_sidebar)
+            .filter(|region| *region != MainRegion::SidePanel || show_side_panel)
             .collect()
     }
 
@@ -41,7 +47,7 @@ impl Shell {
         match region {
             MainRegion::LibrarySidebar => self.library_sidebar.clone().into_any_element(),
             MainRegion::LibraryContent => self.library.clone().into_any_element(),
-            MainRegion::RightSidebar => self.right_sidebar.clone().into_any_element(),
+            MainRegion::SidePanel => self.side_panel.clone().into_any_element(),
         }
     }
 
@@ -50,10 +56,7 @@ impl Shell {
         index: usize,
         region: MainRegion,
     ) -> Option<ResizeEdge> {
-        if !matches!(
-            region,
-            MainRegion::LibrarySidebar | MainRegion::RightSidebar
-        ) {
+        if !matches!(region, MainRegion::LibrarySidebar | MainRegion::SidePanel) {
             return None;
         }
 
@@ -145,7 +148,7 @@ impl Shell {
                         .into_any_element()
                 }
             }
-            MainRegion::RightSidebar => {
+            MainRegion::SidePanel => {
                 let queue_width = cx.global::<Models>().queue_width.clone();
 
                 if let Some(edge) = resize_edge {
@@ -168,8 +171,8 @@ impl Shell {
         }
     }
 
-    fn render_main_band(&self, layout: &ShellLayout, show_sidebar: bool, cx: &App) -> Div {
-        let visible_regions = self.visible_main_regions(layout, show_sidebar);
+    fn render_main_band(&self, layout: &UiLayout, show_side_panel: bool, cx: &App) -> Div {
+        let visible_regions = self.visible_main_regions(layout, show_side_panel);
         let children = visible_regions
             .iter()
             .enumerate()
@@ -188,44 +191,40 @@ impl Shell {
 
     fn render_shell_band(
         &self,
-        band: OuterBand,
-        layout: &ShellLayout,
-        show_sidebar: bool,
+        band: ShellBand,
+        layout: &UiLayout,
+        show_side_panel: bool,
         cx: &App,
     ) -> AnyElement {
         match band {
-            OuterBand::Header => self.header.clone().into_any_element(),
-            OuterBand::Main => self
-                .render_main_band(layout, show_sidebar, cx)
+            ShellBand::Header => self.header.clone().into_any_element(),
+            ShellBand::Body(OuterBand::Main) => self
+                .render_main_band(layout, show_side_panel, cx)
                 .into_any_element(),
-            OuterBand::Controls => self.controls.clone().into_any_element(),
+            ShellBand::Body(OuterBand::Controls) => self.controls.clone().into_any_element(),
         }
     }
 
     fn render_shell_band_slot(
         &self,
-        band: OuterBand,
-        layout: &ShellLayout,
-        index: usize,
-        show_sidebar: bool,
+        content: AnyElement,
+        is_main: bool,
+        is_top: bool,
+        is_bottom: bool,
         window: &Window,
         cx: &App,
     ) -> AnyElement {
-        let is_top = index == 0;
-        let is_bottom = index + 1 == layout.outer_order.len();
         let theme = cx.theme();
         let decorations = window.window_decorations();
 
         let slot = div()
             .w_full()
             .overflow_hidden()
-            .when(matches!(band, OuterBand::Main), |div| {
-                div.flex_1().min_h(px(0.0))
-            })
+            .when(is_main, |div| div.flex_1().min_h(px(0.0)))
             .when(!is_bottom, |div| {
                 div.border_b_1().border_color(theme.border_color)
             })
-            .child(self.render_shell_band(band, layout, show_sidebar, cx))
+            .child(content)
             .map(|div| match decorations {
                 gpui::Decorations::Server => div,
                 gpui::Decorations::Client { tiling } => div
@@ -248,17 +247,26 @@ impl Shell {
 
     pub fn render_children(
         &self,
-        layout: &ShellLayout,
-        show_sidebar: bool,
+        layout: &UiLayout,
+        show_side_panel: bool,
         window: &Window,
         cx: &App,
     ) -> Vec<AnyElement> {
-        layout
-            .outer_order
-            .iter()
+        let bands = std::iter::once(ShellBand::Header)
+            .chain(layout.outer_order.iter().copied().map(ShellBand::Body))
+            .collect::<Vec<_>>();
+        let band_count = bands.len();
+
+        bands
+            .into_iter()
             .enumerate()
             .map(|(index, band)| {
-                self.render_shell_band_slot(*band, layout, index, show_sidebar, window, cx)
+                let is_top = index == 0;
+                let is_bottom = index + 1 == band_count;
+                let is_main = matches!(band, ShellBand::Body(OuterBand::Main));
+                let content = self.render_shell_band(band, layout, show_side_panel, cx);
+
+                self.render_shell_band_slot(content, is_main, is_top, is_bottom, window, cx)
             })
             .rev()
             .collect()

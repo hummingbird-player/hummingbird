@@ -12,4 +12,4 @@ pub use loader::{
     discover_ui_config_options, ensure_seeded_ui_config, load_selected_ui_config,
     resolve_ui_config_relative_path,
 };
-pub use ui_config::{ResolvedUiConfigGlobal, active_shell_layout, resolve_ui_config};
+pub use ui_config::{ResolvedUiConfigGlobal, active_ui_layout, resolve_ui_config};

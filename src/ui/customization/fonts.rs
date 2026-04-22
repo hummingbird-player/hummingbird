@@ -5,19 +5,17 @@ use gpui::{App, Global, SharedString};
 use super::ui_config::{ResolvedUiConfigGlobal, UiConfig};
 
 const DEFAULT_UI_FONT_FAMILY: &str = "Inter";
-const DEFAULT_MONO_FONT_FAMILY: &str = "Roboto Mono";
+pub const DEFAULT_MONO_FONT_FAMILY: &str = "Roboto Mono";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedFonts {
     pub font: SharedString,
-    pub mono_font: SharedString,
 }
 
 impl Default for ResolvedFonts {
     fn default() -> Self {
         Self {
             font: DEFAULT_UI_FONT_FAMILY.into(),
-            mono_font: DEFAULT_MONO_FONT_FAMILY.into(),
         }
     }
 }
@@ -39,12 +37,6 @@ pub fn resolve_fonts(config: &UiConfig, available_fonts: &HashSet<String>) -> Re
             "font",
             config.font.as_deref(),
             &default_fonts.font,
-            available_fonts,
-        ),
-        mono_font: resolve_font_family(
-            "mono_font",
-            config.mono_font.as_deref(),
-            &default_fonts.mono_font,
             available_fonts,
         ),
     }
@@ -109,22 +101,19 @@ mod tests {
         let resolved = resolve_fonts(
             &UiConfig {
                 font: Some("Lexend".to_string()),
-                mono_font: Some("Roboto Mono".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
         );
 
         assert_eq!(resolved.font.as_ref(), "Lexend");
-        assert_eq!(resolved.mono_font.as_ref(), "Roboto Mono");
     }
 
     #[test]
-    fn invalid_custom_fonts_fall_back_to_defaults() {
+    fn invalid_custom_font_falls_back_to_default() {
         let resolved = resolve_fonts(
             &UiConfig {
                 font: Some("Missing UI Font".to_string()),
-                mono_font: Some("Missing Mono Font".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
@@ -138,13 +127,11 @@ mod tests {
         let resolved = resolve_fonts(
             &UiConfig {
                 font: Some(".SystemUIFont".to_string()),
-                mono_font: Some(".SystemUIFont".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
         );
 
         assert_eq!(resolved.font.as_ref(), ".SystemUIFont");
-        assert_eq!(resolved.mono_font.as_ref(), ".SystemUIFont");
     }
 }

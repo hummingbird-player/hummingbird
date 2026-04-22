@@ -1,14 +1,13 @@
 //! UI config loaded from `ui/*.json`.
 //!
-//! `layout` changes shell ordering,
-//! and `font` and `mono_font` change the font roles.
+//! `layout` changes shell and library pane ordering, and `font` changes the main UI font.
 
 use std::collections::HashSet;
 
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 
-use crate::ui::layout::{defaults::default_shell_layout, schema::ShellLayout};
+use crate::ui::layout::{defaults::default_ui_layout, schema::UiLayout};
 
 use super::fonts::{ResolvedFonts, resolve_fonts};
 
@@ -18,21 +17,20 @@ pub const SEEDED_UI_CONFIG_PATH: &str = "ui/custom.json";
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
-    pub layout: Option<ShellLayout>,
+    pub layout: Option<UiLayout>,
     pub font: Option<String>,
-    pub mono_font: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedUiConfig {
-    pub layout: ShellLayout,
+    pub layout: UiLayout,
     pub fonts: ResolvedFonts,
 }
 
 impl Default for ResolvedUiConfig {
     fn default() -> Self {
         Self {
-            layout: default_shell_layout(),
+            layout: default_ui_layout(),
             fonts: ResolvedFonts::default(),
         }
     }
@@ -44,12 +42,12 @@ impl Global for ResolvedUiConfigGlobal {}
 
 pub fn resolve_ui_config(config: &UiConfig, available_fonts: &HashSet<String>) -> ResolvedUiConfig {
     ResolvedUiConfig {
-        layout: config.layout.clone().unwrap_or_else(default_shell_layout),
+        layout: config.layout.clone().unwrap_or_else(default_ui_layout),
         fonts: resolve_fonts(config, available_fonts),
     }
 }
 
-pub fn active_shell_layout(cx: &App) -> ShellLayout {
+pub fn active_ui_layout(cx: &App) -> UiLayout {
     cx.global::<ResolvedUiConfigGlobal>().0.layout.clone()
 }
 
@@ -57,7 +55,7 @@ pub fn active_shell_layout(cx: &App) -> ShellLayout {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::ui::layout::defaults::default_shell_layout;
+    use crate::ui::layout::defaults::default_ui_layout;
 
     use super::{ResolvedFonts, ResolvedUiConfig, UiConfig, resolve_ui_config};
 
@@ -76,8 +74,8 @@ mod tests {
     }
 
     #[test]
-    fn ui_config_uses_explicit_shell_layout() {
-        let layout = default_shell_layout();
+    fn ui_config_uses_explicit_layout() {
+        let layout = default_ui_layout();
         let resolved = resolve_ui_config(
             &UiConfig {
                 layout: Some(layout.clone()),
@@ -94,7 +92,6 @@ mod tests {
         let resolved = resolve_ui_config(
             &UiConfig {
                 font: Some("Lexend".to_string()),
-                mono_font: Some("Roboto Mono".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
@@ -104,7 +101,6 @@ mod tests {
             resolved.fonts,
             ResolvedFonts {
                 font: "Lexend".into(),
-                mono_font: "Roboto Mono".into(),
             }
         );
     }

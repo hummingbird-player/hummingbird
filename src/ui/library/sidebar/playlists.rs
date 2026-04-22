@@ -31,7 +31,10 @@ use crate::{
             sidebar::sidebar_item,
             textbox::Textbox,
         },
-        library::{NavigationHistory, ViewSwitchMessage, playlist_view::find_playlist_tracks},
+        library::{
+            NavigationHistory, ViewSwitchMessage, effective_browse_message,
+            playlist_view::find_playlist_tracks,
+        },
         models::{Models, PlaybackInfo, PlaylistEvent},
         styling::theme::Theme,
     },
@@ -242,8 +245,6 @@ impl Render for PlaylistList {
                 ))
             });
 
-        let current_view = self.nav_model.read(cx).current();
-
         let two_column = cx
             .global::<SettingsGlobal>()
             .model
@@ -251,14 +252,7 @@ impl Render for PlaylistList {
             .interface
             .two_column_library;
 
-        let sidebar_view = if two_column && current_view.is_detail_page() {
-            self.nav_model
-                .read(cx)
-                .last_matching(ViewSwitchMessage::is_key_page)
-                .unwrap_or(current_view)
-        } else {
-            current_view
-        };
+        let sidebar_view = effective_browse_message(self.nav_model.read(cx), two_column);
 
         let rename_input = self.rename_playlist_input.clone();
         let weak_entity = cx.entity().downgrade();

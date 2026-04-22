@@ -127,7 +127,7 @@
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:488",
+    "definedIn": "src/ui/library.rs:505",
     "plural": false,
     "description": null
   },
@@ -139,7 +139,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:489",
+    "definedIn": "src/ui/library.rs:506",
     "plural": false,
     "description": null
   },
@@ -211,7 +211,7 @@
   },
   "ALBUMS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:161",
+    "definedIn": "src/ui/library/sidebar.rs:154",
     "plural": false,
     "description": null
   },
@@ -223,7 +223,7 @@
   },
   "ARTISTS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:181",
+    "definedIn": "src/ui/library/sidebar.rs:174",
     "plural": false,
     "description": null
   },
@@ -247,7 +247,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:585",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:579",
     "plural": false,
     "description": null
   },
@@ -277,7 +277,7 @@
   },
   "COLLAPSE_SIDEBAR": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:129",
+    "definedIn": "src/ui/library/sidebar.rs:122",
     "plural": false,
     "description": null
   },
@@ -361,7 +361,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:594",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:588",
     "plural": false,
     "description": null
   },
@@ -373,7 +373,7 @@
   },
   "DELETE_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:439",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:433",
     "plural": false,
     "description": null
   },
@@ -409,13 +409,13 @@
   },
   "EXPAND_SIDEBAR": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:220",
+    "definedIn": "src/ui/library/sidebar.rs:213",
     "plural": false,
     "description": null
   },
   "EXPORT_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:427",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:421",
     "plural": false,
     "description": null
   },
@@ -655,7 +655,7 @@
   },
   "LIKED_SONGS": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:270",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:264",
     "plural": false,
     "description": null
   },
@@ -685,7 +685,7 @@
   },
   "NEW_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:543",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:537",
     "plural": false,
     "description": null
   },
@@ -787,7 +787,7 @@
   },
   "PLAYLIST_TRACK_COUNT": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:308",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:302",
     "plural": true,
     "description": null
   },
@@ -865,13 +865,13 @@
   },
   "RENAME": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:517",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:511",
     "plural": false,
     "description": null
   },
   "RENAME_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:400",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:394",
     "plural": false,
     "description": null
   },
@@ -1261,13 +1261,13 @@
   },
   "STATS_TOTAL_LENGTH": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:247",
+    "definedIn": "src/ui/library/sidebar.rs:240",
     "plural": true,
     "description": null
   },
   "STATS_TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:241",
+    "definedIn": "src/ui/library/sidebar.rs:234",
     "plural": true,
     "description": null
   },
@@ -1309,7 +1309,7 @@
   },
   "TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:201",
+    "definedIn": "src/ui/library/sidebar.rs:194",
     "plural": false,
     "description": null
   },

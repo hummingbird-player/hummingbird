@@ -21,7 +21,10 @@ use crate::{
         },
         customization::scale::{active_density, active_typography, apply_text_style, scale_px},
         global_actions::Search,
-        library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
+        library::{
+            NavigationHistory, ViewSwitchMessage, effective_browse_message,
+            sidebar::playlists::PlaylistList,
+        },
         models::Models,
         styling::theme::Theme,
     },
@@ -77,7 +80,6 @@ impl Render for Sidebar {
         let density = active_density(cx);
         let typography = active_typography(cx);
         let stats_minutes = self.track_stats.total_duration / 60;
-        let current_view = self.nav_model.read(cx).current();
         let two_column = cx
             .global::<SettingsGlobal>()
             .model
@@ -85,16 +87,7 @@ impl Render for Sidebar {
             .interface
             .two_column_library;
 
-        // In two-column mode, the sidebar should reflect the *left* pane, not the
-        // right (detail) pane.  Derive the effective view the same way Library does.
-        let sidebar_view = if two_column && current_view.is_detail_page() {
-            self.nav_model
-                .read(cx)
-                .last_matching(ViewSwitchMessage::is_key_page)
-                .unwrap_or(current_view)
-        } else {
-            current_view
-        };
+        let sidebar_view = effective_browse_message(self.nav_model.read(cx), two_column);
         let sidebar_width = cx.global::<Models>().sidebar_width.clone();
         let sidebar_collapsed_entity = cx.global::<Models>().sidebar_collapsed.clone();
         let sidebar_collapsed_entity_bottom = sidebar_collapsed_entity.clone();

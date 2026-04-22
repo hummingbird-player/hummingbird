@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ui::layout::defaults::default_shell_layout;
+use crate::ui::layout::defaults::default_ui_layout;
 
 use super::{
     file_options::{
@@ -23,9 +23,8 @@ pub fn seeded_ui_config_path(data_dir: &Path) -> PathBuf {
 
 pub fn ensure_seeded_ui_config(data_dir: &Path) {
     let starter = UiConfig {
-        layout: Some(default_shell_layout()),
+        layout: Some(default_ui_layout()),
         font: None,
-        mono_font: None,
     };
     let serialized = match serialize_config(&starter) {
         Ok(serialized) => serialized,
@@ -102,9 +101,8 @@ pub fn load_selected_ui_config(data_dir: &Path, selected_config: Option<&str>) -
 
 fn default_ui_config() -> UiConfig {
     UiConfig {
-        layout: Some(default_shell_layout()),
+        layout: Some(default_ui_layout()),
         font: None,
-        mono_font: None,
     }
 }
 
@@ -189,8 +187,8 @@ mod tests {
                 ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
             },
             layout::{
-                defaults::default_shell_layout,
-                schema::{MainRegion, OuterBand, ShellLayout},
+                defaults::default_ui_layout,
+                schema::{LibraryLayout, MainRegion, OuterBand, TwoColumnPane, UiLayout},
             },
         },
     };
@@ -214,9 +212,8 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: Some(default_shell_layout()),
+                layout: Some(default_ui_layout()),
                 font: None,
-                mono_font: None,
             }
         );
         assert!(path.is_file());
@@ -227,16 +224,18 @@ mod tests {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
         let expected = UiConfig {
-            layout: Some(ShellLayout {
-                outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
+            layout: Some(UiLayout {
+                outer_order: [OuterBand::Controls, OuterBand::Main],
                 main_order: [
-                    MainRegion::RightSidebar,
+                    MainRegion::SidePanel,
                     MainRegion::LibraryContent,
                     MainRegion::LibrarySidebar,
                 ],
+                library: LibraryLayout {
+                    two_column_order: [TwoColumnPane::Detail, TwoColumnPane::Browse],
+                },
             }),
             font: Some("Inter".to_string()),
-            mono_font: Some("Roboto Mono".to_string()),
         };
         write_config(path.parent().unwrap(), &path, &expected).unwrap();
 
@@ -257,9 +256,8 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: Some(default_shell_layout()),
+                layout: Some(default_ui_layout()),
                 font: None,
-                mono_font: None,
             }
         );
     }
@@ -272,16 +270,16 @@ mod tests {
             path.parent().unwrap(),
             &path,
             &UiConfig {
-                layout: Some(ShellLayout {
-                    outer_order: [OuterBand::Header, OuterBand::Header, OuterBand::Controls],
+                layout: Some(UiLayout {
+                    outer_order: [OuterBand::Main, OuterBand::Main],
                     main_order: [
                         MainRegion::LibrarySidebar,
                         MainRegion::LibraryContent,
-                        MainRegion::RightSidebar,
+                        MainRegion::SidePanel,
                     ],
+                    library: LibraryLayout::default(),
                 }),
                 font: None,
-                mono_font: None,
             },
         )
         .unwrap();
@@ -291,9 +289,8 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: Some(default_shell_layout()),
+                layout: Some(default_ui_layout()),
                 font: None,
-                mono_font: None,
             }
         );
     }
@@ -307,8 +304,7 @@ mod tests {
         fs::write(
             &path,
             r#"{
-  "font": "Inter",
-  "mono_font": "Roboto Mono"
+  "font": "Inter"
 }"#,
         )
         .unwrap();
@@ -320,7 +316,6 @@ mod tests {
             UiConfig {
                 layout: None,
                 font: Some("Inter".to_string()),
-                mono_font: Some("Roboto Mono".to_string()),
             }
         );
     }
@@ -336,15 +331,17 @@ mod tests {
             r#"{
   "layout": {
     "outer_order": [
-      "header",
       "controls",
       "main"
     ],
     "main_order": [
       "library_sidebar",
       "library_content",
-      "right_sidebar"
-    ]
+      "side_panel"
+    ],
+    "library": {
+      "two_column_order": ["detail", "browse"]
+    }
   }
 }"#,
         )
@@ -355,16 +352,18 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: Some(ShellLayout {
-                    outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
+                layout: Some(UiLayout {
+                    outer_order: [OuterBand::Controls, OuterBand::Main],
                     main_order: [
                         MainRegion::LibrarySidebar,
                         MainRegion::LibraryContent,
-                        MainRegion::RightSidebar,
+                        MainRegion::SidePanel,
                     ],
+                    library: LibraryLayout {
+                        two_column_order: [TwoColumnPane::Detail, TwoColumnPane::Browse],
+                    },
                 }),
                 font: None,
-                mono_font: None,
             }
         );
     }
@@ -380,19 +379,20 @@ mod tests {
             r#"{
   "layout": {
     "outer_order": [
-      "header",
       "controls",
       "main"
     ],
     "main_order": [
-      "right_sidebar",
+      "side_panel",
       "library_content",
       "library_sidebar"
-    ]
+    ],
+    "library": {
+      "two_column_order": ["detail", "browse"]
+    }
   },
   "ignored_field": true,
-  "font": "Inter",
-  "mono_font": "Roboto Mono"
+  "font": "Inter"
 }"#,
         )
         .unwrap();
@@ -402,16 +402,75 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: Some(ShellLayout {
-                    outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
+                layout: Some(UiLayout {
+                    outer_order: [OuterBand::Controls, OuterBand::Main],
                     main_order: [
-                        MainRegion::RightSidebar,
+                        MainRegion::SidePanel,
                         MainRegion::LibraryContent,
                         MainRegion::LibrarySidebar,
                     ],
+                    library: LibraryLayout {
+                        two_column_order: [TwoColumnPane::Detail, TwoColumnPane::Browse],
+                    },
                 }),
                 font: Some("Inter".to_string()),
-                mono_font: Some("Roboto Mono".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_legacy_layout_values_fall_back_to_default() {
+        let dir = create_test_dir();
+        let path = seeded_ui_config_path(dir.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{
+  "layout": {
+    "outer_order": ["header", "main"],
+    "main_order": ["library_sidebar", "library_content", "right_sidebar"]
+  }
+}"#,
+        )
+        .unwrap();
+
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
+
+        assert_eq!(
+            config,
+            UiConfig {
+                layout: Some(default_ui_layout()),
+                font: None,
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_two_column_order_falls_back_to_default() {
+        let dir = create_test_dir();
+        let path = seeded_ui_config_path(dir.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{
+  "layout": {
+    "outer_order": ["controls", "main"],
+    "main_order": ["library_sidebar", "library_content", "side_panel"],
+    "library": {
+      "two_column_order": ["browse", "browse"]
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
+
+        assert_eq!(
+            config,
+            UiConfig {
+                layout: Some(default_ui_layout()),
+                font: None,
             }
         );
     }

@@ -1,5 +1,5 @@
-use super::schema::ShellLayout;
+use super::schema::UiLayout;
 
-pub fn default_shell_layout() -> ShellLayout {
-    ShellLayout::default()
+pub fn default_ui_layout() -> UiLayout {
+    UiLayout::default()
 }

@@ -23,6 +23,8 @@ use crate::{
             resizable::{ResizeEdge, resizable},
             table::table_data::TABLE_MAX_WIDTH,
         },
+        customization::active_ui_layout,
+        layout::TwoColumnPane,
         library::{
             playlist_view::{Import, PlaylistView},
             update_playlist::UpdatePlaylist,
@@ -252,8 +254,8 @@ impl LibraryView {
 
 pub struct Library {
     view: LibraryView,
-    left_view: Option<LibraryView>,
-    right_view: Option<LibraryView>,
+    browse_view: Option<LibraryView>,
+    detail_view: Option<LibraryView>,
     section: LibrarySection,
     show_update_playlist: Entity<bool>,
     update_playlist: Entity<UpdatePlaylist>,
@@ -347,6 +349,21 @@ fn library_section_from_history(history: &NavigationHistory) -> LibrarySection {
         .unwrap_or(LibrarySection::Albums)
 }
 
+pub(crate) fn effective_browse_message(
+    history: &NavigationHistory,
+    two_column: bool,
+) -> ViewSwitchMessage {
+    let current = history.current();
+
+    if two_column && current.is_detail_page() {
+        history
+            .last_matching(ViewSwitchMessage::is_key_page)
+            .unwrap_or(current)
+    } else {
+        current
+    }
+}
+
 impl Library {
     fn sync_visible_views(&mut self, model: &Entity<NavigationHistory>, cx: &mut App) {
         let history = model.read(cx);
@@ -362,28 +379,28 @@ impl Library {
 
         if two_column {
             if current_msg.is_detail_page() {
-                self.right_view = Some(self.view.clone());
+                self.detail_view = Some(self.view.clone());
 
-                let left_msg = history.last_matching(ViewSwitchMessage::is_key_page);
+                let browse_msg = history.last_matching(ViewSwitchMessage::is_key_page);
 
-                let needs_new_left = match (&self.left_view, &left_msg) {
+                let needs_new_browse = match (&self.browse_view, &browse_msg) {
                     (None, Some(_)) | (Some(_), None) => true,
                     (Some(lv), Some(msg)) => !msg.library_view_matches(lv),
                     (None, None) => false,
                 };
 
-                if needs_new_left {
-                    self.left_view = left_msg
+                if needs_new_browse {
+                    self.browse_view = browse_msg
                         .as_ref()
                         .map(|message| make_view(message, cx, model, &self.scroll_state));
                 }
             } else {
-                self.left_view = Some(self.view.clone());
-                self.right_view = None;
+                self.browse_view = Some(self.view.clone());
+                self.detail_view = None;
             }
         } else {
-            self.left_view = None;
-            self.right_view = None;
+            self.browse_view = None;
+            self.detail_view = None;
         }
     }
 
@@ -511,8 +528,8 @@ impl Library {
 
             let mut library = Library {
                 view,
-                left_view: None,
-                right_view: None,
+                browse_view: None,
+                detail_view: None,
                 section,
                 update_playlist: UpdatePlaylist::new(cx, show_update_playlist.clone()),
                 show_update_playlist,
@@ -545,6 +562,7 @@ impl Render for Library {
             .read(cx);
         let full_width = settings.interface.effective_full_width();
         let two_column = settings.interface.two_column_library;
+        let ui_layout = active_ui_layout(cx);
 
         fn render_library_view(view: &LibraryView) -> AnyElement {
             match view {
@@ -578,58 +596,80 @@ impl Render for Library {
             })
         });
 
-        let content = if let (true, Some(left), Some(right)) = (
+        let content = if let (true, Some(browse), Some(detail)) = (
             two_column,
-            self.left_view.as_ref(),
-            self.right_view.as_ref(),
+            self.browse_view.as_ref(),
+            self.detail_view.as_ref(),
         ) {
-            // two column
-            let key = left.split_key();
+            let key = browse.split_key();
             let split_widths = &cx.global::<Models>().split_widths;
             let split_width_model = split_widths
                 .get(key)
                 .unwrap_or_else(|| split_widths.get("albums").unwrap())
                 .clone();
+            let browse_on_left =
+                matches!(ui_layout.library.two_column_order[0], TwoColumnPane::Browse);
 
-            div()
+            let browse_pane = resizable(
+                "split-resizable",
+                split_width_model,
+                if browse_on_left {
+                    ResizeEdge::Right
+                } else {
+                    ResizeEdge::Left
+                },
+            )
+            .percent_mode()
+            .border_width(px(2.0))
+            .min_size(px(0.10))
+            .max_size(px(0.80))
+            .default_size(DEFAULT_SPLIT_FRACTION)
+            .h_full()
+            .child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .child(render_library_view(browse)),
+            );
+
+            let detail_pane = div()
                 .w_full()
                 .h_full()
                 .flex()
+                .flex_col()
                 .flex_shrink()
-                .mr_auto()
                 .overflow_hidden()
-                .child(
-                    resizable("split-resizable", split_width_model, ResizeEdge::Right)
-                        .percent_mode()
-                        .border_width(px(2.0))
-                        .min_size(px(0.10))
-                        .max_size(px(0.80))
-                        .default_size(DEFAULT_SPLIT_FRACTION)
-                        .h_full()
-                        .child(
-                            div()
-                                .w_full()
-                                .h_full()
-                                .flex()
-                                .flex_col()
-                                .overflow_hidden()
-                                .child(render_library_view(left)),
-                        ),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .h_full()
-                        .flex()
-                        .flex_col()
-                        .flex_shrink()
-                        .overflow_hidden()
-                        .child(render_library_view(right)),
-                )
-                .into_any_element()
+                .child(render_library_view(detail));
+
+            if browse_on_left {
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .flex_shrink()
+                    .mr_auto()
+                    .overflow_hidden()
+                    .child(browse_pane)
+                    .child(detail_pane)
+                    .into_any_element()
+            } else {
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .flex_shrink()
+                    .mr_auto()
+                    .overflow_hidden()
+                    .child(detail_pane)
+                    .child(browse_pane)
+                    .into_any_element()
+            }
         } else if two_column {
             // single column - two column mode but views not available
-            single_column(self.left_view.as_ref().unwrap_or(&self.view))
+            single_column(self.browse_view.as_ref().unwrap_or(&self.view))
         } else {
             // single column - two column mode disabled
             single_column(&self.view)

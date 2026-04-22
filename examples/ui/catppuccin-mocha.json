@@ -1,7 +1,10 @@
 {
     "layout": {
-        "outer_order": ["header", "controls", "main"],
-        "main_order": ["right_sidebar", "library_content", "library_sidebar"]
+        "outer_order": ["controls", "main"],
+        "main_order": ["side_panel", "library_content", "library_sidebar"],
+        "library": {
+            "two_column_order": ["browse", "detail"]
+        }
     },
     "font": "IBM Plex Sans"
 }
