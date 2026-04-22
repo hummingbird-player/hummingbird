@@ -248,6 +248,15 @@ impl InteractiveButton {
         self
     }
 
+    pub fn on_mouse_down(
+        mut self,
+        button: gpui::MouseButton,
+        fun: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.div = self.div.on_mouse_down(button, fun);
+        self
+    }
+
     pub fn tooltip(mut self, build: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.div = self.div.tooltip(build);
         self

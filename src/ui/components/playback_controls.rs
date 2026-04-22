@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, ClickEvent, ElementId, FontWeight, IntoElement, ParentElement, RenderOnce, SharedString,
-    Styled, Window, div, prelude::FluentBuilder, px,
+    AnyElement, App, ClickEvent, ElementId, FontWeight, IntoElement, ParentElement, RenderOnce,
+    SharedString, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -31,9 +31,21 @@ pub struct PlaybackControls {
     current_track_in_listing: bool,
     is_playing: bool,
     get_track_listing: TrackListingProvider,
+    show_add_to_queue: bool,
+    trailing: Option<AnyElement>,
 }
 
 impl PlaybackControls {
+    pub fn show_add_to_queue(mut self, show: bool) -> Self {
+        self.show_add_to_queue = show;
+        self
+    }
+
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing = Some(element.into_any_element());
+        self
+    }
+
     fn icon_button_with_tooltip(
         id: impl Into<ElementId>,
         icon_name: &'static str,
@@ -61,6 +73,7 @@ impl RenderOnce for PlaybackControls {
         let has_tracks = self.has_available_tracks;
         let is_current = self.current_track_in_listing;
         let is_playing = self.is_playing;
+        let show_add_to_queue = self.show_add_to_queue;
 
         div()
             .gap(px(10.0))
@@ -98,16 +111,18 @@ impl RenderOnce for PlaybackControls {
                         tr!("PLAY", "Play")
                     })),
             )
-            .child(Self::icon_button_with_tooltip(
-                (self.id_prefix.clone(), 1),
-                CIRCLE_PLUS,
-                tr!("ADD_TO_QUEUE").into(),
-                !has_tracks,
-                move |_, _, cx| {
-                    let queue_items = get_tracks_add(cx);
-                    cx.global::<PlaybackInterface>().queue_list(queue_items);
-                },
-            ))
+            .when(show_add_to_queue, |this| {
+                this.child(Self::icon_button_with_tooltip(
+                    (self.id_prefix.clone(), 1),
+                    CIRCLE_PLUS,
+                    tr!("ADD_TO_QUEUE").into(),
+                    !has_tracks,
+                    move |_, _, cx| {
+                        let queue_items = get_tracks_add(cx);
+                        cx.global::<PlaybackInterface>().queue_list(queue_items);
+                    },
+                ))
+            })
             .child(Self::icon_button_with_tooltip(
                 (self.id_prefix.clone(), 2),
                 SHUFFLE,
@@ -121,6 +136,7 @@ impl RenderOnce for PlaybackControls {
                     replace_queue(get_tracks_shuffle(cx), cx);
                 },
             ))
+            .when_some(self.trailing, |this, trailing| this.child(trailing))
     }
 }
 
@@ -137,5 +153,7 @@ pub fn playback_controls(
         current_track_in_listing,
         is_playing,
         get_track_listing: Rc::new(get_track_listing),
+        show_add_to_queue: true,
+        trailing: None,
     }
 }

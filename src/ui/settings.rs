@@ -1,3 +1,4 @@
+pub mod corrupt_settings_dialog;
 mod interface;
 mod library;
 mod playback;

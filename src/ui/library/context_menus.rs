@@ -2,7 +2,7 @@ pub mod album;
 pub mod info_section;
 pub mod track;
 
-use std::{path::Path, process::Command, rc::Rc, sync::Arc};
+use std::{path::Path, rc::Rc, sync::Arc};
 
 use camino::Utf8PathBuf;
 use cntp_i18n::tr;
@@ -289,27 +289,6 @@ fn navigate_to_artist(cx: &mut App, artist_id: i64) {
     switcher.update(cx, |_, cx| {
         cx.emit(ViewSwitchMessage::Artist(artist_id));
     });
-}
-
-fn reveal_track_in_file_manager(track: &Track) {
-    reveal_path_in_file_manager(track.location.as_path());
-}
-
-fn reveal_path_in_file_manager(path: &Path) {
-    if !path.exists() {
-        return;
-    }
-
-    #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg("-R").arg(path).spawn();
-
-    #[cfg(target_os = "windows")]
-    let _ = Command::new("explorer").arg("/select,").arg(path).spawn();
-
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let _ = path
-        .parent()
-        .map(|parent| Command::new("xdg-open").arg(parent).spawn());
 }
 
 fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData> {

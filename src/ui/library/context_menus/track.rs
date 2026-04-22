@@ -22,7 +22,7 @@ use crate::{
 use super::{
     PlaylistMenuInfo, TrackContextMenuContext, navigate_to_track_album, navigate_to_track_artist,
     play_track_next, play_track_now, queue_track, remove_from_playlist, rescan_track,
-    reveal_track_in_file_manager, track_show_in_file_manager_label,
+    track_show_in_file_manager_label,
 };
 use crate::ui::app::Pool;
 
@@ -151,8 +151,8 @@ impl RenderOnce for TrackContextMenu {
                     track_show_in_file_manager_label(),
                     {
                         let track_for_reveal = track_for_reveal.clone();
-                        move |_, _, _| {
-                            reveal_track_in_file_manager(&track_for_reveal);
+                        move |_, _, cx| {
+                            cx.reveal_path(track_for_reveal.location.as_path());
                         }
                     },
                 )
