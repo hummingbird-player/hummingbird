@@ -16,6 +16,7 @@ use crate::{
             menu::{menu, menu_item, menu_separator},
         },
         models::{Models, toggle_like_by_id},
+        util::reveal_path_for_file_manager,
     },
 };
 
@@ -152,7 +153,7 @@ impl RenderOnce for TrackContextMenu {
                     {
                         let track_for_reveal = track_for_reveal.clone();
                         move |_, _, cx| {
-                            cx.reveal_path(track_for_reveal.location.as_path());
+                            reveal_path_for_file_manager(track_for_reveal.location.as_path(), cx);
                         }
                     },
                 )

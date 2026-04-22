@@ -1,15 +1,19 @@
 use std::{
+    collections::VecDeque,
     mem::take,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
 
 use rand::{rng, seq::SliceRandom};
+use smallvec::{SmallVec, smallvec};
 
 use crate::{
     playback::{events::RepeatState, queue::QueueItemData, session_storage::PlaybackSessionData},
     settings::playback::PlaybackSettings,
 };
+
+const UNDO_STACK_CAPACITY: usize = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reshuffled {
@@ -90,6 +94,62 @@ pub enum JumpResult {
     OutOfBounds,
 }
 
+#[derive(Debug, Clone)]
+/// Type storing the inverse of various queue mutations, for undoing queue changes.
+pub enum UndoAction {
+    /// The queue was replaced with a new set of items. Contains the old queue state.
+    Replaced {
+        old_queue: Vec<QueueItemData>,
+        old_original_queue: Vec<QueueItemData>,
+        previous_queue_next: usize,
+        previous_shuffle: bool,
+    },
+    /// The queue was shuffled (shuffle toggled on). The pre-shuffle queue is recoverable
+    /// by taking `original_queue` at undo time, so no payload is needed.
+    Shuffled,
+    /// The queue was unshuffled (shuffle toggled off). Stores the pre-unshuffle (shuffled)
+    /// queue; the pre-unshuffle `original_queue` is recoverable from the queue at undo time.
+    Unshuffled {
+        shuffled_queue: Vec<QueueItemData>,
+        previous_queue_next: usize,
+    },
+    /// Items were removed from the queue. Contains a list of removed items and their indices.
+    Removed {
+        queue_items: SmallVec<[(usize, QueueItemData); 1]>,
+        original_queue_items: SmallVec<[(usize, QueueItemData); 1]>,
+        previous_queue_next: usize,
+        previous_shuffle: bool,
+    },
+    /// Items were inserted into the queue. Contains a list of inserted item indices.
+    Inserted {
+        queue_indices: SmallVec<[usize; 1]>,
+        original_queue_indices: SmallVec<[usize; 1]>,
+        previous_queue_next: usize,
+        previous_shuffle: bool,
+    },
+    /// Items were moved within the queue. Contains the original and new indices.
+    Moved {
+        original: usize,
+        new: usize,
+        previous_queue_next: usize,
+        previous_shuffle: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum UndoResult {
+    /// The last action was undone successfully. Contains the current index and path.
+    Ok {
+        current_idx: usize,
+        current_path: PathBuf,
+        shuffle: bool,
+    },
+    /// The last action was undone successfully, but no current track is selected.
+    OkNoCurrent { shuffle: bool },
+    /// No action to undo.
+    None,
+}
+
 /// Manages the playback queue state.
 ///
 /// This component handles all queue operations including navigation, shuffling,
@@ -110,9 +170,29 @@ pub struct QueueManager {
     queue_next: usize,
     repeat: RepeatState,
     storage_tx: tokio::sync::watch::Sender<PlaybackSessionData>,
+    undo_stack: VecDeque<UndoAction>,
 }
 
 impl QueueManager {
+    fn undo_result_from_state(
+        queue: &[QueueItemData],
+        queue_next: usize,
+        shuffle: bool,
+    ) -> UndoResult {
+        if let Some(current_idx) = queue_next
+            .checked_sub(1)
+            .filter(|current_idx| *current_idx < queue.len())
+        {
+            UndoResult::Ok {
+                current_idx,
+                current_path: queue[current_idx].get_path().clone(),
+                shuffle,
+            }
+        } else {
+            UndoResult::OkNoCurrent { shuffle }
+        }
+    }
+
     fn normalize_repeat_state(
         playback_settings: &PlaybackSettings,
         state: RepeatState,
@@ -144,6 +224,126 @@ impl QueueManager {
         (0..end_exclusive)
             .rev()
             .find(|idx| Self::item_is_playable(&queue[*idx]))
+    }
+
+    fn push_undo_action(&mut self, action: UndoAction) {
+        if self.undo_stack.len() >= UNDO_STACK_CAPACITY {
+            self.undo_stack.pop_front();
+        }
+
+        self.undo_stack.push_back(action);
+    }
+
+    pub fn undo_last_action(&mut self) -> UndoResult {
+        let action = self.undo_stack.pop_back();
+
+        let result = match action {
+            Some(UndoAction::Replaced {
+                old_queue,
+                old_original_queue,
+                previous_queue_next,
+                previous_shuffle,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+                *queue = old_queue;
+                self.original_queue = old_original_queue;
+                self.queue_next = previous_queue_next;
+                self.shuffle = previous_shuffle;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::Removed {
+                queue_items,
+                original_queue_items,
+                previous_queue_next,
+                previous_shuffle,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+
+                let mut queue_items = queue_items.into_vec();
+                queue_items.sort_unstable_by_key(|(idx, _)| *idx);
+                for (idx, item) in queue_items {
+                    queue.insert(idx, item);
+                }
+
+                let mut original_queue_items = original_queue_items.into_vec();
+                original_queue_items.sort_unstable_by_key(|(idx, _)| *idx);
+                for (idx, item) in original_queue_items {
+                    self.original_queue.insert(idx, item);
+                }
+
+                self.queue_next = previous_queue_next;
+                self.shuffle = previous_shuffle;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::Inserted {
+                queue_indices,
+                original_queue_indices,
+                previous_queue_next,
+                previous_shuffle,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+
+                let mut queue_indices = queue_indices.into_vec();
+                queue_indices.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in queue_indices {
+                    queue.remove(idx);
+                }
+
+                let mut original_queue_indices = original_queue_indices.into_vec();
+                original_queue_indices.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in original_queue_indices {
+                    self.original_queue.remove(idx);
+                }
+
+                self.queue_next = previous_queue_next;
+                self.shuffle = previous_shuffle;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::Moved {
+                original,
+                new,
+                previous_queue_next,
+                previous_shuffle,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+
+                let item = queue.remove(new);
+                queue.insert(original, item);
+
+                self.queue_next = previous_queue_next;
+                self.shuffle = previous_shuffle;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::Shuffled) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+                *queue = take(&mut self.original_queue);
+                self.shuffle = false;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::Unshuffled {
+                shuffled_queue,
+                previous_queue_next,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+                self.original_queue = std::mem::replace(&mut *queue, shuffled_queue);
+                self.queue_next = previous_queue_next;
+                self.shuffle = true;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            None => UndoResult::None,
+        };
+
+        if !matches!(result, UndoResult::None) {
+            self.persist_session_with_queue();
+        }
+
+        result
     }
 
     pub fn new(
@@ -182,6 +382,7 @@ impl QueueManager {
             shuffle,
             queue_next: queue_position.map_or(0, |position| position + 1),
             storage_tx,
+            undo_stack: VecDeque::with_capacity(UNDO_STACK_CAPACITY),
         }
     }
 
@@ -406,9 +607,14 @@ impl QueueManager {
     ///
     /// Returns the index where the item was added.
     pub fn queue_item(&mut self, item: QueueItemData) -> usize {
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
+        let mut original_queue_indices = SmallVec::new();
 
         if self.shuffle {
+            original_queue_indices.push(self.original_queue.len());
             self.original_queue.push(item.clone());
         }
 
@@ -418,6 +624,13 @@ impl QueueManager {
 
         drop(queue);
         self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::Inserted {
+            queue_indices: smallvec![index],
+            original_queue_indices,
+            previous_queue_next,
+            previous_shuffle,
+        });
 
         index
     }
@@ -431,11 +644,17 @@ impl QueueManager {
             return self.len();
         }
 
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
         let first_index = queue.len();
+        let mut original_queue_indices = SmallVec::new();
 
         if self.shuffle {
+            let original_start = self.original_queue.len();
             self.original_queue.extend(items.clone());
+            original_queue_indices.extend(original_start..original_start + items.len());
 
             let mut shuffled = items.clone();
             shuffled.shuffle(&mut rng());
@@ -447,16 +666,28 @@ impl QueueManager {
         drop(queue);
         self.persist_session_with_queue();
 
+        self.push_undo_action(UndoAction::Inserted {
+            queue_indices: (first_index..first_index + items.len()).collect(),
+            original_queue_indices,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
         first_index
     }
 
     /// Insert a single item at a specific position.
     pub fn insert_item(&mut self, position: usize, item: QueueItemData) -> InsertResult {
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
+        let mut original_queue_indices = SmallVec::new();
 
         let insert_pos = position.min(queue.len());
 
         if self.shuffle {
+            original_queue_indices.push(self.original_queue.len());
             self.original_queue.push(item.clone());
         }
 
@@ -468,7 +699,7 @@ impl QueueManager {
             self.queue_next += 1;
             InsertResult::InsertedMovedCurrent {
                 first_index: insert_pos,
-                new_position: self.queue_next - 1,
+                new_position: self.queue_next.saturating_sub(1),
             }
         } else {
             InsertResult::Inserted {
@@ -477,6 +708,14 @@ impl QueueManager {
         };
 
         self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::Inserted {
+            queue_indices: smallvec![insert_pos],
+            original_queue_indices,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
         result
     }
 
@@ -486,13 +725,19 @@ impl QueueManager {
             return InsertResult::Unchanged;
         }
 
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
         let insert_pos = position.min(queue.len());
         let items_len = items.len();
+        let mut original_queue_indices = SmallVec::new();
 
         if self.shuffle {
+            let original_start = self.original_queue.len();
             self.original_queue.extend(items.clone());
+            original_queue_indices.extend(original_start..original_start + items_len);
         }
 
         queue.splice(insert_pos..insert_pos, items.clone());
@@ -503,7 +748,7 @@ impl QueueManager {
             self.queue_next += items_len;
             InsertResult::InsertedMovedCurrent {
                 first_index: insert_pos,
-                new_position: self.queue_next - 1,
+                new_position: self.queue_next.saturating_sub(1),
             }
         } else {
             InsertResult::Inserted {
@@ -512,11 +757,22 @@ impl QueueManager {
         };
 
         self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::Inserted {
+            queue_indices: (insert_pos..insert_pos + items_len).collect(),
+            original_queue_indices,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
         result
     }
 
     /// Remove an item from the queue at the specified index.
     pub fn dequeue(&mut self, index: usize) -> DequeueResult {
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
         if index >= queue.len() {
@@ -524,12 +780,13 @@ impl QueueManager {
         }
 
         let removed = queue.remove(index);
+        let mut original_queue_items = SmallVec::new();
 
-        if self.shuffle {
-            self.original_queue
-                .iter()
-                .position(|item| item == &removed)
-                .map(|pos| self.original_queue.remove(pos));
+        if self.shuffle
+            && let Some(pos) = self.original_queue.iter().position(|item| item == &removed)
+        {
+            let original_removed = self.original_queue.remove(pos);
+            original_queue_items.push((pos, original_removed));
         }
 
         let current = self.queue_next.saturating_sub(1);
@@ -542,7 +799,7 @@ impl QueueManager {
         } else if index < current {
             self.queue_next -= 1;
             DequeueResult::Removed {
-                new_position: self.queue_next - 1,
+                new_position: self.queue_next.saturating_sub(1),
             }
         } else {
             DequeueResult::Removed {
@@ -553,14 +810,25 @@ impl QueueManager {
         drop(queue);
         self.persist_session_with_queue();
 
+        self.push_undo_action(UndoAction::Removed {
+            queue_items: smallvec![(index, removed)],
+            original_queue_items,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
         res
     }
 
-    /// Move an item from one position to another.
-    pub fn move_item(&mut self, from: usize, to: usize) -> MoveResult {
+    /// Move an item from one position to another. If it should be logged in the undo history, set
+    /// `user_initiated` to `true`.
+    pub fn move_item(&mut self, from: usize, to: usize, user_initiated: bool) -> MoveResult {
         if from == to {
             return MoveResult::Unchanged;
         }
+
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
 
         let mut queue = self.queue.write().expect("poisoned queue lock");
 
@@ -587,7 +855,7 @@ impl QueueManager {
             // Moved from after to before current
             self.queue_next += 1;
             MoveResult::MovedCurrent {
-                new_position: self.queue_next - 1,
+                new_position: self.queue_next.saturating_sub(1),
             }
         } else {
             MoveResult::Moved
@@ -596,6 +864,15 @@ impl QueueManager {
         drop(queue);
         self.persist_session_with_queue();
 
+        if user_initiated {
+            self.push_undo_action(UndoAction::Moved {
+                original: from,
+                new: to,
+                previous_queue_next,
+                previous_shuffle,
+            });
+        }
+
         res
     }
 
@@ -603,7 +880,13 @@ impl QueueManager {
     ///
     /// If shuffle is enabled, the items are shuffled (but original order is preserved).
     pub fn replace_queue(&mut self, items: Vec<QueueItemData>) -> ReplaceResult {
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        let old_queue = queue.clone();
+        let old_original_queue = self.original_queue.clone();
 
         if self.shuffle {
             let mut shuffled = items.clone();
@@ -619,6 +902,14 @@ impl QueueManager {
         let first_item = Self::first_playable_index(&queue).map(|idx| queue[idx].clone());
 
         drop(queue);
+
+        self.push_undo_action(UndoAction::Replaced {
+            old_queue,
+            old_original_queue,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
         self.queue_next = 0;
         self.persist_session_with_queue();
 
@@ -635,7 +926,14 @@ impl QueueManager {
     /// If `keep_current` is true, the currently playing track will be preserved and the
     /// queue will contain only that track.
     pub fn clear(&mut self, keep_current: bool) {
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
         let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        let queue_clone = queue.clone();
+        let old_original_queue = self.original_queue.clone();
+
         let current_item = keep_current
             .then(|| {
                 (self.queue_next > 0 && self.queue_next <= queue.len())
@@ -659,10 +957,19 @@ impl QueueManager {
 
         drop(queue);
         self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::Replaced {
+            old_queue: queue_clone,
+            old_original_queue,
+            previous_queue_next,
+            previous_shuffle,
+        });
     }
 
     /// Toggle shuffle mode.
     pub fn toggle_shuffle(&mut self) -> ShuffleResult {
+        let previous_queue_next = self.queue_next;
+
         let result = {
             let mut queue = self.queue.write().expect("poisoned queue lock");
 
@@ -675,6 +982,10 @@ impl QueueManager {
                 if start < queue.len() {
                     queue[start..].shuffle(&mut rng());
                 }
+
+                drop(queue);
+
+                self.push_undo_action(UndoAction::Shuffled);
 
                 ShuffleResult::Shuffled
             } else {
@@ -692,8 +1003,17 @@ impl QueueManager {
                     })
                     .unwrap_or(0);
 
+                let shuffled_queue = queue.clone();
+
                 *queue = take(&mut self.original_queue);
                 self.queue_next = new_position + 1;
+
+                drop(queue);
+
+                self.push_undo_action(UndoAction::Unshuffled {
+                    shuffled_queue,
+                    previous_queue_next,
+                });
 
                 ShuffleResult::Unshuffled { new_position }
             }
@@ -743,5 +1063,262 @@ impl QueueManager {
             session.shuffle = shuffle;
             session.repeat = repeat;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use serde_json::json;
+    use tokio::sync::watch;
+
+    use super::{QueueManager, UndoResult};
+    use crate::{
+        playback::{queue::QueueItemData, session_storage::PlaybackSessionData},
+        settings::playback::PlaybackSettings,
+    };
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct QueueManagerState {
+        queue: Vec<QueueItemData>,
+        original_queue: Vec<QueueItemData>,
+        queue_next: usize,
+        shuffle: bool,
+    }
+
+    fn item(id: i64) -> QueueItemData {
+        serde_json::from_value(json!({
+            "db_id": id,
+            "db_album_id": id / 10,
+            "path": format!("/tmp/hummingbird-undo-{id}.flac"),
+        }))
+        .expect("valid queue item")
+    }
+
+    fn manager_with_queue(items: Vec<QueueItemData>) -> QueueManager {
+        let queue = Arc::new(RwLock::new(items));
+        let (storage_tx, _storage_rx) = watch::channel(PlaybackSessionData::default());
+
+        QueueManager::new(
+            queue,
+            PlaybackSettings::default(),
+            PlaybackSessionData::default(),
+            storage_tx,
+        )
+    }
+
+    fn snapshot(manager: &QueueManager) -> QueueManagerState {
+        QueueManagerState {
+            queue: manager.queue.read().expect("poisoned queue lock").clone(),
+            original_queue: manager.original_queue.clone(),
+            queue_next: manager.queue_next,
+            shuffle: manager.shuffle,
+        }
+    }
+
+    fn assert_undo_round_trip(manager: &mut QueueManager, before: QueueManagerState) {
+        let undo = manager.undo_last_action();
+        assert!(
+            !matches!(undo, UndoResult::None),
+            "expected an undoable action"
+        );
+        assert_eq!(snapshot(manager), before);
+    }
+
+    #[test]
+    fn undo_insert_item_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+
+        let before = snapshot(&manager);
+
+        manager.insert_item(0, item(9));
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_queue_items_in_shuffle_mode_restores_original_queue() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+
+        manager.queue_items(vec![item(10), item(11), item(12)]);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_dequeue_in_shuffle_mode_restores_original_queue_indexes() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(2);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+
+        manager.dequeue(1);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_move_restores_previous_track_position() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(2);
+
+        let before = snapshot(&manager);
+
+        manager.move_item(0, 3, true);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_replace_queue_restores_full_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+
+        manager.replace_queue(vec![item(7), item(8)]);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_clear_keep_current_restores_full_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(2);
+
+        let before = snapshot(&manager);
+
+        manager.clear(true);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_toggle_shuffle_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(1);
+
+        let before = snapshot(&manager);
+
+        manager.toggle_shuffle();
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_twice_restores_state_before_both_actions() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+
+        let before = snapshot(&manager);
+
+        manager.insert_item(0, item(9));
+        manager.move_item(0, 2, true);
+
+        assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        assert_eq!(snapshot(&manager), before);
+    }
+
+    #[test]
+    fn undo_on_empty_stack_returns_none() {
+        let mut manager = manager_with_queue(vec![item(1), item(2)]);
+        let before = snapshot(&manager);
+
+        assert!(matches!(manager.undo_last_action(), UndoResult::None));
+        assert_eq!(snapshot(&manager), before);
+    }
+
+    #[test]
+    fn undo_stack_evicts_oldest_when_exceeding_capacity() {
+        use super::UNDO_STACK_CAPACITY;
+
+        let mut manager = manager_with_queue(vec![item(1)]);
+
+        manager.insert_item(0, item(100));
+        let after_first_insert = snapshot(&manager);
+
+        for i in 0..UNDO_STACK_CAPACITY {
+            manager.insert_item(0, item(200 + i as i64));
+        }
+
+        assert_eq!(manager.undo_stack.len(), UNDO_STACK_CAPACITY);
+
+        for _ in 0..UNDO_STACK_CAPACITY {
+            assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        }
+
+        assert!(matches!(manager.undo_last_action(), UndoResult::None));
+        assert_eq!(snapshot(&manager), after_first_insert);
+    }
+
+    #[test]
+    fn undo_toggle_shuffle_off_restores_shuffled_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(1);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+        assert!(before.shuffle);
+
+        manager.toggle_shuffle();
+        assert!(!manager.shuffle);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_insert_items_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+
+        let before = snapshot(&manager);
+
+        manager.insert_items(1, vec![item(10), item(11), item(12)]);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_clear_without_keep_current_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(2);
+
+        let before = snapshot(&manager);
+
+        manager.clear(false);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_shuffle_then_insert_unwinds_in_lifo_order() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(0);
+
+        let before = snapshot(&manager);
+
+        manager.toggle_shuffle();
+        let after_shuffle = snapshot(&manager);
+
+        manager.insert_item(1, item(99));
+
+        assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        assert_eq!(snapshot(&manager), after_shuffle);
+
+        assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        assert_eq!(snapshot(&manager), before);
     }
 }

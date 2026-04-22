@@ -1,7 +1,7 @@
 {
   "ABOUT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:83",
+    "definedIn": "src/ui/global_actions.rs:86",
     "plural": false,
     "description": null
   },
@@ -131,6 +131,12 @@
     "plural": false,
     "description": null
   },
+  "ACTION_GROUP_QUEUE": {
+    "context": "command_palette.rs",
+    "definedIn": "src/ui/command_palette.rs:272",
+    "plural": false,
+    "description": null
+  },
   "ACTION_GROUP_SCAN": {
     "context": "command_palette.rs",
     "definedIn": "src/ui/command_palette.rs:252",
@@ -191,15 +197,21 @@
     "plural": false,
     "description": null
   },
+  "ACTION_UNDO_QUEUE": {
+    "context": "command_palette.rs",
+    "definedIn": "src/ui/command_palette.rs:273",
+    "plural": false,
+    "description": null
+  },
   "ADD_TO_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:193",
+    "definedIn": "src/ui/library/context_menus/track.rs:194",
     "plural": false,
     "description": null
   },
   "ADD_TO_QUEUE": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:113",
+    "definedIn": "src/ui/library/context_menus/track.rs:114",
     "plural": false,
     "description": null
   },
@@ -349,7 +361,7 @@
   },
   "COMMAND_PALETTE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:189",
+    "definedIn": "src/ui/global_actions.rs:197",
     "plural": false,
     "description": null
   },
@@ -397,13 +409,19 @@
   },
   "DISCORD": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:152",
+    "definedIn": "src/ui/global_actions.rs:155",
     "plural": false,
     "description": null
   },
   "DROPDOWN_PLACEHOLDER": {
     "context": "dropdown.rs",
     "definedIn": "src/ui/components/dropdown.rs:133",
+    "plural": false,
+    "description": null
+  },
+  "EDIT": {
+    "context": "global_actions.rs",
+    "definedIn": "src/ui/global_actions.rs:185",
     "plural": false,
     "description": null
   },
@@ -427,13 +445,13 @@
   },
   "FILE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:177",
+    "definedIn": "src/ui/global_actions.rs:180",
     "plural": false,
     "description": null
   },
   "GITHUB_ISSUES": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:147",
+    "definedIn": "src/ui/global_actions.rs:150",
     "plural": false,
     "description": null
   },
@@ -457,19 +475,19 @@
   },
   "HELP": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:129",
+    "definedIn": "src/ui/global_actions.rs:132",
     "plural": false,
     "description": null
   },
   "HIDE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:108",
+    "definedIn": "src/ui/global_actions.rs:111",
     "plural": false,
     "description": null
   },
   "HIDE_OTHERS": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:113",
+    "definedIn": "src/ui/global_actions.rs:116",
     "plural": false,
     "description": null
   },
@@ -631,19 +649,19 @@
   },
   "LIBRARY_FORCE_RESCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:213",
+    "definedIn": "src/ui/global_actions.rs:221",
     "plural": false,
     "description": null
   },
   "LIBRARY_SCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:208",
+    "definedIn": "src/ui/global_actions.rs:216",
     "plural": false,
     "description": null
   },
   "LIBRARY_SHUFFLE_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:202",
+    "definedIn": "src/ui/global_actions.rs:210",
     "plural": false,
     "description": null
   },
@@ -709,7 +727,7 @@
   },
   "PATREON": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:169",
+    "definedIn": "src/ui/global_actions.rs:172",
     "plural": false,
     "description": null
   },
@@ -793,13 +811,13 @@
   },
   "PLAY_FROM_HERE": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:103",
+    "definedIn": "src/ui/library/context_menus/track.rs:104",
     "plural": false,
     "description": null
   },
   "PLAY_NEXT": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:90",
+    "definedIn": "src/ui/library/context_menus/track.rs:91",
     "plural": false,
     "description": null
   },
@@ -817,7 +835,7 @@
   },
   "QUIT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:124",
+    "definedIn": "src/ui/global_actions.rs:127",
     "plural": false,
     "description": null
   },
@@ -847,7 +865,7 @@
   },
   "REMOVE_FROM_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:208",
+    "definedIn": "src/ui/library/context_menus/track.rs:209",
     "plural": false,
     "description": null
   },
@@ -907,7 +925,7 @@
   },
   "RESCAN_TRACK": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:164",
+    "definedIn": "src/ui/library/context_menus/track.rs:165",
     "plural": false,
     "description": null
   },
@@ -1093,7 +1111,7 @@
   },
   "SEARCH": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:194",
+    "definedIn": "src/ui/global_actions.rs:202",
     "plural": false,
     "description": null
   },
@@ -1129,43 +1147,43 @@
   },
   "SETTINGS_CORRUPT_DIALOG_BODY": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:36",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:37",
     "plural": false,
     "description": null
   },
   "SETTINGS_CORRUPT_DIALOG_QUIT": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:62",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:63",
     "plural": false,
     "description": null
   },
   "SETTINGS_CORRUPT_DIALOG_QUIT_SUBTITLE": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:67",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:68",
     "plural": false,
     "description": null
   },
   "SETTINGS_CORRUPT_DIALOG_SHOW": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:48",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:49",
     "plural": false,
     "description": null
   },
   "SETTINGS_CORRUPT_DIALOG_SHOW_SUBTITLE": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:53",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:54",
     "plural": false,
     "description": null
   },
   "SETTINGS_CORRUPT_DIALOG_TITLE": {
     "context": "corrupt_settings_dialog.rs",
-    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:32",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:33",
     "plural": false,
     "description": null
   },
   "SHOW_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:118",
+    "definedIn": "src/ui/global_actions.rs:121",
     "plural": false,
     "description": null
   },
@@ -1337,6 +1355,12 @@
     "plural": false,
     "description": null
   },
+  "UNDO_QUEUE": {
+    "context": "global_actions.rs",
+    "definedIn": "src/ui/global_actions.rs:186",
+    "plural": false,
+    "description": null
+  },
   "UNKNOWN_ARTIST": {
     "context": "info_section.rs",
     "definedIn": "src/ui/controls/info_section.rs:315",
@@ -1393,13 +1417,13 @@
   },
   "VIEW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:184",
+    "definedIn": "src/ui/global_actions.rs:192",
     "plural": false,
     "description": "The View menu. Must *exactly* match the text required by macOS."
   },
   "WINDOW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:225",
+    "definedIn": "src/ui/global_actions.rs:233",
     "plural": false,
     "description": "The Window menu. Must *exactly* match the text required by macOS."
   }

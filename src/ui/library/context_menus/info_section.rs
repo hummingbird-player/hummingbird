@@ -13,6 +13,7 @@ use crate::{
             menu::{menu, menu_item, menu_separator},
         },
         models::toggle_like_by_id,
+        util::reveal_path_for_file_manager,
     },
 };
 
@@ -86,7 +87,7 @@ impl RenderOnce for InfoSectionContextMenu {
                     track_show_in_file_manager_label(),
                     move |_, _, cx| {
                         if let Some(path) = reveal_path.as_ref() {
-                            cx.reveal_path(path);
+                            reveal_path_for_file_manager(path, cx);
                         }
                     },
                 )

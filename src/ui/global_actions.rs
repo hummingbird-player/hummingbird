@@ -25,6 +25,7 @@ actions!(player, [PlayPause, Next, Previous, ShuffleAll]);
 actions!(scan, [ForceScan, Scan]);
 actions!(hummingbird, [HideSelf, HideOthers, ShowAll]);
 actions!(help, [Discord, Patreon, Issues]);
+actions!(queue, [Undo]);
 
 pub fn register_actions(cx: &mut App) {
     debug!("registering actions");
@@ -43,6 +44,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(check_for_updates);
     cx.on_action(discord);
     cx.on_action(patreon);
+    cx.on_action(undo);
     cx.on_action(issues);
     cx.on_action(shuffle_all);
     cx.on_action(scan);
@@ -73,6 +75,7 @@ pub fn register_actions(cx: &mut App) {
         CloseWindow,
         Some("SettingsWindow && !TextInput"),
     )]);
+    cx.bind_keys([KeyBinding::new("secondary-z", Undo, Some("!TextInput"))]);
 
     cx.bind_keys([KeyBinding::new("alt-shift-s", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("alt-s", Scan, None)]);
@@ -179,6 +182,11 @@ pub fn register_actions(cx: &mut App) {
                 .add_item(menu_separator(MenuPlatform::NonMacOS))
                 .add_item(menu_item(tr!("QUIT"), Quit, MenuPlatform::NonMacOS)),
         )
+        .add_menu(MenuBuilder::new(tr!("EDIT", "Edit")).add_item(menu_item(
+            tr!("UNDO_QUEUE", "Undo Last Queue Change"),
+            Undo,
+            MenuPlatform::All,
+        )))
         .add_menu(
             MenuBuilder::new(tr!(
                 "VIEW",
@@ -337,4 +345,9 @@ fn shuffle_all(_: &ShuffleAll, cx: &mut App) {
         }
         interface.replace_queue(tracks);
     }
+}
+
+fn undo(_: &Undo, cx: &mut App) {
+    let interface = cx.global::<PlaybackInterface>();
+    interface.undo();
 }

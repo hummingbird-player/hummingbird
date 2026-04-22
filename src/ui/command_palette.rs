@@ -10,9 +10,9 @@ use rustc_hash::FxHashMap;
 use std::hash::Hash;
 use tracing::error;
 
-use crate::ui::components::modal::ModalActive;
 #[cfg(feature = "update")]
 use crate::ui::global_actions::CheckForUpdates;
+use crate::ui::{components::modal::ModalActive, global_actions::Undo};
 use crate::ui::{
     components::{
         modal::modal,
@@ -262,6 +262,16 @@ impl CommandPalette {
                     Some(tr!("ACTION_GROUP_PLAYBACK")),
                     tr!("ACTION_SHUFFLE_ALL", "Shuffle All Tracks"),
                     ShuffleAll,
+                    None,
+                ),
+            );
+
+            items.insert(
+                ("undo::queue", 0),
+                Command::new(
+                    Some(tr!("ACTION_GROUP_QUEUE", "Queue")),
+                    tr!("ACTION_UNDO_QUEUE", "Undo"),
+                    Undo,
                     None,
                 ),
             );

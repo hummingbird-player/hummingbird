@@ -8,6 +8,7 @@ use crate::ui::{
         icons::{CROSS, FOLDER_SEARCH},
     },
     models::{Models, SettingsHealth},
+    util::reveal_path_for_file_manager,
 };
 
 pub struct CorruptSettingsDialog;
@@ -47,7 +48,7 @@ impl Render for CorruptSettingsDialog {
                 FOLDER_SEARCH,
                 tr!("SETTINGS_CORRUPT_DIALOG_SHOW", "Show settings file"),
                 ButtonIntent::Secondary,
-                move |_, _, cx| cx.reveal_path(path_for_reveal.as_path()),
+                move |_, _, cx| reveal_path_for_file_manager(path_for_reveal.as_path(), cx),
             )
             .subtitle(tr!(
                 "SETTINGS_CORRUPT_DIALOG_SHOW_SUBTITLE",

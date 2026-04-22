@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
 
 use globwalk::GlobWalkerBuilder;
@@ -115,6 +117,24 @@ pub fn drop_image_from_app(cx: &mut App, image: Arc<RenderImage>) {
                 .expect("couldn't get window");
         }
     });
+}
+
+pub fn reveal_path_for_file_manager(path: &Path, cx: &mut App) {
+    #[cfg(windows)]
+    {
+        // this is some crazy garbage but it has to be this way because of windows wonkyness
+        let path_for_reveal = match path.to_string_lossy().strip_prefix("\\\\?\\") {
+            Some(stripped) => PathBuf::from(stripped),
+            None => path.to_path_buf(),
+        };
+
+        cx.reveal_path(path_for_reveal.as_path());
+    }
+
+    #[cfg(not(windows))]
+    {
+        cx.reveal_path(path);
+    }
 }
 
 pub enum MaybeStateful<T> {
