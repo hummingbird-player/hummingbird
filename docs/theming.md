@@ -26,11 +26,11 @@ Platform-specific data directory locations:
 > <summary>Legacy (pre-Hummingbird) folder location</summary>
 > <br>
 >
-> | Platform | Location                                                       |
-> |----------|----------------------------------------------------------------|
-> | Linux    | `~/.local/share/muzak/theme.json`                              |
-> | macOS    | `~/Library/Application Support/me.william341.muzak/theme.json` |
-> | Windows  | `%appdata%\william341\muzak\data\theme.json`                   |
+> | Platform | Location                                                 |
+> |----------|----------------------------------------------------------|
+> | Linux    | `~/.local/share/muzak/`                                  |
+> | macOS    | `~/Library/Application Support/me.william341.muzak/`     |
+> | Windows  | `%appdata%\william341\muzak\data\`                       |
 >
 > This can be applied to all paths - they have all been changed in the same manner.
 > </details>
@@ -58,7 +58,7 @@ Colors are specified as CSS-style hex codes (`#ABCDEF`). If a color is not
 specified, the color from the default theme is used.
 
 ## Example
-A `theme.json` for the default theme is provided here. Note the colors may be
+An example theme matching the built-in default is provided here. Note the colors may be
 out of date, but an effort is made to ensure all possible fields are represented
 in this example.
 

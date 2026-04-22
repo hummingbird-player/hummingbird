@@ -64,7 +64,7 @@ pub fn resolve_ui_config_relative_path(
     data_dir: &Path,
     selected_config: Option<&str>,
 ) -> Option<String> {
-    resolve_relative_file_option_path(data_dir, selected_config)
+    resolve_relative_file_option_path(data_dir, UI_CONFIGS_DIR_NAME, selected_config)
 }
 
 pub fn load_selected_ui_config(data_dir: &Path, selected_config: Option<&str>) -> UiConfig {

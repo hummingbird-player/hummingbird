@@ -36,13 +36,17 @@ pub fn discover_file_options(
 
 pub fn resolve_relative_file_option_path(
     data_dir: &Path,
+    subdir: &str,
     selected: Option<&str>,
 ) -> Option<String> {
     let selected = selected?;
-    data_dir
-        .join(selected)
-        .is_file()
-        .then(|| selected.to_string())
+    let path = data_dir.join(selected);
+    if !path.is_file() {
+        return None;
+    }
+
+    let relative = Path::new(selected);
+    (relative.parent() == Some(Path::new(subdir))).then(|| selected.to_string())
 }
 
 pub fn relative_file_option_path_for_event(
@@ -147,16 +151,24 @@ mod tests {
         let themes_dir = dir.join("themes");
         fs::create_dir_all(&themes_dir).unwrap();
         fs::write(themes_dir.join("ophelia.json"), "{}").unwrap();
+        fs::write(dir.path().join("theme.json"), "{}").unwrap();
 
         assert_eq!(
-            resolve_relative_file_option_path(dir.path(), Some("themes/ophelia.json")),
+            resolve_relative_file_option_path(dir.path(), "themes", Some("themes/ophelia.json")),
             Some("themes/ophelia.json".to_string())
         );
         assert_eq!(
-            resolve_relative_file_option_path(dir.path(), Some("themes/missing.json")),
+            resolve_relative_file_option_path(dir.path(), "themes", Some("themes/missing.json")),
             None
         );
-        assert_eq!(resolve_relative_file_option_path(dir.path(), None), None);
+        assert_eq!(
+            resolve_relative_file_option_path(dir.path(), "themes", Some("theme.json")),
+            None
+        );
+        assert_eq!(
+            resolve_relative_file_option_path(dir.path(), "themes", None),
+            None
+        );
     }
 
     #[test]

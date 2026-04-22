@@ -268,7 +268,6 @@ impl Default for Theme {
 
 impl Global for Theme {}
 
-pub const LEGACY_THEME_PATH: &str = "theme.json";
 pub const THEMES_DIR_NAME: &str = "themes";
 
 pub struct ThemeOptionsGlobal {
@@ -299,22 +298,19 @@ pub fn create_theme(path: &Path) -> Theme {
     }
 }
 
+fn ensure_themes_dir(data_dir: &Path) {
+    if let Err(error) = std::fs::create_dir_all(data_dir.join(THEMES_DIR_NAME)) {
+        warn!(error = %error, "failed to create themes directory");
+    }
+}
+
 /// Discovers all available theme options in the data directory.
-/// Returns a vector containing the default theme, legacy theme (if present),
-/// and any custom themes found in the themes subdirectory.
+/// Returns the built-in default plus any custom themes in the themes folder.
 pub fn discover_theme_options(data_dir: &Path) -> Vec<SelectionOption> {
     let mut themes = vec![SelectionOption {
         id: None,
         label: "Default".to_string(),
     }];
-
-    let legacy_theme = data_dir.join(LEGACY_THEME_PATH);
-    if legacy_theme.is_file() {
-        themes.push(SelectionOption {
-            id: Some(LEGACY_THEME_PATH.to_string()),
-            label: "Legacy".to_string(),
-        });
-    }
 
     themes.extend(discover_file_options(data_dir, THEMES_DIR_NAME, "json"));
     themes
@@ -326,12 +322,7 @@ pub fn resolve_theme_relative_path(
     data_dir: &Path,
     selected_theme: Option<&str>,
 ) -> Option<String> {
-    if selected_theme == Some(LEGACY_THEME_PATH) {
-        let path = data_dir.join(LEGACY_THEME_PATH);
-        return path.is_file().then(|| LEGACY_THEME_PATH.to_string());
-    }
-
-    resolve_relative_file_option_path(data_dir, selected_theme)
+    resolve_relative_file_option_path(data_dir, THEMES_DIR_NAME, selected_theme)
 }
 
 /// Resolves a theme identifier to its full filesystem path.
@@ -350,10 +341,6 @@ pub fn load_selected_theme(data_dir: &Path, selected_theme: Option<&str>) -> The
 
 /// Converts a filesystem path to a theme-relative path for comparison.
 fn theme_relative_path_for_event(data_dir: &Path, path: &Path) -> Option<String> {
-    if path.parent() == Some(data_dir) && path.file_name() == Some(LEGACY_THEME_PATH.as_ref()) {
-        return Some(LEGACY_THEME_PATH.to_string());
-    }
-
     relative_file_option_path_for_event(data_dir, THEMES_DIR_NAME, "json", path)
 }
 
@@ -401,6 +388,8 @@ pub struct ThemeWatcher(pub Box<dyn Watcher>);
 impl Global for ThemeWatcher {}
 
 pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
+    ensure_themes_dir(&data_dir);
+
     let settings_model = cx.global::<SettingsGlobal>().model.clone();
     let selected_theme = settings_model.read(cx).interface.theme.clone();
     let selected_theme_state = Arc::new(RwLock::new(selected_theme.clone()));
@@ -514,5 +503,66 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
         cx.set_global(tw);
     } else if let Err(e) = watcher {
         warn!("failed to watch theme directory: {:?}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use crate::test_support::TestDir;
+    use crate::ui::customization::SelectionOption;
+
+    use super::{
+        THEMES_DIR_NAME, discover_theme_options, ensure_themes_dir, resolve_theme_relative_path,
+    };
+
+    fn create_test_dir() -> TestDir {
+        TestDir::new("hummingbird-theme-test")
+    }
+
+    #[test]
+    fn ensure_themes_dir_creates_themes_folder() {
+        let dir = create_test_dir();
+
+        ensure_themes_dir(dir.path());
+
+        assert!(dir.path().join(THEMES_DIR_NAME).is_dir());
+    }
+
+    #[test]
+    fn discover_theme_options_lists_default_and_folder_themes() {
+        let dir = create_test_dir();
+        let themes_dir = dir.path().join(THEMES_DIR_NAME);
+        fs::create_dir_all(&themes_dir).unwrap();
+        fs::write(themes_dir.join("ophelia.json"), "{}").unwrap();
+        fs::write(dir.path().join("theme.json"), "{}").unwrap();
+
+        let options = discover_theme_options(dir.path());
+
+        assert_eq!(
+            options,
+            vec![
+                SelectionOption {
+                    id: None,
+                    label: "Default".to_string(),
+                },
+                SelectionOption {
+                    id: Some("themes/ophelia.json".to_string()),
+                    label: "ophelia".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_theme_relative_path_ignores_root_theme_file() {
+        let dir = create_test_dir();
+        fs::write(dir.path().join("theme.json"), "{}").unwrap();
+
+        assert_eq!(
+            resolve_theme_relative_path(dir.path(), Some("theme.json")),
+            None
+        );
     }
 }

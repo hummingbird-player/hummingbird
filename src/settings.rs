@@ -6,13 +6,7 @@ pub mod services;
 pub mod storage;
 pub mod update;
 
-use std::{
-    fs,
-    fs::File,
-    path::{Path, PathBuf},
-    sync::mpsc::channel,
-    time::Duration,
-};
+use std::{fs, fs::File, path::PathBuf, sync::mpsc::channel, time::Duration};
 
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Global};
 use notify::{Event, RecursiveMode, Watcher};
@@ -37,24 +31,6 @@ pub struct Settings {
     pub update: update::UpdateSettings,
 }
 
-fn has_stored_theme_setting(value: &serde_json::Value) -> bool {
-    value
-        .get("interface")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|interface| interface.contains_key("theme"))
-}
-
-fn apply_legacy_theme_selection(path: &Path, settings: &mut Settings, has_theme_setting: bool) {
-    if has_theme_setting || settings.interface.theme.is_some() {
-        return;
-    }
-
-    let legacy_theme = path.parent().unwrap().join("theme.json");
-    if legacy_theme.is_file() {
-        settings.interface.theme = Some("theme.json".to_string());
-    }
-}
-
 #[derive(Debug)]
 pub enum SettingsLoadOutcome {
     Loaded(Settings),
@@ -72,39 +48,31 @@ impl SettingsLoadOutcome {
 
 pub fn create_settings(path: &PathBuf) -> SettingsLoadOutcome {
     let Ok(contents) = fs::read_to_string(path) else {
-        let mut settings = Settings::default();
-        apply_legacy_theme_selection(path, &mut settings, false);
-        return SettingsLoadOutcome::Loaded(settings);
+        return SettingsLoadOutcome::Loaded(Settings::default());
     };
 
     let value: serde_json::Value = match serde_json::from_str(&contents) {
         Ok(value) => value,
         Err(e) => {
             warn!("Failed to parse settings file ({e}), scanner will wait for recovery");
-            let mut settings = Settings::default();
-            apply_legacy_theme_selection(path, &mut settings, false);
             return SettingsLoadOutcome::Corrupt {
-                settings,
+                settings: Settings::default(),
                 path: path.clone(),
             };
         }
     };
 
-    let has_theme_setting = has_stored_theme_setting(&value);
-    let mut settings: Settings = match serde_json::from_value(value) {
+    let settings: Settings = match serde_json::from_value(value) {
         Ok(settings) => settings,
         Err(e) => {
             warn!("Failed to deserialize settings file ({e}), scanner will wait for recovery");
-            let mut defaults = Settings::default();
-            apply_legacy_theme_selection(path, &mut defaults, has_theme_setting);
             return SettingsLoadOutcome::Corrupt {
-                settings: defaults,
+                settings: Settings::default(),
                 path: path.clone(),
             };
         }
     };
 
-    apply_legacy_theme_selection(path, &mut settings, has_theme_setting);
     SettingsLoadOutcome::Loaded(settings)
 }
 
@@ -247,10 +215,7 @@ fn apply_settings_outcome(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Settings, SettingsLoadOutcome, apply_legacy_theme_selection, create_settings,
-        has_stored_theme_setting,
-    };
+    use super::{Settings, SettingsLoadOutcome, create_settings};
     use crate::test_support::TestDir;
     use serde_json::json;
     use std::{fs, path::PathBuf};
@@ -261,38 +226,6 @@ mod tests {
 
     fn settings_path(dir: &TestDir) -> PathBuf {
         dir.join("settings.json")
-    }
-
-    #[test]
-    fn has_stored_theme_setting_detects_raw_theme_key_presence() {
-        assert!(has_stored_theme_setting(&json!({
-            "interface": { "theme": "custom.json" }
-        })));
-        assert!(has_stored_theme_setting(&json!({
-            "interface": { "theme": null }
-        })));
-        assert!(!has_stored_theme_setting(&json!({ "interface": {} })));
-        assert!(!has_stored_theme_setting(&json!({})));
-    }
-
-    #[test]
-    fn apply_legacy_theme_selection_only_applies_when_allowed() {
-        let dir = create_test_dir();
-        let settings_path = settings_path(&dir);
-        fs::write(dir.path().join("theme.json"), "{}").unwrap();
-
-        let mut settings = Settings::default();
-        apply_legacy_theme_selection(&settings_path, &mut settings, false);
-        assert_eq!(settings.interface.theme.as_deref(), Some("theme.json"));
-
-        let mut settings = Settings::default();
-        apply_legacy_theme_selection(&settings_path, &mut settings, true);
-        assert_eq!(settings.interface.theme, None);
-
-        let mut settings = Settings::default();
-        settings.interface.theme = Some("custom.json".to_string());
-        apply_legacy_theme_selection(&settings_path, &mut settings, false);
-        assert_eq!(settings.interface.theme.as_deref(), Some("custom.json"));
     }
 
     #[test]
