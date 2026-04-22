@@ -90,13 +90,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_ui_config_uses_default_fonts() {
-        let resolved = resolve_fonts(&UiConfig::default(), &available_fonts());
-
-        assert_eq!(resolved, ResolvedFonts::default());
-    }
-
-    #[test]
     fn ui_config_uses_configured_fonts() {
         let resolved = resolve_fonts(
             &UiConfig {

@@ -9,6 +9,12 @@ pub struct SelectionOption {
     pub label: String,
 }
 
+pub fn ensure_subdir(data_dir: &Path, subdir: &str) -> io::Result<PathBuf> {
+    let path = data_dir.join(subdir);
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
 pub fn discover_file_options(
     data_dir: &Path,
     subdir: &str,
@@ -31,6 +37,19 @@ pub fn discover_file_options(
         .collect::<Vec<_>>();
 
     options.sort_by(|a, b| a.id.cmp(&b.id));
+    options
+}
+
+pub fn discover_selection_options(
+    data_dir: &Path,
+    subdir: &str,
+    extension: &str,
+) -> Vec<SelectionOption> {
+    let mut options = vec![SelectionOption {
+        id: None,
+        label: "Default".to_string(),
+    }];
+    options.extend(discover_file_options(data_dir, subdir, extension));
     options
 }
 
@@ -111,8 +130,9 @@ mod tests {
     use crate::test_support::TestDir;
 
     use super::{
-        SelectionOption, discover_file_options, relative_file_option_path_for_event,
-        relative_file_path, resolve_relative_file_option_path, seed_relative_file_if_missing,
+        SelectionOption, discover_file_options, discover_selection_options, ensure_subdir,
+        relative_file_option_path_for_event, relative_file_path, resolve_relative_file_option_path,
+        seed_relative_file_if_missing,
     };
 
     fn create_test_dir() -> TestDir {
@@ -146,7 +166,31 @@ mod tests {
     }
 
     #[test]
-    fn resolve_relative_file_option_path_requires_existing_file() {
+    fn discover_selection_options_adds_default_entry() {
+        let dir = create_test_dir();
+        let themes_dir = dir.join("themes");
+        fs::create_dir_all(&themes_dir).unwrap();
+        fs::write(themes_dir.join("ophelia.json"), "{}").unwrap();
+
+        let options = discover_selection_options(dir.path(), "themes", "json");
+
+        assert_eq!(
+            options,
+            vec![
+                SelectionOption {
+                    id: None,
+                    label: "Default".to_string(),
+                },
+                SelectionOption {
+                    id: Some("themes/ophelia.json".to_string()),
+                    label: "ophelia".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_relative_file_option_path_requires_existing_file_in_subdir() {
         let dir = create_test_dir();
         let themes_dir = dir.join("themes");
         fs::create_dir_all(&themes_dir).unwrap();
@@ -169,6 +213,16 @@ mod tests {
             resolve_relative_file_option_path(dir.path(), "themes", None),
             None
         );
+    }
+
+    #[test]
+    fn ensure_subdir_creates_folder() {
+        let dir = create_test_dir();
+
+        let path = ensure_subdir(dir.path(), "themes").unwrap();
+
+        assert_eq!(path, dir.join("themes"));
+        assert!(path.is_dir());
     }
 
     #[test]

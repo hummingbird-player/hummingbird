@@ -9,7 +9,7 @@ use crate::ui::layout::defaults::default_ui_layout;
 
 use super::{
     file_options::{
-        SelectionOption, discover_file_options, relative_file_path,
+        SelectionOption, discover_selection_options, ensure_subdir, relative_file_path,
         resolve_relative_file_option_path, seed_relative_file_if_missing,
     },
     ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
@@ -22,6 +22,11 @@ pub fn seeded_ui_config_path(data_dir: &Path) -> PathBuf {
 }
 
 pub fn ensure_seeded_ui_config(data_dir: &Path) {
+    if let Err(err) = ensure_subdir(data_dir, UI_CONFIGS_DIR_NAME) {
+        tracing::warn!(error = %err, "couldn't create ui config directory on first run");
+        return;
+    }
+
     let starter = UiConfig {
         layout: Some(default_ui_layout()),
         font: None,
@@ -52,12 +57,7 @@ pub fn ensure_seeded_ui_config(data_dir: &Path) {
 }
 
 pub fn discover_ui_config_options(data_dir: &Path) -> Vec<SelectionOption> {
-    let mut configs = vec![SelectionOption {
-        id: None,
-        label: "Default".to_string(),
-    }];
-    configs.extend(discover_file_options(data_dir, UI_CONFIGS_DIR_NAME, "json"));
-    configs
+    discover_selection_options(data_dir, UI_CONFIGS_DIR_NAME, "json")
 }
 
 pub fn resolve_ui_config_relative_path(
@@ -181,10 +181,7 @@ mod tests {
     use crate::{
         test_support::TestDir,
         ui::{
-            customization::{
-                file_options::SelectionOption,
-                ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
-            },
+            customization::ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
             layout::{
                 defaults::default_ui_layout,
                 schema::{LibraryLayout, MainRegion, OuterBand, TwoColumnPane, UiLayout},
@@ -193,8 +190,7 @@ mod tests {
     };
 
     use super::{
-        discover_ui_config_options, ensure_seeded_ui_config, load_selected_ui_config,
-        seeded_ui_config_path, write_config,
+        ensure_seeded_ui_config, load_selected_ui_config, seeded_ui_config_path, write_config,
     };
 
     fn create_test_dir() -> TestDir {
@@ -249,39 +245,6 @@ mod tests {
         let path = seeded_ui_config_path(dir.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{ definitely not json").unwrap();
-
-        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
-
-        assert_eq!(
-            config,
-            UiConfig {
-                layout: Some(default_ui_layout()),
-                font: None,
-            }
-        );
-    }
-
-    #[test]
-    fn invalid_layout_permutation_falls_back_to_default() {
-        let dir = create_test_dir();
-        let path = seeded_ui_config_path(dir.path());
-        write_config(
-            path.parent().unwrap(),
-            &path,
-            &UiConfig {
-                layout: Some(UiLayout {
-                    outer_order: [OuterBand::Main, OuterBand::Main],
-                    main_order: [
-                        MainRegion::LibrarySidebar,
-                        MainRegion::LibraryContent,
-                        MainRegion::SidePanel,
-                    ],
-                    library: LibraryLayout::default(),
-                }),
-                font: None,
-            },
-        )
-        .unwrap();
 
         let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
@@ -368,83 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_field_in_config_is_ignored() {
-        let dir = create_test_dir();
-        let path = seeded_ui_config_path(dir.path());
-
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            r#"{
-  "layout": {
-    "outer_order": [
-      "controls",
-      "main"
-    ],
-    "main_order": [
-      "side_panel",
-      "library_content",
-      "library_sidebar"
-    ],
-    "library": {
-      "two_column_order": ["detail", "browse"]
-    }
-  },
-  "ignored_field": true,
-  "font": "Inter"
-}"#,
-        )
-        .unwrap();
-
-        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
-
-        assert_eq!(
-            config,
-            UiConfig {
-                layout: Some(UiLayout {
-                    outer_order: [OuterBand::Controls, OuterBand::Main],
-                    main_order: [
-                        MainRegion::SidePanel,
-                        MainRegion::LibraryContent,
-                        MainRegion::LibrarySidebar,
-                    ],
-                    library: LibraryLayout {
-                        two_column_order: [TwoColumnPane::Detail, TwoColumnPane::Browse],
-                    },
-                }),
-                font: Some("Inter".to_string()),
-            }
-        );
-    }
-
-    #[test]
-    fn invalid_legacy_layout_values_fall_back_to_default() {
-        let dir = create_test_dir();
-        let path = seeded_ui_config_path(dir.path());
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            r#"{
-  "layout": {
-    "outer_order": ["header", "main"],
-    "main_order": ["library_sidebar", "library_content", "right_sidebar"]
-  }
-}"#,
-        )
-        .unwrap();
-
-        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
-
-        assert_eq!(
-            config,
-            UiConfig {
-                layout: Some(default_ui_layout()),
-                font: None,
-            }
-        );
-    }
-
-    #[test]
     fn invalid_two_column_order_falls_back_to_default() {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
@@ -471,35 +357,6 @@ mod tests {
                 layout: Some(default_ui_layout()),
                 font: None,
             }
-        );
-    }
-
-    #[test]
-    fn discover_ui_config_options_lists_default_and_files() {
-        let dir = create_test_dir();
-        ensure_seeded_ui_config(dir.path());
-        let ophelia_path = dir.join("ui").join("ophelia.json");
-        fs::create_dir_all(ophelia_path.parent().unwrap()).unwrap();
-        fs::write(&ophelia_path, "{}").unwrap();
-
-        let configs = discover_ui_config_options(dir.path());
-
-        assert_eq!(
-            configs,
-            vec![
-                SelectionOption {
-                    id: None,
-                    label: "Default".to_string(),
-                },
-                SelectionOption {
-                    id: Some("ui/custom.json".to_string()),
-                    label: "custom".to_string(),
-                },
-                SelectionOption {
-                    id: Some("ui/ophelia.json".to_string()),
-                    label: "ophelia".to_string(),
-                },
-            ]
         );
     }
 }

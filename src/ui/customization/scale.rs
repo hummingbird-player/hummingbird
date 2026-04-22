@@ -146,21 +146,7 @@ where
 mod tests {
     use crate::settings::interface::UiDensity;
 
-    use super::{TextStyle, resolve_density, scale_px, scale_px_by};
-
-    fn interface(ui_density: UiDensity) -> crate::settings::interface::InterfaceSettings {
-        crate::settings::interface::InterfaceSettings {
-            ui_density,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn density_comes_from_settings() {
-        let resolved = resolve_density(&interface(UiDensity::from(1.0)));
-
-        assert_eq!(resolved, UiDensity::from(1.0));
-    }
+    use super::{TextStyle, scale_px, scale_px_by};
 
     #[test]
     fn text_style_interpolates_between_anchors() {

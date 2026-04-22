@@ -8,8 +8,8 @@ use std::{
 
 use crate::settings::SettingsGlobal;
 use crate::ui::customization::file_options::{
-    SelectionOption, discover_file_options, relative_file_option_path_for_event,
-    resolve_relative_file_option_path,
+    SelectionOption, discover_selection_options, ensure_subdir,
+    relative_file_option_path_for_event, resolve_relative_file_option_path,
 };
 use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
@@ -299,7 +299,7 @@ pub fn create_theme(path: &Path) -> Theme {
 }
 
 fn ensure_themes_dir(data_dir: &Path) {
-    if let Err(error) = std::fs::create_dir_all(data_dir.join(THEMES_DIR_NAME)) {
+    if let Err(error) = ensure_subdir(data_dir, THEMES_DIR_NAME) {
         warn!(error = %error, "failed to create themes directory");
     }
 }
@@ -307,13 +307,7 @@ fn ensure_themes_dir(data_dir: &Path) {
 /// Discovers all available theme options in the data directory.
 /// Returns the built-in default plus any custom themes in the themes folder.
 pub fn discover_theme_options(data_dir: &Path) -> Vec<SelectionOption> {
-    let mut themes = vec![SelectionOption {
-        id: None,
-        label: "Default".to_string(),
-    }];
-
-    themes.extend(discover_file_options(data_dir, THEMES_DIR_NAME, "json"));
-    themes
+    discover_selection_options(data_dir, THEMES_DIR_NAME, "json")
 }
 
 /// Resolves a theme identifier to its relative path if the file exists.
@@ -510,49 +504,11 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
 mod tests {
     use std::fs;
 
+    use super::resolve_theme_relative_path;
     use crate::test_support::TestDir;
-    use crate::ui::customization::SelectionOption;
-
-    use super::{
-        THEMES_DIR_NAME, discover_theme_options, ensure_themes_dir, resolve_theme_relative_path,
-    };
 
     fn create_test_dir() -> TestDir {
         TestDir::new("hummingbird-theme-test")
-    }
-
-    #[test]
-    fn ensure_themes_dir_creates_themes_folder() {
-        let dir = create_test_dir();
-
-        ensure_themes_dir(dir.path());
-
-        assert!(dir.path().join(THEMES_DIR_NAME).is_dir());
-    }
-
-    #[test]
-    fn discover_theme_options_lists_default_and_folder_themes() {
-        let dir = create_test_dir();
-        let themes_dir = dir.path().join(THEMES_DIR_NAME);
-        fs::create_dir_all(&themes_dir).unwrap();
-        fs::write(themes_dir.join("ophelia.json"), "{}").unwrap();
-        fs::write(dir.path().join("theme.json"), "{}").unwrap();
-
-        let options = discover_theme_options(dir.path());
-
-        assert_eq!(
-            options,
-            vec![
-                SelectionOption {
-                    id: None,
-                    label: "Default".to_string(),
-                },
-                SelectionOption {
-                    id: Some("themes/ophelia.json".to_string()),
-                    label: "ophelia".to_string(),
-                },
-            ]
-        );
     }
 
     #[test]

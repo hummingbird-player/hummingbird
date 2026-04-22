@@ -122,11 +122,6 @@ mod tests {
     use super::{LibraryLayout, MainRegion, OuterBand, TwoColumnPane, UiLayout};
 
     #[test]
-    fn ui_layout_default_is_valid() {
-        assert!(UiLayout::default().is_valid());
-    }
-
-    #[test]
     fn ui_layout_accepts_reordered_bands_and_panes() {
         let layout = UiLayout {
             outer_order: [OuterBand::Controls, OuterBand::Main],

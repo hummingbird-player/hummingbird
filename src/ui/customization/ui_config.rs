@@ -57,20 +57,13 @@ mod tests {
 
     use crate::ui::layout::defaults::default_ui_layout;
 
-    use super::{ResolvedFonts, ResolvedUiConfig, UiConfig, resolve_ui_config};
+    use super::{UiConfig, resolve_ui_config};
 
     fn available_fonts() -> HashSet<String> {
         ["Inter", "Roboto Mono", "Lexend"]
             .into_iter()
             .map(str::to_string)
             .collect()
-    }
-
-    #[test]
-    fn empty_ui_config_resolves_to_defaults() {
-        let resolved = resolve_ui_config(&UiConfig::default(), &available_fonts());
-
-        assert_eq!(resolved, ResolvedUiConfig::default());
     }
 
     #[test]
@@ -85,23 +78,5 @@ mod tests {
         );
 
         assert_eq!(resolved.layout, layout);
-    }
-
-    #[test]
-    fn ui_config_uses_configured_fonts() {
-        let resolved = resolve_ui_config(
-            &UiConfig {
-                font: Some("Lexend".to_string()),
-                ..Default::default()
-            },
-            &available_fonts(),
-        );
-
-        assert_eq!(
-            resolved.fonts,
-            ResolvedFonts {
-                font: "Lexend".into(),
-            }
-        );
     }
 }

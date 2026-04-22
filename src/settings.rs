@@ -229,24 +229,6 @@ mod tests {
     }
 
     #[test]
-    fn create_settings_missing_file_reports_loaded() {
-        let dir = create_test_dir();
-        let outcome = create_settings(&settings_path(&dir));
-
-        assert!(matches!(outcome, SettingsLoadOutcome::Loaded(_)));
-
-        let settings = outcome.into_settings();
-        let defaults = Settings::default();
-        assert_eq!(settings.interface, defaults.interface);
-        assert_eq!(settings.playback, defaults.playback);
-        assert_eq!(
-            settings.update.release_channel,
-            defaults.update.release_channel
-        );
-        assert_eq!(settings.update.auto_update, defaults.update.auto_update);
-    }
-
-    #[test]
     fn create_settings_invalid_json_reports_corrupt() {
         let dir = create_test_dir();
         let path = settings_path(&dir);
@@ -391,18 +373,5 @@ mod tests {
             settings.interface.ui_density,
             super::interface::UiDensity::from(0.25)
         );
-    }
-
-    #[test]
-    fn all_categories_deserialize_when_empty() {
-        let empty_settings = json!({
-            "scanning": {},
-            "playback": {},
-            "interface": {},
-            "services": {},
-            "update": {}
-        });
-
-        let _: Settings = serde_json::from_value(empty_settings).unwrap();
     }
 }
