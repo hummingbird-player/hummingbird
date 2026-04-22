@@ -1,6 +1,4 @@
 //! UI config loaded from `ui/*.json`.
-//!
-//! `layout` changes and `font` changes the main font (duh)
 
 use std::collections::HashSet;
 

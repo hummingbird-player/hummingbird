@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::customization::scale::{active_density, active_typography, scale_px, scale_px_by};
+use crate::ui::customization::scale::{active_density, scale_px, scale_px_by, typography_roles};
 use crate::ui::styling::StyledExt;
 
 const INFO_OUTER_MARGIN_INLINE: f32 = 12.0;
@@ -154,7 +154,7 @@ impl Render for InfoSection {
         let preview_offset = scale_px(density, INFO_PREVIEW_OFFSET);
         let like_padding = scale_px(density, INFO_LIKE_PADDING);
         let like_icon_size = scale_px(density, INFO_ICON_SIZE);
-        let metadata_text = active_typography(cx).metadata;
+        let metadata_text = typography_roles(density).metadata;
         let add_to_state = self.current_library_track.as_ref().map(|track| {
             crate::ui::library::context_menus::add_to_playlist_state(
                 "info-section-menu-state",

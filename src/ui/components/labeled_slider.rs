@@ -7,7 +7,7 @@ use gpui::{
 
 use crate::ui::{
     components::slider::slider,
-    customization::scale::{active_density, active_typography, apply_text_style, scale_px},
+    customization::scale::{active_density, apply_text_style, scale_px, typography_roles},
     styling::theme::Theme,
 };
 
@@ -76,7 +76,7 @@ impl Styled for LabeledSlider {
 impl RenderOnce for LabeledSlider {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let density = active_density(cx);
-        let typography = active_typography(cx);
+        let typography = typography_roles(density);
         let theme = cx.global::<Theme>();
         let low = self.min.min(self.max);
         let high = self.min.max(self.max);

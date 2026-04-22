@@ -19,8 +19,7 @@ use crate::settings::{
     interface::{InterfaceSettings, UiDensity},
 };
 
-
-// Gpooey has its own textstyle, i should probably rename this to 
+// Gpooey has its own textstyle, i should probably rename this to
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextStyle {
     pub size: f32,

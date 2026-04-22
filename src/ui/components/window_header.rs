@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
     customization::scale::{
-        active_density, active_typography, apply_text_style, scale_px, scale_px_by,
+        active_density, apply_text_style, scale_px, scale_px_by, typography_roles,
     },
     styling::constants::APP_ROUNDING,
     styling::{ActiveTheme, StyledExt},
@@ -64,7 +64,7 @@ impl Styled for WindowHeader {
 impl RenderOnce for WindowHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let density = active_density(cx);
-        let typography = active_typography(cx);
+        let typography = typography_roles(density);
         let theme = cx.theme();
 
         let left_container = div()
