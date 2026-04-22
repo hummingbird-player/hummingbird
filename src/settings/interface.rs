@@ -107,6 +107,9 @@ pub struct InterfaceSettings {
     pub reduced_motion: bool,
     #[serde(default)]
     pub always_show_scrollbars: bool,
+    #[cfg(not(target_os = "macos"))]
+    #[serde(default)]
+    pub swap_menu_and_nav: bool,
 }
 
 impl InterfaceSettings {
@@ -116,6 +119,17 @@ impl InterfaceSettings {
 
     pub fn effective_full_width(&self) -> bool {
         self.full_width_library || self.two_column_library
+    }
+
+    pub fn should_swap_menu_and_nav(&self) -> bool {
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.swap_menu_and_nav
+        }
+        #[cfg(target_os = "macos")]
+        {
+            false
+        }
     }
 }
 
@@ -132,6 +146,8 @@ impl Default for InterfaceSettings {
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,
             always_show_scrollbars: false,
+            #[cfg(not(target_os = "macos"))]
+            swap_menu_and_nav: false,
         }
     }
 }

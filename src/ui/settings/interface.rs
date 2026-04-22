@@ -262,7 +262,7 @@ impl Render for InterfaceSettings {
                 })
         };
 
-        div()
+        let body = div()
             .v_flex()
             .gap(px(layout.section_gap))
             .child(section_header(tr!("INTERFACE")))
@@ -433,6 +433,35 @@ impl Render for InterfaceSettings {
                     "interface-always-show-scrollbars-check",
                     interface.always_show_scrollbars,
                 )),
+            );
+
+        #[cfg(not(target_os = "macos"))]
+        let body = body.child(
+            label(
+                "interface-swap-menu-and-nav",
+                tr!(
+                    "INTERFACE_SWAP_MENU_AND_NAV",
+                    "Swap menu and navigation buttons"
+                ),
             )
+            .subtext(tr!(
+                "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT",
+                "Place the menu before the back/forward buttons so navigation sits closer \
+                to the center of the window."
+            ))
+            .cursor_pointer()
+            .w_full()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.update_interface(cx, |interface| {
+                    interface.swap_menu_and_nav = !interface.swap_menu_and_nav;
+                });
+            }))
+            .child(checkbox(
+                "interface-swap-menu-and-nav-check",
+                interface.swap_menu_and_nav,
+            )),
+        );
+
+        body
     }
 }

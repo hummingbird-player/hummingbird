@@ -1,7 +1,7 @@
 {
   "ABOUT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:82",
+    "definedIn": "src/ui/global_actions.rs:83",
     "plural": false,
     "description": null
   },
@@ -349,7 +349,7 @@
   },
   "COMMAND_PALETTE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:188",
+    "definedIn": "src/ui/global_actions.rs:189",
     "plural": false,
     "description": null
   },
@@ -397,7 +397,7 @@
   },
   "DISCORD": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:151",
+    "definedIn": "src/ui/global_actions.rs:152",
     "plural": false,
     "description": null
   },
@@ -427,13 +427,13 @@
   },
   "FILE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:176",
+    "definedIn": "src/ui/global_actions.rs:177",
     "plural": false,
     "description": null
   },
   "GITHUB_ISSUES": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:146",
+    "definedIn": "src/ui/global_actions.rs:147",
     "plural": false,
     "description": null
   },
@@ -457,25 +457,25 @@
   },
   "HELP": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:128",
+    "definedIn": "src/ui/global_actions.rs:129",
     "plural": false,
     "description": null
   },
   "HIDE": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:107",
+    "definedIn": "src/ui/global_actions.rs:108",
     "plural": false,
     "description": null
   },
   "HIDE_OTHERS": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:112",
+    "definedIn": "src/ui/global_actions.rs:113",
     "plural": false,
     "description": null
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:123",
+    "definedIn": "src/ui/settings.rs:124",
     "plural": false,
     "description": null
   },
@@ -563,6 +563,18 @@
     "plural": false,
     "description": null
   },
+  "INTERFACE_SWAP_MENU_AND_NAV": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:443",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:448",
+    "plural": false,
+    "description": null
+  },
   "INTERFACE_THEME": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:280",
@@ -613,25 +625,25 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:124",
+    "definedIn": "src/ui/settings.rs:125",
     "plural": false,
     "description": null
   },
   "LIBRARY_FORCE_RESCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:212",
+    "definedIn": "src/ui/global_actions.rs:213",
     "plural": false,
     "description": null
   },
   "LIBRARY_SCAN": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:207",
+    "definedIn": "src/ui/global_actions.rs:208",
     "plural": false,
     "description": null
   },
   "LIBRARY_SHUFFLE_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:201",
+    "definedIn": "src/ui/global_actions.rs:202",
     "plural": false,
     "description": null
   },
@@ -649,7 +661,7 @@
   },
   "LIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:295",
+    "definedIn": "src/ui/library/release_view.rs:305",
     "plural": false,
     "description": null
   },
@@ -697,25 +709,25 @@
   },
   "PATREON": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:168",
+    "definedIn": "src/ui/global_actions.rs:169",
     "plural": false,
     "description": null
   },
   "PAUSE": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:96",
+    "definedIn": "src/ui/components/playback_controls.rs:109",
     "plural": false,
     "description": null
   },
   "PLAY": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:98",
+    "definedIn": "src/ui/components/playback_controls.rs:111",
     "plural": false,
     "description": null
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:125",
+    "definedIn": "src/ui/settings.rs:126",
     "plural": false,
     "description": null
   },
@@ -805,19 +817,19 @@
   },
   "QUIT": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:123",
+    "definedIn": "src/ui/global_actions.rs:124",
     "plural": false,
     "description": null
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:344",
+    "definedIn": "src/ui/library/release_view.rs:408",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:359",
+    "definedIn": "src/ui/library/release_view.rs:423",
     "plural": false,
     "description": null
   },
@@ -955,49 +967,49 @@
   },
   "SCANNING_MISSING_DIALOG_BODY": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:172",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:80",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DELETE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:244",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:107",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DELETE_SUBTITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:246",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:114",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DONT_ASK_AGAIN": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:279",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:64",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_DONT_ASK_HINT": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:290",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:72",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_KEEP": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:228",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:90",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_KEEP_SUBTITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:230",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:97",
     "plural": false,
     "description": null
   },
   "SCANNING_MISSING_DIALOG_TITLE": {
     "context": "missing_folder_dialog.rs",
-    "definedIn": "src/ui/library/missing_folder_dialog.rs:154",
+    "definedIn": "src/ui/library/missing_folder_dialog.rs:78",
     "plural": false,
     "description": null
   },
@@ -1063,25 +1075,25 @@
   },
   "SCAN_COMPLETE_WATCHING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:166",
+    "definedIn": "src/ui/header.rs:183",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:145",
+    "definedIn": "src/ui/header.rs:162",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:153",
+    "definedIn": "src/ui/header.rs:170",
     "plural": false,
     "description": null
   },
   "SEARCH": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:193",
+    "definedIn": "src/ui/global_actions.rs:194",
     "plural": false,
     "description": null
   },
@@ -1093,7 +1105,7 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:126",
+    "definedIn": "src/ui/settings.rs:127",
     "plural": false,
     "description": null
   },
@@ -1111,13 +1123,49 @@
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:51",
+    "definedIn": "src/ui/settings.rs:52",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_BODY": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:36",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_QUIT": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:62",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_QUIT_SUBTITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:67",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_SHOW": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:48",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_SHOW_SUBTITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:53",
+    "plural": false,
+    "description": null
+  },
+  "SETTINGS_CORRUPT_DIALOG_TITLE": {
+    "context": "corrupt_settings_dialog.rs",
+    "definedIn": "src/ui/settings/corrupt_settings_dialog.rs:32",
     "plural": false,
     "description": null
   },
   "SHOW_ALL": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:117",
+    "definedIn": "src/ui/global_actions.rs:118",
     "plural": false,
     "description": null
   },
@@ -1141,7 +1189,7 @@
   },
   "SHUFFLE": {
     "context": "playback_controls.rs",
-    "definedIn": "src/ui/components/playback_controls.rs:114",
+    "definedIn": "src/ui/components/playback_controls.rs:129",
     "plural": false,
     "description": null
   },
@@ -1309,7 +1357,7 @@
   },
   "UNLIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:293",
+    "definedIn": "src/ui/library/release_view.rs:303",
     "plural": false,
     "description": null
   },
@@ -1327,7 +1375,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:128",
+    "definedIn": "src/ui/settings.rs:129",
     "plural": false,
     "description": null
   },
@@ -1345,13 +1393,13 @@
   },
   "VIEW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:183",
+    "definedIn": "src/ui/global_actions.rs:184",
     "plural": false,
     "description": "The View menu. Must *exactly* match the text required by macOS."
   },
   "WINDOW": {
     "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:224",
+    "definedIn": "src/ui/global_actions.rs:225",
     "plural": false,
     "description": "The Window menu. Must *exactly* match the text required by macOS."
   }

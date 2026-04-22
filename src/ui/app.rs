@@ -44,6 +44,7 @@ use crate::{
         library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
         models::WindowInformation,
         right_sidebar::RightSidebar,
+        settings::corrupt_settings_dialog::CorruptSettingsDialog,
         shell::Shell,
         ui_config::{UiConfigGlobal, active_shell_layout},
     },
@@ -76,6 +77,7 @@ struct MainWindow {
     pub show_about: Entity<bool>,
     pub about_focus: FocusHandle,
     pub missing_folder_dialog: Entity<MissingFolderDialog>,
+    pub corrupt_settings_dialog: Entity<CorruptSettingsDialog>,
     pub palette: Entity<CommandPalette>,
     pub image_cache: Entity<HummingbirdImageCache>,
 }
@@ -98,9 +100,9 @@ impl Render for MainWindow {
 
         let show_about = *self.show_about.clone().read(cx);
         let scan_state = cx.global::<Models>().scan_state.read(cx).clone();
-        let show_missing_folder_dialog = matches!(
-            scan_state,
-            ScanEvent::WaitingForMissingFolderDecision { .. }
+        let show_corrupt_settings_dialog = matches!(
+            cx.global::<Models>().settings_health.read(cx),
+            models::SettingsHealth::Corrupt { .. }
         );
         let show_queue = cx.global::<Models>().show_queue.clone();
         let show_lyrics = cx.global::<Models>().show_lyrics.clone();
@@ -108,6 +110,11 @@ impl Render for MainWindow {
         let shell_layout = active_shell_layout(cx);
         let shell = self.shell();
         let shell_children = shell.render_children(&shell_layout, show_sidebar, window, cx);
+        let show_missing_folder_dialog = !show_corrupt_settings_dialog
+            && matches!(
+                scan_state,
+                ScanEvent::WaitingForMissingFolderDecision { .. }
+            );
 
         div()
             .image_cache(self.image_cache.clone())
@@ -145,6 +152,9 @@ impl Render for MainWindow {
                     })
                     .when(show_missing_folder_dialog, |this| {
                         this.child(self.missing_folder_dialog.clone())
+                    })
+                    .when(show_corrupt_settings_dialog, |this| {
+                        this.child(self.corrupt_settings_dialog.clone())
                     }),
             ))
     }
@@ -294,6 +304,7 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
             show_about,
             about_focus,
             missing_folder_dialog: MissingFolderDialog::new(cx),
+            corrupt_settings_dialog: CorruptSettingsDialog::new(cx),
             palette,
             // use a really small global image cache
             // this is literally just to ensure that images are *always* removed
@@ -443,10 +454,31 @@ pub fn run() -> anyhow::Result<()> {
         }
 
         let mut scan_interface: ScanInterface = start_scanner(pool.clone(), scanning_settings);
-        scan_interface.scan();
+        let initial_health = cx.global::<Models>().settings_health.read(cx).clone();
+        if matches!(initial_health, models::SettingsHealth::Ok) {
+            scan_interface.scan();
+        } else {
+            tracing::warn!("Settings file is corrupt; holding scanner until resolved");
+        }
         scan_interface.start_broadcast(cx);
 
         cx.set_global(scan_interface);
+
+        let settings_health = cx.global::<Models>().settings_health.clone();
+        cx.observe(&settings_health, |health, cx| {
+            if matches!(health.read(cx), models::SettingsHealth::Ok) {
+                let scanning = cx
+                    .global::<SettingsGlobal>()
+                    .model
+                    .read(cx)
+                    .scanning
+                    .clone();
+                let scanner = cx.global::<ScanInterface>();
+                scanner.update_settings(scanning);
+                scanner.scan();
+            }
+        })
+        .detach();
 
         let power_manager = PowerManager::new(cx, playback_settings.prevent_idle);
         cx.set_global(power_manager);

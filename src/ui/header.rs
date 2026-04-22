@@ -12,6 +12,7 @@ use super::models::Models;
 use crate::{
     library::scan::ScanEvent,
     services::mmb::lastfm::LASTFM_CREDS,
+    settings::{Settings, SettingsGlobal},
     ui::{
         components::{
             icons::{FOLDER_SEARCH, icon},
@@ -28,6 +29,7 @@ pub struct Header {
     scan_status: Entity<ScanStatus>,
     menu_bar: Option<Entity<MenuBar>>,
     lastfm: Option<Entity<lastfm::LastFM>>,
+    settings: Entity<Settings>,
 }
 
 impl Header {
@@ -42,27 +44,42 @@ impl Header {
             info!("These can additionally be set at compile time to bake them into the binary.");
         }
 
-        cx.new(|cx| Self {
-            scan_status: ScanStatus::new(cx),
-            menu_bar: if cfg!(not(target_os = "macos")) {
-                let menus = cx.get_menus().unwrap();
-                Some(MenuBar::new(cx, menus))
-            } else {
-                None
-            },
-            lastfm,
+        let settings = cx.global::<SettingsGlobal>().model.clone();
+
+        cx.new(|cx| {
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+
+            Self {
+                scan_status: ScanStatus::new(cx),
+                menu_bar: if cfg!(not(target_os = "macos")) {
+                    let menus = cx.get_menus().unwrap();
+                    Some(MenuBar::new(cx, menus))
+                } else {
+                    None
+                },
+                lastfm,
+                settings,
+            }
         })
     }
 }
 
 impl Render for Header {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut header = header().main_window(true);
 
-        header = header.left(nav_buttons());
+        let swap = self.settings.read(cx).interface.should_swap_menu_and_nav();
 
-        if let Some(menu_bar) = self.menu_bar.clone() {
-            header = header.left(menu_bar);
+        if swap {
+            if let Some(menu_bar) = self.menu_bar.clone() {
+                header = header.left(menu_bar);
+            }
+            header = header.left(nav_buttons());
+        } else {
+            header = header.left(nav_buttons());
+            if let Some(menu_bar) = self.menu_bar.clone() {
+                header = header.left(menu_bar);
+            }
         }
 
         header = header.left(self.scan_status.clone());

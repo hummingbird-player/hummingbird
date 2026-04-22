@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 
 use cntp_i18n::tr;
 use gpui::*;
@@ -17,8 +17,10 @@ use crate::{
         availability::{has_available_tracks, is_track_available},
         caching::hummingbird_cache,
         components::{
-            icons::{STAR, STAR_FILLED, icon},
+            button::{ButtonSize, button},
+            icons::{DOTS_VERTICAL, STAR, STAR_FILLED, icon},
             playback_controls::playback_controls,
+            popover::{PopoverPosition, popover},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
@@ -26,6 +28,7 @@ use crate::{
         library::{
             ViewSwitchMessage,
             collection_summary::format_collection_summary,
+            context_menus::{AlbumContextMenuContext, album::AlbumContextMenu},
             nav_buttons::detail_close_button,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
@@ -59,6 +62,7 @@ pub struct ReleaseView {
     scroll_follow: SmoothScrollFollow,
     scroll_frame_scheduled: bool,
     all_liked: bool,
+    menu_open: bool,
 }
 
 impl ReleaseView {
@@ -150,6 +154,7 @@ impl ReleaseView {
                 scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
                 scroll_frame_scheduled: false,
                 all_liked,
+                menu_open: false,
             }
         })
     }
@@ -161,6 +166,7 @@ impl ReleaseView {
         current_track_in_album: bool,
         is_playing: bool,
         show_close_button: bool,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
             .pt(px(52.0))
@@ -248,29 +254,33 @@ impl ReleaseView {
                             .flex_row()
                             .items_center()
                             .gap(px(10.0))
-                            .child(playback_controls(
-                                "release",
-                                has_available_tracks,
-                                current_track_in_album,
-                                is_playing,
-                                {
-                                    let tracks = self.track_listing.tracks().clone();
-                                    move |cx| {
-                                        tracks
-                                            .iter()
-                                            .filter(|track| is_track_available(track))
-                                            .map(|track| {
-                                                QueueItemData::new(
-                                                    cx,
-                                                    track.location.clone(),
-                                                    Some(track.id),
-                                                    track.album_id,
-                                                )
-                                            })
-                                            .collect()
-                                    }
-                                },
-                            ))
+                            .child(
+                                playback_controls(
+                                    "release",
+                                    has_available_tracks,
+                                    current_track_in_album,
+                                    is_playing,
+                                    {
+                                        let tracks = self.track_listing.tracks().clone();
+                                        move |cx| {
+                                            tracks
+                                                .iter()
+                                                .filter(|track| is_track_available(track))
+                                                .map(|track| {
+                                                    QueueItemData::new(
+                                                        cx,
+                                                        track.location.clone(),
+                                                        Some(track.id),
+                                                        track.album_id,
+                                                    )
+                                                })
+                                                .collect()
+                                        }
+                                    },
+                                )
+                                .show_add_to_queue(false)
+                                .trailing(self.render_menu_button(cx)),
+                            )
                             .child(self.render_like_button(theme)),
                     ),
             )
@@ -308,6 +318,60 @@ impl ReleaseView {
                         theme.text_secondary
                     }),
             )
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        self.menu_open = false;
+        cx.notify();
+    }
+
+    fn render_menu_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .relative()
+            .flex()
+            .child(
+                button()
+                    .id("release-menu-button")
+                    .size(ButtonSize::Large)
+                    .flex_none()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu_open = !this.menu_open;
+                        cx.notify();
+                    }))
+                    .child(icon(DOTS_VERTICAL).size(px(16.0)).my_auto()),
+            )
+            .when(self.menu_open, |this| {
+                let album = Rc::new((*self.album).clone());
+                let weak_self = cx.entity().downgrade();
+                let close = {
+                    let weak_self = weak_self.clone();
+                    move |cx: &mut App| {
+                        weak_self.update(cx, |this, cx| this.close_menu(cx)).ok();
+                    }
+                };
+                let close_for_dismiss = close.clone();
+                let close_for_out = close.clone();
+                this.child(
+                    popover()
+                        .position(PopoverPosition::BottomRight)
+                        .edge_offset(px(4.0))
+                        .p(px(0.0))
+                        .on_dismiss(move |_, cx| close_for_dismiss(cx))
+                        .on_mouse_down_out(move |_, _, cx| close_for_out(cx))
+                        .child(
+                            div()
+                                .id("release-menu-container")
+                                .on_click(move |_, _, cx| close(cx))
+                                .child(AlbumContextMenu::new(
+                                    album,
+                                    AlbumContextMenuContext::default(),
+                                )),
+                        ),
+                )
+            })
     }
 
     fn render_footer(&self, theme: &Theme) -> impl IntoElement {
@@ -482,7 +546,7 @@ impl Render for ReleaseView {
             }
         }
 
-        let theme = cx.global::<Theme>();
+        let theme = cx.global::<Theme>().clone();
 
         let is_playing =
             cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
@@ -525,18 +589,19 @@ impl Render for ReleaseView {
                     .flex_shrink()
                     .overflow_x_hidden()
                     .child(self.render_header(
-                        theme,
+                        &theme,
                         has_available_tracks,
                         current_track_in_album,
                         is_playing,
                         two_column,
+                        cx,
                     ))
                     .children(self.track_listing.track_elements())
                     .when(
                         self.release_info.is_some()
                             || self.album.release_date.is_some()
                             || self.album.isrc.is_some(),
-                        |this| this.child(self.render_footer(theme)),
+                        |this| this.child(self.render_footer(&theme)),
                     ),
             )
             .child(floating_scrollbar(
