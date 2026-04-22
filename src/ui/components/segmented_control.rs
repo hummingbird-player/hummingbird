@@ -7,7 +7,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px_by},
     styling::theme::Theme,
 };
 
@@ -27,11 +27,11 @@ fn segmented_control_metrics(cx: &App) -> SegmentedControlMetrics {
     let density = active_density(cx);
 
     SegmentedControlMetrics {
-        container_padding: scale_px(density, 2.0, 0.5),
-        container_gap: scale_px(density, 2.0, 0.5),
-        segment_inline_padding: scale_px(density, 8.0, 1.0),
-        segment_block_padding_start: scale_px(density, 3.0, 1.0),
-        segment_block_padding_end: scale_px(density, 2.0, 1.0),
+        container_padding: scale_px_by(density, 2.0, 0.5),
+        container_gap: scale_px_by(density, 2.0, 0.5),
+        segment_inline_padding: scale_px_by(density, 8.0, 1.0),
+        segment_block_padding_start: scale_px_by(density, 3.0, 1.0),
+        segment_block_padding_end: scale_px_by(density, 2.0, 1.0),
         text: active_typography(cx).caption,
         radius: 3.0,
     }

@@ -1,53 +1,6 @@
 use super::*;
 use crate::ui::scale::{active_density, scale_px};
-
-struct PlaybackButtonMetrics {
-    width: f32,
-    height: f32,
-    radius: f32,
-    icon_size: f32,
-}
-
-struct PlaybackSectionMetrics {
-    top_margin: f32,
-    side_toggle: PlaybackButtonMetrics,
-    transport_side: PlaybackButtonMetrics,
-    transport_center: PlaybackButtonMetrics,
-    outer_gap: f32,
-    transport_border_width: f32,
-    side_toggle_block_offset: f32,
-    transport_radius: f32,
-}
-
-fn playback_section_metrics(
-    density: crate::settings::interface::UiDensity,
-) -> PlaybackSectionMetrics {
-    PlaybackSectionMetrics {
-        top_margin: scale_px(density, 5.0, 1.0),
-        side_toggle: PlaybackButtonMetrics {
-            width: scale_px(density, 28.0, 2.0),
-            height: scale_px(density, 25.0, 2.0),
-            radius: 3.0,
-            icon_size: scale_px(density, 14.0, 1.0),
-        },
-        transport_side: PlaybackButtonMetrics {
-            width: scale_px(density, 30.0, 2.0),
-            height: scale_px(density, 28.0, 2.0),
-            radius: 3.0,
-            icon_size: scale_px(density, 16.0, 1.0),
-        },
-        transport_center: PlaybackButtonMetrics {
-            width: scale_px(density, 32.0, 2.0),
-            height: scale_px(density, 28.0, 2.0),
-            radius: 0.0,
-            icon_size: scale_px(density, 16.0, 1.0),
-        },
-        outer_gap: scale_px(density, 6.0, 1.0),
-        transport_border_width: 1.0,
-        side_toggle_block_offset: scale_px(density, 3.0, 1.0),
-        transport_radius: 4.0,
-    }
-}
+use crate::ui::spacing::active_spacing;
 
 pub(super) struct PlaybackSection {
     info: PlaybackInfo,
@@ -77,7 +30,8 @@ impl PlaybackSection {
 
 impl Render for PlaybackSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let metrics = playback_section_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).controls.playback;
         let state = self.info.playback_state.read(cx);
         let shuffling = self.info.shuffling.read(cx);
         let repeating = *self.info.repeating.read(cx);
@@ -97,17 +51,17 @@ impl Render for PlaybackSection {
         div()
             .mr(auto())
             .ml(auto())
-            .mt(px(metrics.top_margin))
+            .mt(px(scale_px(density, spacing.top_margin)))
             .flex()
             .w_full()
             .absolute()
             .child(
                 div()
-                    .rounded(px(metrics.side_toggle.radius))
-                    .w(px(metrics.side_toggle.width))
-                    .h(px(metrics.side_toggle.height))
-                    .mt(px(metrics.side_toggle_block_offset))
-                    .mr(px(metrics.outer_gap))
+                    .rounded(px(3.0))
+                    .w(px(scale_px(density, spacing.side_toggle_size)))
+                    .h(px(scale_px(density, spacing.side_toggle_size - 3.0)))
+                    .mt(px(scale_px(density, spacing.side_toggle_block_offset)))
+                    .mr(px(scale_px(density, spacing.outer_gap)))
                     .ml_auto()
                     .border_color(theme.playback_button_border)
                     .flex()
@@ -125,7 +79,7 @@ impl Render for PlaybackSection {
                     })
                     .child(
                         icon(SHUFFLE)
-                            .size(px(metrics.side_toggle.icon_size))
+                            .size(px(scale_px(density, spacing.side_toggle_icon_size)))
                             .when(*shuffling, |this| {
                                 this.text_color(theme.playback_button_toggled)
                             }),
@@ -138,15 +92,15 @@ impl Render for PlaybackSection {
             )
             .child(
                 div()
-                    .rounded(px(metrics.transport_radius))
+                    .rounded(px(4.0))
                     .border_color(theme.playback_button_border)
                     .border_1()
                     .flex()
                     .child(
                         div()
-                            .w(px(metrics.transport_side.width))
-                            .h(px(metrics.transport_side.height))
-                            .rounded_l(px(metrics.transport_side.radius))
+                            .w(px(scale_px(density, spacing.transport_side_width)))
+                            .h(px(scale_px(density, spacing.transport_height)))
+                            .rounded_l(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
                             .items_center()
@@ -161,16 +115,19 @@ impl Render for PlaybackSection {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Previous), cx);
                             })
-                            .child(icon(PREV_TRACK).size(px(metrics.transport_side.icon_size)))
+                            .child(
+                                icon(PREV_TRACK)
+                                    .size(px(scale_px(density, spacing.transport_icon_size))),
+                            )
                             .tooltip(build_tooltip(tr!("PREVIOUS_TRACK", "Previous Track"))),
                     )
                     .child(
                         div()
-                            .w(px(metrics.transport_center.width))
-                            .h(px(metrics.transport_center.height))
+                            .w(px(scale_px(density, spacing.transport_center_width)))
+                            .h(px(scale_px(density, spacing.transport_height)))
                             .bg(theme.playback_button)
-                            .border_l(px(metrics.transport_border_width))
-                            .border_r(px(metrics.transport_border_width))
+                            .border_l(px(1.0))
+                            .border_r(px(1.0))
                             .border_color(theme.playback_button_border)
                             .flex()
                             .items_center()
@@ -186,19 +143,25 @@ impl Render for PlaybackSection {
                                 window.dispatch_action(Box::new(PlayPause), cx);
                             })
                             .when(*state == PlaybackState::Playing, |div| {
-                                div.child(icon(PAUSE).size(px(metrics.transport_center.icon_size)))
-                                    .tooltip(build_tooltip(tr!("PAUSE")))
+                                div.child(
+                                    icon(PAUSE)
+                                        .size(px(scale_px(density, spacing.transport_icon_size))),
+                                )
+                                .tooltip(build_tooltip(tr!("PAUSE")))
                             })
                             .when(*state != PlaybackState::Playing, |div| {
-                                div.child(icon(PLAY).size(px(metrics.transport_center.icon_size)))
-                                    .tooltip(build_tooltip(tr!("PLAY")))
+                                div.child(
+                                    icon(PLAY)
+                                        .size(px(scale_px(density, spacing.transport_icon_size))),
+                                )
+                                .tooltip(build_tooltip(tr!("PLAY")))
                             }),
                     )
                     .child(
                         div()
-                            .w(px(metrics.transport_side.width))
-                            .h(px(metrics.transport_side.height))
-                            .rounded_r(px(metrics.transport_side.radius))
+                            .w(px(scale_px(density, spacing.transport_side_width)))
+                            .h(px(scale_px(density, spacing.transport_height)))
+                            .rounded_r(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
                             .items_center()
@@ -213,7 +176,10 @@ impl Render for PlaybackSection {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Next), cx);
                             })
-                            .child(icon(NEXT_TRACK).size(px(metrics.transport_side.icon_size)))
+                            .child(
+                                icon(NEXT_TRACK)
+                                    .size(px(scale_px(density, spacing.transport_icon_size))),
+                            )
                             .tooltip(build_tooltip(tr!("NEXT_TRACK", "Next Track"))),
                     ),
             )
@@ -222,11 +188,11 @@ impl Render for PlaybackSection {
                     context("repeat-context")
                         .with(
                             div()
-                                .rounded(px(metrics.side_toggle.radius))
-                                .w(px(metrics.side_toggle.width))
-                                .h(px(metrics.side_toggle.height))
-                                .mt(px(metrics.side_toggle_block_offset))
-                                .ml(px(metrics.outer_gap))
+                                .rounded(px(3.0))
+                                .w(px(scale_px(density, spacing.side_toggle_size)))
+                                .h(px(scale_px(density, spacing.side_toggle_size - 3.0)))
+                                .mt(px(scale_px(density, spacing.side_toggle_block_offset)))
+                                .ml(px(scale_px(density, spacing.outer_gap)))
                                 .border_color(theme.playback_button_border)
                                 .flex()
                                 .items_center()
@@ -269,7 +235,7 @@ impl Render for PlaybackSection {
                                         }
                                         RepeatState::RepeatingOne => REPEAT_ONCE,
                                     })
-                                    .size(px(metrics.side_toggle.icon_size))
+                                    .size(px(scale_px(density, spacing.side_toggle_icon_size)))
                                     .text_color(repeat_icon_color),
                                 ),
                         )

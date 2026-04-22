@@ -22,43 +22,13 @@ use crate::{
         global_actions::Search,
         library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
         models::Models,
-        scale::{TextStyle, active_density, apply_text_style, scale_px, typography_roles},
+        scale::{active_density, active_typography, apply_text_style, scale_px},
+        spacing::active_spacing,
         styling::theme::Theme,
     },
 };
 
 mod playlists;
-
-struct LibrarySidebarMetrics {
-    search_toggle_gap: f32,
-    search_toggle_block_start: f32,
-    search_toggle_block_end: f32,
-    search_toggle_padding_block_end: f32,
-    nav_button_size: f32,
-    section_padding_block: f32,
-    section_padding_inline_start: f32,
-    section_padding_inline_end: f32,
-    stats_text: TextStyle,
-    stats_padding_block_start: f32,
-}
-
-fn library_sidebar_metrics(
-    density: crate::settings::interface::UiDensity,
-) -> LibrarySidebarMetrics {
-    let typography = typography_roles(density);
-    LibrarySidebarMetrics {
-        search_toggle_gap: scale_px(density, 4.0, 1.0),
-        search_toggle_block_start: scale_px(density, 2.0, 1.0),
-        search_toggle_block_end: scale_px(density, 4.0, 1.0),
-        search_toggle_padding_block_end: scale_px(density, 10.0, 2.0),
-        nav_button_size: scale_px(density, 38.0, 2.0),
-        section_padding_block: scale_px(density, 8.0, 1.0),
-        section_padding_inline_start: scale_px(density, 7.0, 1.0),
-        section_padding_inline_end: scale_px(density, 8.0, 1.0),
-        stats_text: typography.caption,
-        stats_padding_block_start: scale_px(density, 8.0, 2.0),
-    }
-}
 
 pub struct Sidebar {
     playlists: Entity<PlaylistList>,
@@ -95,7 +65,9 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let metrics = library_sidebar_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).sidebar;
+        let typography = active_typography(cx);
         let stats_minutes = self.track_stats.total_duration / 60;
         let current_view = self.nav_model.read(cx).current();
         let two_column = cx
@@ -127,16 +99,19 @@ impl Render for Sidebar {
             .when(collapsed, |this| {
                 this.flex_col()
                     .items_center()
-                    .gap(px(metrics.search_toggle_gap))
+                    .gap(px(scale_px(density, spacing.search_toggle_gap)))
             })
-            .mt(px(metrics.search_toggle_block_start))
-            .mb(px(metrics.search_toggle_block_end))
-            .pb(px(metrics.search_toggle_padding_block_end))
+            .mt(px(scale_px(density, spacing.search_toggle_block_start)))
+            .mb(px(scale_px(density, spacing.search_toggle_block_end)))
+            .pb(px(scale_px(
+                density,
+                spacing.search_toggle_padding_block_end,
+            )))
             .border_b_1()
             .border_color(theme.border_color)
             .child(
                 nav_button("search", SEARCH)
-                    .w(px(metrics.nav_button_size))
+                    .w(px(scale_px(density, spacing.nav_button_size)))
                     .tooltip(build_tooltip(tr!("SEARCH")))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(Search), cx);
@@ -147,7 +122,7 @@ impl Render for Sidebar {
                     nav_button("sidebar-toggle", toggle_icon)
                         .ml_auto()
                         .tooltip(build_tooltip(tr!("COLLAPSE_SIDEBAR", "Collapse Sidebar")))
-                        .w(px(metrics.nav_button_size))
+                        .w(px(scale_px(density, spacing.nav_button_size)))
                         .on_click(move |_, _, cx| {
                             sidebar_collapsed_entity.update(cx, |v, cx| {
                                 *v = !*v;
@@ -166,10 +141,10 @@ impl Render for Sidebar {
             .id("main-sidebar")
             .h_full()
             .max_h_full()
-            .pt(px(metrics.section_padding_block))
-            .pb(px(metrics.section_padding_block))
-            .pl(px(metrics.section_padding_inline_start))
-            .pr(px(metrics.section_padding_inline_end))
+            .pt(px(scale_px(density, spacing.section_padding_block)))
+            .pb(px(scale_px(density, spacing.section_padding_block)))
+            .pl(px(scale_px(density, spacing.section_padding_inline_start)))
+            .pr(px(scale_px(density, spacing.section_padding_inline_end)))
             .when(!collapsed, |this| this.overflow_hidden())
             .flex()
             .flex_col()
@@ -238,8 +213,8 @@ impl Render for Sidebar {
                     div().mt_auto().child(
                         nav_button("sidebar-toggle", SIDEBAR_INACTIVE)
                             .tooltip(build_tooltip(tr!("EXPAND_SIDEBAR", "Expand Sidebar")))
-                            .w(px(metrics.nav_button_size))
-                            .h(px(metrics.nav_button_size))
+                            .w(px(scale_px(density, spacing.nav_button_size)))
+                            .h(px(scale_px(density, spacing.nav_button_size)))
                             .on_click(move |_, _, cx| {
                                 sidebar_collapsed_entity_bottom.update(cx, |v, cx| {
                                     *v = !*v;
@@ -255,7 +230,7 @@ impl Render for Sidebar {
                         .flex()
                         .flex_col()
                         .mt_auto()
-                        .pt(px(metrics.stats_padding_block_start))
+                        .pt(px(scale_px(density, spacing.stats_padding_block_start)))
                         .text_color(theme.text_secondary)
                         .child(trn!(
                             "STATS_TRACKS",
@@ -269,7 +244,7 @@ impl Render for Sidebar {
                             "{{count}} minutes",
                             count = stats_minutes
                         )),
-                    metrics.stats_text,
+                    typography.caption,
                 ))
             });
 

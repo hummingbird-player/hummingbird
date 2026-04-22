@@ -7,7 +7,7 @@ use gpui::{
 
 use crate::ui::{
     components::input::{EnrichedInputAction, TextInput},
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px_by},
     styling::theme::Theme,
 };
 
@@ -22,8 +22,8 @@ fn textbox_metrics(cx: &App) -> TextboxMetrics {
     let density = active_density(cx);
 
     TextboxMetrics {
-        inline_padding: scale_px(density, 8.0, 1.5),
-        block_padding: scale_px(density, 6.0, 1.0),
+        inline_padding: scale_px_by(density, 8.0, 1.5),
+        block_padding: scale_px_by(density, 6.0, 1.0),
         radius: 4.0,
         text: active_typography(cx).body,
     }

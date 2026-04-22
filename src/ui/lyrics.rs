@@ -12,7 +12,7 @@ use crate::{
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
         },
         models::{CurrentTrack, Models, PlaybackInfo},
-        scale::{TextStyle, active_density, interpolate_text_style, scale_px},
+        scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         styling::ActiveTheme,
     },
@@ -41,13 +41,13 @@ struct LyricsMetrics {
 
 fn lyrics_metrics(density: crate::settings::interface::UiDensity) -> LyricsMetrics {
     LyricsMetrics {
-        empty_icon_size: scale_px(density, 16.0, 2.0),
-        empty_line_height: scale_px(density, 16.0, 2.0),
-        blank_line_height: scale_px(density, 16.0, 2.0),
-        line_horizontal_padding: scale_px(density, 20.0, 2.0),
-        scroll_vertical_padding: scale_px(density, 9.0, 1.0),
-        plain_text_padding_x: scale_px(density, 16.0, 2.0),
-        plain_text_padding_y: scale_px(density, 14.0, 2.0),
+        empty_icon_size: scale_px(density, 16.0),
+        empty_line_height: scale_px(density, 16.0),
+        blank_line_height: scale_px(density, 16.0),
+        line_horizontal_padding: scale_px(density, 20.0),
+        scroll_vertical_padding: scale_px_by(density, 9.0, 1.0),
+        plain_text_padding_x: scale_px(density, 16.0),
+        plain_text_padding_y: scale_px(density, 14.0),
         plain_text: interpolate_text_style(
             density,
             TextStyle::new(18.0, 28.0),
@@ -66,8 +66,8 @@ fn lyrics_metrics(density: crate::settings::interface::UiDensity) -> LyricsMetri
             TextStyle::new(25.0, 36.0),
             TextStyle::new(27.0, 39.0),
         ),
-        base_vertical_padding: scale_px(density, 7.0, 1.0),
-        active_vertical_padding: scale_px(density, 9.0, 1.0),
+        base_vertical_padding: scale_px_by(density, 7.0, 1.0),
+        active_vertical_padding: scale_px_by(density, 9.0, 1.0),
     }
 }
 pub struct Lyrics {

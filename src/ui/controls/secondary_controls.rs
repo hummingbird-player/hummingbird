@@ -1,49 +1,8 @@
 use super::*;
-use crate::ui::scale::{active_density, scale_px};
-
-struct SecondaryControlButtonMetrics {
-    width: f32,
-    height: f32,
-    radius: f32,
-    icon_size: f32,
-}
-
-struct SecondaryControlsMetrics {
-    horizontal_padding: f32,
-    bottom_padding: f32,
-    button: SecondaryControlButtonMetrics,
-    button_top_margin: f32,
-    volume_track_height: f32,
-    volume_track_top_margin: f32,
-    volume_track_horizontal_margin: f32,
-    divider_height: f32,
-    divider_width: f32,
-    divider_top_margin: f32,
-    divider_horizontal_margin: f32,
-}
-
-fn secondary_controls_metrics(
-    density: crate::settings::interface::UiDensity,
-) -> SecondaryControlsMetrics {
-    SecondaryControlsMetrics {
-        horizontal_padding: scale_px(density, 18.0, 2.0),
-        bottom_padding: scale_px(density, 2.0, 1.0),
-        button: SecondaryControlButtonMetrics {
-            width: scale_px(density, 25.0, 2.0),
-            height: scale_px(density, 25.0, 2.0),
-            radius: 3.0,
-            icon_size: scale_px(density, 14.0, 1.0),
-        },
-        button_top_margin: scale_px(density, 2.0, 1.0),
-        volume_track_height: scale_px(density, 6.0, 1.0),
-        volume_track_top_margin: scale_px(density, 11.0, 1.0),
-        volume_track_horizontal_margin: scale_px(density, 4.0, 1.0),
-        divider_height: scale_px(density, 24.0, 2.0),
-        divider_width: 1.0,
-        divider_top_margin: scale_px(density, 3.0, 1.0),
-        divider_horizontal_margin: scale_px(density, 4.0, 1.0),
-    }
-}
+use crate::ui::{
+    scale::{active_density, scale_px},
+    spacing::active_spacing,
+};
 
 #[derive(IntoElement)]
 struct SidebarToggleButton {
@@ -68,7 +27,8 @@ impl Styled for SidebarToggleButton {
 
 impl RenderOnce for SidebarToggleButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let metrics = secondary_controls_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).controls.secondary;
         let theme = cx.theme();
         let icon_color = if self.active {
             theme.playback_button_toggled
@@ -77,10 +37,10 @@ impl RenderOnce for SidebarToggleButton {
         };
 
         self.div
-            .rounded(px(metrics.button.radius))
-            .w(px(metrics.button.width))
-            .h(px(metrics.button.height))
-            .mt(px(metrics.button_top_margin))
+            .rounded(px(3.0))
+            .w(px(scale_px(density, spacing.button_size)))
+            .h(px(scale_px(density, spacing.button_size)))
+            .mt(px(scale_px(density, spacing.button_top_margin)))
             .flex()
             .items_center()
             .justify_center()
@@ -91,7 +51,7 @@ impl RenderOnce for SidebarToggleButton {
             .active(|this| this.bg(theme.playback_button_active))
             .child(
                 icon(self.icon_path)
-                    .size(px(metrics.button.icon_size))
+                    .size(px(scale_px(density, spacing.button_icon_size)))
                     .text_color(icon_color),
             )
     }
@@ -152,7 +112,8 @@ impl SecondaryControls {
 
 impl Render for SecondaryControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let metrics = secondary_controls_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).controls.secondary;
         let theme = cx.theme();
         let volume = *self.info.volume.read(cx);
         let prev_volume = *self.info.prev_volume.read(cx);
@@ -162,7 +123,7 @@ impl Render for SecondaryControls {
         let queue_active = *self.show_queue.read(cx);
 
         div()
-            .px(px(metrics.horizontal_padding))
+            .px(px(scale_px(density, spacing.horizontal_padding)))
             .flex()
             .w_full()
             .h_full()
@@ -171,13 +132,13 @@ impl Render for SecondaryControls {
                     .flex()
                     .w_full()
                     .my_auto()
-                    .pb(px(metrics.bottom_padding))
+                    .pb(px(scale_px(density, spacing.bottom_padding)))
                     .child(
                         div()
-                            .rounded(px(metrics.button.radius))
-                            .w(px(metrics.button.width))
-                            .h(px(metrics.button.height))
-                            .mt(px(metrics.button_top_margin))
+                            .rounded(px(3.0))
+                            .w(px(scale_px(density, spacing.button_size)))
+                            .h(px(scale_px(density, spacing.button_size)))
+                            .mt(px(scale_px(density, spacing.button_top_margin)))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -188,32 +149,38 @@ impl Render for SecondaryControls {
                             .hover(|this| this.bg(theme.playback_button_hover))
                             .active(|this| this.bg(theme.playback_button_active))
                             .when(volume <= 0.0, |div| {
-                                div.child(icon(VOLUME_OFF).size(px(metrics.button.icon_size)))
-                                    .on_click(move |_, _, cx| {
-                                        cx.global::<PlaybackInterface>().set_volume(prev_volume);
-                                    })
-                                    .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
+                                div.child(
+                                    icon(VOLUME_OFF)
+                                        .size(px(scale_px(density, spacing.button_icon_size))),
+                                )
+                                .on_click(move |_, _, cx| {
+                                    cx.global::<PlaybackInterface>().set_volume(prev_volume);
+                                })
+                                .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
                             })
                             .when(volume > 0.0, |div| {
-                                div.child(icon(VOLUME).size(px(metrics.button.icon_size)))
-                                    .on_click(move |_, _, cx| {
-                                        cx.global::<PlaybackInterface>().set_volume(0 as f64);
-                                    })
-                                    .tooltip(build_tooltip(tr!("MUTE", "Mute")))
+                                div.child(
+                                    icon(VOLUME)
+                                        .size(px(scale_px(density, spacing.button_icon_size))),
+                                )
+                                .on_click(move |_, _, cx| {
+                                    cx.global::<PlaybackInterface>().set_volume(0 as f64);
+                                })
+                                .tooltip(build_tooltip(tr!("MUTE", "Mute")))
                             }),
                     )
                     .child(
                         div()
                             .id("volume-container")
-                            .mx(px(metrics.volume_track_horizontal_margin))
+                            .mx(px(scale_px(density, spacing.volume_track_inline_margin)))
                             .flex_1()
                             .min_w(px(50.0))
                             .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
                             .child(
                                 slider()
                                     .w_full()
-                                    .h(px(metrics.volume_track_height))
-                                    .mt(px(metrics.volume_track_top_margin))
+                                    .h(px(scale_px(density, spacing.volume_track_height)))
+                                    .mt(px(scale_px(density, spacing.volume_track_top_margin)))
                                     .rounded(px(3.0))
                                     .id("volume")
                                     .value(volume as f32)
@@ -240,10 +207,10 @@ impl Render for SecondaryControls {
                     .child(self.replaygain_button.clone())
                     .child(
                         div()
-                            .h(px(metrics.divider_height))
-                            .w(px(metrics.divider_width))
-                            .mt(px(metrics.divider_top_margin))
-                            .mx(px(metrics.divider_horizontal_margin))
+                            .h(px(scale_px(density, spacing.divider_height)))
+                            .w(px(1.0))
+                            .mt(px(scale_px(density, spacing.divider_top_margin)))
+                            .mx(px(scale_px(density, spacing.divider_inline_margin)))
                             .bg(theme.border_color),
                     )
                     .child(

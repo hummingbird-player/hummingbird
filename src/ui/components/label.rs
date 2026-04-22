@@ -6,7 +6,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px_by},
     styling::{ActiveTheme, StyledExt},
 };
 
@@ -22,7 +22,7 @@ fn label_metrics(cx: &App) -> LabelMetrics {
     let density = active_density(cx);
     let typography = active_typography(cx);
     LabelMetrics {
-        content_gap: scale_px(density, 6.0, 1.0),
+        content_gap: scale_px_by(density, 6.0, 1.0),
         text: typography.label,
         subtext: typography.secondary_body,
     }

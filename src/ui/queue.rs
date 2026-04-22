@@ -21,7 +21,7 @@ use crate::{
             tooltip::build_tooltip,
         },
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
-        scale::{TextStyle, active_density, interpolate_text_style, scale_px, typography_roles},
+        scale::{TextStyle, active_density, interpolate_text_style, scale_px_by, typography_roles},
     },
 };
 use cntp_i18n::tr;
@@ -77,13 +77,13 @@ struct QueueMetrics {
 fn queue_metrics(density: crate::settings::interface::UiDensity) -> QueueMetrics {
     QueueMetrics {
         item: QueueItemMetrics {
-            height: scale_px(density, QUEUE_ITEM_HEIGHT, 4.0),
-            gap: scale_px(density, 11.0, 1.0),
-            padding_x: scale_px(density, 17.0, 2.0),
-            padding_y: scale_px(density, 11.0, 2.0),
-            scrollbar_right_padding: scale_px(density, 25.0, 2.0),
+            height: scale_px_by(density, QUEUE_ITEM_HEIGHT, 4.0),
+            gap: scale_px_by(density, 11.0, 1.0),
+            padding_x: scale_px_by(density, 17.0, 2.0),
+            padding_y: scale_px_by(density, 11.0, 2.0),
+            scrollbar_right_padding: scale_px_by(density, 25.0, 2.0),
             border_width: 1.0,
-            art_size: scale_px(density, 36.0, 3.0),
+            art_size: scale_px_by(density, 36.0, 3.0),
             art_radius: 4.0,
             metadata: interpolate_text_style(
                 density,
@@ -91,14 +91,14 @@ fn queue_metrics(density: crate::settings::interface::UiDensity) -> QueueMetrics
                 TextStyle::new(15.0, 16.0),
                 TextStyle::new(16.0, 18.0),
             ),
-            duration_gap: scale_px(density, 6.0, 1.0),
+            duration_gap: scale_px_by(density, 6.0, 1.0),
         },
         header: QueueHeaderMetrics {
-            padding_y: scale_px(density, 11.0, 1.0),
-            padding_left: scale_px(density, 18.0, 2.0),
-            padding_right: scale_px(density, 12.0, 1.0),
+            padding_y: scale_px_by(density, 11.0, 1.0),
+            padding_left: scale_px_by(density, 18.0, 2.0),
+            padding_right: scale_px_by(density, 12.0, 1.0),
             title: typography_roles(density).panel_title,
-            clear_icon_size: scale_px(density, 14.0, 1.0),
+            clear_icon_size: scale_px_by(density, 14.0, 1.0),
         },
     }
 }

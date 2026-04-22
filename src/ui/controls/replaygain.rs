@@ -12,38 +12,10 @@ use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{active_density, active_typography, apply_text_style, scale_px},
+    spacing::active_spacing,
     styling::theme::Theme,
 };
-
-struct ReplayGainMetrics {
-    button_width: f32,
-    button_height: f32,
-    button_radius: f32,
-    button_icon_size: f32,
-    button_top_margin: f32,
-    popover_gap: f32,
-    popover_padding_inline: f32,
-    popover_padding_block: f32,
-    section_label: TextStyle,
-}
-
-fn replaygain_metrics(
-    density: crate::settings::interface::UiDensity,
-    cx: &App,
-) -> ReplayGainMetrics {
-    ReplayGainMetrics {
-        button_width: scale_px(density, 25.0, 2.0),
-        button_height: scale_px(density, 25.0, 2.0),
-        button_radius: 3.0,
-        button_icon_size: scale_px(density, 14.0, 1.0),
-        button_top_margin: scale_px(density, 2.0, 1.0),
-        popover_gap: scale_px(density, 10.0, 2.0),
-        popover_padding_inline: scale_px(density, 4.0, 1.0),
-        popover_padding_block: scale_px(density, 8.0, 1.0),
-        section_label: active_typography(cx).caption,
-    }
-}
 
 pub struct ReplayGainButton {
     settings: Entity<Settings>,
@@ -76,7 +48,10 @@ impl ReplayGainButton {
 impl Render for ReplayGainButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let metrics = replaygain_metrics(active_density(cx), cx);
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).controls;
+        let button_spacing = spacing.secondary;
+        let section_label = active_typography(cx).caption;
         let rg_settings = self.settings.read(cx).playback.replaygain;
         let rg_mode = rg_settings.mode;
         let settings = self.settings.clone();
@@ -86,10 +61,10 @@ impl Render for ReplayGainButton {
             .relative()
             .child(
                 div()
-                    .rounded(px(metrics.button_radius))
-                    .w(px(metrics.button_width))
-                    .h(px(metrics.button_height))
-                    .mt(px(metrics.button_top_margin))
+                    .rounded(px(3.0))
+                    .w(px(scale_px(density, button_spacing.button_size)))
+                    .h(px(scale_px(density, button_spacing.button_size)))
+                    .mt(px(scale_px(density, button_spacing.button_top_margin)))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -110,7 +85,7 @@ impl Render for ReplayGainButton {
                     }))
                     .child(
                         icon(ADJUSTMENTS)
-                            .size(px(metrics.button_icon_size))
+                            .size(px(scale_px(density, button_spacing.button_icon_size)))
                             .when(rg_mode != ReplayGainMode::Off, |this| {
                                 this.text_color(theme.playback_button_toggled)
                             }),
@@ -134,10 +109,19 @@ impl Render for ReplayGainButton {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(metrics.popover_gap))
-                                .px(px(metrics.popover_padding_inline))
-                                .pt(px(metrics.popover_padding_block))
-                                .pb(px(metrics.popover_padding_block))
+                                .gap(px(scale_px(density, spacing.replaygain_popover_gap)))
+                                .px(px(scale_px(
+                                    density,
+                                    spacing.replaygain_popover_padding_inline,
+                                )))
+                                .pt(px(scale_px(
+                                    density,
+                                    spacing.replaygain_popover_padding_block,
+                                )))
+                                .pb(px(scale_px(
+                                    density,
+                                    spacing.replaygain_popover_padding_block,
+                                )))
                                 .child(
                                     div()
                                         .flex()
@@ -148,7 +132,7 @@ impl Render for ReplayGainButton {
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(theme.text_secondary)
                                                 .child(tr!("RG_MODE_LABEL", "ReplayGain Mode")),
-                                            metrics.section_label,
+                                            section_label,
                                         ))
                                         .child({
                                             let settings = settings.clone();
@@ -188,7 +172,7 @@ impl Render for ReplayGainButton {
                                                     .text_color(theme.text_secondary)
                                                     .mb(px(1.0))
                                                     .child(tr!("RG_PREAMP_LABEL", "Pre-amp")),
-                                                metrics.section_label,
+                                                section_label,
                                             ))
                                             .child({
                                                 let settings = settings.clone();

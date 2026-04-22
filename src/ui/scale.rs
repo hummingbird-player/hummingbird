@@ -1,3 +1,14 @@
+//! Shared helpers for interface scale.
+//!
+//! `ui_density` is the one global scale setting. It affects text through
+//! `TextStyle { size, line_height }`, and it affects ordinary geometry through
+//! `scale_px(...)`.
+//!
+//! In practice, shared text should usually come from the typography roles,
+//! normal geometry should use `scale_px(...)`, and `scale_px_by(...)` is there
+//! for the few places where the default 2 px nudge is not the right fit.
+//! Anything with behavior tied to its geometry should still own that locally.
+
 use gpui::{App, Styled, px};
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +61,11 @@ pub fn interpolate_scalar(density: UiDensity, compact: f32, default: f32, comfor
     density.interpolate(compact, default, comfortable)
 }
 
-pub fn scale_px(density: UiDensity, default: f32, delta: f32) -> f32 {
+pub fn scale_px(density: UiDensity, default: f32) -> f32 {
+    scale_px_by(density, default, 2.0)
+}
+
+pub fn scale_px_by(density: UiDensity, default: f32, delta: f32) -> f32 {
     default + (density.value() * delta)
 }
 
@@ -131,7 +146,7 @@ where
 mod tests {
     use crate::settings::interface::UiDensity;
 
-    use super::{TextStyle, resolve_density, scale_px};
+    use super::{TextStyle, resolve_density, scale_px, scale_px_by};
 
     fn interface(ui_density: UiDensity) -> crate::settings::interface::InterfaceSettings {
         crate::settings::interface::InterfaceSettings {
@@ -172,8 +187,15 @@ mod tests {
 
     #[test]
     fn scale_px_offsets_from_default() {
-        assert_eq!(scale_px(UiDensity::from(-1.0), 36.0, 2.0), 34.0);
-        assert_eq!(scale_px(UiDensity::from(0.0), 36.0, 2.0), 36.0);
-        assert_eq!(scale_px(UiDensity::from(1.0), 36.0, 2.0), 38.0);
+        assert_eq!(scale_px(UiDensity::from(-1.0), 36.0), 34.0);
+        assert_eq!(scale_px(UiDensity::from(0.0), 36.0), 36.0);
+        assert_eq!(scale_px(UiDensity::from(1.0), 36.0), 38.0);
+    }
+
+    #[test]
+    fn scale_px_by_uses_custom_delta() {
+        assert_eq!(scale_px_by(UiDensity::from(-1.0), 36.0, 4.0), 32.0);
+        assert_eq!(scale_px_by(UiDensity::from(0.0), 36.0, 4.0), 36.0);
+        assert_eq!(scale_px_by(UiDensity::from(1.0), 36.0, 4.0), 40.0);
     }
 }

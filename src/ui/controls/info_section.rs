@@ -1,45 +1,7 @@
 use super::*;
-use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px};
+use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by};
+use crate::ui::spacing::active_spacing;
 use crate::ui::styling::StyledExt;
-
-struct InfoSectionMetrics {
-    outer_margin_x: f32,
-    outer_margin_top: f32,
-    outer_margin_bottom: f32,
-    row_gap: f32,
-    art_size: f32,
-    art_radius: f32,
-    art_bottom_inset: f32,
-    preview_size: f32,
-    preview_radius: f32,
-    preview_bottom_offset: f32,
-    metadata_text: TextStyle,
-    like_padding: f32,
-    like_icon_size: f32,
-}
-
-fn info_section_metrics(density: crate::settings::interface::UiDensity) -> InfoSectionMetrics {
-    InfoSectionMetrics {
-        outer_margin_x: scale_px(density, 12.0, 2.0),
-        outer_margin_top: scale_px(density, 12.0, 2.0),
-        outer_margin_bottom: scale_px(density, 6.0, 1.0),
-        row_gap: 10.0,
-        art_size: scale_px(density, 36.0, 3.0),
-        art_radius: 4.0,
-        art_bottom_inset: scale_px(density, 6.0, 1.0),
-        preview_size: scale_px(density, 256.0, 24.0),
-        preview_radius: 10.0,
-        preview_bottom_offset: scale_px(density, 26.0, 3.0),
-        metadata_text: interpolate_text_style(
-            density,
-            TextStyle::new(14.0, 16.0),
-            TextStyle::new(15.0, 16.0),
-            TextStyle::new(16.0, 18.0),
-        ),
-        like_padding: scale_px(density, 4.0, 1.0),
-        like_icon_size: scale_px(density, 14.0, 1.0),
-    }
-}
 
 pub(super) struct InfoSection {
     track_name: Option<SharedString>,
@@ -171,7 +133,24 @@ impl InfoSection {
 
 impl Render for InfoSection {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let metrics = info_section_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).controls.info;
+        let outer_margin_inline = scale_px(density, spacing.outer_margin_inline);
+        let outer_margin_block_start = scale_px(density, spacing.outer_margin_block_start);
+        let outer_margin_block_end = scale_px(density, spacing.outer_margin_block_end);
+        let row_gap = scale_px(density, spacing.item_gap);
+        let art_size = scale_px(density, spacing.art_size);
+        let art_bottom_inset = scale_px(density, spacing.art_bottom_inset);
+        let preview_size = scale_px_by(density, spacing.preview_size, 24.0);
+        let preview_offset = scale_px(density, spacing.preview_offset);
+        let like_padding = scale_px(density, spacing.like_padding);
+        let like_icon_size = scale_px(density, spacing.icon_size);
+        let metadata_text = interpolate_text_style(
+            density,
+            TextStyle::new(14.0, 16.0),
+            TextStyle::new(15.0, 16.0),
+            TextStyle::new(16.0, 18.0),
+        );
         let add_to_state = self.current_library_track.as_ref().map(|track| {
             crate::ui::library::context_menus::add_to_playlist_state(
                 "info-section-menu-state",
@@ -206,10 +185,10 @@ impl Render for InfoSection {
             .flex_shrink_0()
             .child(
                 div()
-                    .mx(px(metrics.outer_margin_x))
-                    .mt(px(metrics.outer_margin_top))
-                    .mb(px(metrics.outer_margin_bottom))
-                    .gap(px(metrics.row_gap))
+                    .mx(px(outer_margin_inline))
+                    .mt(px(outer_margin_block_start))
+                    .mb(px(outer_margin_block_end))
+                    .gap(px(row_gap))
                     .flex()
                     .w_full()
                     .overflow_x_hidden()
@@ -217,12 +196,12 @@ impl Render for InfoSection {
                         div()
                             .image_cache(hummingbird_cache("infosection_cache", 1))
                             .id("album-art")
-                            .rounded(px(metrics.art_radius))
+                            .rounded(px(4.0))
                             .bg(theme.album_art_background)
                             .shadow_sm()
-                            .w(px(metrics.art_size))
-                            .h(px(metrics.art_size))
-                            .mb(px(metrics.art_bottom_inset))
+                            .w(px(art_size))
+                            .h(px(art_size))
+                            .mb(px(art_bottom_inset))
                             .flex_shrink_0()
                             .on_hover(cx.listener(|this, is_hovering: &bool, _, cx| {
                                 if this.is_hovering_art != *is_hovering {
@@ -237,7 +216,7 @@ impl Render for InfoSection {
                                             div()
                                                 .id("album-art-preview")
                                                 .occlude()
-                                                .pb(px(metrics.preview_bottom_offset))
+                                                .pb(px(preview_offset))
                                                 .child(
                                                     managed_image(
                                                         (
@@ -246,9 +225,9 @@ impl Render for InfoSection {
                                                         ),
                                                         key.clone(),
                                                     )
-                                                    .w(px(metrics.preview_size))
-                                                    .h(px(metrics.preview_size))
-                                                    .rounded(px(metrics.preview_radius))
+                                                    .w(px(preview_size))
+                                                    .h(px(preview_size))
+                                                    .rounded(px(10.0))
                                                     .shadow_md(),
                                                 ),
                                         )),
@@ -256,10 +235,10 @@ impl Render for InfoSection {
                                 })
                                 .child(
                                     managed_image(("album-art-thumb", image_element_key), key)
-                                        .w(px(metrics.art_size))
-                                        .h(px(metrics.art_size))
+                                        .w(px(art_size))
+                                        .h(px(art_size))
                                         .object_fit(ObjectFit::Fill)
-                                        .rounded(px(metrics.art_radius))
+                                        .rounded(px(4.0))
                                         .thumb(),
                                 )
                             }),
@@ -267,13 +246,13 @@ impl Render for InfoSection {
                     .when(*state == PlaybackState::Stopped, |e| {
                         e.child(
                             div()
-                                .line_height(px(metrics.metadata_text.line_height))
+                                .line_height(px(metadata_text.line_height))
                                 .font_weight(FontWeight::EXTRA_BOLD)
-                                .text_size(px(metrics.metadata_text.size))
+                                .text_size(px(metadata_text.size))
                                 .flex()
                                 .h_full()
                                 .items_center()
-                                .pb(px(metrics.art_bottom_inset))
+                                .pb(px(art_bottom_inset))
                                 .child(tr!(
                                     "APP_NAME",
                                     "Hummingbird",
@@ -291,8 +270,8 @@ impl Render for InfoSection {
                             div()
                                 .flex()
                                 .v_flex()
-                                .line_height(px(metrics.metadata_text.line_height))
-                                .text_size(px(metrics.metadata_text.size))
+                                .line_height(px(metadata_text.line_height))
+                                .text_size(px(metadata_text.size))
                                 .gap_1()
                                 .w_full()
                                 .overflow_x_hidden()
@@ -329,7 +308,7 @@ impl Render for InfoSection {
                         .when(has_track, |e| {
                             e.child(
                                 div()
-                                    .pb(px(metrics.art_bottom_inset))
+                                    .pb(px(art_bottom_inset))
                                     .h_full()
                                     .flex()
                                     .ml_auto()
@@ -338,7 +317,7 @@ impl Render for InfoSection {
                                             .id("info-like")
                                             .my_auto()
                                             .rounded_sm()
-                                            .p(px(metrics.like_padding))
+                                            .p(px(like_padding))
                                             .cursor_pointer()
                                             .hover(|this| this.bg(theme.button_secondary_hover))
                                             .active(|this| this.bg(theme.button_secondary_active))
@@ -348,7 +327,7 @@ impl Render for InfoSection {
                                                 } else {
                                                     STAR
                                                 })
-                                                .size(px(metrics.like_icon_size))
+                                                .size(px(like_icon_size))
                                                 .text_color(if is_liked.is_some() {
                                                     theme.liked_song
                                                 } else {

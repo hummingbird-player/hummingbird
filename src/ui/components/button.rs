@@ -1,7 +1,7 @@
 use gpui::*;
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px_by},
     styling::theme::Theme,
 };
 
@@ -43,13 +43,13 @@ fn button_metrics(cx: &App) -> ButtonMetrics {
     let density = active_density(cx);
 
     ButtonMetrics {
-        regular_inline_padding: scale_px(density, 10.0, 1.0),
-        regular_block_padding_start: scale_px(density, 3.0, 0.75),
-        regular_block_padding_end: scale_px(density, 3.0, 0.75),
-        large_inline_padding: scale_px(density, 12.0, 1.5),
-        large_block_padding_start: scale_px(density, 4.0, 1.0),
-        large_block_padding_end: scale_px(density, 3.0, 1.0),
-        content_gap: scale_px(density, 8.0, 1.0),
+        regular_inline_padding: scale_px_by(density, 10.0, 1.0),
+        regular_block_padding_start: scale_px_by(density, 3.0, 0.75),
+        regular_block_padding_end: scale_px_by(density, 3.0, 0.75),
+        large_inline_padding: scale_px_by(density, 12.0, 1.5),
+        large_block_padding_start: scale_px_by(density, 4.0, 1.0),
+        large_block_padding_end: scale_px_by(density, 3.0, 1.0),
+        content_gap: scale_px_by(density, 8.0, 1.0),
         text: active_typography(cx).label,
         radius: 4.0,
     }

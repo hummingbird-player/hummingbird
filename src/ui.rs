@@ -23,6 +23,7 @@ mod scroll_follow;
 mod search;
 mod settings;
 mod shell;
+mod spacing;
 pub mod styling;
 mod troubleshooting;
 mod ui_config;

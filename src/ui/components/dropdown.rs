@@ -13,7 +13,9 @@ use crate::ui::{
         icons::{CHECK, CHEVRON_DOWN, icon},
         segmented_control::ChangeHandler,
     },
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{
+        TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
+    },
     styling::theme::Theme,
 };
 
@@ -62,18 +64,18 @@ fn dropdown_metrics(cx: &App) -> DropdownMetrics {
     let density = active_density(cx);
 
     DropdownMetrics {
-        control_inline_padding: scale_px(density, 12.0, 2.0),
-        control_block_padding_start: scale_px(density, 4.0, 1.0),
-        control_block_padding_end: scale_px(density, 3.0, 1.0),
-        control_gap: scale_px(density, 8.0, 1.0),
+        control_inline_padding: scale_px(density, 12.0),
+        control_block_padding_start: scale_px_by(density, 4.0, 1.0),
+        control_block_padding_end: scale_px_by(density, 3.0, 1.0),
+        control_gap: scale_px_by(density, 8.0, 1.0),
         text: active_typography(cx).body,
-        icon_size: scale_px(density, 16.0, 2.0),
-        popup_padding: scale_px(density, 3.0, 1.0),
-        popup_margin_block_start: scale_px(density, 4.0, 1.0),
-        option_inline_padding: scale_px(density, 6.0, 1.0),
-        option_block_padding: scale_px(density, 5.0, 1.0),
-        option_gap: scale_px(density, 7.0, 1.0),
-        option_indicator_size: scale_px(density, 18.0, 2.0),
+        icon_size: scale_px(density, 16.0),
+        popup_padding: scale_px_by(density, 3.0, 1.0),
+        popup_margin_block_start: scale_px_by(density, 4.0, 1.0),
+        option_inline_padding: scale_px_by(density, 6.0, 1.0),
+        option_block_padding: scale_px_by(density, 5.0, 1.0),
+        option_gap: scale_px_by(density, 7.0, 1.0),
+        option_indicator_size: scale_px(density, 18.0),
     }
 }
 

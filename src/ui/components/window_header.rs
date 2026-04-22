@@ -3,46 +3,11 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
-    scale::{active_density, scale_px},
+    scale::{active_density, scale_px, scale_px_by},
+    spacing::active_spacing,
     styling::constants::APP_ROUNDING,
     styling::{ActiveTheme, StyledExt},
 };
-
-struct WindowHeaderMetrics {
-    height: f32,
-    left_padding: f32,
-    top_padding: f32,
-    bottom_padding: f32,
-    item_gap: f32,
-    macos_drag_spacer: f32,
-}
-
-struct WindowButtonMetrics {
-    width: f32,
-    height: f32,
-    icon_size: f32,
-    icon_text_size: f32,
-}
-
-fn window_header_metrics(density: crate::settings::interface::UiDensity) -> WindowHeaderMetrics {
-    WindowHeaderMetrics {
-        height: scale_px(density, 37.0, 2.0),
-        left_padding: scale_px(density, 12.0, 2.0),
-        top_padding: scale_px(density, 7.0, 1.0),
-        bottom_padding: scale_px(density, 8.0, 1.0),
-        item_gap: scale_px(density, 8.0, 1.0),
-        macos_drag_spacer: scale_px(density, 72.0, 4.0),
-    }
-}
-
-fn window_button_metrics(density: crate::settings::interface::UiDensity) -> WindowButtonMetrics {
-    WindowButtonMetrics {
-        width: scale_px(density, 36.0, 2.0),
-        height: scale_px(density, 37.0, 2.0),
-        icon_size: scale_px(density, 14.0, 1.0),
-        icon_text_size: scale_px(density, 11.0, 1.0),
-    }
-}
 
 #[derive(IntoElement)]
 pub struct WindowHeader {
@@ -86,21 +51,22 @@ impl Styled for WindowHeader {
 
 impl RenderOnce for WindowHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let metrics = window_header_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).chrome;
         let theme = cx.theme();
 
         let left_container = div()
             .h_flex()
-            .pl(px(metrics.left_padding))
-            .pb(px(metrics.bottom_padding))
-            .pt(px(metrics.top_padding))
-            .gap(px(metrics.item_gap))
+            .pl(px(scale_px(density, spacing.header_padding_inline_start)))
+            .pb(px(scale_px(density, spacing.header_padding_block_end)))
+            .pt(px(scale_px(density, spacing.header_padding_block_start)))
+            .gap(px(scale_px(density, spacing.header_item_gap)))
             .children(self.left);
 
         let right_container = div()
             .h_flex()
             .ml_auto()
-            .gap(px(metrics.item_gap))
+            .gap(px(scale_px(density, spacing.header_item_gap)))
             .children(self.right);
 
         self.div
@@ -108,8 +74,8 @@ impl RenderOnce for WindowHeader {
             .items_center()
             .w_full()
             .text_sm()
-            .min_h(px(metrics.height))
-            .max_h(px(metrics.height))
+            .min_h(px(scale_px(density, spacing.header_height)))
+            .max_h(px(scale_px(density, spacing.header_height)))
             .bg(theme.background_secondary)
             .id("titlebar")
             .window_control_area(WindowControlArea::Drag)
@@ -126,7 +92,11 @@ impl RenderOnce for WindowHeader {
                 })
             })
             .when(cfg!(target_os = "macos"), |this| {
-                this.child(div().w(px(metrics.macos_drag_spacer)))
+                this.child(div().w(px(scale_px_by(
+                    density,
+                    spacing.header_macos_drag_spacer,
+                    4.0,
+                ))))
             })
             .child(left_container)
             .child(right_container)
@@ -156,7 +126,8 @@ pub enum WindowButton {
 
 impl RenderOnce for WindowButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let metrics = window_button_metrics(active_density(cx));
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).chrome;
         let theme = cx.theme();
 
         let (bg, hover, active) = if matches!(self, WindowButton::Close(_)) {
@@ -175,8 +146,8 @@ impl RenderOnce for WindowButton {
 
         div()
             .flex()
-            .w(px(metrics.width))
-            .h(px(metrics.height))
+            .w(px(scale_px(density, spacing.window_button_width)))
+            .h(px(scale_px(density, spacing.window_button_height)))
             .items_center()
             .justify_center()
             .cursor_pointer()
@@ -193,7 +164,7 @@ impl RenderOnce for WindowButton {
                 WindowButton::Minimize => WindowControlArea::Min,
                 WindowButton::Maximize => WindowControlArea::Max,
             })
-            .text_size(px(metrics.icon_text_size))
+            .text_size(px(scale_px(density, spacing.window_button_icon_text_size)))
             .occlude()
             .child(
                 icon(match self {
@@ -207,7 +178,7 @@ impl RenderOnce for WindowButton {
                         }
                     }
                 })
-                .size(px(metrics.icon_size)),
+                .size(px(scale_px(density, spacing.window_button_icon_size))),
             )
             .when(matches!(self, WindowButton::Close(_)), |this| {
                 this.rounded_tr(APP_ROUNDING)

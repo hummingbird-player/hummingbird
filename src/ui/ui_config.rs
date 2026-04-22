@@ -1,10 +1,23 @@
+//! UI config loaded from `layouts/*.ron`.
+//!
+//! `layout` changes shell ordering,
+//! `font` and `mono_font` change the font roles,
+//!  and `spacing` changes spacing bases
+//!
+//! The flat optional wrapper types are to make RON files
+//! readable. They let users write `layout: (...)` and `font: "IBM Plex Sans"`
+//! instead of wrapping everything in `Some(...)`.
+
 use gpui::{App, Global};
 use serde::{
     Deserialize, Serialize,
     de::{MapAccess, Visitor, value::MapAccessDeserializer},
 };
 
-use crate::ui::layout::{defaults::default_shell_layout, schema::ShellLayout};
+use crate::ui::{
+    layout::{defaults::default_shell_layout, schema::ShellLayout},
+    spacing::SpacingConfig,
+};
 
 pub const SEEDED_UI_CONFIG_PATH: &str = "layouts/custom.ron";
 
@@ -93,6 +106,7 @@ impl<'de> Deserialize<'de> for FlatOptionalLayout {
     }
 }
 
+/// Optional string that reads and writes like a bare string.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlatOptionalString(pub Option<String>);
 
@@ -155,6 +169,65 @@ impl<'de> Deserialize<'de> for FlatOptionalString {
     }
 }
 
+fn serialize_optional_spacing<S>(
+    spacing: &Option<SpacingConfig>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match spacing {
+        Some(value) => value.serialize(serializer),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_optional_spacing<'de, D>(deserializer: D) -> Result<Option<SpacingConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct SpacingVisitor;
+
+    impl<'de> Visitor<'de> for SpacingVisitor {
+        type Value = Option<SpacingConfig>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a spacing config map or None")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            SpacingConfig::deserialize(deserializer).map(Some)
+        }
+
+        fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            SpacingConfig::deserialize(MapAccessDeserializer::new(map)).map(Some)
+        }
+    }
+
+    deserializer.deserialize_any(SpacingVisitor)
+}
+
+/// The advanced UI config selected from `layouts/*.ron`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
     #[serde(default, skip_serializing_if = "FlatOptionalLayout::is_none")]
@@ -163,6 +236,13 @@ pub struct UiConfig {
     pub font: FlatOptionalString,
     #[serde(default, skip_serializing_if = "FlatOptionalString::is_none")]
     pub mono_font: FlatOptionalString,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_spacing",
+        deserialize_with = "deserialize_optional_spacing"
+    )]
+    pub spacing: Option<SpacingConfig>,
 }
 
 pub struct UiConfigGlobal(pub UiConfig);
@@ -196,6 +276,7 @@ mod tests {
         let layout = default_shell_layout();
         let resolved = resolve_shell_layout(&UiConfig {
             layout: FlatOptionalLayout::from(layout.clone()),
+            spacing: None,
             ..Default::default()
         });
 

@@ -4,7 +4,9 @@ use gpui::{
 };
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{
+        TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
+    },
     styling::{ActiveTheme, StyledExt},
 };
 
@@ -19,8 +21,8 @@ fn section_header_metrics(cx: &App) -> SectionHeaderMetrics {
     let density = active_density(cx);
     let typography = active_typography(cx);
     SectionHeaderMetrics {
-        group_gap: scale_px(density, 4.0, 1.0),
-        title_height: scale_px(density, 30.0, 2.0),
+        group_gap: scale_px_by(density, 4.0, 1.0),
+        title_height: scale_px(density, 30.0),
         title: typography.section_title,
         subtitle: typography.body,
     }

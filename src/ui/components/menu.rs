@@ -2,7 +2,9 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::icons::{CHECK, LOCK, icon},
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px},
+    scale::{
+        TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
+    },
     styling::theme::Theme,
 };
 
@@ -22,13 +24,13 @@ fn menu_metrics(cx: &App) -> MenuMetrics {
     let density = active_density(cx);
 
     MenuMetrics {
-        item_inline_padding: scale_px(density, 6.0, 1.0),
-        item_block_padding: scale_px(density, 5.0, 1.0),
-        item_gap: scale_px(density, 7.0, 1.0),
+        item_inline_padding: scale_px_by(density, 6.0, 1.0),
+        item_block_padding: scale_px_by(density, 5.0, 1.0),
+        item_gap: scale_px_by(density, 7.0, 1.0),
         text: active_typography(cx).body,
-        icon_size: scale_px(density, 18.0, 2.0),
+        icon_size: scale_px(density, 18.0),
         radius: 4.0,
-        separator_block_margin: scale_px(density, 4.0, 1.0),
+        separator_block_margin: scale_px_by(density, 4.0, 1.0),
     }
 }
 

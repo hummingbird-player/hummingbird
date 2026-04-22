@@ -11,6 +11,8 @@ use crate::ui::{
         tooltip::build_tooltip,
     },
     models::Models,
+    scale::{active_density, scale_px},
+    spacing::active_spacing,
 };
 
 use super::{EscapeBack, ViewSwitchMessage};
@@ -23,13 +25,15 @@ impl RenderOnce for NavButtons {
         let vsm = cx.global::<Models>().switcher_model.clone();
         let can_go_back = vsm.read(cx).can_go_back();
         let can_go_forward = vsm.read(cx).can_go_forward();
+        let density = active_density(cx);
+        let spacing = active_spacing(cx).chrome;
 
         div()
             .flex()
             .occlude()
-            .mt(px(1.0))
-            .mr(px(6.0))
-            .gap(px(2.0))
+            .mt(px(scale_px(density, spacing.nav_group_margin_block_start)))
+            .mr(px(scale_px(density, spacing.nav_group_margin_inline_end)))
+            .gap(px(scale_px(density, spacing.nav_group_gap)))
             .child(
                 nav_button("back", ARROW_LEFT)
                     .disabled(!can_go_back)

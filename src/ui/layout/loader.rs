@@ -1,8 +1,4 @@
-//! Disk loading for advanced UI config files.
-//!
-//! Hummingbird exposes a built-in default shell plus `layouts/*.ron` files in
-//! the app data directory. File configs can override shell layout and UI font
-//! roles. Bare layout-only files are still accepted.
+//! Loading for ui configs (util for themes/layouts)
 
 use std::{
     fs,
@@ -29,6 +25,7 @@ pub fn ensure_seeded_ui_config(data_dir: &Path) {
         layout: FlatOptionalLayout::from(default_shell_layout()),
         font: FlatOptionalString::default(),
         mono_font: FlatOptionalString::default(),
+        spacing: None,
     };
     let serialized = match serialize_config(&starter) {
         Ok(serialized) => serialized,
@@ -108,19 +105,23 @@ fn default_ui_config() -> UiConfig {
         layout: FlatOptionalLayout::from(default_shell_layout()),
         font: FlatOptionalString::default(),
         mono_font: FlatOptionalString::default(),
+        spacing: None,
     }
 }
 
 fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
     let raw = fs::read_to_string(path)?;
+    let ron =
+        ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
 
-    match ron::from_str::<UiConfig>(&raw) {
+    match ron.from_str::<UiConfig>(&raw) {
         Ok(config) => {
             let config = validate_config(config)?;
             if config.layout.is_none()
                 && config.font.is_none()
                 && config.mono_font.is_none()
-                && let Ok(layout) = ron::from_str::<ShellLayout>(&raw)
+                && config.spacing.is_none()
+                && let Ok(layout) = ron.from_str::<ShellLayout>(&raw)
             {
                 return Ok(UiConfig {
                     layout: FlatOptionalLayout::from(
@@ -130,12 +131,13 @@ fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
                     ),
                     font: FlatOptionalString::default(),
                     mono_font: FlatOptionalString::default(),
+                    spacing: None,
                 });
             }
 
             Ok(config)
         }
-        Err(config_err) => match ron::from_str::<ShellLayout>(&raw) {
+        Err(config_err) => match ron.from_str::<ShellLayout>(&raw) {
             Ok(layout) => Ok(UiConfig {
                 layout: FlatOptionalLayout::from(
                     layout
@@ -144,6 +146,7 @@ fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
                 ),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }),
             Err(layout_err) => Err(LoadError::Parse {
                 config_error: Box::new(config_err),
@@ -239,6 +242,10 @@ mod tests {
                 defaults::default_shell_layout,
                 schema::{MainRegion, OuterBand, ShellLayout},
             },
+            spacing::{
+                ChromeSpacingConfig, ControlsSpacingConfig, PlaybackSpacingConfig,
+                SidebarSpacingConfig, SpacingConfig,
+            },
             ui_config::{FlatOptionalLayout, FlatOptionalString, SEEDED_UI_CONFIG_PATH, UiConfig},
         },
     };
@@ -265,6 +272,7 @@ mod tests {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }
         );
         assert!(path.is_file());
@@ -285,6 +293,7 @@ mod tests {
             }),
             font: FlatOptionalString::from("Inter"),
             mono_font: FlatOptionalString::from("Roboto Mono"),
+            spacing: None,
         };
         write_config(path.parent().unwrap(), &path, &expected).unwrap();
 
@@ -328,6 +337,7 @@ mod tests {
                 layout: FlatOptionalLayout::from(layout),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }
         );
     }
@@ -347,6 +357,7 @@ mod tests {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }
         );
     }
@@ -369,6 +380,7 @@ mod tests {
                 }),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             },
         )
         .unwrap();
@@ -381,6 +393,7 @@ mod tests {
                 layout: FlatOptionalLayout::from(default_shell_layout()),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }
         );
     }
@@ -408,6 +421,59 @@ mod tests {
                 layout: FlatOptionalLayout::default(),
                 font: FlatOptionalString::from("Inter"),
                 mono_font: FlatOptionalString::from("Roboto Mono"),
+                spacing: None,
+            }
+        );
+    }
+
+    #[test]
+    fn spacing_block_in_config_is_loaded() {
+        let dir = create_test_dir();
+        let path = seeded_ui_config_path(dir.path());
+        let raw = r#"(
+  spacing: (
+    chrome: (
+      nav_button_size: 20.0,
+    ),
+    controls: (
+      playback: (
+        outer_gap: 8.0,
+      ),
+    ),
+    sidebar: (
+      item_padding_inline: 11.0,
+    ),
+  ),
+)"#;
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, raw).unwrap();
+
+        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
+
+        assert_eq!(
+            config,
+            UiConfig {
+                layout: FlatOptionalLayout::default(),
+                font: FlatOptionalString::default(),
+                mono_font: FlatOptionalString::default(),
+                spacing: Some(SpacingConfig {
+                    chrome: Some(ChromeSpacingConfig {
+                        nav_button_size: Some(20.0),
+                        ..Default::default()
+                    }),
+                    controls: Some(ControlsSpacingConfig {
+                        playback: Some(PlaybackSpacingConfig {
+                            outer_gap: Some(8.0),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    sidebar: Some(SidebarSpacingConfig {
+                        item_padding_inline: Some(11.0),
+                        ..Default::default()
+                    }),
+                }),
             }
         );
     }
@@ -452,6 +518,7 @@ mod tests {
                 }),
                 font: FlatOptionalString::default(),
                 mono_font: FlatOptionalString::default(),
+                spacing: None,
             }
         );
     }
@@ -499,6 +566,7 @@ mod tests {
                 }),
                 font: FlatOptionalString::from("Inter"),
                 mono_font: FlatOptionalString::from("Roboto Mono"),
+                spacing: None,
             }
         );
     }

@@ -1,9 +1,4 @@
-//! Closed-world shell layout support for Hummingbird's main window.
-//!
-//! File-based UI configs stay intentionally small: they can reorder a fixed
-//! set of built-in shell regions and override the app's UI font roles.
-//! Hummingbird remains data-driven at the shell level without shipping a
-//! generic UI DSL.
+//! shell layout support for main window
 
 pub mod defaults;
 pub mod loader;
