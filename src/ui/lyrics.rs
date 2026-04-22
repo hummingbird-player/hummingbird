@@ -11,8 +11,10 @@ use crate::{
             icons::{MICROPHONE, icon},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
         },
+        customization::scale::{
+            TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by,
+        },
         models::{CurrentTrack, Models, PlaybackInfo},
-        scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         styling::ActiveTheme,
     },

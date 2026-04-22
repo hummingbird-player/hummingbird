@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use gpui::{App, Global, SharedString};
 
-use crate::ui::ui_config::{UiConfig, UiConfigGlobal};
+use super::ui_config::{ResolvedUiConfigGlobal, UiConfig};
 
 const DEFAULT_UI_FONT_FAMILY: &str = "Inter";
 const DEFAULT_MONO_FONT_FAMILY: &str = "Roboto Mono";
@@ -21,10 +21,6 @@ impl Default for ResolvedFonts {
         }
     }
 }
-
-pub struct ResolvedFontsGlobal(pub ResolvedFonts);
-
-impl Global for ResolvedFontsGlobal {}
 
 #[derive(Default)]
 pub struct AvailableFontsGlobal(pub HashSet<String>);
@@ -54,15 +50,8 @@ pub fn resolve_fonts(config: &UiConfig, available_fonts: &HashSet<String>) -> Re
     }
 }
 
-pub fn refresh_resolved_fonts(cx: &mut App) {
-    let config = cx.global::<UiConfigGlobal>().0.clone();
-    let available_fonts = cx.global::<AvailableFontsGlobal>().0.clone();
-
-    cx.global_mut::<ResolvedFontsGlobal>().0 = resolve_fonts(&config, &available_fonts);
-}
-
 pub fn active_fonts(cx: &App) -> ResolvedFonts {
-    cx.global::<ResolvedFontsGlobal>().0.clone()
+    cx.global::<ResolvedUiConfigGlobal>().0.fonts.clone()
 }
 
 fn resolve_font_family(
@@ -97,7 +86,7 @@ fn font_family_available(family: &str, available_fonts: &HashSet<String>) -> boo
 mod tests {
     use std::collections::HashSet;
 
-    use crate::ui::ui_config::{FlatOptionalString, UiConfig};
+    use crate::ui::customization::ui_config::UiConfig;
 
     use super::{ResolvedFonts, resolve_fonts};
 
@@ -119,8 +108,8 @@ mod tests {
     fn ui_config_uses_configured_fonts() {
         let resolved = resolve_fonts(
             &UiConfig {
-                font: FlatOptionalString::from("Lexend"),
-                mono_font: FlatOptionalString::from("Roboto Mono"),
+                font: Some("Lexend".to_string()),
+                mono_font: Some("Roboto Mono".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
@@ -134,8 +123,8 @@ mod tests {
     fn invalid_custom_fonts_fall_back_to_defaults() {
         let resolved = resolve_fonts(
             &UiConfig {
-                font: FlatOptionalString::from("Missing UI Font"),
-                mono_font: FlatOptionalString::from("Missing Mono Font"),
+                font: Some("Missing UI Font".to_string()),
+                mono_font: Some("Missing Mono Font".to_string()),
                 ..Default::default()
             },
             &available_fonts(),
@@ -148,8 +137,8 @@ mod tests {
     fn system_font_aliases_are_allowed() {
         let resolved = resolve_fonts(
             &UiConfig {
-                font: FlatOptionalString::from(".SystemUIFont"),
-                mono_font: FlatOptionalString::from(".SystemUIFont"),
+                font: Some(".SystemUIFont".to_string()),
+                mono_font: Some(".SystemUIFont".to_string()),
                 ..Default::default()
             },
             &available_fonts(),

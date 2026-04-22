@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::settings::SettingsGlobal;
-use crate::ui::file_options::{
+use crate::ui::customization::file_options::{
     SelectionOption, discover_file_options, relative_file_option_path_for_event,
     resolve_relative_file_option_path,
 };

@@ -1,8 +1,8 @@
 use super::playback_section::PlaybackSection;
 use super::*;
 use crate::ui::{
-    scale::{TextStyle, active_density, interpolate_text_style, scale_px},
-    spacing::active_spacing,
+    customization::scale::{TextStyle, active_density, interpolate_text_style, scale_px},
+    customization::spacing::active_spacing,
 };
 
 pub(super) struct Scrubber {

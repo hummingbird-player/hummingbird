@@ -12,8 +12,8 @@ use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
-    scale::{active_density, active_typography, apply_text_style, scale_px},
-    spacing::active_spacing,
+    customization::scale::{active_density, active_typography, apply_text_style, scale_px},
+    customization::spacing::active_spacing,
     styling::theme::Theme,
 };
 

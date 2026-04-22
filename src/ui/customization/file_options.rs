@@ -118,23 +118,23 @@ mod tests {
     #[test]
     fn discover_file_options_returns_sorted_labels() {
         let dir = create_test_dir();
-        let layouts_dir = dir.join("layouts");
-        fs::create_dir_all(&layouts_dir).unwrap();
-        fs::write(layouts_dir.join("zeta.ron"), "()").unwrap();
-        fs::write(layouts_dir.join("alpha.ron"), "()").unwrap();
-        fs::write(layouts_dir.join("skip.txt"), "()").unwrap();
+        let ui_dir = dir.join("ui");
+        fs::create_dir_all(&ui_dir).unwrap();
+        fs::write(ui_dir.join("zeta.json"), "{}").unwrap();
+        fs::write(ui_dir.join("alpha.json"), "{}").unwrap();
+        fs::write(ui_dir.join("skip.txt"), "{}").unwrap();
 
-        let options = discover_file_options(dir.path(), "layouts", "ron");
+        let options = discover_file_options(dir.path(), "ui", "json");
 
         assert_eq!(
             options,
             vec![
                 SelectionOption {
-                    id: Some("layouts/alpha.ron".to_string()),
+                    id: Some("ui/alpha.json".to_string()),
                     label: "alpha".to_string(),
                 },
                 SelectionOption {
-                    id: Some("layouts/zeta.ron".to_string()),
+                    id: Some("ui/zeta.json".to_string()),
                     label: "zeta".to_string(),
                 },
             ]
@@ -163,8 +163,8 @@ mod tests {
     fn relative_file_option_path_for_event_only_matches_expected_subdir_and_extension() {
         let dir = create_test_dir();
         let matching = dir.join("themes").join("ophelia.json");
-        let wrong_ext = dir.join("themes").join("ophelia.ron");
-        let wrong_dir = dir.join("layouts").join("ophelia.json");
+        let wrong_ext = dir.join("themes").join("ophelia.txt");
+        let wrong_dir = dir.join("ui").join("ophelia.json");
 
         assert_eq!(
             relative_file_option_path_for_event(dir.path(), "themes", "json", &matching),
@@ -184,13 +184,14 @@ mod tests {
     fn seed_relative_file_if_missing_only_writes_once() {
         let dir = create_test_dir();
 
-        assert!(seed_relative_file_if_missing(dir.path(), "layouts/custom.ron", "()").unwrap());
+        assert!(seed_relative_file_if_missing(dir.path(), "ui/custom.json", "{}").unwrap());
         assert!(
-            !seed_relative_file_if_missing(dir.path(), "layouts/custom.ron", "(changed)").unwrap()
+            !seed_relative_file_if_missing(dir.path(), "ui/custom.json", "{\"changed\":true}")
+                .unwrap()
         );
         assert_eq!(
-            fs::read_to_string(relative_file_path(dir.path(), "layouts/custom.ron")).unwrap(),
-            "()"
+            fs::read_to_string(relative_file_path(dir.path(), "ui/custom.json")).unwrap(),
+            "{}"
         );
     }
 }

@@ -1,0 +1,96 @@
+{
+    "layout": {
+        "outer_order": ["header", "main", "controls"],
+        "main_order": ["library_sidebar", "library_content", "right_sidebar"]
+    },
+    "font": "Spotify Mix UI Title Var",
+    "spacing": {
+        "chrome": {
+            "nav_button_size": 32.0,
+            "nav_button_icon_size": 16.0,
+            "nav_button_radius": 16.0,
+            "nav_group_gap": 4.0,
+            "nav_group_margin_inline_end": 12.0,
+            "nav_group_margin_block_start": 1.0,
+            "header_height": 40.0,
+            "header_item_gap": 10.0,
+            "header_macos_drag_spacer": 92.0,
+            "header_padding_inline_start": 16.0,
+            "header_padding_block_start": 8.0,
+            "header_padding_block_end": 8.0,
+            "window_button_width": 40.0,
+            "window_button_height": 40.0
+        },
+        "controls": {
+            "info": {
+                "outer_margin_inline": 16.0,
+                "outer_margin_block_start": 10.0,
+                "outer_margin_block_end": 8.0,
+                "item_gap": 12.0,
+                "art_size": 54.0,
+                "art_bottom_inset": 6.0,
+                "preview_size": 340.0,
+                "preview_offset": 36.0,
+                "like_padding": 6.0,
+                "icon_size": 15.0
+            },
+            "playback": {
+                "top_margin": 4.0,
+                "side_toggle_size": 28.0,
+                "side_toggle_icon_size": 14.0,
+                "transport_side_width": 34.0,
+                "transport_center_width": 40.0,
+                "transport_height": 32.0,
+                "transport_icon_size": 17.0,
+                "outer_gap": 8.0,
+                "side_toggle_block_offset": 2.0
+            },
+            "scrubber": {
+                "horizontal_padding": 24.0,
+                "top_margin": 6.0,
+                "bottom_margin": 6.0,
+                "track_height": 7.0,
+                "time_gap": 8.0,
+                "duration_separator_padding": 7.0,
+                "duration_separator_height": 32.0
+            },
+            "secondary": {
+                "horizontal_padding": 20.0,
+                "bottom_padding": 3.0,
+                "button_size": 27.0,
+                "button_icon_size": 15.0,
+                "button_top_margin": 3.0,
+                "volume_track_height": 7.0,
+                "volume_track_top_margin": 12.0,
+                "volume_track_inline_margin": 6.0,
+                "divider_height": 26.0,
+                "divider_top_margin": 3.0,
+                "divider_inline_margin": 6.0
+            },
+            "replaygain_popover_gap": 12.0,
+            "replaygain_popover_padding_inline": 7.0,
+            "replaygain_popover_padding_block": 9.0
+        },
+        "sidebar": {
+            "container_gap": 6.0,
+            "item_padding_inline": 11.0,
+            "item_padding_block": 8.0,
+            "item_gap": 8.0,
+            "item_icon_size": 18.0,
+            "collapsed_item_size": 40.0,
+            "collapsed_tooltip_inline_padding": 14.0,
+            "collapsed_tooltip_block_start": 7.0,
+            "collapsed_tooltip_block_end": 6.0,
+            "separator_block_margin": 6.0,
+            "search_toggle_gap": 6.0,
+            "search_toggle_block_start": 3.0,
+            "search_toggle_block_end": 6.0,
+            "search_toggle_padding_block_end": 12.0,
+            "nav_button_size": 40.0,
+            "section_padding_block": 9.0,
+            "section_padding_inline_start": 9.0,
+            "section_padding_inline_end": 10.0,
+            "stats_padding_block_start": 10.0
+        }
+    }
+}

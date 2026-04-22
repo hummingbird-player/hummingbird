@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
-    scale::{active_density, scale_px, scale_px_by},
-    spacing::active_spacing,
+    customization::scale::{active_density, scale_px, scale_px_by},
+    customization::spacing::active_spacing,
     styling::constants::APP_ROUNDING,
     styling::{ActiveTheme, StyledExt},
 };

@@ -35,18 +35,17 @@ use crate::{
         command_palette::{CommandPalette, CommandPaletteHolder},
         components::dropdown,
         controls::Controls,
-        fonts::{
-            AvailableFontsGlobal, ResolvedFontsGlobal, capture_available_fonts,
-            refresh_resolved_fonts,
+        customization::{
+            AvailableFontsGlobal, ResolvedUiConfigGlobal, active_shell_layout,
+            capture_available_fonts, ensure_seeded_ui_config, load_selected_ui_config,
+            resolve_ui_config,
         },
         header::Header,
-        layout::{ensure_seeded_ui_config, load_selected_ui_config},
         library::{self, Library, missing_folder_dialog::MissingFolderDialog, sidebar::Sidebar},
         models::WindowInformation,
         right_sidebar::RightSidebar,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
         shell::Shell,
-        ui_config::{UiConfigGlobal, active_shell_layout},
     },
 };
 
@@ -390,13 +389,13 @@ pub fn run() -> anyhow::Result<()> {
             .interface
             .ui_config
             .clone();
-        cx.set_global(UiConfigGlobal(load_selected_ui_config(
-            &data_dir,
-            selected_ui_config.as_deref(),
-        )));
+        let loaded_ui_config = load_selected_ui_config(&data_dir, selected_ui_config.as_deref());
         cx.set_global(AvailableFontsGlobal(capture_available_fonts(cx)));
-        cx.set_global(ResolvedFontsGlobal(Default::default()));
-        refresh_resolved_fonts(cx);
+        let available_fonts = cx.global::<AvailableFontsGlobal>().0.clone();
+        cx.set_global(ResolvedUiConfigGlobal(resolve_ui_config(
+            &loaded_ui_config,
+            &available_fonts,
+        )));
 
         let settings_model = cx.global::<SettingsGlobal>().model.clone();
         let data_dir_for_ui_configs = data_dir.clone();
@@ -408,9 +407,11 @@ pub fn run() -> anyhow::Result<()> {
                 .interface
                 .ui_config
                 .clone();
-            cx.global_mut::<UiConfigGlobal>().0 =
+            let loaded_ui_config =
                 load_selected_ui_config(&data_dir_for_ui_configs, selected_ui_config.as_deref());
-            refresh_resolved_fonts(cx);
+            let available_fonts = cx.global::<AvailableFontsGlobal>().0.clone();
+            cx.global_mut::<ResolvedUiConfigGlobal>().0 =
+                resolve_ui_config(&loaded_ui_config, &available_fonts);
             cx.refresh_windows();
         })
         .detach();

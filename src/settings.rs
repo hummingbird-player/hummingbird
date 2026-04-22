@@ -368,7 +368,7 @@ mod tests {
                 "interface": {
                     "theme": "custom.json",
                     "full_width_library": true,
-                    "ui_config": "layouts/ophelia.ron",
+                    "ui_config": "ui/ophelia.json",
                     "ui_density": 1.0,
                     "reduced_motion": true,
                     "always_show_scrollbars": true
@@ -393,7 +393,7 @@ mod tests {
         assert!(settings.interface.full_width_library);
         assert_eq!(
             settings.interface.ui_config.as_deref(),
-            Some("layouts/ophelia.ron")
+            Some("ui/ophelia.json")
         );
         assert_eq!(
             settings.interface.ui_density,

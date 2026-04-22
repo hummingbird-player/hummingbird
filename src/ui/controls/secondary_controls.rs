@@ -1,7 +1,7 @@
 use super::*;
 use crate::ui::{
-    scale::{active_density, scale_px},
-    spacing::active_spacing,
+    customization::scale::{active_density, scale_px},
+    customization::spacing::active_spacing,
 };
 
 #[derive(IntoElement)]

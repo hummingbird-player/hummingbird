@@ -11,7 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
-    fonts::active_fonts,
+    customization::fonts::active_fonts,
     styling::theme::Theme,
 };
 

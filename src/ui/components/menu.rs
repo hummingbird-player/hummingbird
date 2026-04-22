@@ -2,7 +2,7 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::icons::{CHECK, LOCK, icon},
-    scale::{
+    customization::scale::{
         TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
     },
     styling::theme::Theme,

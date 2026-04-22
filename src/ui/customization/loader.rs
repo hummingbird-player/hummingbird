@@ -1,20 +1,21 @@
-//! Loading for ui configs (util for themes/layouts)
+//! Loading for UI config files.
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::ui::{
+use crate::ui::layout::defaults::default_shell_layout;
+
+use super::{
     file_options::{
         SelectionOption, discover_file_options, relative_file_path,
         resolve_relative_file_option_path, seed_relative_file_if_missing,
     },
-    layout::{defaults::default_shell_layout, schema::ShellLayout},
-    ui_config::{FlatOptionalLayout, FlatOptionalString, SEEDED_UI_CONFIG_PATH, UiConfig},
+    ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
 };
 
-pub const UI_CONFIGS_DIR_NAME: &str = "layouts";
+pub const UI_CONFIGS_DIR_NAME: &str = "ui";
 
 pub fn seeded_ui_config_path(data_dir: &Path) -> PathBuf {
     relative_file_path(data_dir, SEEDED_UI_CONFIG_PATH)
@@ -22,9 +23,9 @@ pub fn seeded_ui_config_path(data_dir: &Path) -> PathBuf {
 
 pub fn ensure_seeded_ui_config(data_dir: &Path) {
     let starter = UiConfig {
-        layout: FlatOptionalLayout::from(default_shell_layout()),
-        font: FlatOptionalString::default(),
-        mono_font: FlatOptionalString::default(),
+        layout: Some(default_shell_layout()),
+        font: None,
+        mono_font: None,
         spacing: None,
     };
     let serialized = match serialize_config(&starter) {
@@ -57,7 +58,7 @@ pub fn discover_ui_config_options(data_dir: &Path) -> Vec<SelectionOption> {
         id: None,
         label: "Default".to_string(),
     }];
-    configs.extend(discover_file_options(data_dir, UI_CONFIGS_DIR_NAME, "ron"));
+    configs.extend(discover_file_options(data_dir, UI_CONFIGS_DIR_NAME, "json"));
     configs
 }
 
@@ -102,65 +103,26 @@ pub fn load_selected_ui_config(data_dir: &Path, selected_config: Option<&str>) -
 
 fn default_ui_config() -> UiConfig {
     UiConfig {
-        layout: FlatOptionalLayout::from(default_shell_layout()),
-        font: FlatOptionalString::default(),
-        mono_font: FlatOptionalString::default(),
+        layout: Some(default_shell_layout()),
+        font: None,
+        mono_font: None,
         spacing: None,
     }
 }
 
 fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
     let raw = fs::read_to_string(path)?;
-    let ron =
-        ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-
-    match ron.from_str::<UiConfig>(&raw) {
-        Ok(config) => {
-            let config = validate_config(config)?;
-            if config.layout.is_none()
-                && config.font.is_none()
-                && config.mono_font.is_none()
-                && config.spacing.is_none()
-                && let Ok(layout) = ron.from_str::<ShellLayout>(&raw)
-            {
-                return Ok(UiConfig {
-                    layout: FlatOptionalLayout::from(
-                        layout
-                            .validated()
-                            .ok_or(LoadError::InvalidLayoutPermutation)?,
-                    ),
-                    font: FlatOptionalString::default(),
-                    mono_font: FlatOptionalString::default(),
-                    spacing: None,
-                });
-            }
-
-            Ok(config)
-        }
-        Err(config_err) => match ron.from_str::<ShellLayout>(&raw) {
-            Ok(layout) => Ok(UiConfig {
-                layout: FlatOptionalLayout::from(
-                    layout
-                        .validated()
-                        .ok_or(LoadError::InvalidLayoutPermutation)?,
-                ),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
-                spacing: None,
-            }),
-            Err(layout_err) => Err(LoadError::Parse {
-                config_error: Box::new(config_err),
-                bare_layout_error: Some(Box::new(layout_err)),
-            }),
-        },
-    }
+    let config: UiConfig = serde_json::from_str(&raw)?;
+    validate_config(config)
 }
 
-fn validate_config(config: UiConfig) -> Result<UiConfig, LoadError> {
-    if let Some(layout) = config.layout.as_ref()
-        && layout.clone().validated().is_none()
-    {
-        return Err(LoadError::InvalidLayoutPermutation);
+fn validate_config(mut config: UiConfig) -> Result<UiConfig, LoadError> {
+    if let Some(layout) = config.layout.take() {
+        config.layout = Some(
+            layout
+                .validated()
+                .ok_or(LoadError::InvalidLayoutPermutation)?,
+        );
     }
 
     Ok(config)
@@ -175,22 +137,14 @@ fn write_config(dir: &Path, path: &Path, config: &UiConfig) -> Result<(), LoadEr
 }
 
 fn serialize_config(config: &UiConfig) -> Result<String, LoadError> {
-    let pretty = ron::ser::PrettyConfig::new()
-        .depth_limit(8)
-        .indentor("  ")
-        .separate_tuple_members(true)
-        .enumerate_arrays(false);
-    Ok(ron::ser::to_string_pretty(config, pretty)?)
+    Ok(serde_json::to_string_pretty(config)?)
 }
 
 #[derive(Debug)]
 enum LoadError {
     Io(std::io::Error),
-    Parse {
-        config_error: Box<ron::error::SpannedError>,
-        bare_layout_error: Option<Box<ron::error::SpannedError>>,
-    },
-    Serialize(ron::Error),
+    Parse(serde_json::Error),
+    Serialize(serde_json::Error),
     InvalidLayoutPermutation,
 }
 
@@ -198,16 +152,7 @@ impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LoadError::Io(e) => write!(f, "io error: {e}"),
-            LoadError::Parse {
-                config_error,
-                bare_layout_error,
-            } => {
-                write!(f, "parse error: {config_error}")?;
-                if let Some(bare_layout_error) = bare_layout_error {
-                    write!(f, " (bare layout parse error: {bare_layout_error})")?;
-                }
-                Ok(())
-            }
+            LoadError::Parse(e) => write!(f, "parse error: {e}"),
             LoadError::Serialize(e) => write!(f, "serialize error: {e}"),
             LoadError::InvalidLayoutPermutation => {
                 write!(f, "layout must include each built-in region exactly once")
@@ -224,9 +169,13 @@ impl From<std::io::Error> for LoadError {
     }
 }
 
-impl From<ron::Error> for LoadError {
-    fn from(e: ron::Error) -> Self {
-        LoadError::Serialize(e)
+impl From<serde_json::Error> for LoadError {
+    fn from(e: serde_json::Error) -> Self {
+        if e.is_data() || e.is_syntax() || e.is_eof() {
+            LoadError::Parse(e)
+        } else {
+            LoadError::Serialize(e)
+        }
     }
 }
 
@@ -237,16 +186,18 @@ mod tests {
     use crate::{
         test_support::TestDir,
         ui::{
-            file_options::SelectionOption,
+            customization::{
+                file_options::SelectionOption,
+                spacing::{
+                    ChromeSpacingConfig, ControlsSpacingConfig, PlaybackSpacingConfig,
+                    SidebarSpacingConfig, SpacingConfig,
+                },
+                ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
+            },
             layout::{
                 defaults::default_shell_layout,
                 schema::{MainRegion, OuterBand, ShellLayout},
             },
-            spacing::{
-                ChromeSpacingConfig, ControlsSpacingConfig, PlaybackSpacingConfig,
-                SidebarSpacingConfig, SpacingConfig,
-            },
-            ui_config::{FlatOptionalLayout, FlatOptionalString, SEEDED_UI_CONFIG_PATH, UiConfig},
         },
     };
 
@@ -269,9 +220,9 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::from(default_shell_layout()),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                layout: Some(default_shell_layout()),
+                font: None,
+                mono_font: None,
                 spacing: None,
             }
         );
@@ -283,7 +234,7 @@ mod tests {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
         let expected = UiConfig {
-            layout: FlatOptionalLayout::from(ShellLayout {
+            layout: Some(ShellLayout {
                 outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                 main_order: [
                     MainRegion::RightSidebar,
@@ -291,8 +242,8 @@ mod tests {
                     MainRegion::LibrarySidebar,
                 ],
             }),
-            font: FlatOptionalString::from("Inter"),
-            mono_font: FlatOptionalString::from("Roboto Mono"),
+            font: Some("Inter".to_string()),
+            mono_font: Some("Roboto Mono".to_string()),
             spacing: None,
         };
         write_config(path.parent().unwrap(), &path, &expected).unwrap();
@@ -303,60 +254,20 @@ mod tests {
     }
 
     #[test]
-    fn bare_layout_only_config_is_loaded() {
+    fn invalid_json_falls_back_to_default() {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
-        let layout = ShellLayout {
-            outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
-            main_order: [
-                MainRegion::RightSidebar,
-                MainRegion::LibraryContent,
-                MainRegion::LibrarySidebar,
-            ],
-        };
-
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            ron::ser::to_string_pretty(
-                &layout,
-                ron::ser::PrettyConfig::new()
-                    .indentor("  ")
-                    .separate_tuple_members(true)
-                    .enumerate_arrays(false),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        fs::write(&path, "{ definitely not json").unwrap();
 
         let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
 
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::from(layout),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
-                spacing: None,
-            }
-        );
-    }
-
-    #[test]
-    fn invalid_ron_falls_back_to_default() {
-        let dir = create_test_dir();
-        let path = seeded_ui_config_path(dir.path());
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "{ definitely not ron").unwrap();
-
-        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
-
-        assert_eq!(
-            config,
-            UiConfig {
-                layout: FlatOptionalLayout::from(default_shell_layout()),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                layout: Some(default_shell_layout()),
+                font: None,
+                mono_font: None,
                 spacing: None,
             }
         );
@@ -370,7 +281,7 @@ mod tests {
             path.parent().unwrap(),
             &path,
             &UiConfig {
-                layout: FlatOptionalLayout::from(ShellLayout {
+                layout: Some(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Header, OuterBand::Controls],
                     main_order: [
                         MainRegion::LibrarySidebar,
@@ -378,8 +289,8 @@ mod tests {
                         MainRegion::RightSidebar,
                     ],
                 }),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                font: None,
+                mono_font: None,
                 spacing: None,
             },
         )
@@ -390,9 +301,9 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::from(default_shell_layout()),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                layout: Some(default_shell_layout()),
+                font: None,
+                mono_font: None,
                 spacing: None,
             }
         );
@@ -406,10 +317,10 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
-            r#"(
-  font: "Inter",
-  mono_font: "Roboto Mono",
-)"#,
+            r#"{
+  "font": "Inter",
+  "mono_font": "Roboto Mono"
+}"#,
         )
         .unwrap();
 
@@ -418,9 +329,9 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::default(),
-                font: FlatOptionalString::from("Inter"),
-                mono_font: FlatOptionalString::from("Roboto Mono"),
+                layout: None,
+                font: Some("Inter".to_string()),
+                mono_font: Some("Roboto Mono".to_string()),
                 spacing: None,
             }
         );
@@ -430,21 +341,21 @@ mod tests {
     fn spacing_block_in_config_is_loaded() {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
-        let raw = r#"(
-  spacing: (
-    chrome: (
-      nav_button_size: 20.0,
-    ),
-    controls: (
-      playback: (
-        outer_gap: 8.0,
-      ),
-    ),
-    sidebar: (
-      item_padding_inline: 11.0,
-    ),
-  ),
-)"#;
+        let raw = r#"{
+  "spacing": {
+    "chrome": {
+      "nav_button_size": 20.0
+    },
+    "controls": {
+      "playback": {
+        "outer_gap": 8.0
+      }
+    },
+    "sidebar": {
+      "item_padding_inline": 11.0
+    }
+  }
+}"#;
 
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, raw).unwrap();
@@ -454,9 +365,9 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::default(),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                layout: None,
+                font: None,
+                mono_font: None,
                 spacing: Some(SpacingConfig {
                     chrome: Some(ChromeSpacingConfig {
                         nav_button_size: Some(20.0),
@@ -479,27 +390,27 @@ mod tests {
     }
 
     #[test]
-    fn bare_layout_block_in_new_style_config_is_loaded() {
+    fn layout_block_in_json_config_is_loaded() {
         let dir = create_test_dir();
         let path = seeded_ui_config_path(dir.path());
 
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
-            r#"(
-  layout: (
-    outer_order: (
-      header,
-      controls,
-      main,
-    ),
-    main_order: (
-      library_sidebar,
-      library_content,
-      right_sidebar,
-    ),
-  ),
-)"#,
+            r#"{
+  "layout": {
+    "outer_order": [
+      "header",
+      "controls",
+      "main"
+    ],
+    "main_order": [
+      "library_sidebar",
+      "library_content",
+      "right_sidebar"
+    ]
+  }
+}"#,
         )
         .unwrap();
 
@@ -508,7 +419,7 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::from(ShellLayout {
+                layout: Some(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                     main_order: [
                         MainRegion::LibrarySidebar,
@@ -516,8 +427,8 @@ mod tests {
                         MainRegion::RightSidebar,
                     ],
                 }),
-                font: FlatOptionalString::default(),
-                mono_font: FlatOptionalString::default(),
+                font: None,
+                mono_font: None,
                 spacing: None,
             }
         );
@@ -531,23 +442,23 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
-            r#"(
-  layout: (
-    outer_order: (
-      header,
-      controls,
-      main,
-    ),
-    main_order: (
-      right_sidebar,
-      library_content,
-      library_sidebar,
-    ),
-  ),
-  ignored_field: true,
-  font: "Inter",
-  mono_font: "Roboto Mono",
-)"#,
+            r#"{
+  "layout": {
+    "outer_order": [
+      "header",
+      "controls",
+      "main"
+    ],
+    "main_order": [
+      "right_sidebar",
+      "library_content",
+      "library_sidebar"
+    ]
+  },
+  "ignored_field": true,
+  "font": "Inter",
+  "mono_font": "Roboto Mono"
+}"#,
         )
         .unwrap();
 
@@ -556,7 +467,7 @@ mod tests {
         assert_eq!(
             config,
             UiConfig {
-                layout: FlatOptionalLayout::from(ShellLayout {
+                layout: Some(ShellLayout {
                     outer_order: [OuterBand::Header, OuterBand::Controls, OuterBand::Main],
                     main_order: [
                         MainRegion::RightSidebar,
@@ -564,8 +475,8 @@ mod tests {
                         MainRegion::LibrarySidebar,
                     ],
                 }),
-                font: FlatOptionalString::from("Inter"),
-                mono_font: FlatOptionalString::from("Roboto Mono"),
+                font: Some("Inter".to_string()),
+                mono_font: Some("Roboto Mono".to_string()),
                 spacing: None,
             }
         );
@@ -575,8 +486,9 @@ mod tests {
     fn discover_ui_config_options_lists_default_and_files() {
         let dir = create_test_dir();
         ensure_seeded_ui_config(dir.path());
-        let ophelia_path = dir.join("layouts").join("ophelia.ron");
-        fs::write(&ophelia_path, "()").unwrap();
+        let ophelia_path = dir.join("ui").join("ophelia.json");
+        fs::create_dir_all(ophelia_path.parent().unwrap()).unwrap();
+        fs::write(&ophelia_path, "{}").unwrap();
 
         let configs = discover_ui_config_options(dir.path());
 
@@ -588,11 +500,11 @@ mod tests {
                     label: "Default".to_string(),
                 },
                 SelectionOption {
-                    id: Some("layouts/custom.ron".to_string()),
+                    id: Some("ui/custom.json".to_string()),
                     label: "custom".to_string(),
                 },
                 SelectionOption {
-                    id: Some("layouts/ophelia.ron".to_string()),
+                    id: Some("ui/ophelia.json".to_string()),
                     label: "ophelia".to_string(),
                 },
             ]

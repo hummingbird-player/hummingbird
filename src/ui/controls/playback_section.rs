@@ -1,6 +1,6 @@
 use super::*;
-use crate::ui::scale::{active_density, scale_px};
-use crate::ui::spacing::active_spacing;
+use crate::ui::customization::scale::{active_density, scale_px};
+use crate::ui::customization::spacing::active_spacing;
 
 pub(super) struct PlaybackSection {
     info: PlaybackInfo,

@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use crate::ui::{
-    scale::{
+    customization::scale::{
         TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
     },
     styling::{ActiveTheme, StyledExt},

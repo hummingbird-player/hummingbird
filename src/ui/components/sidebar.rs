@@ -8,8 +8,8 @@ use crate::{
     settings::storage::DEFAULT_SIDEBAR_WIDTH,
     ui::{
         components::icons::icon,
-        scale::{active_density, active_typography, apply_text_style, scale_px},
-        spacing::active_spacing,
+        customization::scale::{active_density, active_typography, apply_text_style, scale_px},
+        customization::spacing::active_spacing,
         styling::ActiveTheme,
         util::MaybeStateful,
     },

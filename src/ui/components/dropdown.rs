@@ -13,7 +13,7 @@ use crate::ui::{
         icons::{CHECK, CHEVRON_DOWN, icon},
         segmented_control::ChangeHandler,
     },
-    scale::{
+    customization::scale::{
         TextStyle, active_density, active_typography, apply_text_style, scale_px, scale_px_by,
     },
     styling::theme::Theme,

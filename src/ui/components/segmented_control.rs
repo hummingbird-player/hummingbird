@@ -7,7 +7,9 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::ui::{
-    scale::{TextStyle, active_density, active_typography, apply_text_style, scale_px_by},
+    customization::scale::{
+        TextStyle, active_density, active_typography, apply_text_style, scale_px_by,
+    },
     styling::theme::Theme,
 };
 

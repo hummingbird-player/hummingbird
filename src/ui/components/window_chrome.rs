@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
-    fonts::active_fonts,
+    customization::fonts::active_fonts,
     styling::constants::{APP_ROUNDING, APP_SHADOW_SIZE},
     styling::theme::Theme,
 };

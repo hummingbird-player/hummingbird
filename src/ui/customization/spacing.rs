@@ -1,6 +1,6 @@
 //! Spacing defaults and overrides
 //!
-//! The values from `.ron` are base values, not final rendered pixels.
+//! The values from the selected UI config are base values, not final rendered pixels.
 //! components still run them through the global interface scale from settings
 //!
 //! The important boundary is that spacing is configurable at the family level:
@@ -10,9 +10,9 @@
 use gpui::App;
 use serde::{Deserialize, Serialize};
 
-use crate::ui::ui_config::UiConfigGlobal;
+use super::ui_config::ResolvedUiConfigGlobal;
 
-/// Family-level spacing overrides loaded from `.ron`.
+/// Family-level spacing overrides loaded from the selected UI config.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SpacingConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,7 +209,7 @@ pub struct SidebarSpacingConfig {
     pub stats_padding_block_start: Option<f32>,
 }
 
-/// Resolved spacing values after merging defaults with any `.ron` overrides.
+/// Resolved spacing values after merging defaults with any UI config overrides.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Spacing {
     pub chrome: ChromeSpacing,
@@ -325,8 +325,7 @@ pub struct SidebarSpacing {
 }
 
 pub fn active_spacing(cx: &App) -> Spacing {
-    let config = cx.global::<UiConfigGlobal>().0.clone();
-    resolve_spacing(config.spacing.as_ref())
+    cx.global::<ResolvedUiConfigGlobal>().0.spacing
 }
 
 pub fn resolve_spacing(config: Option<&SpacingConfig>) -> Spacing {
@@ -594,10 +593,14 @@ fn resolve_sidebar_spacing(config: Option<&SidebarSpacingConfig>) -> SidebarSpac
     spacing
 }
 
-const fn merge_spacing_value(base: f32, override_value: Option<f32>) -> f32 {
+const MIN_SPACING_VALUE: f32 = 0.0;
+const MAX_SPACING_VALUE: f32 = 4096.0;
+
+fn merge_spacing_value(base: f32, override_value: Option<f32>) -> f32 {
     match override_value {
-        Some(value) => value,
+        Some(value) if value.is_finite() => value.clamp(MIN_SPACING_VALUE, MAX_SPACING_VALUE),
         None => base,
+        Some(_) => base,
     }
 }
 
@@ -732,9 +735,9 @@ impl Default for SidebarSpacing {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChromeSpacingConfig, ControlsSpacingConfig, InfoSpacingConfig, PlaybackSpacingConfig,
-        SecondaryControlsSpacingConfig, SidebarSpacing, SidebarSpacingConfig, Spacing,
-        SpacingConfig, resolve_spacing,
+        ChromeSpacingConfig, ControlsSpacingConfig, InfoSpacingConfig, MAX_SPACING_VALUE,
+        PlaybackSpacingConfig, SecondaryControlsSpacingConfig, SidebarSpacing,
+        SidebarSpacingConfig, Spacing, SpacingConfig, resolve_spacing,
     };
 
     #[test]
@@ -789,6 +792,26 @@ mod tests {
         assert_eq!(spacing.controls.secondary.button_size, 27.0);
         assert_eq!(spacing.sidebar.item_padding_inline, 11.0);
         assert_eq!(spacing.sidebar.nav_button_size, 42.0);
+        assert_eq!(spacing.sidebar.item_gap, SidebarSpacing::default().item_gap);
+    }
+
+    #[test]
+    fn invalid_spacing_values_fall_back_or_clamp() {
+        let spacing = resolve_spacing(Some(&SpacingConfig {
+            chrome: Some(ChromeSpacingConfig {
+                nav_button_size: Some(-10.0),
+                header_height: Some(10_000.0),
+                ..Default::default()
+            }),
+            sidebar: Some(SidebarSpacingConfig {
+                item_gap: Some(f32::INFINITY),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }));
+
+        assert_eq!(spacing.chrome.nav_button_size, 0.0);
+        assert_eq!(spacing.chrome.header_height, MAX_SPACING_VALUE);
         assert_eq!(spacing.sidebar.item_gap, SidebarSpacing::default().item_gap);
     }
 }

@@ -10,9 +10,9 @@ use crate::ui::{
         nav_button::nav_button,
         tooltip::build_tooltip,
     },
+    customization::scale::{active_density, scale_px},
+    customization::spacing::active_spacing,
     models::Models,
-    scale::{active_density, scale_px},
-    spacing::active_spacing,
 };
 
 use super::{EscapeBack, ViewSwitchMessage};

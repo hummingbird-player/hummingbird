@@ -19,8 +19,8 @@ use crate::{
             menu_bar::MenuBar,
             window_header::header,
         },
+        customization::scale::active_typography,
         library::nav_buttons::nav_buttons,
-        scale::active_typography,
         styling::ActiveTheme,
     },
 };

@@ -1,6 +1,8 @@
 use super::*;
-use crate::ui::scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by};
-use crate::ui::spacing::active_spacing;
+use crate::ui::customization::{
+    scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by},
+    spacing::active_spacing,
+};
 use crate::ui::styling::StyledExt;
 
 pub(super) struct InfoSection {

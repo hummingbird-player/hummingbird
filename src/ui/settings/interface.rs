@@ -20,8 +20,9 @@ use crate::{
         checkbox::checkbox, dropdown::dropdown, label::label, labeled_slider::labeled_slider,
         section_header::section_header,
     },
-    ui::file_options::SelectionOption,
-    ui::layout::{discover_ui_config_options, resolve_ui_config_relative_path},
+    ui::customization::{
+        SelectionOption, discover_ui_config_options, resolve_ui_config_relative_path,
+    },
     ui::styling::{
         StyledExt,
         theme::{Theme, ThemeOptionsGlobal, resolve_theme_relative_path},
@@ -290,7 +291,7 @@ impl Render for InterfaceSettings {
                 label("layout-config-selector", tr!("INTERFACE_LAYOUT", "Layout"))
                     .subtext(tr!(
                         "INTERFACE_LAYOUT_SUBTEXT",
-                        "Use the built-in layout or choose a .ron file from the layouts folder. Switching files applies immediately. Editing a selected .ron file still requires restarting Hummingbird."
+                        "Use the built-in layout or choose a .json file from the ui folder. Switching files applies immediately. Editing a selected .json file still requires restarting Hummingbird."
                     ))
                     .w_full()
                     .child(layout_dropdown),

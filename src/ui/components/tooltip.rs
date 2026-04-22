@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::{fonts::active_fonts, styling::theme::Theme};
+use crate::ui::{customization::fonts::active_fonts, styling::theme::Theme};
 
 /// Shared styling for all tooltip containers.
 pub fn tooltip_container(theme: &Theme) -> Div {
