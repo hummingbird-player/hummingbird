@@ -17,7 +17,6 @@ struct MenuMetrics {
     text: TextStyle,
     icon_size: f32,
     radius: f32,
-    separator_block_margin: f32,
 }
 
 fn menu_metrics(cx: &App) -> MenuMetrics {
@@ -30,7 +29,6 @@ fn menu_metrics(cx: &App) -> MenuMetrics {
         text: active_typography(cx).body,
         icon_size: scale_px(density, 18.0),
         radius: 4.0,
-        separator_block_margin: scale_px_by(density, 4.0, 1.0),
     }
 }
 
@@ -248,13 +246,11 @@ pub struct MenuSeparator;
 impl RenderOnce for MenuSeparator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let metrics = menu_metrics(cx);
 
         div()
             .min_w_full()
             .h(px(1.0))
             .flex_shrink_0()
-            .my(px(metrics.separator_block_margin))
             .bg(theme.elevated_border_color)
             .mx(px(4.0))
             .my(px(2.0))

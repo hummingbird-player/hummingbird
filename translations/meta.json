@@ -229,7 +229,7 @@
   },
   "APP_NAME": {
     "context": "info_section.rs",
-    "definedIn": "src/ui/controls/info_section.rs:268",
+    "definedIn": "src/ui/controls/info_section.rs:261",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -265,7 +265,7 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:591",
+    "definedIn": "src/ui/queue.rs:588",
     "plural": false,
     "description": null
   },
@@ -277,7 +277,7 @@
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:602",
+    "definedIn": "src/ui/queue.rs:599",
     "plural": false,
     "description": null
   },
@@ -457,13 +457,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:361",
+    "definedIn": "src/ui/queue.rs:358",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:378",
+    "definedIn": "src/ui/queue.rs:375",
     "plural": false,
     "description": null
   },
@@ -667,7 +667,7 @@
   },
   "LIKE": {
     "context": "info_section.rs",
-    "definedIn": "src/ui/controls/info_section.rs:352",
+    "definedIn": "src/ui/controls/info_section.rs:345",
     "plural": false,
     "description": null
   },
@@ -829,7 +829,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:579",
+    "definedIn": "src/ui/queue.rs:576",
     "plural": false,
     "description": null
   },
@@ -871,7 +871,7 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:426",
+    "definedIn": "src/ui/queue.rs:423",
     "plural": false,
     "description": null
   },
@@ -1363,19 +1363,19 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "info_section.rs",
-    "definedIn": "src/ui/controls/info_section.rs:315",
+    "definedIn": "src/ui/controls/info_section.rs:308",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "info_section.rs",
-    "definedIn": "src/ui/controls/info_section.rs:301",
+    "definedIn": "src/ui/controls/info_section.rs:294",
     "plural": false,
     "description": null
   },
   "UNLIKE": {
     "context": "info_section.rs",
-    "definedIn": "src/ui/controls/info_section.rs:349",
+    "definedIn": "src/ui/controls/info_section.rs:342",
     "plural": false,
     "description": null
   },

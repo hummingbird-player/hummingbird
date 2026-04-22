@@ -57,20 +57,10 @@ Controls the selected theme.
 You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
-### `interface.ui_config`
-
-Controls the selected UI configuration.
-
-- `null` or omitted: the built-in default Hummingbird layout
-- `"ui/<name>.json"`: a file-based UI configuration from the `ui/` directory
-
-File-based UI configurations are loaded immediately when selected from **Settings > Interface > Layout**. Editing the selected file still requires restarting Hummingbird.
-
 ### `interface.ui_density`
 
 Controls the default interface scale.
 
-- stored as a signed number from `-1.0` to `1.0`
 - `-1.0` = compact
 - `0.0` = default
 - `1.0` = comfortable

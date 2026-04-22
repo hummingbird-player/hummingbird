@@ -1,8 +1,6 @@
 use super::playback_section::PlaybackSection;
 use super::*;
-use crate::ui::customization::scale::{
-    TextStyle, active_density, interpolate_text_style, scale_px,
-};
+use crate::ui::customization::scale::{active_density, active_typography, scale_px};
 
 const SCRUBBER_HORIZONTAL_PADDING: f32 = 13.0;
 const SCRUBBER_TOP_MARGIN: f32 = 6.0;
@@ -46,12 +44,7 @@ impl Scrubber {
 impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let density = active_density(cx);
-        let text = interpolate_text_style(
-            density,
-            TextStyle::new(14.0, 16.0),
-            TextStyle::new(15.0, 16.0),
-            TextStyle::new(16.0, 18.0),
-        );
+        let text = active_typography(cx).metadata;
         let theme = cx.theme();
         let position_ms = *self.position.read(cx);
         let duration_secs = *self.duration.read(cx);

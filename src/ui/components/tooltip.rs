@@ -1,21 +1,29 @@
 use gpui::*;
 
-use crate::ui::{customization::fonts::active_fonts, styling::theme::Theme};
+use crate::ui::{
+    customization::{
+        fonts::active_fonts,
+        scale::{active_typography, apply_text_style},
+    },
+    styling::theme::Theme,
+};
 
 /// Shared styling for all tooltip containers.
-pub fn tooltip_container(theme: &Theme) -> Div {
-    div()
-        .text_sm()
-        .rounded(px(6.0))
-        .border_1()
-        .border_color(theme.elevated_border_color)
-        .bg(theme.elevated_background)
-        .text_color(theme.text_secondary)
-        .shadow_sm()
-        .px(px(8.0))
-        .pt(px(4.0))
-        .pb(px(5.0))
-        .max_w(px(260.0))
+pub fn tooltip_container(cx: &App, theme: &Theme) -> Div {
+    apply_text_style(
+        div()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme.elevated_border_color)
+            .bg(theme.elevated_background)
+            .text_color(theme.text_secondary)
+            .shadow_sm()
+            .px(px(8.0))
+            .pt(px(4.0))
+            .pb(px(5.0))
+            .max_w(px(260.0)),
+        active_typography(cx).secondary_body,
+    )
 }
 
 pub struct TooltipContent {
@@ -26,7 +34,7 @@ impl Render for TooltipContent {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let fonts = active_fonts(cx);
-        tooltip_container(theme)
+        tooltip_container(cx, theme)
             .font_family(fonts.font)
             .child(self.text.clone())
     }

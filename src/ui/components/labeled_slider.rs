@@ -5,7 +5,11 @@ use gpui::{
     StyleRefinement, Styled, Window, div, px, relative,
 };
 
-use crate::ui::{components::slider::slider, styling::theme::Theme};
+use crate::ui::{
+    components::slider::slider,
+    customization::scale::{active_density, active_typography, apply_text_style, scale_px},
+    styling::theme::Theme,
+};
 
 type ChangeHandler = dyn FnMut(f32, &mut Window, &mut App);
 type ValueFormatter = dyn Fn(f32) -> SharedString;
@@ -71,6 +75,8 @@ impl Styled for LabeledSlider {
 
 impl RenderOnce for LabeledSlider {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let density = active_density(cx);
+        let typography = active_typography(cx);
         let theme = cx.global::<Theme>();
         let low = self.min.min(self.max);
         let high = self.min.max(self.max);
@@ -99,8 +105,8 @@ impl RenderOnce for LabeledSlider {
                 slider()
                     .id(slider_id)
                     .w_full()
-                    .h(px(8.0))
-                    .rounded(px(4.0))
+                    .h(px(scale_px(density, 8.0)))
+                    .rounded(px(scale_px(density, 4.0)))
                     .value(normalized)
                     .on_change(move |v, window, cx| {
                         let value = (low + ((high - low) * v)).clamp(low, high);
@@ -115,8 +121,8 @@ impl RenderOnce for LabeledSlider {
             None => slider()
                 .id(slider_id)
                 .w_full()
-                .h(px(8.0))
-                .rounded(px(4.0))
+                .h(px(scale_px(density, 8.0)))
+                .rounded(px(scale_px(density, 4.0)))
                 .value(normalized),
         };
 
@@ -124,15 +130,26 @@ impl RenderOnce for LabeledSlider {
             .id(self.id)
             .flex()
             .flex_col()
-            .child(
+            .child(apply_text_style(
                 div()
                     .relative()
                     .w_full()
-                    .h(px(26.0))
-                    .text_xs()
+                    .h(px(scale_px(density, 26.0)))
                     .text_color(theme.text_secondary)
-                    .child(div().absolute().left(px(0.0)).top(px(4.0)).child(min_text))
-                    .child(div().absolute().right(px(0.0)).top(px(4.0)).child(max_text))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(0.0))
+                            .top(px(scale_px(density, 4.0)))
+                            .child(min_text),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(0.0))
+                            .top(px(scale_px(density, 4.0)))
+                            .child(max_text),
+                    )
                     .child(
                         div()
                             .absolute()
@@ -148,14 +165,15 @@ impl RenderOnce for LabeledSlider {
                                     .border_1()
                                     .border_color(theme.elevated_border_color)
                                     .bg(theme.elevated_background)
-                                    .rounded(px(4.0))
-                                    .px(px(6.0))
+                                    .rounded(px(scale_px(density, 4.0)))
+                                    .px(px(scale_px(density, 6.0)))
                                     .py(px(1.0))
                                     .child(current_text),
                             )
                             .child(div().h(px(1.0)).w(relative(right_flex))),
                     ),
-            )
+                typography.caption,
+            ))
             .child(slider)
     }
 }

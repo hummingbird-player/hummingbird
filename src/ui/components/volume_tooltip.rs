@@ -23,7 +23,7 @@ impl Render for VolumeTooltip {
         let volume = *self.volume.read(cx);
         let percentage = (volume * 100.0).round() as i32;
 
-        tooltip_container(theme).child(format!("{}%", percentage))
+        tooltip_container(cx, theme).child(format!("{}%", percentage))
     }
 }
 

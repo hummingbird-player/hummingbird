@@ -8,6 +8,8 @@
 //! normal geometry should use `scale_px(...)`, and `scale_px_by(...)` is there
 //! for the few places where the default 2 px nudge is not the right fit.
 //! Anything with behavior tied to its geometry should still own that locally.
+//! Not every older `text_sm()` / `text_xs()` call site has been migrated yet,
+//! but this module (should?) be the preferred path for shared text and geometry.
 
 use gpui::{App, Styled, px};
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,8 @@ use crate::settings::{
     interface::{InterfaceSettings, UiDensity},
 };
 
+
+// Gpooey has its own textstyle, i should probably rename this to 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextStyle {
     pub size: f32,
@@ -34,6 +38,7 @@ pub struct TypographyRoles {
     pub body: TextStyle,
     pub secondary_body: TextStyle,
     pub caption: TextStyle,
+    pub metadata: TextStyle,
     pub label: TextStyle,
     pub section_title: TextStyle,
     pub panel_title: TextStyle,
@@ -88,6 +93,12 @@ pub fn typography_roles(density: UiDensity) -> TypographyRoles {
             TextStyle::new(11.0, 15.0),
             TextStyle::new(12.0, 16.0),
             TextStyle::new(13.0, 18.0),
+        ),
+        metadata: interpolate_text_style(
+            density,
+            TextStyle::new(14.0, 16.0),
+            TextStyle::new(15.0, 16.0),
+            TextStyle::new(16.0, 18.0),
         ),
         label: interpolate_text_style(
             density,
@@ -146,7 +157,7 @@ where
 mod tests {
     use crate::settings::interface::UiDensity;
 
-    use super::{TextStyle, scale_px, scale_px_by};
+    use super::{TextStyle, scale_px, scale_px_by, typography_roles};
 
     #[test]
     fn text_style_interpolates_between_anchors() {
@@ -183,5 +194,21 @@ mod tests {
         assert_eq!(scale_px_by(UiDensity::from(-1.0), 36.0, 4.0), 32.0);
         assert_eq!(scale_px_by(UiDensity::from(0.0), 36.0, 4.0), 36.0);
         assert_eq!(scale_px_by(UiDensity::from(1.0), 36.0, 4.0), 40.0);
+    }
+
+    #[test]
+    fn metadata_role_matches_shared_metadata_ramp() {
+        assert_eq!(
+            typography_roles(UiDensity::from(0.0)).metadata,
+            TextStyle::new(15.0, 16.0)
+        );
+        assert_eq!(
+            typography_roles(UiDensity::from(-1.0)).metadata,
+            TextStyle::new(14.0, 16.0)
+        );
+        assert_eq!(
+            typography_roles(UiDensity::from(1.0)).metadata,
+            TextStyle::new(16.0, 18.0)
+        );
     }
 }

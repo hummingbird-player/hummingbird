@@ -3,7 +3,9 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
-    customization::scale::{active_density, scale_px, scale_px_by},
+    customization::scale::{
+        active_density, active_typography, apply_text_style, scale_px, scale_px_by,
+    },
     styling::constants::APP_ROUNDING,
     styling::{ActiveTheme, StyledExt},
 };
@@ -62,6 +64,7 @@ impl Styled for WindowHeader {
 impl RenderOnce for WindowHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let density = active_density(cx);
+        let typography = active_typography(cx);
         let theme = cx.theme();
 
         let left_container = div()
@@ -78,43 +81,45 @@ impl RenderOnce for WindowHeader {
             .gap(px(scale_px(density, HEADER_ITEM_GAP)))
             .children(self.right);
 
-        self.div
-            .flex()
-            .items_center()
-            .w_full()
-            .text_sm()
-            .min_h(px(scale_px(density, HEADER_HEIGHT)))
-            .max_h(px(scale_px(density, HEADER_HEIGHT)))
-            .bg(theme.background_secondary)
-            .id("titlebar")
-            .window_control_area(WindowControlArea::Drag)
-            .when(cfg!(not(target_os = "windows")), |this| {
-                this.on_mouse_down(MouseButton::Left, move |ev, window, _| {
-                    if ev.click_count != 2 {
-                        window.start_window_move();
-                    }
+        apply_text_style(
+            self.div
+                .flex()
+                .items_center()
+                .w_full()
+                .min_h(px(scale_px(density, HEADER_HEIGHT)))
+                .max_h(px(scale_px(density, HEADER_HEIGHT)))
+                .bg(theme.background_secondary)
+                .id("titlebar")
+                .window_control_area(WindowControlArea::Drag)
+                .when(cfg!(not(target_os = "windows")), |this| {
+                    this.on_mouse_down(MouseButton::Left, move |ev, window, _| {
+                        if ev.click_count != 2 {
+                            window.start_window_move();
+                        }
+                    })
+                    .on_click(|ev, window, _| {
+                        if ev.click_count() == 2 {
+                            window.zoom_window();
+                        }
+                    })
                 })
-                .on_click(|ev, window, _| {
-                    if ev.click_count() == 2 {
-                        window.zoom_window();
-                    }
+                .when(cfg!(target_os = "macos"), |this| {
+                    this.child(div().w(px(scale_px_by(density, HEADER_MACOS_DRAG_SPACER, 4.0))))
                 })
-            })
-            .when(cfg!(target_os = "macos"), |this| {
-                this.child(div().w(px(scale_px_by(density, HEADER_MACOS_DRAG_SPACER, 4.0))))
-            })
-            .child(left_container)
-            .child(right_container)
-            .when(cfg!(not(target_os = "macos")), |this| {
-                this.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .child(WindowButton::Minimize)
-                        .child(WindowButton::Maximize)
-                        .child(WindowButton::Close(self.main_window)),
-                )
-            })
+                .child(left_container)
+                .child(right_container)
+                .when(cfg!(not(target_os = "macos")), |this| {
+                    this.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(WindowButton::Minimize)
+                            .child(WindowButton::Maximize)
+                            .child(WindowButton::Close(self.main_window)),
+                    )
+                }),
+            typography.body,
+        )
     }
 }
 
