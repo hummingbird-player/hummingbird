@@ -114,11 +114,7 @@ fn read_and_parse(path: &Path) -> Result<UiConfig, LoadError> {
 
 fn validate_config(mut config: UiConfig) -> Result<UiConfig, LoadError> {
     if let Some(layout) = config.layout.take() {
-        config.layout = Some(
-            layout
-                .validated()
-                .ok_or(LoadError::InvalidLayoutPermutation)?,
-        );
+        config.layout = Some(layout.validated().ok_or(LoadError::InvalidLayout)?);
     }
 
     Ok(config)
@@ -141,7 +137,7 @@ enum LoadError {
     Io(std::io::Error),
     Parse(serde_json::Error),
     Serialize(serde_json::Error),
-    InvalidLayoutPermutation,
+    InvalidLayout,
 }
 
 impl std::fmt::Display for LoadError {
@@ -150,8 +146,11 @@ impl std::fmt::Display for LoadError {
             LoadError::Io(e) => write!(f, "io error: {e}"),
             LoadError::Parse(e) => write!(f, "parse error: {e}"),
             LoadError::Serialize(e) => write!(f, "serialize error: {e}"),
-            LoadError::InvalidLayoutPermutation => {
-                write!(f, "layout must include each built-in region exactly once")
+            LoadError::InvalidLayout => {
+                write!(
+                    f,
+                    "layout must include each built-in value exactly once in outer_order, main_order, and library.two_column_order"
+                )
             }
         }
     }
