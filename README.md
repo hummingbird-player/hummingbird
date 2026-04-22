@@ -7,6 +7,7 @@ performant and lightweight while maximizing extensibility and maintaining a high
 design standard.
 
 # Features
+
 - Fully native application with no web component
 - FLAC, MP3, OGG Vorbis, Opus, AAC and WAV playback
 - Linux, macOS and Windows support
@@ -21,11 +22,12 @@ design standard.
 - Discord RPC
 
 ## Planned Features
+
 - WASM Extension support:
-  - Codecs
-  - Scrobble services
-  - Metadata services
-  - Cloud storage services
+    - Codecs
+    - Scrobble services
+    - Metadata services
+    - Cloud storage services
 - Improved library management
 - Parametric equalizer
 - Cloud storage support
@@ -36,37 +38,46 @@ design standard.
 ## Stable Builds
 
 ### Windows, macOS and Linux AppImage
+
 Binaries for these platforms are officially available for 64-bit ARM and Intel architectures.
 See the [latest release](https://github.com/hummingbird-player/hummingbird/releases/latest) for downloads.
 
 ### Fedora
+
 Fedora users can install Hummingbird using the `william341/hummingbird` COPR:
+
 ```bash
 sudo dnf copr enable william341/hummingbird
 sudo dnf install hummingbird
 ```
 
 ### Arch
+
 Arch users can install Hummingbird using the `hummingbird-player` AUR package:
+
 ```bash
 paru -S hummingbird-player
 ```
 
 ## NixOS
+
 A flake is available for NixOS users. Work towards upstreaming Hummingbird into nixpkgs is
 currently ongoing.
 
 ## Unstable Builds
+
 The latest commit is built using Github Actions and uploaded to the
 [latest](https://github.com/143mailliw/hummingbird/releases/tag/latest) tag
 automatically.
 
 Official builds are signed with `minisign`. The signature is attached to the release and must be downloaded seperately and placed next to the binary you are attempting to verify. Verify with:
+
 ```
 minisign -Vm <file> -P RWTVGbNhJ/77g9Dm280SNcfxaPz118Hgg8vI55tFX83sIMiObZuxpDyV
 ```
 
 ## Building
+
 For more detailed instructions, see the [Building](docs/building.md) documentation.
 
 ```sh
@@ -87,4 +98,5 @@ cargo build --release
 ```
 
 # Contributing
+
 See [CONTRIBUTING.md](CONTRIBUTING.md).
