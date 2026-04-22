@@ -1,6 +1,6 @@
 //! UI config loaded from `ui/*.json`.
 //!
-//! `layout` changes shell and library pane ordering, and `font` changes the main UI font.
+//! `layout` changes and `font` changes the main font (duh)
 
 use std::collections::HashSet;
 
@@ -13,7 +13,6 @@ use super::fonts::{ResolvedFonts, resolve_fonts};
 
 pub const SEEDED_UI_CONFIG_PATH: &str = "ui/custom.json";
 
-/// The advanced UI config selected from `ui/*.json`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
