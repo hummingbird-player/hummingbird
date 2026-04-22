@@ -1,6 +1,15 @@
 use super::*;
 use crate::ui::customization::scale::{active_density, scale_px};
-use crate::ui::customization::spacing::active_spacing;
+
+const PLAYBACK_TOP_MARGIN: f32 = 5.0;
+const PLAYBACK_SIDE_TOGGLE_SIZE: f32 = 28.0;
+const PLAYBACK_SIDE_TOGGLE_ICON_SIZE: f32 = 14.0;
+const PLAYBACK_TRANSPORT_SIDE_WIDTH: f32 = 30.0;
+const PLAYBACK_TRANSPORT_CENTER_WIDTH: f32 = 32.0;
+const PLAYBACK_TRANSPORT_HEIGHT: f32 = 28.0;
+const PLAYBACK_TRANSPORT_ICON_SIZE: f32 = 16.0;
+const PLAYBACK_OUTER_GAP: f32 = 6.0;
+const PLAYBACK_SIDE_TOGGLE_BLOCK_OFFSET: f32 = 3.0;
 
 pub(super) struct PlaybackSection {
     info: PlaybackInfo,
@@ -31,7 +40,6 @@ impl PlaybackSection {
 impl Render for PlaybackSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let density = active_density(cx);
-        let spacing = active_spacing(cx).controls.playback;
         let state = self.info.playback_state.read(cx);
         let shuffling = self.info.shuffling.read(cx);
         let repeating = *self.info.repeating.read(cx);
@@ -51,17 +59,17 @@ impl Render for PlaybackSection {
         div()
             .mr(auto())
             .ml(auto())
-            .mt(px(scale_px(density, spacing.top_margin)))
+            .mt(px(scale_px(density, PLAYBACK_TOP_MARGIN)))
             .flex()
             .w_full()
             .absolute()
             .child(
                 div()
                     .rounded(px(3.0))
-                    .w(px(scale_px(density, spacing.side_toggle_size)))
-                    .h(px(scale_px(density, spacing.side_toggle_size - 3.0)))
-                    .mt(px(scale_px(density, spacing.side_toggle_block_offset)))
-                    .mr(px(scale_px(density, spacing.outer_gap)))
+                    .w(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_SIZE)))
+                    .h(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_SIZE - 3.0)))
+                    .mt(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_BLOCK_OFFSET)))
+                    .mr(px(scale_px(density, PLAYBACK_OUTER_GAP)))
                     .ml_auto()
                     .border_color(theme.playback_button_border)
                     .flex()
@@ -79,7 +87,7 @@ impl Render for PlaybackSection {
                     })
                     .child(
                         icon(SHUFFLE)
-                            .size(px(scale_px(density, spacing.side_toggle_icon_size)))
+                            .size(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_ICON_SIZE)))
                             .when(*shuffling, |this| {
                                 this.text_color(theme.playback_button_toggled)
                             }),
@@ -98,8 +106,8 @@ impl Render for PlaybackSection {
                     .flex()
                     .child(
                         div()
-                            .w(px(scale_px(density, spacing.transport_side_width)))
-                            .h(px(scale_px(density, spacing.transport_height)))
+                            .w(px(scale_px(density, PLAYBACK_TRANSPORT_SIDE_WIDTH)))
+                            .h(px(scale_px(density, PLAYBACK_TRANSPORT_HEIGHT)))
                             .rounded_l(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
@@ -117,14 +125,14 @@ impl Render for PlaybackSection {
                             })
                             .child(
                                 icon(PREV_TRACK)
-                                    .size(px(scale_px(density, spacing.transport_icon_size))),
+                                    .size(px(scale_px(density, PLAYBACK_TRANSPORT_ICON_SIZE))),
                             )
                             .tooltip(build_tooltip(tr!("PREVIOUS_TRACK", "Previous Track"))),
                     )
                     .child(
                         div()
-                            .w(px(scale_px(density, spacing.transport_center_width)))
-                            .h(px(scale_px(density, spacing.transport_height)))
+                            .w(px(scale_px(density, PLAYBACK_TRANSPORT_CENTER_WIDTH)))
+                            .h(px(scale_px(density, PLAYBACK_TRANSPORT_HEIGHT)))
                             .bg(theme.playback_button)
                             .border_l(px(1.0))
                             .border_r(px(1.0))
@@ -145,22 +153,22 @@ impl Render for PlaybackSection {
                             .when(*state == PlaybackState::Playing, |div| {
                                 div.child(
                                     icon(PAUSE)
-                                        .size(px(scale_px(density, spacing.transport_icon_size))),
+                                        .size(px(scale_px(density, PLAYBACK_TRANSPORT_ICON_SIZE))),
                                 )
                                 .tooltip(build_tooltip(tr!("PAUSE")))
                             })
                             .when(*state != PlaybackState::Playing, |div| {
                                 div.child(
                                     icon(PLAY)
-                                        .size(px(scale_px(density, spacing.transport_icon_size))),
+                                        .size(px(scale_px(density, PLAYBACK_TRANSPORT_ICON_SIZE))),
                                 )
                                 .tooltip(build_tooltip(tr!("PLAY")))
                             }),
                     )
                     .child(
                         div()
-                            .w(px(scale_px(density, spacing.transport_side_width)))
-                            .h(px(scale_px(density, spacing.transport_height)))
+                            .w(px(scale_px(density, PLAYBACK_TRANSPORT_SIDE_WIDTH)))
+                            .h(px(scale_px(density, PLAYBACK_TRANSPORT_HEIGHT)))
                             .rounded_r(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
@@ -178,7 +186,7 @@ impl Render for PlaybackSection {
                             })
                             .child(
                                 icon(NEXT_TRACK)
-                                    .size(px(scale_px(density, spacing.transport_icon_size))),
+                                    .size(px(scale_px(density, PLAYBACK_TRANSPORT_ICON_SIZE))),
                             )
                             .tooltip(build_tooltip(tr!("NEXT_TRACK", "Next Track"))),
                     ),
@@ -189,10 +197,10 @@ impl Render for PlaybackSection {
                         .with(
                             div()
                                 .rounded(px(3.0))
-                                .w(px(scale_px(density, spacing.side_toggle_size)))
-                                .h(px(scale_px(density, spacing.side_toggle_size - 3.0)))
-                                .mt(px(scale_px(density, spacing.side_toggle_block_offset)))
-                                .ml(px(scale_px(density, spacing.outer_gap)))
+                                .w(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_SIZE)))
+                                .h(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_SIZE - 3.0)))
+                                .mt(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_BLOCK_OFFSET)))
+                                .ml(px(scale_px(density, PLAYBACK_OUTER_GAP)))
                                 .border_color(theme.playback_button_border)
                                 .flex()
                                 .items_center()
@@ -235,7 +243,7 @@ impl Render for PlaybackSection {
                                         }
                                         RepeatState::RepeatingOne => REPEAT_ONCE,
                                     })
-                                    .size(px(scale_px(density, spacing.side_toggle_icon_size)))
+                                    .size(px(scale_px(density, PLAYBACK_SIDE_TOGGLE_ICON_SIZE)))
                                     .text_color(repeat_icon_color),
                                 ),
                         )

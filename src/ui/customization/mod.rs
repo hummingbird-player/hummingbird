@@ -4,7 +4,6 @@ pub mod file_options;
 pub mod fonts;
 pub mod loader;
 pub mod scale;
-pub mod spacing;
 pub mod ui_config;
 
 pub use file_options::SelectionOption;

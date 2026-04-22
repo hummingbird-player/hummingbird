@@ -1,9 +1,16 @@
 use super::playback_section::PlaybackSection;
 use super::*;
-use crate::ui::{
-    customization::scale::{TextStyle, active_density, interpolate_text_style, scale_px},
-    customization::spacing::active_spacing,
+use crate::ui::customization::scale::{
+    TextStyle, active_density, interpolate_text_style, scale_px,
 };
+
+const SCRUBBER_HORIZONTAL_PADDING: f32 = 13.0;
+const SCRUBBER_TOP_MARGIN: f32 = 6.0;
+const SCRUBBER_BOTTOM_MARGIN: f32 = 6.0;
+const SCRUBBER_TRACK_HEIGHT: f32 = 6.0;
+const SCRUBBER_TIME_GAP: f32 = 6.0;
+const SCRUBBER_DURATION_SEPARATOR_PADDING: f32 = 6.0;
+const SCRUBBER_DURATION_SEPARATOR_HEIGHT: f32 = 30.0;
 
 pub(super) struct Scrubber {
     position: Entity<u64>,
@@ -39,7 +46,6 @@ impl Scrubber {
 impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let density = active_density(cx);
-        let spacing = active_spacing(cx).controls.scrubber;
         let text = interpolate_text_style(
             density,
             TextStyle::new(14.0, 16.0),
@@ -56,8 +62,8 @@ impl Render for Scrubber {
         let window_width = window.viewport_size().width;
 
         div()
-            .pl(px(scale_px(density, spacing.horizontal_padding)))
-            .pr(px(scale_px(density, spacing.horizontal_padding)))
+            .pl(px(scale_px(density, SCRUBBER_HORIZONTAL_PADDING)))
+            .pr(px(scale_px(density, SCRUBBER_HORIZONTAL_PADDING)))
             .border_x(px(1.0))
             .border_color(theme.border_color)
             .flex_grow()
@@ -72,11 +78,11 @@ impl Render for Scrubber {
                     .flex()
                     .relative()
                     .items_end()
-                    .mt(px(scale_px(density, spacing.top_margin)))
-                    .mb(px(scale_px(density, spacing.bottom_margin)))
+                    .mt(px(scale_px(density, SCRUBBER_TOP_MARGIN)))
+                    .mb(px(scale_px(density, SCRUBBER_BOTTOM_MARGIN)))
                     .child(
                         div()
-                            .mr(px(scale_px(density, spacing.time_gap)))
+                            .mr(px(scale_px(density, SCRUBBER_TIME_GAP)))
                             .line_height(px(text.line_height))
                             .child(format_duration(position_secs as i64, true)),
                     )
@@ -86,13 +92,13 @@ impl Render for Scrubber {
                                 .line_height(px(text.line_height))
                                 .border_color(rgb(0x4b5563))
                                 .border_l(px(2.0))
-                                .pl(px(scale_px(density, spacing.duration_separator_padding)))
+                                .pl(px(scale_px(density, SCRUBBER_DURATION_SEPARATOR_PADDING)))
                                 .text_color(rgb(0xcbd5e1))
                                 .child(format_duration(duration_secs as i64, true)),
                         )
                     })
                     .child(self.playback_section.clone())
-                    .child(div().h(px(scale_px(density, spacing.duration_separator_height))))
+                    .child(div().h(px(scale_px(density, SCRUBBER_DURATION_SEPARATOR_HEIGHT))))
                     .child(
                         div()
                             .ml(auto())
@@ -103,7 +109,7 @@ impl Render for Scrubber {
             .child(
                 slider()
                     .w_full()
-                    .h(px(scale_px(density, spacing.track_height)))
+                    .h(px(scale_px(density, SCRUBBER_TRACK_HEIGHT)))
                     .rounded(px(3.0))
                     .id("scrubber-back")
                     .value(if duration_ms > 0 {

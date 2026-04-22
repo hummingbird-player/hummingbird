@@ -9,11 +9,21 @@ use crate::{
     ui::{
         components::icons::icon,
         customization::scale::{active_density, active_typography, apply_text_style, scale_px},
-        customization::spacing::active_spacing,
         styling::ActiveTheme,
         util::MaybeStateful,
     },
 };
+
+const SIDEBAR_CONTAINER_GAP: f32 = 4.0;
+const SIDEBAR_ITEM_PADDING_INLINE: f32 = 9.0;
+const SIDEBAR_ITEM_PADDING_BLOCK: f32 = 7.0;
+const SIDEBAR_ITEM_GAP: f32 = 6.0;
+const SIDEBAR_ITEM_ICON_SIZE: f32 = 18.0;
+const SIDEBAR_COLLAPSED_ITEM_SIZE: f32 = 36.0;
+const SIDEBAR_COLLAPSED_TOOLTIP_INLINE_PADDING: f32 = 12.0;
+const SIDEBAR_COLLAPSED_TOOLTIP_BLOCK_START: f32 = 6.0;
+const SIDEBAR_COLLAPSED_TOOLTIP_BLOCK_END: f32 = 5.0;
+const SIDEBAR_SEPARATOR_BLOCK_MARGIN: f32 = 4.0;
 
 #[derive(IntoElement)]
 pub struct Sidebar {
@@ -52,7 +62,6 @@ impl ParentElement for Sidebar {
 impl RenderOnce for Sidebar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let density = active_density(cx);
-        let spacing = active_spacing(cx).sidebar;
         let width: Pixels = match self.width {
             Some(w) => w,
             None => DEFAULT_SIDEBAR_WIDTH,
@@ -61,7 +70,7 @@ impl RenderOnce for Sidebar {
         self.div
             .w(width)
             .flex()
-            .gap(px(scale_px(density, spacing.container_gap)))
+            .gap(px(scale_px(density, SIDEBAR_CONTAINER_GAP)))
             .flex_col()
     }
 }
@@ -130,7 +139,6 @@ impl RenderOnce for SidebarItem {
         let state = window.use_keyed_state(self.state_id.clone(), cx, |_, _| false);
         let theme = cx.theme();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).sidebar;
         let typography = active_typography(cx);
 
         let item = self
@@ -139,7 +147,7 @@ impl RenderOnce for SidebarItem {
             .overflow_x_hidden()
             .when(!self.collapsed, |this| this.w_full())
             .when(self.collapsed, |this| {
-                this.size(px(scale_px(density, spacing.collapsed_item_size)))
+                this.size(px(scale_px(density, SIDEBAR_COLLAPSED_ITEM_SIZE)))
                     .items_center()
                     .justify_center()
                     .flex_shrink_0()
@@ -159,10 +167,10 @@ impl RenderOnce for SidebarItem {
             })
             .rounded(px(4.0))
             .when(!self.collapsed, |this| {
-                this.px(px(scale_px(density, spacing.item_padding_inline)))
+                this.px(px(scale_px(density, SIDEBAR_ITEM_PADDING_INLINE)))
             })
-            .py(px(scale_px(density, spacing.item_padding_block)))
-            .gap(px(scale_px(density, spacing.item_gap)))
+            .py(px(scale_px(density, SIDEBAR_ITEM_PADDING_BLOCK)))
+            .gap(px(scale_px(density, SIDEBAR_ITEM_GAP)))
             .font_weight(FontWeight::SEMIBOLD)
             .hover(|this| {
                 this.bg(theme.nav_button_hover)
@@ -175,17 +183,17 @@ impl RenderOnce for SidebarItem {
             .when_none(&self.icon, |this| {
                 this.child(
                     div()
-                        .size(px(scale_px(density, spacing.item_icon_size)))
+                        .size(px(scale_px(density, SIDEBAR_ITEM_ICON_SIZE)))
                         .flex_shrink_0()
-                        .min_w(px(scale_px(density, spacing.item_icon_size))),
+                        .min_w(px(scale_px(density, SIDEBAR_ITEM_ICON_SIZE))),
                 )
             })
             .when_some(self.icon, |this, used_icon| {
                 this.child(
                     icon(used_icon)
-                        .size(px(scale_px(density, spacing.item_icon_size)))
+                        .size(px(scale_px(density, SIDEBAR_ITEM_ICON_SIZE)))
                         .flex_shrink_0()
-                        .min_w(px(scale_px(density, spacing.item_icon_size))),
+                        .min_w(px(scale_px(density, SIDEBAR_ITEM_ICON_SIZE))),
                 )
             })
             .when(!self.collapsed, |this| {
@@ -230,10 +238,10 @@ impl RenderOnce for SidebarItem {
                             .shadow_sm()
                             .px(px(scale_px(
                                 density,
-                                spacing.collapsed_tooltip_inline_padding,
+                                SIDEBAR_COLLAPSED_TOOLTIP_INLINE_PADDING,
                             )))
-                            .pt(px(scale_px(density, spacing.collapsed_tooltip_block_start)))
-                            .pb(px(scale_px(density, spacing.collapsed_tooltip_block_end)))
+                            .pt(px(scale_px(density, SIDEBAR_COLLAPSED_TOOLTIP_BLOCK_START)))
+                            .pb(px(scale_px(density, SIDEBAR_COLLAPSED_TOOLTIP_BLOCK_END)))
                             .text_color(theme.text)
                             .whitespace_nowrap()
                             .child(apply_text_style(div().child(label_text), typography.body)),
@@ -267,11 +275,10 @@ impl RenderOnce for SidebarSeparator {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).sidebar;
 
         div()
             .w_full()
-            .my(px(scale_px(density, spacing.separator_block_margin)))
+            .my(px(scale_px(density, SIDEBAR_SEPARATOR_BLOCK_MARGIN)))
             .border_b_1()
             .border_color(theme.border_color)
     }

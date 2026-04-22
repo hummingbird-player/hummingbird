@@ -1,9 +1,19 @@
 use super::*;
-use crate::ui::customization::{
-    scale::{TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by},
-    spacing::active_spacing,
+use crate::ui::customization::scale::{
+    TextStyle, active_density, interpolate_text_style, scale_px, scale_px_by,
 };
 use crate::ui::styling::StyledExt;
+
+const INFO_OUTER_MARGIN_INLINE: f32 = 12.0;
+const INFO_OUTER_MARGIN_BLOCK_START: f32 = 12.0;
+const INFO_OUTER_MARGIN_BLOCK_END: f32 = 6.0;
+const INFO_ROW_GAP: f32 = 10.0;
+const INFO_ART_SIZE: f32 = 36.0;
+const INFO_ART_BOTTOM_INSET: f32 = 6.0;
+const INFO_PREVIEW_SIZE: f32 = 256.0;
+const INFO_PREVIEW_OFFSET: f32 = 26.0;
+const INFO_LIKE_PADDING: f32 = 4.0;
+const INFO_ICON_SIZE: f32 = 14.0;
 
 pub(super) struct InfoSection {
     track_name: Option<SharedString>,
@@ -136,17 +146,16 @@ impl InfoSection {
 impl Render for InfoSection {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let density = active_density(cx);
-        let spacing = active_spacing(cx).controls.info;
-        let outer_margin_inline = scale_px(density, spacing.outer_margin_inline);
-        let outer_margin_block_start = scale_px(density, spacing.outer_margin_block_start);
-        let outer_margin_block_end = scale_px(density, spacing.outer_margin_block_end);
-        let row_gap = scale_px(density, spacing.item_gap);
-        let art_size = scale_px(density, spacing.art_size);
-        let art_bottom_inset = scale_px(density, spacing.art_bottom_inset);
-        let preview_size = scale_px_by(density, spacing.preview_size, 24.0);
-        let preview_offset = scale_px(density, spacing.preview_offset);
-        let like_padding = scale_px(density, spacing.like_padding);
-        let like_icon_size = scale_px(density, spacing.icon_size);
+        let outer_margin_inline = scale_px(density, INFO_OUTER_MARGIN_INLINE);
+        let outer_margin_block_start = scale_px(density, INFO_OUTER_MARGIN_BLOCK_START);
+        let outer_margin_block_end = scale_px(density, INFO_OUTER_MARGIN_BLOCK_END);
+        let row_gap = INFO_ROW_GAP;
+        let art_size = scale_px(density, INFO_ART_SIZE);
+        let art_bottom_inset = scale_px(density, INFO_ART_BOTTOM_INSET);
+        let preview_size = scale_px_by(density, INFO_PREVIEW_SIZE, 24.0);
+        let preview_offset = scale_px(density, INFO_PREVIEW_OFFSET);
+        let like_padding = scale_px(density, INFO_LIKE_PADDING);
+        let like_icon_size = scale_px(density, INFO_ICON_SIZE);
         let metadata_text = interpolate_text_style(
             density,
             TextStyle::new(14.0, 16.0),

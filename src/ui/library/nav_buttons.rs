@@ -11,11 +11,14 @@ use crate::ui::{
         tooltip::build_tooltip,
     },
     customization::scale::{active_density, scale_px},
-    customization::spacing::active_spacing,
     models::Models,
 };
 
 use super::{EscapeBack, ViewSwitchMessage};
+
+const NAV_GROUP_GAP: f32 = 2.0;
+const NAV_GROUP_MARGIN_INLINE_END: f32 = 6.0;
+const NAV_GROUP_MARGIN_BLOCK_START: f32 = 1.0;
 
 #[derive(IntoElement)]
 pub struct NavButtons {}
@@ -26,14 +29,13 @@ impl RenderOnce for NavButtons {
         let can_go_back = vsm.read(cx).can_go_back();
         let can_go_forward = vsm.read(cx).can_go_forward();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).chrome;
 
         div()
             .flex()
             .occlude()
-            .mt(px(scale_px(density, spacing.nav_group_margin_block_start)))
-            .mr(px(scale_px(density, spacing.nav_group_margin_inline_end)))
-            .gap(px(scale_px(density, spacing.nav_group_gap)))
+            .mt(px(scale_px(density, NAV_GROUP_MARGIN_BLOCK_START)))
+            .mr(px(scale_px(density, NAV_GROUP_MARGIN_INLINE_END)))
+            .gap(px(scale_px(density, NAV_GROUP_GAP)))
             .child(
                 nav_button("back", ARROW_LEFT)
                     .disabled(!can_go_back)

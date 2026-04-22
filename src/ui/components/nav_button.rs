@@ -6,9 +6,12 @@ use gpui::{
 use crate::ui::{
     components::icons::icon,
     customization::scale::{active_density, scale_px},
-    customization::spacing::active_spacing,
     styling::ActiveTheme,
 };
+
+const NAV_BUTTON_SIZE: f32 = 28.0;
+const NAV_BUTTON_ICON_SIZE: f32 = 16.0;
+const NAV_BUTTON_RADIUS: f32 = 3.0;
 
 #[derive(IntoElement)]
 pub struct NavButton {
@@ -42,10 +45,9 @@ impl RenderOnce for NavButton {
     fn render(self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let theme = cx.theme();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).chrome;
-        let button_size = px(scale_px(density, spacing.nav_button_size));
-        let icon_size = px(scale_px(density, spacing.nav_button_icon_size));
-        let radius = px(scale_px(density, spacing.nav_button_radius));
+        let button_size = px(scale_px(density, NAV_BUTTON_SIZE));
+        let icon_size = px(scale_px(density, NAV_BUTTON_ICON_SIZE));
+        let radius = px(scale_px(density, NAV_BUTTON_RADIUS));
 
         self.div
             .size(button_size)

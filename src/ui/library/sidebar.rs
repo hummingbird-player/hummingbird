@@ -20,7 +20,6 @@ use crate::{
             sidebar::{sidebar, sidebar_item, sidebar_separator},
         },
         customization::scale::{active_density, active_typography, apply_text_style, scale_px},
-        customization::spacing::active_spacing,
         global_actions::Search,
         library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
         models::Models,
@@ -29,6 +28,16 @@ use crate::{
 };
 
 mod playlists;
+
+const SEARCH_TOGGLE_GAP: f32 = 4.0;
+const SEARCH_TOGGLE_BLOCK_START: f32 = 2.0;
+const SEARCH_TOGGLE_BLOCK_END: f32 = 4.0;
+const SEARCH_TOGGLE_PADDING_BLOCK_END: f32 = 10.0;
+const SIDEBAR_NAV_BUTTON_SIZE: f32 = 38.0;
+const SECTION_PADDING_BLOCK: f32 = 8.0;
+const SECTION_PADDING_INLINE_START: f32 = 7.0;
+const SECTION_PADDING_INLINE_END: f32 = 8.0;
+const STATS_PADDING_BLOCK_START: f32 = 8.0;
 
 pub struct Sidebar {
     playlists: Entity<PlaylistList>,
@@ -66,7 +75,6 @@ impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).sidebar;
         let typography = active_typography(cx);
         let stats_minutes = self.track_stats.total_duration / 60;
         let current_view = self.nav_model.read(cx).current();
@@ -99,19 +107,16 @@ impl Render for Sidebar {
             .when(collapsed, |this| {
                 this.flex_col()
                     .items_center()
-                    .gap(px(scale_px(density, spacing.search_toggle_gap)))
+                    .gap(px(scale_px(density, SEARCH_TOGGLE_GAP)))
             })
-            .mt(px(scale_px(density, spacing.search_toggle_block_start)))
-            .mb(px(scale_px(density, spacing.search_toggle_block_end)))
-            .pb(px(scale_px(
-                density,
-                spacing.search_toggle_padding_block_end,
-            )))
+            .mt(px(scale_px(density, SEARCH_TOGGLE_BLOCK_START)))
+            .mb(px(scale_px(density, SEARCH_TOGGLE_BLOCK_END)))
+            .pb(px(scale_px(density, SEARCH_TOGGLE_PADDING_BLOCK_END)))
             .border_b_1()
             .border_color(theme.border_color)
             .child(
                 nav_button("search", SEARCH)
-                    .w(px(scale_px(density, spacing.nav_button_size)))
+                    .w(px(scale_px(density, SIDEBAR_NAV_BUTTON_SIZE)))
                     .tooltip(build_tooltip(tr!("SEARCH")))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(Search), cx);
@@ -122,7 +127,7 @@ impl Render for Sidebar {
                     nav_button("sidebar-toggle", toggle_icon)
                         .ml_auto()
                         .tooltip(build_tooltip(tr!("COLLAPSE_SIDEBAR", "Collapse Sidebar")))
-                        .w(px(scale_px(density, spacing.nav_button_size)))
+                        .w(px(scale_px(density, SIDEBAR_NAV_BUTTON_SIZE)))
                         .on_click(move |_, _, cx| {
                             sidebar_collapsed_entity.update(cx, |v, cx| {
                                 *v = !*v;
@@ -141,10 +146,10 @@ impl Render for Sidebar {
             .id("main-sidebar")
             .h_full()
             .max_h_full()
-            .pt(px(scale_px(density, spacing.section_padding_block)))
-            .pb(px(scale_px(density, spacing.section_padding_block)))
-            .pl(px(scale_px(density, spacing.section_padding_inline_start)))
-            .pr(px(scale_px(density, spacing.section_padding_inline_end)))
+            .pt(px(scale_px(density, SECTION_PADDING_BLOCK)))
+            .pb(px(scale_px(density, SECTION_PADDING_BLOCK)))
+            .pl(px(scale_px(density, SECTION_PADDING_INLINE_START)))
+            .pr(px(scale_px(density, SECTION_PADDING_INLINE_END)))
             .when(!collapsed, |this| this.overflow_hidden())
             .flex()
             .flex_col()
@@ -213,8 +218,8 @@ impl Render for Sidebar {
                     div().mt_auto().child(
                         nav_button("sidebar-toggle", SIDEBAR_INACTIVE)
                             .tooltip(build_tooltip(tr!("EXPAND_SIDEBAR", "Expand Sidebar")))
-                            .w(px(scale_px(density, spacing.nav_button_size)))
-                            .h(px(scale_px(density, spacing.nav_button_size)))
+                            .w(px(scale_px(density, SIDEBAR_NAV_BUTTON_SIZE)))
+                            .h(px(scale_px(density, SIDEBAR_NAV_BUTTON_SIZE)))
                             .on_click(move |_, _, cx| {
                                 sidebar_collapsed_entity_bottom.update(cx, |v, cx| {
                                     *v = !*v;
@@ -230,7 +235,7 @@ impl Render for Sidebar {
                         .flex()
                         .flex_col()
                         .mt_auto()
-                        .pt(px(scale_px(density, spacing.stats_padding_block_start)))
+                        .pt(px(scale_px(density, STATS_PADDING_BLOCK_START)))
                         .text_color(theme.text_secondary)
                         .child(trn!(
                             "STATS_TRACKS",

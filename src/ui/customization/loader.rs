@@ -26,7 +26,6 @@ pub fn ensure_seeded_ui_config(data_dir: &Path) {
         layout: Some(default_shell_layout()),
         font: None,
         mono_font: None,
-        spacing: None,
     };
     let serialized = match serialize_config(&starter) {
         Ok(serialized) => serialized,
@@ -106,7 +105,6 @@ fn default_ui_config() -> UiConfig {
         layout: Some(default_shell_layout()),
         font: None,
         mono_font: None,
-        spacing: None,
     }
 }
 
@@ -188,10 +186,6 @@ mod tests {
         ui::{
             customization::{
                 file_options::SelectionOption,
-                spacing::{
-                    ChromeSpacingConfig, ControlsSpacingConfig, PlaybackSpacingConfig,
-                    SidebarSpacingConfig, SpacingConfig,
-                },
                 ui_config::{SEEDED_UI_CONFIG_PATH, UiConfig},
             },
             layout::{
@@ -223,7 +217,6 @@ mod tests {
                 layout: Some(default_shell_layout()),
                 font: None,
                 mono_font: None,
-                spacing: None,
             }
         );
         assert!(path.is_file());
@@ -244,7 +237,6 @@ mod tests {
             }),
             font: Some("Inter".to_string()),
             mono_font: Some("Roboto Mono".to_string()),
-            spacing: None,
         };
         write_config(path.parent().unwrap(), &path, &expected).unwrap();
 
@@ -268,7 +260,6 @@ mod tests {
                 layout: Some(default_shell_layout()),
                 font: None,
                 mono_font: None,
-                spacing: None,
             }
         );
     }
@@ -291,7 +282,6 @@ mod tests {
                 }),
                 font: None,
                 mono_font: None,
-                spacing: None,
             },
         )
         .unwrap();
@@ -304,7 +294,6 @@ mod tests {
                 layout: Some(default_shell_layout()),
                 font: None,
                 mono_font: None,
-                spacing: None,
             }
         );
     }
@@ -332,59 +321,6 @@ mod tests {
                 layout: None,
                 font: Some("Inter".to_string()),
                 mono_font: Some("Roboto Mono".to_string()),
-                spacing: None,
-            }
-        );
-    }
-
-    #[test]
-    fn spacing_block_in_config_is_loaded() {
-        let dir = create_test_dir();
-        let path = seeded_ui_config_path(dir.path());
-        let raw = r#"{
-  "spacing": {
-    "chrome": {
-      "nav_button_size": 20.0
-    },
-    "controls": {
-      "playback": {
-        "outer_gap": 8.0
-      }
-    },
-    "sidebar": {
-      "item_padding_inline": 11.0
-    }
-  }
-}"#;
-
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, raw).unwrap();
-
-        let config = load_selected_ui_config(dir.path(), Some(SEEDED_UI_CONFIG_PATH));
-
-        assert_eq!(
-            config,
-            UiConfig {
-                layout: None,
-                font: None,
-                mono_font: None,
-                spacing: Some(SpacingConfig {
-                    chrome: Some(ChromeSpacingConfig {
-                        nav_button_size: Some(20.0),
-                        ..Default::default()
-                    }),
-                    controls: Some(ControlsSpacingConfig {
-                        playback: Some(PlaybackSpacingConfig {
-                            outer_gap: Some(8.0),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    }),
-                    sidebar: Some(SidebarSpacingConfig {
-                        item_padding_inline: Some(11.0),
-                        ..Default::default()
-                    }),
-                }),
             }
         );
     }
@@ -429,7 +365,6 @@ mod tests {
                 }),
                 font: None,
                 mono_font: None,
-                spacing: None,
             }
         );
     }
@@ -477,7 +412,6 @@ mod tests {
                 }),
                 font: Some("Inter".to_string()),
                 mono_font: Some("Roboto Mono".to_string()),
-                spacing: None,
             }
         );
     }

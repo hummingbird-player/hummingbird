@@ -13,9 +13,15 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
     customization::scale::{active_density, active_typography, apply_text_style, scale_px},
-    customization::spacing::active_spacing,
     styling::theme::Theme,
 };
+
+const SECONDARY_BUTTON_SIZE: f32 = 25.0;
+const SECONDARY_BUTTON_ICON_SIZE: f32 = 14.0;
+const SECONDARY_BUTTON_TOP_MARGIN: f32 = 2.0;
+const REPLAYGAIN_POPOVER_GAP: f32 = 10.0;
+const REPLAYGAIN_POPOVER_PADDING_INLINE: f32 = 4.0;
+const REPLAYGAIN_POPOVER_PADDING_BLOCK: f32 = 8.0;
 
 pub struct ReplayGainButton {
     settings: Entity<Settings>,
@@ -49,8 +55,6 @@ impl Render for ReplayGainButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let density = active_density(cx);
-        let spacing = active_spacing(cx).controls;
-        let button_spacing = spacing.secondary;
         let section_label = active_typography(cx).caption;
         let rg_settings = self.settings.read(cx).playback.replaygain;
         let rg_mode = rg_settings.mode;
@@ -62,9 +66,9 @@ impl Render for ReplayGainButton {
             .child(
                 div()
                     .rounded(px(3.0))
-                    .w(px(scale_px(density, button_spacing.button_size)))
-                    .h(px(scale_px(density, button_spacing.button_size)))
-                    .mt(px(scale_px(density, button_spacing.button_top_margin)))
+                    .w(px(scale_px(density, SECONDARY_BUTTON_SIZE)))
+                    .h(px(scale_px(density, SECONDARY_BUTTON_SIZE)))
+                    .mt(px(scale_px(density, SECONDARY_BUTTON_TOP_MARGIN)))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -85,7 +89,7 @@ impl Render for ReplayGainButton {
                     }))
                     .child(
                         icon(ADJUSTMENTS)
-                            .size(px(scale_px(density, button_spacing.button_icon_size)))
+                            .size(px(scale_px(density, SECONDARY_BUTTON_ICON_SIZE)))
                             .when(rg_mode != ReplayGainMode::Off, |this| {
                                 this.text_color(theme.playback_button_toggled)
                             }),
@@ -109,19 +113,10 @@ impl Render for ReplayGainButton {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(scale_px(density, spacing.replaygain_popover_gap)))
-                                .px(px(scale_px(
-                                    density,
-                                    spacing.replaygain_popover_padding_inline,
-                                )))
-                                .pt(px(scale_px(
-                                    density,
-                                    spacing.replaygain_popover_padding_block,
-                                )))
-                                .pb(px(scale_px(
-                                    density,
-                                    spacing.replaygain_popover_padding_block,
-                                )))
+                                .gap(px(scale_px(density, REPLAYGAIN_POPOVER_GAP)))
+                                .px(px(scale_px(density, REPLAYGAIN_POPOVER_PADDING_INLINE)))
+                                .pt(px(scale_px(density, REPLAYGAIN_POPOVER_PADDING_BLOCK)))
+                                .pb(px(scale_px(density, REPLAYGAIN_POPOVER_PADDING_BLOCK)))
                                 .child(
                                     div()
                                         .flex()
