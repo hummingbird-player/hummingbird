@@ -24,7 +24,7 @@ use crate::{
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
     },
 };
-use cntp_i18n::tr;
+use cntp_i18n::{tr, trn};
 use gpui::*;
 use prelude::FluentBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -526,10 +526,11 @@ impl Render for QueueItem {
                         .item(menu_item(
                             "remove_items",
                             Some(CROSS),
-                            tr!(
+                            trn!(
                                 "REMOVE_N_FROM_QUEUE",
-                                "Remove {{count}} from queue",
-                                count = remove_count as isize
+                                "Remove {{count}} track from queue",
+                                "Remove {{count}} tracks from queue",
+                                count = remove_count
                             ),
                             move |_, _, cx| {
                                 cx.global::<PlaybackInterface>()
