@@ -29,4 +29,4 @@ jobs:
       - name: Update Rust
         run: rustup update
       - name: Run tests
-        run: cargo test
+        run: cargo test --all-features --locked
