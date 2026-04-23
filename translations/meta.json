@@ -361,7 +361,7 @@
   },
   "CONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:38",
+    "definedIn": "src/ui/header/lastfm.rs:42",
     "plural": false,
     "description": null
   },
@@ -1087,37 +1087,37 @@
   },
   "SERVICES_LASTFM": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:26",
+    "definedIn": "src/ui/header/lastfm.rs:30",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_AWAITING_CONFIRMATION": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:55",
+    "definedIn": "src/ui/header/lastfm.rs:59",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_CONFIRM": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:103",
+    "definedIn": "src/ui/header/lastfm.rs:107",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_CONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:60",
+    "definedIn": "src/ui/header/lastfm.rs:64",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_CONNECTED_AS": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:33",
+    "definedIn": "src/ui/header/lastfm.rs:37",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_DISCONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:50",
+    "definedIn": "src/ui/header/lastfm.rs:54",
     "plural": false,
     "description": null
   },
@@ -1135,7 +1135,7 @@
   },
   "SERVICES_STATUS_SIGN_IN_PENDING": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:42",
+    "definedIn": "src/ui/header/lastfm.rs:46",
     "plural": false,
     "description": null
   },
@@ -1213,7 +1213,13 @@
   },
   "SIGN_IN": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:93",
+    "definedIn": "src/ui/header/lastfm.rs:97",
+    "plural": false,
+    "description": null
+  },
+  "SIGN_OUT": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:119",
     "plural": false,
     "description": null
   },

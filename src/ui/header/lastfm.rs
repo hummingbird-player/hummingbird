@@ -4,8 +4,12 @@ use gpui::{App, Entity, IntoElement, ParentElement, Rgba, SharedString, Styled, 
 use tracing::error;
 
 use crate::{
+    paths,
     services::mmb::lastfm::{LASTFM_CREDS, client::LastFMClient},
-    ui::{components::button::button, models::LastFMState},
+    ui::{
+        components::button::{ButtonIntent, button},
+        models::LastFMState,
+    },
 };
 
 use super::services::ServiceStatus;
@@ -107,7 +111,15 @@ pub(crate) fn render_settings_row(
                 ),
             )
         }
-        LastFMState::Connected(_) => row,
+        LastFMState::Connected(_) => row.child(
+            div().my_auto().child(
+                button()
+                    .id("services-lastfm-sign-out")
+                    .intent(ButtonIntent::Secondary)
+                    .child(tr!("SIGN_OUT", "Sign out"))
+                    .on_click(move |_, _, cx| sign_out_lastfm(cx, state.clone())),
+            ),
+        ),
     }
 }
 
@@ -143,6 +155,23 @@ fn start_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>) {
         anyhow::Ok(())
     })
     .detach();
+}
+
+fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
+    state.update(cx, |lastfm, cx| {
+        *lastfm = LastFMState::Disconnected;
+        cx.notify();
+    });
+
+    let mmbs = cx.global::<crate::ui::models::Models>().mmbs.clone();
+    mmbs.update(cx, |m, _| {
+        m.0.remove("lastfm");
+    });
+
+    let path = paths::data_dir().join("lastfm.json");
+    if let Err(err) = std::fs::remove_file(&path) {
+        error!(?err, "Failed to remove last.fm session file");
+    }
 }
 
 fn confirm_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>, token: String) {
