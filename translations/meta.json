@@ -217,7 +217,7 @@
   },
   "ADD_TO_SELECTED_PLAYLIST": {
     "context": "add_to_playlist.rs",
-    "definedIn": "src/ui/library/add_to_playlist.rs:38",
+    "definedIn": "src/ui/library/add_to_playlist.rs:85",
     "plural": false,
     "description": null
   },
@@ -265,7 +265,7 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:636",
+    "definedIn": "src/ui/queue.rs:766",
     "plural": false,
     "description": null
   },
@@ -277,7 +277,7 @@
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:647",
+    "definedIn": "src/ui/queue.rs:777",
     "plural": false,
     "description": null
   },
@@ -439,13 +439,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:412",
+    "definedIn": "src/ui/queue.rs:525",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:429",
+    "definedIn": "src/ui/queue.rs:542",
     "plural": false,
     "description": null
   },
@@ -781,7 +781,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:628",
+    "definedIn": "src/ui/queue.rs:758",
     "plural": false,
     "description": null
   },
@@ -823,13 +823,19 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:477",
+    "definedIn": "src/ui/queue.rs:606",
     "plural": false,
     "description": null
   },
   "REMOVE_FROM_SELECTED_PLAYLIST": {
     "context": "add_to_playlist.rs",
-    "definedIn": "src/ui/library/add_to_playlist.rs:45",
+    "definedIn": "src/ui/library/add_to_playlist.rs:92",
+    "plural": false,
+    "description": null
+  },
+  "REMOVE_N_FROM_QUEUE": {
+    "context": "queue.rs",
+    "definedIn": "src/ui/queue.rs:508",
     "plural": false,
     "description": null
   },

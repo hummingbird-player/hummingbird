@@ -48,6 +48,18 @@ pub enum DequeueResult {
     Unchanged,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DequeueManyResult {
+    /// Items were removed, queue position adjusted.
+    Removed { new_position: usize },
+    /// The currently playing item was removed.
+    RemovedCurrent {
+        new_path: Option<PathBuf>,
+    },
+    /// Nothing changed (indices empty or all out of bounds).
+    Unchanged,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveResult {
     Moved,
@@ -820,6 +832,74 @@ impl QueueManager {
         res
     }
 
+    pub fn dequeue_many(&mut self, mut indices: Vec<usize>) -> DequeueManyResult {
+        if indices.is_empty() {
+            return DequeueManyResult::Unchanged;
+        }
+
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
+        let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        indices.retain(|idx| *idx < queue.len());
+        indices.sort_unstable();
+        indices.dedup();
+
+        if indices.is_empty() {
+            return DequeueManyResult::Unchanged;
+        }
+
+        let mut removed_queue_items: SmallVec<[(usize, QueueItemData); 1]> = SmallVec::new();
+        let mut removed_original_items: SmallVec<[(usize, QueueItemData); 1]> = SmallVec::new();
+
+        for &idx in indices.iter().rev() {
+            let item = queue.remove(idx);
+
+            if self.shuffle
+                && let Some(pos) = self.original_queue.iter().position(|q| q == &item)
+            {
+                let orig_item = self.original_queue.remove(pos);
+                removed_original_items.push((pos, orig_item));
+            }
+
+            removed_queue_items.push((idx, item));
+        }
+
+        let current = self.queue_next.checked_sub(1);
+        let removed_current = current.is_some_and(|c| indices.binary_search(&c).is_ok());
+        let items_before_current = current
+            .map(|c| indices.iter().filter(|&&idx| idx < c).count())
+            .unwrap_or(0);
+
+        let res = if removed_current {
+            let current = current.expect("removed_current implies current is Some");
+            let new_path = Self::next_playable_from(&queue, current - items_before_current)
+                .and_then(|idx| queue.get(idx))
+                .map(|v| v.get_path().clone());
+            DequeueManyResult::RemovedCurrent { new_path }
+        } else if self.queue_next > 0 {
+            self.queue_next -= items_before_current;
+            DequeueManyResult::Removed {
+                new_position: self.queue_next - 1,
+            }
+        } else {
+            DequeueManyResult::Removed { new_position: 0 }
+        };
+
+        drop(queue);
+        self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::Removed {
+            queue_items: removed_queue_items,
+            original_queue_items: removed_original_items,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
+        res
+    }
+
     /// Move an item from one position to another. If it should be logged in the undo history, set
     /// `user_initiated` to `true`.
     pub fn move_item(&mut self, from: usize, to: usize, user_initiated: bool) -> MoveResult {
@@ -1073,7 +1153,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::watch;
 
-    use super::{QueueManager, UndoResult};
+    use super::{DequeueManyResult, QueueManager, UndoResult};
     use crate::{
         playback::{queue::QueueItemData, session_storage::PlaybackSessionData},
         settings::playback::PlaybackSettings,
@@ -1299,6 +1379,128 @@ mod tests {
         let before = snapshot(&manager);
 
         manager.clear(false);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn dequeue_many_empty_indices_is_unchanged() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(1);
+        let before = snapshot(&manager);
+
+        let res = manager.dequeue_many(vec![]);
+
+        assert!(matches!(res, DequeueManyResult::Unchanged));
+        assert_eq!(snapshot(&manager), before);
+    }
+
+    #[test]
+    fn dequeue_many_out_of_bounds_indices_are_filtered() {
+        let mut manager = manager_with_queue(vec![item(1), item(2)]);
+        manager.set_position(1);
+        let before = snapshot(&manager);
+
+        let res = manager.dequeue_many(vec![5, 6, 7]);
+
+        assert!(matches!(res, DequeueManyResult::Unchanged));
+        assert_eq!(snapshot(&manager), before);
+    }
+
+    #[test]
+    fn dequeue_many_when_nothing_playing_does_not_start_playback() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        // queue_next stays 0 (nothing playing).
+        assert_eq!(manager.queue_next, 0);
+
+        let res = manager.dequeue_many(vec![0, 1]);
+
+        match res {
+            DequeueManyResult::Removed { new_position } => assert_eq!(new_position, 0),
+            other => panic!("expected Removed, got {other:?}"),
+        }
+        assert_eq!(manager.queue_next, 0);
+        assert_eq!(manager.len(), 1);
+    }
+
+    #[test]
+    fn dequeue_many_removes_current_item() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(1); // current = index 1 (item 2)
+
+        let res = manager.dequeue_many(vec![1, 3]);
+
+        // new_path depends on files existing on disk; just assert the variant.
+        assert!(matches!(res, DequeueManyResult::RemovedCurrent { .. }));
+        assert_eq!(manager.len(), 2);
+    }
+
+    #[test]
+    fn dequeue_many_removes_items_before_current_shifts_position() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(3); // current = index 3 (item 4)
+
+        let res = manager.dequeue_many(vec![0, 1]);
+
+        match res {
+            DequeueManyResult::Removed { new_position } => assert_eq!(new_position, 1),
+            other => panic!("expected Removed, got {other:?}"),
+        }
+        // current item (item 4) is now at index 1; queue_next points past it.
+        assert_eq!(manager.queue_next, 2);
+    }
+
+    #[test]
+    fn dequeue_many_removes_items_after_current_keeps_position() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(1); // current = index 1 (item 2)
+        let before_queue_next = manager.queue_next;
+
+        let res = manager.dequeue_many(vec![3, 4]);
+
+        match res {
+            DequeueManyResult::Removed { new_position } => assert_eq!(new_position, 1),
+            other => panic!("expected Removed, got {other:?}"),
+        }
+        assert_eq!(manager.queue_next, before_queue_next);
+    }
+
+    #[test]
+    fn dequeue_many_deduplicates_indices() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3)]);
+        manager.set_position(0);
+
+        let res = manager.dequeue_many(vec![2, 2, 2]);
+
+        match res {
+            DequeueManyResult::Removed { new_position } => assert_eq!(new_position, 0),
+            other => panic!("expected Removed, got {other:?}"),
+        }
+        assert_eq!(manager.len(), 2);
+    }
+
+    #[test]
+    fn undo_dequeue_many_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(2);
+
+        let before = snapshot(&manager);
+
+        manager.dequeue_many(vec![0, 2, 4]);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_dequeue_many_in_shuffle_mode_restores_original_queue() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4)]);
+        manager.set_position(1);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+
+        manager.dequeue_many(vec![0, 2]);
 
         assert_undo_round_trip(&mut manager, before);
     }

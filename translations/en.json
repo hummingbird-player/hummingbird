@@ -147,6 +147,7 @@
   "REMOVE_FROM_PLAYLIST": "Remove from playlist",
   "REMOVE_FROM_QUEUE": "Remove from queue",
   "REMOVE_FROM_SELECTED_PLAYLIST": "Remove from {{name}}",
+  "REMOVE_N_FROM_QUEUE": "Remove {{count}} from queue",
   "RENAME": "Rename",
   "RENAME_PLAYLIST": "Rename playlist",
   "REPEAT": "Repeat",

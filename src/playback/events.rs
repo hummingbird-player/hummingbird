@@ -74,6 +74,8 @@ pub enum PlaybackCommand {
     SetRepeat(RepeatState),
     /// Requests that the item at the index provided be removed from the queue.
     RemoveItem(usize),
+    /// Requests that the items at the indices provided be removed from the queue.
+    RemoveItems(Vec<usize>),
     /// Requests that an item be moved from one position to another in the queue.
     /// The first usize is the source index, the second is the destination index.
     MoveItem { from: usize, to: usize },

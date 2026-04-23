@@ -139,6 +139,10 @@ impl PlaybackInterface {
         self.cmd_tx.send(PlaybackCommand::RemoveItem(idx)).unwrap();
     }
 
+    pub fn remove_items(&self, indices: Vec<usize>) {
+        self.cmd_tx.send(PlaybackCommand::RemoveItems(indices)).unwrap();
+    }
+
     pub fn move_item(&self, from: usize, to: usize) {
         self.cmd_tx
             .send(PlaybackCommand::MoveItem { from, to })

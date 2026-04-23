@@ -72,7 +72,7 @@ pub(crate) fn add_to_playlist_state(
 ) -> (Entity<bool>, Entity<AddToPlaylist>) {
     let menu_state = window.use_keyed_state((key, track_id as usize), cx, |_, cx| {
         let show = cx.new(|_| false);
-        let add_to = AddToPlaylist::new(cx, show.clone(), track_id);
+        let add_to = AddToPlaylist::new(cx, show.clone(), vec![track_id]);
         AddToPlaylistState { show, add_to }
     });
     let state = menu_state.read(cx);
