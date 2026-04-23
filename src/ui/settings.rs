@@ -36,6 +36,10 @@ use crate::{
 use crate::ui::settings::update::UpdateSettings;
 
 pub fn open_settings_window(cx: &mut App) {
+    open_settings_window_with_section(cx, SettingsSectionKind::Interface);
+}
+
+pub fn open_settings_window_with_section(cx: &mut App, section: SettingsSectionKind) {
     let bounds = WindowBounds::Windowed(gpui::Bounds::centered(
         None,
         gpui::size(px(900.0), px(600.0)),
@@ -59,9 +63,9 @@ pub fn open_settings_window(cx: &mut App) {
             kind: WindowKind::Normal,
             ..Default::default()
         },
-        |window, cx| {
+        move |window, cx| {
             window.set_window_title(tr!("SETTINGS").to_string().as_str());
-            SettingsWindow::new(cx)
+            SettingsWindow::new(section, cx)
         },
     )
     .ok();
@@ -87,7 +91,7 @@ pub(super) fn close_orphaned_settings_windows(cx: &mut App) {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsSectionKind {
+pub enum SettingsSectionKind {
     Interface,
     Library,
     Playback,
@@ -185,9 +189,9 @@ struct SettingsWindow {
 }
 
 impl SettingsWindow {
-    fn new(cx: &mut App) -> gpui::Entity<Self> {
+    fn new(initial_section: SettingsSectionKind, cx: &mut App) -> gpui::Entity<Self> {
         let focus_handle = cx.focus_handle();
-        let active = SettingsSection::new(SettingsSectionKind::Interface, cx);
+        let active = SettingsSection::new(initial_section, cx);
         cx.new(|_| Self {
             active,
             scroll_handle: ScrollHandle::new(),

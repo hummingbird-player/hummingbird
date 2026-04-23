@@ -9,12 +9,21 @@ use discord_rich_presence::{
     DiscordIpc, DiscordIpcClient,
     activity::{Activity, Assets, StatusDisplayType, Timestamps},
 };
+use tokio::sync::watch;
 use tracing::{debug, warn};
 
 use crate::{
     media::metadata::Metadata, playback::thread::PlaybackState,
     services::mmb::MediaMetadataBroadcastService,
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiscordRpcStatus {
+    #[default]
+    Disabled,
+    Disconnected,
+    Connected,
+}
 
 pub struct Discord {
     metadata: Option<Arc<Metadata>>,
@@ -28,11 +37,12 @@ pub struct Discord {
     force_activity_update: bool,
     enabled: bool,
     connected: bool,
+    status_tx: watch::Sender<DiscordRpcStatus>,
     client: DiscordIpcClient,
 }
 
 impl Discord {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new(enabled: bool, status_tx: watch::Sender<DiscordRpcStatus>) -> Self {
         let client = DiscordIpcClient::new("1486108276218400818");
 
         let mut discord = Self {
@@ -47,25 +57,44 @@ impl Discord {
             force_activity_update: enabled,
             enabled,
             connected: false,
+            status_tx,
             client,
         };
 
         if enabled {
             discord.connect();
+        } else {
+            discord.publish_status();
         }
 
         discord
+    }
+
+    fn status(&self) -> DiscordRpcStatus {
+        if !self.enabled {
+            DiscordRpcStatus::Disabled
+        } else if self.connected {
+            DiscordRpcStatus::Connected
+        } else {
+            DiscordRpcStatus::Disconnected
+        }
+    }
+
+    fn publish_status(&self) {
+        let _ = self.status_tx.send(self.status());
     }
 
     fn connect(&mut self) -> bool {
         match self.client.connect() {
             Ok(()) => {
                 self.connected = true;
+                self.publish_status();
                 debug!("connected discord RPC client");
                 true
             }
             Err(error) => {
                 self.connected = false;
+                self.publish_status();
                 debug!(?error, "failed to connect discord RPC client");
                 false
             }
@@ -76,11 +105,13 @@ impl Discord {
         match self.client.reconnect() {
             Ok(()) => {
                 self.connected = true;
+                self.publish_status();
                 debug!("reconnected discord RPC client");
                 true
             }
             Err(error) => {
                 self.connected = false;
+                self.publish_status();
                 debug!(?error, "failed to reconnect discord RPC client");
                 false
             }
@@ -107,10 +138,13 @@ impl Discord {
         if let Err(error) = self.client.clear_activity() {
             debug!(?error, context, "failed to clear discord RPC activity");
             self.connected = false;
+            self.publish_status();
 
             if self.reconnect()
                 && let Err(error) = self.client.clear_activity()
             {
+                self.connected = false;
+                self.publish_status();
                 debug!(
                     ?error,
                     context, "failed to clear discord RPC activity after reconnect"
@@ -178,10 +212,13 @@ impl Discord {
         {
             warn!(?error, "failed to set discord RPC activity");
             self.connected = false;
+            self.publish_status();
 
             if self.reconnect()
                 && let Err(error) = self.client.set_activity(activity.assets(assets))
             {
+                self.connected = false;
+                self.publish_status();
                 warn!(?error, "failed to set discord RPC activity after reconnect");
             }
         }
@@ -344,6 +381,7 @@ impl MediaMetadataBroadcastService for Discord {
 
         self.enabled = enabled;
         self.needs_update_time = None;
+        self.publish_status();
 
         if enabled {
             if self.last_state == PlaybackState::Playing {

@@ -4,13 +4,17 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::{paths, services::mmb::discord::Discord, ui::library::NavigationHistory};
+use crate::{
+    paths,
+    services::mmb::discord::{Discord, DiscordRpcStatus},
+    ui::library::NavigationHistory,
+};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, Global, Pixels, RenderImage, Size,
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -77,6 +81,7 @@ pub struct Models {
     pub settings_health: Entity<SettingsHealth>,
     pub mmbs: Entity<MMBSList>,
     pub lastfm: Entity<LastFMState>,
+    pub discord_rpc: Entity<DiscordRpcStatus>,
     pub switcher_model: Entity<NavigationHistory>,
     pub show_about: Entity<bool>,
     pub playlist_tracker: Entity<PlaylistInfoTransfer>,
@@ -257,10 +262,34 @@ pub fn build_models(
         }
     });
 
+    let initial_discord_status = if discord_rpc_enabled(cx) {
+        DiscordRpcStatus::Disconnected
+    } else {
+        DiscordRpcStatus::Disabled
+    };
+    let discord_rpc = cx.new(|_| initial_discord_status);
+    let (discord_status_tx, mut discord_status_rx) = watch::channel(initial_discord_status);
     let playlist_tracker: Entity<PlaylistInfoTransfer> = cx.new(|_| PlaylistInfoTransfer);
 
     let discord_mmbs = mmbs.clone();
-    create_discord_mmbs(cx, &discord_mmbs, discord_rpc_enabled(cx));
+    create_discord_mmbs(
+        cx,
+        &discord_mmbs,
+        discord_rpc_enabled(cx),
+        discord_status_tx,
+    );
+
+    let discord_rpc_model = discord_rpc.clone();
+    cx.spawn(async move |cx| {
+        while discord_status_rx.changed().await.is_ok() {
+            let status = *discord_status_rx.borrow_and_update();
+            discord_rpc_model.update(cx, |current, cx| {
+                *current = status;
+                cx.notify();
+            });
+        }
+    })
+    .detach();
 
     let settings_model = cx.global::<SettingsGlobal>().model.clone();
     let discord_mmbs = mmbs.clone();
@@ -397,6 +426,7 @@ pub fn build_models(
         settings_health,
         mmbs,
         lastfm,
+        discord_rpc,
         switcher_model,
         show_about,
         playlist_tracker,
@@ -445,8 +475,13 @@ pub fn create_last_fm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, session: 
     });
 }
 
-pub fn create_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: bool) {
-    let mmbs = Discord::new(enabled);
+pub fn create_discord_mmbs(
+    cx: &mut App,
+    mmbs_list: &Entity<MMBSList>,
+    enabled: bool,
+    status_tx: watch::Sender<DiscordRpcStatus>,
+) {
+    let mmbs = Discord::new(enabled, status_tx);
     mmbs_list.update(cx, |m, _| {
         m.0.insert("discord".to_string(), Arc::new(Mutex::new(mmbs)));
     });

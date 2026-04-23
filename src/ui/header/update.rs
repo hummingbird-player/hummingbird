@@ -1,11 +1,10 @@
 use cntp_i18n::tr;
 use gpui::{
     InteractiveElement, IntoElement, ParentElement, RenderOnce, StatefulInteractiveElement, Styled,
-    div, prelude::FluentBuilder, px,
+    div, px,
 };
 
 use crate::{
-    services::mmb::lastfm::LASTFM_CREDS,
     ui::{
         components::icons::{UPDATE, icon},
         models::Models,
@@ -27,10 +26,6 @@ impl RenderOnce for Update {
             div()
                 .flex()
                 .gap(px(8.0))
-                .when(
-                    cfg!(target_os = "macos") && LASTFM_CREDS.is_none(),
-                    |this| this.mr(px(8.0)),
-                )
                 .child(div().text_sm().child(tr!("UPDATE_READY", "Update ready")))
                 .child(
                     div()

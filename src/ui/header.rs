@@ -1,4 +1,5 @@
-mod lastfm;
+pub(crate) mod lastfm;
+mod services;
 
 #[cfg(feature = "update")]
 mod update;
@@ -6,11 +7,8 @@ mod update;
 use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
-use tracing::{info, warn};
-
 use crate::{
     library::scan::ScanEvent,
-    services::mmb::lastfm::LASTFM_CREDS,
     settings::{Settings, SettingsGlobal},
     ui::{
         components::{
@@ -27,22 +25,12 @@ use super::{models::Models, theme::Theme};
 pub struct Header {
     scan_status: Entity<ScanStatus>,
     menu_bar: Option<Entity<MenuBar>>,
-    lastfm: Option<Entity<lastfm::LastFM>>,
+    services: Entity<services::ServicesIndicator>,
     settings: Entity<Settings>,
 }
 
 impl Header {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let lastfm = LASTFM_CREDS.map(|_| lastfm::LastFM::new(cx));
-
-        if lastfm.is_none() {
-            warn!(
-                "Last.fm authentication disabled. \
-                Set `LASTFM_API_KEY` and `LASTFM_API_SECRET` to allow connecting to Last.fm."
-            );
-            info!("These can additionally be set at compile time to bake them into the binary.");
-        }
-
         let settings = cx.global::<SettingsGlobal>().model.clone();
 
         cx.new(|cx| {
@@ -56,7 +44,7 @@ impl Header {
                 } else {
                     None
                 },
-                lastfm,
+                services: services::ServicesIndicator::new(cx),
                 settings,
             }
         })
@@ -88,11 +76,7 @@ impl Render for Header {
             header = header.right(update::Update);
         }
 
-        if let Some(lastfm) = self.lastfm.clone() {
-            header = header.right(lastfm);
-        }
-
-        header
+        header.right(self.services.clone())
     }
 }
 

@@ -5,20 +5,29 @@ use gpui::{
 
 use crate::{
     settings::{Settings, SettingsGlobal, save_settings},
-    ui::components::{checkbox::checkbox, label::label, section_header::section_header},
+    ui::{
+        components::{checkbox::checkbox, label::label, section_header::section_header},
+        header::lastfm as lastfm_ui,
+        models::{LastFMState, Models},
+        theme::Theme,
+    },
 };
 
 pub struct ServicesSettings {
     settings: Entity<Settings>,
+    lastfm: Entity<LastFMState>,
 }
 
 impl ServicesSettings {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
-            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            let lastfm = cx.global::<Models>().lastfm.clone();
 
-            Self { settings }
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
+
+            Self { settings, lastfm }
         })
     }
 
@@ -39,32 +48,42 @@ impl ServicesSettings {
 impl Render for ServicesSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let services = self.settings.read(cx).services.clone();
+        let lastfm = self.lastfm.read(cx).clone();
 
-        div()
+        let mut body = div()
             .flex()
             .flex_col()
             .gap(px(12.0))
-            .child(section_header(tr!("SERVICES")))
-            .child(
-                label(
-                    "services-discord-rpc",
-                    tr!("SERVICES_DISCORD_RPC", "Enable Discord Rich Presence"),
-                )
-                .subtext(tr!(
-                    "SERVICES_DISCORD_RPC_SUBTEXT",
-                    "Shows the current track in your Discord status while music is playing."
-                ))
-                .cursor_pointer()
-                .w_full()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.update_services(cx, |services| {
-                        services.discord_rpc_enabled = !services.discord_rpc_enabled;
-                    });
-                }))
-                .child(checkbox(
-                    "services-discord-rpc-check",
-                    services.discord_rpc_enabled,
-                )),
+            .child(section_header(tr!("SERVICES")));
+
+        if lastfm_ui::is_available() {
+            body = body.child(lastfm_ui::render_settings_row(
+                &lastfm,
+                self.lastfm.clone(),
+                cx.global::<Theme>().text_secondary,
+            ));
+        }
+
+        body.child(
+            label(
+                "services-discord-rpc",
+                tr!("SERVICES_DISCORD_RPC_TITLE", "Discord Rich Presence"),
             )
+            .subtext(tr!(
+                "SERVICES_DISCORD_RPC_SUBTEXT",
+                "Shows the current track in your Discord status while music is playing."
+            ))
+            .cursor_pointer()
+            .w_full()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.update_services(cx, |services| {
+                    services.discord_rpc_enabled = !services.discord_rpc_enabled;
+                });
+            }))
+            .child(checkbox(
+                "services-discord-rpc-check",
+                services.discord_rpc_enabled,
+            )),
+        )
     }
 }

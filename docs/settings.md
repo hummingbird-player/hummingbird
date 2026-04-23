@@ -69,7 +69,16 @@ By default, logs are stored here:
 
 You can choose a different folder by setting `HUMMINGBIRD_LOG_DIR`.
 
-## Last.FM
+## Services
+Service integrations are managed from **Settings > Services**.
+
+### Discord Rich Presence
+Use **Settings > Services > Discord Rich Presence** to control whether Hummingbird
+shows the currently playing track in your Discord status.
+
+### Last.FM
+Connect your Last.FM account from **Settings > Services > Last.FM**.
+
 The current Last.FM session is stored in the following places:
 
 | Platform | Location                                                            |

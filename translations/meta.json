@@ -269,12 +269,6 @@
     "plural": false,
     "description": null
   },
-  "CLICK_TO_CONFIRM": {
-    "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:82",
-    "plural": false,
-    "description": null
-  },
   "CLOSE": {
     "context": "queue.rs",
     "definedIn": "src/ui/queue.rs:528",
@@ -367,7 +361,7 @@
   },
   "CONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:87",
+    "definedIn": "src/ui/header/lastfm.rs:38",
     "plural": false,
     "description": null
   },
@@ -475,7 +469,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:124",
+    "definedIn": "src/ui/settings.rs:128",
     "plural": false,
     "description": null
   },
@@ -595,7 +589,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:125",
+    "definedIn": "src/ui/settings.rs:129",
     "plural": false,
     "description": null
   },
@@ -697,7 +691,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:126",
+    "definedIn": "src/ui/settings.rs:130",
     "plural": false,
     "description": null
   },
@@ -1045,19 +1039,19 @@
   },
   "SCAN_COMPLETE_WATCHING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:180",
+    "definedIn": "src/ui/header.rs:164",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:159",
+    "definedIn": "src/ui/header.rs:143",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:167",
+    "definedIn": "src/ui/header.rs:151",
     "plural": false,
     "description": null
   },
@@ -1075,25 +1069,79 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:127",
-    "plural": false,
-    "description": null
-  },
-  "SERVICES_DISCORD_RPC": {
-    "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:51",
+    "definedIn": "src/ui/settings.rs:131",
     "plural": false,
     "description": null
   },
   "SERVICES_DISCORD_RPC_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:54",
+    "definedIn": "src/ui/settings/services.rs:73",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_DISCORD_RPC_TITLE": {
+    "context": "services.rs",
+    "definedIn": "src/ui/settings/services.rs:70",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:26",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM_AWAITING_CONFIRMATION": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:55",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM_CONFIRM": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:103",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM_CONNECTED": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:60",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM_CONNECTED_AS": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:33",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_LASTFM_DISCONNECTED": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:50",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_NO_ACTIVE": {
+    "context": "services.rs",
+    "definedIn": "src/ui/header/services.rs:220",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_STATUS_NOT_CONNECTED": {
+    "context": "services.rs",
+    "definedIn": "src/ui/header/services.rs:135",
+    "plural": false,
+    "description": null
+  },
+  "SERVICES_STATUS_SIGN_IN_PENDING": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/header/lastfm.rs:42",
     "plural": false,
     "description": null
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:52",
+    "definedIn": "src/ui/settings.rs:56",
     "plural": false,
     "description": null
   },
@@ -1165,7 +1213,7 @@
   },
   "SIGN_IN": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/header/lastfm.rs:80",
+    "definedIn": "src/ui/header/lastfm.rs:93",
     "plural": false,
     "description": null
   },
@@ -1351,7 +1399,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:129",
+    "definedIn": "src/ui/settings.rs:133",
     "plural": false,
     "description": null
   },
@@ -1363,7 +1411,7 @@
   },
   "UPDATE_READY": {
     "context": "update.rs",
-    "definedIn": "src/ui/header/update.rs:34",
+    "definedIn": "src/ui/header/update.rs:29",
     "plural": false,
     "description": null
   },
