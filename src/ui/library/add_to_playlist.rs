@@ -71,11 +71,7 @@ impl PaletteItem for (TrackList, Playlist) {
 
     fn middle_content(&self, cx: &mut App) -> SharedString {
         if self.0.is_multi() {
-            tr!(
-                "ADD_TO_SELECTED_PLAYLIST",
-                name = self.1.name.0.as_str()
-            )
-            .into()
+            tr!("ADD_TO_SELECTED_PLAYLIST", name = self.1.name.0.as_str()).into()
         } else {
             let track_id = self.0.first();
             let has_track = cx.playlist_has_track(self.1.id, track_id).ok().flatten();
@@ -115,8 +111,7 @@ pub struct AddToPlaylist {
 impl AddToPlaylist {
     pub fn new(cx: &mut App, show: Entity<bool>, track_ids: Vec<i64>) -> Entity<Self> {
         cx.new(|cx| {
-            let track_list: SharedTrackList =
-                Arc::new(RwLock::new(TrackList::from_ids(track_ids)));
+            let track_list: SharedTrackList = Arc::new(RwLock::new(TrackList::from_ids(track_ids)));
 
             let track_list_for_observe = track_list.clone();
             cx.observe(&show, move |this: &mut Self, _, cx| {
@@ -148,10 +143,7 @@ impl AddToPlaylist {
 
                 if track_ids.len() == 1 {
                     let track_id = track_ids[0];
-                    let has_track = cx
-                        .playlist_has_track(playlist_id, track_id)
-                        .ok()
-                        .flatten();
+                    let has_track = cx.playlist_has_track(playlist_id, track_id).ok().flatten();
 
                     let pool = cx.global::<Pool>().0.clone();
                     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();

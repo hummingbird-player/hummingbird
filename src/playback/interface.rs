@@ -140,12 +140,20 @@ impl PlaybackInterface {
     }
 
     pub fn remove_items(&self, indices: Vec<usize>) {
-        self.cmd_tx.send(PlaybackCommand::RemoveItems(indices)).unwrap();
+        self.cmd_tx
+            .send(PlaybackCommand::RemoveItems(indices))
+            .unwrap();
     }
 
     pub fn move_item(&self, from: usize, to: usize) {
         self.cmd_tx
             .send(PlaybackCommand::MoveItem { from, to })
+            .unwrap();
+    }
+
+    pub fn move_items(&self, indices: Vec<usize>, to: usize) {
+        self.cmd_tx
+            .send(PlaybackCommand::MoveItems { indices, to })
             .unwrap();
     }
 

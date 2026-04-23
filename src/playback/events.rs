@@ -79,6 +79,10 @@ pub enum PlaybackCommand {
     /// Requests that an item be moved from one position to another in the queue.
     /// The first usize is the source index, the second is the destination index.
     MoveItem { from: usize, to: usize },
+    /// Requests that multiple items be moved to a single destination in the queue.
+    /// The source indices are sorted in ascending order; the destination is the final
+    /// position after all items have been moved.
+    MoveItems { indices: Vec<usize>, to: usize },
     /// Requests that the last queue mutation be undone.
     Undo,
     /// Informs the playback thread that the playback settings have changed.

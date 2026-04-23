@@ -17,6 +17,7 @@ pub enum DropPosition {
 #[derive(Clone, Debug)]
 pub struct DragData {
     pub source_index: usize,
+    pub additional_indices: Vec<usize>,
     pub list_id: ElementId,
 }
 
@@ -24,8 +25,22 @@ impl DragData {
     pub fn new(source_index: usize, list_id: impl Into<ElementId>) -> Self {
         Self {
             source_index,
+            additional_indices: Vec::new(),
             list_id: list_id.into(),
         }
+    }
+
+    pub fn with_additional_indices(mut self, indices: Vec<usize>) -> Self {
+        self.additional_indices = indices;
+        self
+    }
+
+    pub fn all_indices(&self) -> Vec<usize> {
+        let mut all = vec![self.source_index];
+        all.extend_from_slice(&self.additional_indices);
+        all.sort_unstable();
+        all.dedup();
+        all
     }
 }
 
@@ -115,7 +130,7 @@ impl Default for EdgeScrollConfig {
 
 #[derive(Clone, Debug, Default)]
 pub struct DragDropState {
-    pub dragging_index: Option<usize>,
+    pub dragging_indices: Vec<usize>,
     /// Current drop target: (index, position)
     pub drop_target: Option<(usize, DropPosition)>,
     pub is_dragging: bool,
@@ -136,7 +151,7 @@ impl DragDropState {
     }
 
     pub fn end_drag(&mut self) {
-        self.dragging_index = None;
+        self.dragging_indices.clear();
         self.is_dragging = false;
         self.drop_target = None;
         self.drag_mouse_y = None;
@@ -178,7 +193,7 @@ impl DragDropItemState {
     pub fn for_index(manager: &DragDropListManager, index: usize) -> Self {
         let state = &manager.state;
 
-        let is_being_dragged = state.dragging_index == Some(index);
+        let is_being_dragged = state.dragging_indices.contains(&index);
 
         let (is_drop_target_before, is_drop_target_after) =
             if let Some((target_idx, position)) = state.drop_target {
@@ -439,13 +454,13 @@ pub fn handle_drag_move<V: 'static>(
         return false;
     }
 
+    let all_indices = drag_data.all_indices();
     let mouse_pos = event.event.position;
     let container_bounds = event.bounds;
-    let source_index = drag_data.source_index;
 
     manager.update(cx, |m, _| {
         m.state.is_dragging = true;
-        m.state.dragging_index = Some(source_index);
+        m.state.dragging_indices = all_indices;
         m.state.set_mouse_y(mouse_pos.y);
         m.container_bounds = Some(container_bounds);
     });
@@ -516,7 +531,7 @@ pub fn handle_track_drag_move<V: 'static>(
 
     manager.update(cx, |m, _| {
         m.state.is_dragging = true;
-        m.state.dragging_index = Some(source_index);
+        m.state.dragging_indices = vec![source_index];
         m.state.set_mouse_y(mouse_pos.y);
         m.container_bounds = Some(container_bounds);
     });
@@ -575,6 +590,37 @@ pub fn handle_drop<V: 'static, F>(
 
         if source_index != final_target {
             on_reorder(source_index, final_target, cx);
+        }
+    }
+
+    manager.update(cx, |m, _| m.state.end_drag());
+}
+
+/// Handle a drop of DragData with potential multi-selection indices.
+/// Like `handle_drop`, but calls `on_multi_reorder` with the full DragData
+/// so the caller can dispatch single vs. multi-item moves.
+pub fn handle_drop_multi<V: 'static, F>(
+    manager: Entity<DragDropListManager>,
+    drag_data: &DragData,
+    cx: &mut Context<V>,
+    on_multi_reorder: F,
+) where
+    F: FnOnce(&DragData, usize, &mut Context<V>),
+{
+    let config_list_id = manager.read(cx).config.list_id.clone();
+
+    if drag_data.list_id != config_list_id {
+        return;
+    }
+
+    let target = manager.read(cx).state.drop_target;
+
+    if let Some((target_index, position)) = target {
+        let final_target = calculate_move_target(drag_data.source_index, target_index, position);
+
+        let is_multi = !drag_data.additional_indices.is_empty();
+        if is_multi || drag_data.source_index != final_target {
+            on_multi_reorder(drag_data, final_target, cx);
         }
     }
 

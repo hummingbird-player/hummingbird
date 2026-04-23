@@ -195,6 +195,7 @@ impl PlaybackThread {
                 PlaybackCommand::RemoveItem(idx) => self.remove(idx),
                 PlaybackCommand::RemoveItems(indices) => self.remove_many(&indices),
                 PlaybackCommand::MoveItem { from, to } => self.move_item(from, to),
+                PlaybackCommand::MoveItems { indices, to } => self.move_items(indices, to),
                 PlaybackCommand::Undo => self.undo(),
                 PlaybackCommand::SettingsChanged(settings) => self.settings_changed(settings),
                 PlaybackCommand::SetPositionBroadcastActive(active) => {
@@ -483,6 +484,20 @@ impl PlaybackThread {
                 self.send_event(PlaybackEvent::QueueUpdated);
             }
             MoveResult::Unchanged => {}
+        }
+    }
+
+    fn move_items(&mut self, indices: Vec<usize>, to: usize) {
+        use crate::playback::thread::queue_manager::MoveItemsResult;
+        match self.queue.move_items(indices, to) {
+            MoveItemsResult::Moved => {
+                self.send_event(PlaybackEvent::QueueUpdated);
+            }
+            MoveItemsResult::MovedCurrent { new_position } => {
+                self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
+                self.send_event(PlaybackEvent::QueueUpdated);
+            }
+            MoveItemsResult::Unchanged => {}
         }
     }
 

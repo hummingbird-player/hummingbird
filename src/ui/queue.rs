@@ -11,7 +11,8 @@ use crate::{
                 AlbumDragData, DragData, DragDropItemState, DragDropListConfig,
                 DragDropListManager, DragPreview, DropIndicator, TrackDragData,
                 calculate_drop_target, check_drag_cancelled, continue_edge_scroll,
-                get_edge_scroll_direction, handle_drag_move, handle_drop, perform_edge_scroll,
+                get_edge_scroll_direction, handle_drag_move, handle_drop_multi,
+                perform_edge_scroll,
             },
             icons::{CROSS, DISC, PLAYLIST_ADD, STAR, STAR_FILLED, TRASH, USERS, icon},
             managed_image::{ManagedImageKey, managed_image},
@@ -67,10 +68,6 @@ impl QueueSelection {
 
     pub fn is_multi(&self) -> bool {
         self.selected.len() > 1
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.selected.is_empty()
     }
 
     pub fn indices(&self) -> Vec<usize> {
@@ -195,8 +192,8 @@ impl QueueItem {
             .detach();
 
             let show_add_to = cx.new(|_| false);
-            let add_to =
-                track_id.map(|track_id| AddToPlaylist::new(cx, show_add_to.clone(), vec![track_id]));
+            let add_to = track_id
+                .map(|track_id| AddToPlaylist::new(cx, show_add_to.clone(), vec![track_id]));
 
             let is_liked = track_id.and_then(|id| {
                 cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
@@ -255,6 +252,7 @@ impl Render for QueueItem {
             let idx = self.idx;
             let current = self.current;
             let selection = self.selection.clone();
+            let selection_for_drag = selection.clone();
             let selection_for_aux = selection.clone();
             let selection_read = selection.read(cx);
             let is_multi_selected = selection_read.is_multi() && selection_read.contains(idx);
@@ -310,9 +308,10 @@ impl Render for QueueItem {
                         .when(is_selected && !item_state.is_being_dragged, |div| {
                             div.bg(theme.queue_item_selected)
                         })
-                        .when(!is_selected && is_current && !item_state.is_being_dragged, |div| {
-                            div.bg(theme.queue_item_current)
-                        })
+                        .when(
+                            !is_selected && is_current && !item_state.is_being_dragged,
+                            |div| div.bg(theme.queue_item_current),
+                        )
                         .when(is_available, |div| {
                             div.on_click(move |event: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
@@ -324,24 +323,43 @@ impl Render for QueueItem {
                                 } else if ctrl {
                                     selection.update(cx, |s, cx| s.ctrl_toggle(idx, cx));
                                 } else if modifiers.shift {
-                                    selection.update(cx, |s, cx| {
-                                        s.shift_range(idx, Some(current), cx)
-                                    });
+                                    selection
+                                        .update(cx, |s, cx| s.shift_range(idx, Some(current), cx));
                                 } else {
                                     selection.update(cx, |s, cx| s.select(idx, cx));
                                 }
                             })
                         })
-                        .when(is_available && !is_selected && !item_state.is_being_dragged, |div| {
-                            div.hover(|div| div.bg(theme.queue_item_hover))
-                                .active(|div| div.bg(theme.queue_item_active))
-                        })
-                        .when(is_available && is_selected && !item_state.is_being_dragged, |div| {
-                            div.hover(|div| div.bg(theme.queue_item_selected))
-                                .active(|div| div.bg(theme.queue_item_active))
-                        })
+                        .when(
+                            is_available && !is_selected && !item_state.is_being_dragged,
+                            |div| {
+                                div.hover(|div| div.bg(theme.queue_item_hover))
+                                    .active(|div| div.bg(theme.queue_item_active))
+                            },
+                        )
+                        .when(
+                            is_available && is_selected && !item_state.is_being_dragged,
+                            |div| {
+                                div.hover(|div| div.bg(theme.queue_item_selected))
+                                    .active(|div| div.bg(theme.queue_item_active))
+                            },
+                        )
                         .when(is_available, |div| {
-                            div.on_drag(DragData::new(idx, QUEUE_LIST_ID), move |_, _, _, cx| {
+                            let drag_data = if is_selected {
+                                let all = selection_for_drag.read(cx).indices();
+                                let primary = all
+                                    .iter()
+                                    .position(|&i| i == idx)
+                                    .expect("is_selected implies idx is in selection");
+                                DragData::new(idx, QUEUE_LIST_ID).with_additional_indices({
+                                    let mut others: Vec<usize> = all;
+                                    others.remove(primary);
+                                    others
+                                })
+                            } else {
+                                DragData::new(idx, QUEUE_LIST_ID)
+                            };
+                            div.on_drag(drag_data, move |_, _, _, cx| {
                                 DragPreview::new(cx, track_name.clone())
                             })
                             .drag_over::<DragData>(
@@ -428,189 +446,190 @@ impl Render for QueueItem {
                                 ),
                         ),
                 )
-                .child(
-                    if is_multi_selected {
-                        let remove_indices = selected_indices.clone();
-                        let remove_count = selected_indices.len();
-                        let add_to_ids = selected_track_ids.clone();
-                        let entity_for_add = queue_item_entity.clone();
-                        let show_add_to_multi = self.show_add_to.clone();
+                .child(if is_multi_selected {
+                    let remove_indices = selected_indices.clone();
+                    let remove_count = selected_indices.len();
+                    let add_to_ids = selected_track_ids.clone();
+                    let entity_for_add = queue_item_entity.clone();
+                    let show_add_to_multi = self.show_add_to.clone();
 
-                        let liked_ids: Vec<i64> = selected_track_ids
-                            .iter()
-                            .copied()
-                            .filter(|id| {
-                                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, *id)
-                                    .ok()
-                                    .flatten()
-                                    .is_some()
-                            })
-                            .collect();
-                        let any_liked = !liked_ids.is_empty();
+                    let liked_ids: Vec<i64> = selected_track_ids
+                        .iter()
+                        .copied()
+                        .filter(|id| {
+                            cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, *id)
+                                .ok()
+                                .flatten()
+                                .is_some()
+                        })
+                        .collect();
+                    let any_liked = !liked_ids.is_empty();
 
-                        menu()
-                            .when(!add_to_ids.is_empty(), |menu| {
-                                menu.item(menu_item(
-                                    "add_to_playlist",
-                                    Some(PLAYLIST_ADD),
-                                    tr!("ADD_TO_PLAYLIST"),
+                    menu()
+                        .when(!add_to_ids.is_empty(), |menu| {
+                            menu.item(menu_item(
+                                "add_to_playlist",
+                                Some(PLAYLIST_ADD),
+                                tr!("ADD_TO_PLAYLIST"),
+                                move |_, _, cx| {
+                                    entity_for_add.update(cx, |item, cx| match &item.add_to {
+                                        Some(add_to) => {
+                                            add_to.read(cx).set_track_ids(add_to_ids.clone());
+                                        }
+                                        None => {
+                                            item.add_to = Some(AddToPlaylist::new(
+                                                cx,
+                                                item.show_add_to.clone(),
+                                                add_to_ids.clone(),
+                                            ));
+                                        }
+                                    });
+                                    show_add_to_multi.write(cx, true);
+                                },
+                            ))
+                            .item(menu_separator())
+                        })
+                        .when(!selected_track_ids.is_empty(), |menu| {
+                            let track_ids_for_like = selected_track_ids.clone();
+                            let liked_ids = liked_ids.clone();
+                            menu.item(menu_item(
+                                "toggle_like",
+                                Some(if any_liked { STAR_FILLED } else { STAR }),
+                                if any_liked {
+                                    tr!("UNLIKE")
+                                } else {
+                                    tr!("LIKE")
+                                },
+                                move |_, _, cx| {
+                                    if any_liked {
+                                        for &track_id in &liked_ids {
+                                            let is_liked = cx
+                                                .playlist_has_track(
+                                                    LIKED_SONGS_PLAYLIST_ID,
+                                                    track_id,
+                                                )
+                                                .ok()
+                                                .flatten();
+                                            if is_liked.is_some() {
+                                                toggle_like_by_id(track_id, is_liked, cx);
+                                            }
+                                        }
+                                    } else {
+                                        for &track_id in &track_ids_for_like {
+                                            toggle_like_by_id(track_id, None, cx);
+                                        }
+                                    }
+                                },
+                            ))
+                            .item(menu_separator())
+                        })
+                        .item(menu_item(
+                            "remove_items",
+                            Some(CROSS),
+                            tr!(
+                                "REMOVE_N_FROM_QUEUE",
+                                "Remove {{count}} from queue",
+                                count = remove_count as isize
+                            ),
+                            move |_, _, cx| {
+                                cx.global::<PlaybackInterface>()
+                                    .remove_items(remove_indices.clone());
+                            },
+                        ))
+                } else {
+                    let entity_for_add = queue_item_entity.clone();
+                    menu()
+                        .when(self.add_to.is_some(), |menu| {
+                            menu.item(
+                                menu_item(
+                                    "go_to_album",
+                                    Some(DISC),
+                                    tr!("GO_TO_ALBUM", "Go to album"),
                                     move |_, _, cx| {
-                                        entity_for_add.update(cx, |item, cx| {
-                                            match &item.add_to {
-                                                Some(add_to) => {
-                                                    add_to.read(cx).set_track_ids(add_to_ids.clone());
-                                                }
-                                                None => {
-                                                    item.add_to = Some(AddToPlaylist::new(
-                                                        cx,
-                                                        item.show_add_to.clone(),
-                                                        add_to_ids.clone(),
-                                                    ));
-                                                }
+                                        if let Some(album_id) = album_id {
+                                            let switcher =
+                                                cx.global::<Models>().switcher_model.clone();
+                                            switcher.update(cx, |_, cx| {
+                                                cx.emit(ViewSwitchMessage::Release(album_id, None));
+                                            })
+                                        }
+                                    },
+                                )
+                                .disabled(!is_available),
+                            )
+                            .item(
+                                menu_item(
+                                    "go_to_artist",
+                                    Some(USERS),
+                                    tr!("GO_TO_ARTIST", "Go to artist"),
+                                    move |_, _, cx| {
+                                        if let Some(album_id) = album_id {
+                                            let Ok(artist_id) = cx.artist_id_for_album(album_id)
+                                            else {
+                                                return;
+                                            };
+
+                                            let switcher =
+                                                cx.global::<Models>().switcher_model.clone();
+                                            switcher.update(cx, |_, cx| {
+                                                cx.emit(ViewSwitchMessage::Artist(artist_id));
+                                            })
+                                        }
+                                    },
+                                )
+                                .disabled(!is_available),
+                            )
+                            .item(menu_separator())
+                            .item(menu_item(
+                                "add_to_playlist",
+                                Some(PLAYLIST_ADD),
+                                tr!("ADD_TO_PLAYLIST"),
+                                move |_, _, cx| {
+                                    if let Some(track_id) = single_track_id {
+                                        entity_for_add.update(cx, |item, cx| match &item.add_to {
+                                            Some(add_to) => {
+                                                add_to.read(cx).set_track_ids(vec![track_id]);
+                                            }
+                                            None => {
+                                                item.add_to = Some(AddToPlaylist::new(
+                                                    cx,
+                                                    item.show_add_to.clone(),
+                                                    vec![track_id],
+                                                ));
                                             }
                                         });
-                                        show_add_to_multi.write(cx, true);
-                                    },
-                                ))
-                                .item(menu_separator())
-                            })
-                            .when(!selected_track_ids.is_empty(), |menu| {
-                                let track_ids_for_like = selected_track_ids.clone();
-                                let liked_ids = liked_ids.clone();
-                                menu.item(menu_item(
-                                    "toggle_like",
-                                    Some(if any_liked { STAR_FILLED } else { STAR }),
-                                    if any_liked { tr!("UNLIKE") } else { tr!("LIKE") },
-                                    move |_, _, cx| {
-                                        if any_liked {
-                                            for &track_id in &liked_ids {
-                                                let is_liked = cx
-                                                    .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track_id)
-                                                    .ok()
-                                                    .flatten();
-                                                if is_liked.is_some() {
-                                                    toggle_like_by_id(track_id, is_liked, cx);
-                                                }
-                                            }
-                                        } else {
-                                            for &track_id in &track_ids_for_like {
-                                                toggle_like_by_id(track_id, None, cx);
-                                            }
-                                        }
-                                    },
-                                ))
-                                .item(menu_separator())
-                            })
-                            .item(menu_item(
-                                "remove_items",
-                                Some(CROSS),
-                                tr!(
-                                    "REMOVE_N_FROM_QUEUE",
-                                    "Remove {{count}} from queue",
-                                    count = remove_count as isize
-                                ),
-                                move |_, _, cx| {
-                                    cx.global::<PlaybackInterface>()
-                                        .remove_items(remove_indices.clone());
+                                    }
+                                    show_add_to.write(cx, true);
                                 },
                             ))
-                    } else {
-                        let entity_for_add = queue_item_entity.clone();
-                        menu()
-                            .when(self.add_to.is_some(), |menu| {
+                            .item(menu_separator())
+                            .when_some(self.track_id, |menu, track_id| {
+                                let entity = cx.entity().clone();
+                                let is_liked = self.is_liked.is_some();
                                 menu.item(
                                     menu_item(
-                                        "go_to_album",
-                                        Some(DISC),
-                                        tr!("GO_TO_ALBUM", "Go to album"),
+                                        "toggle_like",
+                                        Some(if is_liked { STAR_FILLED } else { STAR }),
+                                        if is_liked { tr!("UNLIKE") } else { tr!("LIKE") },
                                         move |_, _, cx| {
-                                            if let Some(album_id) = album_id {
-                                                let switcher =
-                                                    cx.global::<Models>().switcher_model.clone();
-                                                switcher.update(cx, |_, cx| {
-                                                    cx.emit(ViewSwitchMessage::Release(album_id, None));
-                                                })
-                                            }
+                                            toggle_like(track_id, entity.clone(), cx);
                                         },
                                     )
                                     .disabled(!is_available),
                                 )
-                                .item(
-                                    menu_item(
-                                        "go_to_artist",
-                                        Some(USERS),
-                                        tr!("GO_TO_ARTIST", "Go to artist"),
-                                        move |_, _, cx| {
-                                            if let Some(album_id) = album_id {
-                                                let Ok(artist_id) = cx.artist_id_for_album(album_id)
-                                                else {
-                                                    return;
-                                                };
-
-                                                let switcher =
-                                                    cx.global::<Models>().switcher_model.clone();
-                                                switcher.update(cx, |_, cx| {
-                                                    cx.emit(ViewSwitchMessage::Artist(artist_id));
-                                                })
-                                            }
-                                        },
-                                    )
-                                    .disabled(!is_available),
-                                )
-                                .item(menu_separator())
-                                .item(menu_item(
-                                    "add_to_playlist",
-                                    Some(PLAYLIST_ADD),
-                                    tr!("ADD_TO_PLAYLIST"),
-                                    move |_, _, cx| {
-                                        if let Some(track_id) = single_track_id {
-                                            entity_for_add.update(cx, |item, cx| {
-                                                match &item.add_to {
-                                                    Some(add_to) => {
-                                                        add_to.read(cx).set_track_ids(vec![track_id]);
-                                                    }
-                                                    None => {
-                                                        item.add_to = Some(AddToPlaylist::new(
-                                                            cx,
-                                                            item.show_add_to.clone(),
-                                                            vec![track_id],
-                                                        ));
-                                                    }
-                                                }
-                                            });
-                                        }
-                                        show_add_to.write(cx, true);
-                                    },
-                                ))
-                                .item(menu_separator())
-                                .when_some(self.track_id, |menu, track_id| {
-                                    let entity = cx.entity().clone();
-                                    let is_liked = self.is_liked.is_some();
-                                    menu.item(
-                                        menu_item(
-                                            "toggle_like",
-                                            Some(if is_liked { STAR_FILLED } else { STAR }),
-                                            if is_liked { tr!("UNLIKE") } else { tr!("LIKE") },
-                                            move |_, _, cx| {
-                                                toggle_like(track_id, entity.clone(), cx);
-                                            },
-                                        )
-                                        .disabled(!is_available),
-                                    )
-                                })
-                                .item(menu_separator())
                             })
-                            .item(menu_item(
-                                "remove_item",
-                                Some(CROSS),
-                                tr!("REMOVE_FROM_QUEUE", "Remove from queue"),
-                                move |_, _, cx| {
-                                    let playback = cx.global::<PlaybackInterface>();
-                                    playback.remove_item(idx);
-                                },
-                            ))
-                    },
-                )
+                            .item(menu_separator())
+                        })
+                        .item(menu_item(
+                            "remove_item",
+                            Some(CROSS),
+                            tr!("REMOVE_FROM_QUEUE", "Remove from queue"),
+                            move |_, _, cx| {
+                                let playback = cx.global::<PlaybackInterface>();
+                                playback.remove_item(idx);
+                            },
+                        ))
+                })
                 .into_any_element()
         } else {
             // TODO: Skeleton for this
@@ -1008,12 +1027,26 @@ impl Render for Queue {
                     ))
                     .on_drop(
                         cx.listener(move |this: &mut Queue, drag_data: &DragData, _, cx| {
-                            handle_drop(
+                            handle_drop_multi(
                                 this.drag_drop_manager.clone(),
                                 drag_data,
                                 cx,
-                                |from, to, cx| {
-                                    cx.global::<PlaybackInterface>().move_item(from, to);
+                                |drag_data, to, cx| {
+                                    if drag_data.additional_indices.is_empty() {
+                                        cx.global::<PlaybackInterface>()
+                                            .move_item(drag_data.source_index, to);
+                                    } else {
+                                        let corrected_to = to.saturating_sub(
+                                            drag_data
+                                                .additional_indices
+                                                .iter()
+                                                .filter(|&&idx| idx < to)
+                                                .count(),
+                                        );
+                                        let indices = drag_data.all_indices();
+                                        cx.global::<PlaybackInterface>()
+                                            .move_items(indices, corrected_to);
+                                    }
                                 },
                             );
                             cx.notify();

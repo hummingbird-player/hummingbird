@@ -53,9 +53,7 @@ pub enum DequeueManyResult {
     /// Items were removed, queue position adjusted.
     Removed { new_position: usize },
     /// The currently playing item was removed.
-    RemovedCurrent {
-        new_path: Option<PathBuf>,
-    },
+    RemovedCurrent { new_path: Option<PathBuf> },
     /// Nothing changed (indices empty or all out of bounds).
     Unchanged,
 }
@@ -68,6 +66,13 @@ pub enum MoveResult {
         new_position: usize,
     },
     /// Nothing changed (same position or invalid).
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MoveItemsResult {
+    Moved,
+    MovedCurrent { new_position: usize },
     Unchanged,
 }
 
@@ -143,6 +148,12 @@ pub enum UndoAction {
     Moved {
         original: usize,
         new: usize,
+        previous_queue_next: usize,
+        previous_shuffle: bool,
+    },
+    MovedMany {
+        items: SmallVec<[(usize, QueueItemData); 2]>,
+        destination: usize,
         previous_queue_next: usize,
         previous_shuffle: bool,
     },
@@ -324,6 +335,31 @@ impl QueueManager {
 
                 let item = queue.remove(new);
                 queue.insert(original, item);
+
+                self.queue_next = previous_queue_next;
+                self.shuffle = previous_shuffle;
+
+                Self::undo_result_from_state(&queue, self.queue_next, self.shuffle)
+            }
+            Some(UndoAction::MovedMany {
+                items,
+                destination,
+                previous_queue_next,
+                previous_shuffle,
+            }) => {
+                let mut queue = self.queue.write().expect("poisoned queue lock");
+
+                for _ in 0..items.len() {
+                    if destination < queue.len() {
+                        queue.remove(destination);
+                    }
+                }
+
+                for (original_idx, item) in items {
+                    if original_idx <= queue.len() {
+                        queue.insert(original_idx, item);
+                    }
+                }
 
                 self.queue_next = previous_queue_next;
                 self.shuffle = previous_shuffle;
@@ -956,6 +992,101 @@ impl QueueManager {
         res
     }
 
+    /// Move multiple items to a single destination.
+    ///
+    /// Items at `indices` (sorted ascending) are removed, then re-inserted contiguously
+    /// starting at `to`. The destination `to` refers to the final position after removal
+    /// (i.e. the index where the first moved item should end up).
+    pub fn move_items(&mut self, mut indices: Vec<usize>, to: usize) -> MoveItemsResult {
+        if indices.is_empty() {
+            return MoveItemsResult::Unchanged;
+        }
+        if indices.len() == 1 {
+            let result = self.move_item(indices[0], to, true);
+            return match result {
+                MoveResult::Moved => MoveItemsResult::Moved,
+                MoveResult::MovedCurrent { new_position } => {
+                    MoveItemsResult::MovedCurrent { new_position }
+                }
+                MoveResult::Unchanged => MoveItemsResult::Unchanged,
+            };
+        }
+
+        let previous_queue_next = self.queue_next;
+        let previous_shuffle = self.shuffle;
+
+        let mut queue = self.queue.write().expect("poisoned queue lock");
+
+        indices.retain(|idx| *idx < queue.len());
+        indices.sort_unstable();
+        indices.dedup();
+
+        if indices.is_empty() {
+            drop(queue);
+            return MoveItemsResult::Unchanged;
+        }
+
+        // `to` is the insert position in the post-removal queue (the caller adjusts
+        // for additional removals beyond the primary source index)
+        let insert_at = to.min(queue.len() - indices.len());
+
+        // Record original positions and items, then remove in reverse order
+        let mut original_items: SmallVec<[(usize, QueueItemData); 2]> = SmallVec::new();
+        for &idx in indices.iter().rev() {
+            let item = queue.remove(idx);
+            original_items.push((idx, item));
+        }
+        // original_items is in reverse order, reverse to get ascending order
+        original_items.reverse();
+
+        // Insert all items at the destination
+        for (i, (_, item)) in original_items.iter().enumerate() {
+            queue.insert(insert_at + i, item.clone());
+        }
+
+        // Adjust current position
+        let res = if let Some(current) = previous_queue_next.checked_sub(1) {
+            if let Ok(current_offset) = indices.binary_search(&current) {
+                let new_position = insert_at + current_offset;
+                self.queue_next = new_position + 1;
+                MoveItemsResult::MovedCurrent { new_position }
+            } else {
+                let mut new_current = current;
+                for &idx in &indices {
+                    if idx < current {
+                        new_current = new_current.saturating_sub(1);
+                    }
+                }
+                if insert_at <= new_current {
+                    new_current += original_items.len();
+                }
+
+                if new_current != current {
+                    self.queue_next = new_current + 1;
+                    MoveItemsResult::MovedCurrent {
+                        new_position: new_current,
+                    }
+                } else {
+                    MoveItemsResult::Moved
+                }
+            }
+        } else {
+            MoveItemsResult::Moved
+        };
+
+        drop(queue);
+        self.persist_session_with_queue();
+
+        self.push_undo_action(UndoAction::MovedMany {
+            items: original_items,
+            destination: insert_at,
+            previous_queue_next,
+            previous_shuffle,
+        });
+
+        res
+    }
+
     /// Replace the entire queue with new items.
     ///
     /// If shuffle is enabled, the items are shuffled (but original order is preserved).
@@ -1153,7 +1284,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::watch;
 
-    use super::{DequeueManyResult, QueueManager, UndoResult};
+    use super::{DequeueManyResult, MoveItemsResult, QueueManager, UndoResult};
     use crate::{
         playback::{queue::QueueItemData, session_storage::PlaybackSessionData},
         settings::playback::PlaybackSettings,
@@ -1195,6 +1326,16 @@ mod tests {
             queue_next: manager.queue_next,
             shuffle: manager.shuffle,
         }
+    }
+
+    fn queue_ids(manager: &QueueManager) -> Vec<i64> {
+        manager
+            .queue
+            .read()
+            .expect("poisoned queue lock")
+            .iter()
+            .map(|item| item.get_db_id().expect("test items have db ids"))
+            .collect()
     }
 
     fn assert_undo_round_trip(manager: &mut QueueManager, before: QueueManagerState) {
@@ -1503,6 +1644,103 @@ mod tests {
         manager.dequeue_many(vec![0, 2]);
 
         assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn move_items_when_nothing_playing_does_not_start_playback() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        assert_eq!(manager.queue_next, 0);
+
+        let res = manager.move_items(vec![1, 3], 0);
+
+        assert!(matches!(res, MoveItemsResult::Moved));
+        assert_eq!(manager.queue_next, 0);
+        assert_eq!(queue_ids(&manager), vec![2, 4, 1, 3, 5]);
+    }
+
+    #[test]
+    fn move_items_keeps_relative_order_and_filters_duplicate_indices() {
+        let mut manager =
+            manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5), item(6)]);
+
+        let res = manager.move_items(vec![4, 1, 1, 99, 3], 0);
+
+        assert!(matches!(res, MoveItemsResult::Moved));
+        assert_eq!(queue_ids(&manager), vec![2, 4, 5, 1, 3, 6]);
+    }
+
+    #[test]
+    fn move_items_current_item_uses_its_offset_within_the_moved_block() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(3); // current = index 3 (item 4)
+
+        let res = manager.move_items(vec![1, 3], 0);
+
+        assert_eq!(res, MoveItemsResult::MovedCurrent { new_position: 1 });
+        assert_eq!(manager.queue_next, 2);
+        assert_eq!(queue_ids(&manager), vec![2, 4, 1, 3, 5]);
+    }
+
+    #[test]
+    fn undo_move_items_restores_previous_state() {
+        let mut manager =
+            manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5), item(6)]);
+        manager.set_position(4);
+
+        let before = snapshot(&manager);
+
+        manager.move_items(vec![1, 3, 4], 0);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn undo_move_items_in_shuffle_mode_restores_previous_state() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(2);
+        manager.toggle_shuffle();
+        manager.undo_stack.clear();
+
+        let before = snapshot(&manager);
+
+        manager.move_items(vec![0, 2], 1);
+
+        assert_undo_round_trip(&mut manager, before);
+    }
+
+    #[test]
+    fn move_items_all_after_current_leaves_position_unchanged() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+        manager.set_position(1);
+        let before_queue_next = manager.queue_next;
+
+        let res = manager.move_items(vec![3, 4], 2);
+
+        assert_eq!(res, MoveItemsResult::Moved);
+        assert_eq!(manager.queue_next, before_queue_next);
+        assert_eq!(queue_ids(&manager), vec![1, 2, 4, 5, 3]);
+    }
+
+    #[test]
+    fn move_items_spanning_current_shifts_position() {
+        let mut manager =
+            manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5), item(6)]);
+        manager.set_position(2);
+
+        let res = manager.move_items(vec![0, 4], 1);
+
+        assert_eq!(res, MoveItemsResult::MovedCurrent { new_position: 3 });
+        assert_eq!(queue_ids(&manager), vec![2, 1, 5, 3, 4, 6]);
+    }
+
+    #[test]
+    fn move_items_clamps_destination_to_end() {
+        let mut manager = manager_with_queue(vec![item(1), item(2), item(3), item(4), item(5)]);
+
+        let res = manager.move_items(vec![0, 1], 99);
+
+        assert_eq!(res, MoveItemsResult::Moved);
+        assert_eq!(queue_ids(&manager), vec![3, 4, 5, 1, 2]);
     }
 
     #[test]
