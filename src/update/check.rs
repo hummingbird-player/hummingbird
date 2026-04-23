@@ -397,7 +397,7 @@ mod tests {
             "latest",
             vec![asset(
                 TEST_PLATFORM_PACKAGE,
-                "2026-03-01T01:59:59Z",
+                "2026-03-01T00:29:59Z",
                 "github-actions[bot]",
             )],
         );
