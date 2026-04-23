@@ -4,9 +4,7 @@ mod services;
 #[cfg(feature = "update")]
 mod update;
 
-use cntp_i18n::tr;
-use gpui::{prelude::FluentBuilder, *};
-
+use super::{models::Models, theme::Theme};
 use crate::{
     library::scan::ScanEvent,
     settings::{Settings, SettingsGlobal},
@@ -19,13 +17,14 @@ use crate::{
         library::nav_buttons::nav_buttons,
     },
 };
-
-use super::{models::Models, theme::Theme};
+use cntp_i18n::tr;
+use gpui::{prelude::FluentBuilder, *};
+use services::ServicesIndicator;
 
 pub struct Header {
     scan_status: Entity<ScanStatus>,
     menu_bar: Option<Entity<MenuBar>>,
-    services: Entity<services::ServicesIndicator>,
+    services: Entity<ServicesIndicator>,
     settings: Entity<Settings>,
 }
 
@@ -44,7 +43,7 @@ impl Header {
                 } else {
                     None
                 },
-                services: services::ServicesIndicator::new(cx),
+                services: ServicesIndicator::new(cx),
                 settings,
             }
         })
