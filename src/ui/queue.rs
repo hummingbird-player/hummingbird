@@ -26,7 +26,7 @@ use crate::{
 use cntp_i18n::tr;
 use gpui::*;
 use prelude::FluentBuilder;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Duration;
 
 use super::{
@@ -47,12 +47,94 @@ const QUEUE_ITEM_HEIGHT: f32 = 60.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
+/// Shared selection state for the queue.
+pub struct QueueSelection {
+    selected: FxHashSet<usize>,
+    anchor: Option<usize>,
+}
+
+impl QueueSelection {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self {
+            selected: FxHashSet::default(),
+            anchor: None,
+        })
+    }
+
+    pub fn contains(&self, index: usize) -> bool {
+        self.selected.contains(&index)
+    }
+
+    pub fn is_multi(&self) -> bool {
+        self.selected.len() > 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.selected.is_empty()
+    }
+
+    pub fn indices(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = self.selected.iter().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.selected.clear();
+        self.anchor = None;
+        cx.notify();
+    }
+
+    /// Plain click: deselect all, select only this item.
+    pub fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.selected.clear();
+        self.selected.insert(index);
+        self.anchor = Some(index);
+        cx.notify();
+    }
+
+    /// Ctrl/Cmd+click: toggle this item in the selection.
+    pub fn ctrl_toggle(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.selected.contains(&index) {
+            self.selected.remove(&index);
+            if self.anchor == Some(index) {
+                self.anchor = self.selected.iter().copied().next();
+            }
+        } else {
+            self.selected.insert(index);
+            self.anchor = Some(index);
+        }
+        cx.notify();
+    }
+
+    /// Shift+click: select range from anchor to this item.
+    /// Replaces any previous range selection. If no anchor exists,
+    /// uses `current_position` (the currently-playing track) as the anchor.
+    pub fn shift_range(
+        &mut self,
+        index: usize,
+        current_position: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = self.anchor.or(current_position).unwrap_or(index);
+        self.anchor = Some(anchor);
+        self.selected.clear();
+        let start = anchor.min(index);
+        let end = anchor.max(index);
+        for i in start..=end {
+            self.selected.insert(i);
+        }
+        cx.notify();
+    }
+}
+
 pub struct QueueItem {
     item: Option<QueueItemData>,
     current: usize,
     idx: usize,
     drag_drop_manager: Entity<DragDropListManager>,
     scroll_handle: UniformListScrollHandle,
+    selection: Entity<QueueSelection>,
     add_to: Option<Entity<AddToPlaylist>>,
     show_add_to: Entity<bool>,
     track_id: Option<i64>,
@@ -75,6 +157,7 @@ impl QueueItem {
         idx: usize,
         drag_drop_manager: Entity<DragDropListManager>,
         scroll_handle: UniformListScrollHandle,
+        selection: Entity<QueueSelection>,
     ) -> Entity<Self> {
         cx.new(move |cx| {
             cx.on_release(|m: &mut QueueItem, cx| {
@@ -106,6 +189,11 @@ impl QueueItem {
             })
             .detach();
 
+            cx.observe(&selection, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
             let show_add_to = cx.new(|_| false);
             let add_to =
                 track_id.map(|track_id| AddToPlaylist::new(cx, show_add_to.clone(), track_id));
@@ -123,6 +211,7 @@ impl QueueItem {
                 current: queue.read(cx).position,
                 drag_drop_manager,
                 scroll_handle,
+                selection,
                 add_to,
                 show_add_to,
                 track_id,
@@ -147,6 +236,7 @@ impl Render for QueueItem {
             .item
             .as_ref()
             .is_some_and(|queue_item| is_track_path_available(queue_item.get_path()));
+        let is_selected = self.selection.read(cx).contains(self.idx);
 
         if let Some(item) = ui_data.as_ref() {
             let scrollbar_always_visible = {
@@ -163,6 +253,8 @@ impl Render for QueueItem {
                     .map(|i| ManagedImageKey::TrackFile(i.get_path().to_path_buf()))
             });
             let idx = self.idx;
+            let current = self.current;
+            let selection = self.selection.clone();
 
             let item_state =
                 DragDropItemState::for_index(self.drag_drop_manager.read(cx), self.idx);
@@ -194,16 +286,37 @@ impl Render for QueueItem {
                         .border_b(px(1.0))
                         .border_color(theme.border_color)
                         .when(item_state.is_being_dragged, |div| div.opacity(0.5))
-                        .when(is_current && !item_state.is_being_dragged, |div| {
+                        .when(is_selected && !item_state.is_being_dragged, |div| {
+                            div.bg(theme.queue_item_selected)
+                        })
+                        .when(!is_selected && is_current && !item_state.is_being_dragged, |div| {
                             div.bg(theme.queue_item_current)
                         })
                         .when(is_available, |div| {
-                            div.on_click(move |_, _, cx| {
-                                cx.global::<PlaybackInterface>().jump(idx);
+                            div.on_click(move |event: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                let modifiers = event.modifiers();
+                                let ctrl = modifiers.control || modifiers.platform;
+
+                                if event.click_count() == 2 {
+                                    cx.global::<PlaybackInterface>().jump(idx);
+                                } else if ctrl {
+                                    selection.update(cx, |s, cx| s.ctrl_toggle(idx, cx));
+                                } else if modifiers.shift {
+                                    selection.update(cx, |s, cx| {
+                                        s.shift_range(idx, Some(current), cx)
+                                    });
+                                } else {
+                                    selection.update(cx, |s, cx| s.select(idx, cx));
+                                }
                             })
                         })
-                        .when(is_available && !item_state.is_being_dragged, |div| {
+                        .when(is_available && !is_selected && !item_state.is_being_dragged, |div| {
                             div.hover(|div| div.bg(theme.queue_item_hover))
+                                .active(|div| div.bg(theme.queue_item_active))
+                        })
+                        .when(is_available && is_selected && !item_state.is_being_dragged, |div| {
+                            div.hover(|div| div.bg(theme.queue_item_selected))
                                 .active(|div| div.bg(theme.queue_item_active))
                         })
                         .when(is_available, |div| {
@@ -387,6 +500,7 @@ pub struct Queue {
     show_queue: Entity<bool>,
     scroll_handle: UniformListScrollHandle,
     drag_drop_manager: Entity<DragDropListManager>,
+    selection: Entity<QueueSelection>,
     last_queue_position: usize,
     queue_hovered: bool,
     follow_current_pending: bool,
@@ -405,6 +519,7 @@ impl Queue {
 
             let config = DragDropListConfig::new(QUEUE_LIST_ID, px(QUEUE_ITEM_HEIGHT));
             let drag_drop_manager = DragDropListManager::new(cx, config);
+            let selection = QueueSelection::new(cx);
 
             cx.observe(&items, move |this: &mut Queue, _, cx| {
                 let new_position = cx.global::<Models>().queue.read(cx).position;
@@ -426,6 +541,8 @@ impl Queue {
                     .collect();
                 retain_views(&this.views_model, &valid_keys, cx);
 
+                this.selection.update(cx, |s, cx| s.clear(cx));
+
                 cx.notify();
             })
             .detach();
@@ -435,6 +552,7 @@ impl Queue {
                 show_queue,
                 scroll_handle: UniformListScrollHandle::new(),
                 drag_drop_manager,
+                selection,
                 last_queue_position: initial_queue_position,
                 queue_hovered: false,
                 follow_current_pending: initial_has_current_track,
@@ -463,6 +581,7 @@ impl Render for Queue {
         let scroll_handle = self.scroll_handle.clone();
         let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
+        let selection = self.selection.clone();
         let reduced_motion = cx
             .global::<SettingsGlobal>()
             .model
@@ -535,6 +654,9 @@ impl Render for Queue {
                     .w_full()
                     .h_full()
                     .relative()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.selection.update(cx, |s, cx| s.clear(cx));
+                    }))
                     .on_hover(cx.listener(|this, is_hovering: &bool, _, cx| {
                         if this.queue_hovered == *is_hovering {
                             return;
@@ -859,6 +981,7 @@ impl Render for Queue {
 
                                         let drag_drop_manager = drag_drop_manager.clone();
                                         let scroll_handle = item_scroll_handle.clone();
+                                        let item_selection = selection.clone();
 
                                         let view = create_or_retrieve_view_keyed(
                                             &views_model,
@@ -870,6 +993,7 @@ impl Render for Queue {
                                                     idx,
                                                     drag_drop_manager,
                                                     scroll_handle,
+                                                    item_selection,
                                                 )
                                             },
                                             cx,

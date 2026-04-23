@@ -54,6 +54,7 @@ pub struct Theme {
     pub queue_item_hover: Rgba,
     pub queue_item_active: Rgba,
     pub queue_item_current: Rgba,
+    pub queue_item_selected: Rgba,
 
     pub button_primary: Rgba,
     pub button_primary_border: Rgba,
@@ -174,6 +175,7 @@ impl Default for Theme {
             queue_item_hover: rgb(0x151621),
             queue_item_active: rgb(0x101118),
             queue_item_current: rgb(0x1B1C28),
+            queue_item_selected: rgb(0x1A2040),
 
             close_button: rgba(0x00000000),
             close_button_hover: rgb(0x7E2C2C),
