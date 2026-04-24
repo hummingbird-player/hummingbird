@@ -2,7 +2,10 @@ use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    services::mmb::{discord::DiscordRpcStatus, lastfm::{LastFMState, is_available}},
+    services::mmb::{
+        discord::DiscordRpcStatus,
+        lastfm::{LastFMState, is_available},
+    },
     settings::{Settings, SettingsGlobal, save_settings},
     ui::{
         components::{
@@ -162,12 +165,8 @@ impl Render for ServicesIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lastfm = self.lastfm.read(cx).clone();
         let discord_rpc = *self.discord_rpc.read(cx);
-        let services = collect_services(
-            self.settings.read(cx),
-            &lastfm,
-            discord_rpc,
-            is_available(),
-        );
+        let services =
+            collect_services(self.settings.read(cx), &lastfm, discord_rpc, is_available());
         let indicator = indicator_icon(&services);
         let weak_self = cx.entity().downgrade();
 
