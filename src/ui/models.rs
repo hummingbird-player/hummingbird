@@ -248,19 +248,19 @@ pub fn build_models(
             } else {
                 error!("The last.fm session information is stored on disk but the file could not be opened.");
                 warn!("You will not be logged in to last.fm.");
-                LastFMState::Disconnected
+                LastFMState::Disconnected { error: None }
             }
         } else {
-            LastFMState::Disconnected
+            LastFMState::Disconnected { error: None }
         }
     });
 
     let initial_discord_status = if discord_rpc_enabled(cx) {
-        DiscordRpcStatus::Disconnected
+        DiscordRpcStatus::Disconnected { error: None }
     } else {
         DiscordRpcStatus::Disabled
     };
-    let discord_rpc = cx.new(|_| initial_discord_status);
+    let discord_rpc = cx.new(|_| initial_discord_status.clone());
     let (discord_status_tx, mut discord_status_rx) = watch::channel(initial_discord_status);
     let playlist_tracker: Entity<PlaylistInfoTransfer> = cx.new(|_| PlaylistInfoTransfer);
 
@@ -275,7 +275,7 @@ pub fn build_models(
     let discord_rpc_model = discord_rpc.clone();
     cx.spawn(async move |cx| {
         while discord_status_rx.changed().await.is_ok() {
-            let status = *discord_status_rx.borrow_and_update();
+            let status = discord_status_rx.borrow_and_update().clone();
             discord_rpc_model.update(cx, |current, cx| {
                 *current = status;
                 cx.notify();

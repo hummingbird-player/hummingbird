@@ -1,5 +1,3 @@
-use std::{fs::File, io::BufReader};
-
 use cntp_i18n::tr;
 use futures::{FutureExt, TryFutureExt};
 use gpui::{App, Entity, IntoElement, ParentElement, Rgba, SharedString, Styled, div, px};
@@ -7,7 +5,7 @@ use tracing::error;
 
 use crate::{
     paths,
-    services::mmb::lastfm::{LASTFM_CREDS, LastFMState, client::LastFMClient, types::Session},
+    services::mmb::lastfm::{LASTFM_CREDS, LastFMState, client::LastFMClient},
     settings::{Settings, save_settings},
     ui::{
         components::button::{ButtonIntent, button},
@@ -21,7 +19,13 @@ pub fn title() -> SharedString {
 
 fn settings_description(lastfm: &LastFMState) -> SharedString {
     match lastfm {
-        LastFMState::Disconnected => tr!(
+        LastFMState::Disconnected { error: Some(error) } => tr!(
+            "SERVICES_LASTFM_ERROR",
+            "Last.fm sign-in failed: {{error}}",
+            error = error.as_ref()
+        )
+        .into(),
+        LastFMState::Disconnected { error: None } => tr!(
             "SERVICES_LASTFM_DISCONNECTED",
             "Connect your Last.fm account to scrobble tracks."
         )
@@ -61,7 +65,7 @@ pub fn render_settings_row(
     );
 
     match lastfm {
-        LastFMState::Disconnected => row.child(
+        LastFMState::Disconnected { .. } => row.child(
             div().my_auto().child(
                 button()
                     .id("services-lastfm-sign-in")
@@ -101,9 +105,20 @@ fn start_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>) {
         .map(Result::flatten);
 
     cx.spawn(async move |cx| {
-        let token = get_token.await.inspect_err(|err| {
-            error!(?err, "error getting last.fm token: {err}");
-        })?;
+        let token = match get_token.await {
+            Ok(token) => token,
+            Err(err) => {
+                error!(?err, "error getting last.fm token: {err}");
+                let message: SharedString = format!("{err}").into();
+                state.update(cx, move |lastfm, cx| {
+                    *lastfm = LastFMState::Disconnected {
+                        error: Some(message),
+                    };
+                    cx.notify();
+                });
+                return anyhow::Ok(());
+            }
+        };
 
         let (key, _) = LASTFM_CREDS.unwrap();
         let url = String::from(url::Url::parse_with_params(
@@ -130,7 +145,7 @@ fn start_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>) {
 
 pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
     state.update(cx, |lastfm, cx| {
-        *lastfm = LastFMState::Disconnected;
+        *lastfm = LastFMState::Disconnected { error: None };
         cx.notify();
     });
 
@@ -163,8 +178,11 @@ fn confirm_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>, token: Strin
             }
             Err(err) => {
                 error!(?err, "error getting last.fm session: {err}");
+                let message: SharedString = format!("{err}").into();
                 state.update(cx, |lastfm, cx| {
-                    *lastfm = LastFMState::Disconnected;
+                    *lastfm = LastFMState::Disconnected {
+                        error: Some(message),
+                    };
                     cx.notify();
                 });
             }
@@ -188,21 +206,18 @@ pub fn toggle_lastfm(
         cx.notify();
     });
 
-    if !new_enabled {
-        sign_out_lastfm(cx, lastfm);
-    } else {
-        let directory = crate::paths::data_dir();
-        let path = directory.join("lastfm.json");
-        if let Ok(file) = File::open(&path) {
-            let reader = BufReader::new(file);
-            if let Ok(session) = serde_json::from_reader::<BufReader<File>, Session>(reader) {
-                let mmbs = cx.global::<Models>().mmbs.clone();
-                create_last_fm_mmbs(cx, &mmbs, session.key.clone());
-                lastfm.update(cx, |lastfm, cx| {
-                    *lastfm = LastFMState::Connected(session);
-                    cx.notify();
-                });
-            }
+    let mmbs = cx.global::<Models>().mmbs.clone();
+    if new_enabled {
+        let session_key = match lastfm.read(cx) {
+            LastFMState::Connected(session) => Some(session.key.clone()),
+            _ => None,
+        };
+        if let Some(key) = session_key {
+            create_last_fm_mmbs(cx, &mmbs, key);
         }
+    } else {
+        mmbs.update(cx, |m, _| {
+            m.0.remove("lastfm");
+        });
     }
 }

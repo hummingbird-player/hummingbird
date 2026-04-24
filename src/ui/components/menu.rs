@@ -1,7 +1,10 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::{
-    components::icons::{CHECK, LOCK, icon},
+    components::{
+        icons::{CHECK, LOCK, icon},
+        tooltip::build_tooltip,
+    },
     theme::Theme,
 };
 
@@ -28,6 +31,7 @@ struct BaseMenuItem {
     name: SharedString,
     on_click: ClickEvHandler,
     disabled: bool,
+    tooltip: Option<SharedString>,
 }
 
 impl BaseMenuItem {
@@ -41,11 +45,17 @@ impl BaseMenuItem {
             name: text.into(),
             on_click: Box::new(func),
             disabled: false,
+            tooltip: None,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: Option<SharedString>) -> Self {
+        self.tooltip = tooltip;
         self
     }
 
@@ -78,7 +88,8 @@ impl BaseMenuItem {
             )
             .when_some(right_element, |this, el| {
                 this.child(div().ml(px(12.0)).child(el))
-            });
+            })
+            .when_some(self.tooltip, |this, text| this.tooltip(build_tooltip(text)));
 
         if self.disabled {
             base.cursor_default()
@@ -242,6 +253,11 @@ impl StatusMenuItem {
 
     pub fn right_element(mut self, element: impl IntoElement) -> Self {
         self.right_element = Some(element.into_any_element());
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: Option<impl Into<SharedString>>) -> Self {
+        self.base = self.base.tooltip(tooltip.map(Into::into));
         self
     }
 }

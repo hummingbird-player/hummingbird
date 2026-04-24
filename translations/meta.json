@@ -1081,31 +1081,31 @@
   },
   "SERVICES_LASTFM": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:19",
+    "definedIn": "src/ui/settings/lastfm.rs:17",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_AWAITING_CONFIRMATION": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:30",
+    "definedIn": "src/ui/settings/lastfm.rs:34",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_CONFIRM": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:78",
+    "definedIn": "src/ui/settings/lastfm.rs:82",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_CONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:35",
+    "definedIn": "src/ui/settings/lastfm.rs:39",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_DISCONNECTED": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:25",
+    "definedIn": "src/ui/settings/lastfm.rs:29",
     "plural": false,
     "description": null
   },
@@ -1121,9 +1121,15 @@
     "plural": false,
     "description": null
   },
+  "SERVICES_LASTFM_ERROR": {
+    "context": "lastfm.rs",
+    "definedIn": "src/ui/settings/lastfm.rs:23",
+    "plural": false,
+    "description": null
+  },
   "SERVICES_NO_ACTIVE": {
     "context": "services.rs",
-    "definedIn": "src/ui/header/services.rs:200",
+    "definedIn": "src/ui/header/services.rs:212",
     "plural": false,
     "description": null
   },
@@ -1201,13 +1207,13 @@
   },
   "SIGN_IN": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:68",
+    "definedIn": "src/ui/settings/lastfm.rs:72",
     "plural": false,
     "description": null
   },
   "SIGN_OUT": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:90",
+    "definedIn": "src/ui/settings/lastfm.rs:94",
     "plural": false,
     "description": null
   },

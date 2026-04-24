@@ -9,6 +9,7 @@ use discord_rich_presence::{
     DiscordIpc, DiscordIpcClient,
     activity::{Activity, Assets, StatusDisplayType, Timestamps},
 };
+use gpui::SharedString;
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
@@ -17,11 +18,13 @@ use crate::{
     services::mmb::MediaMetadataBroadcastService,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum DiscordRpcStatus {
     #[default]
     Disabled,
-    Disconnected,
+    Disconnected {
+        error: Option<SharedString>,
+    },
     Connected,
 }
 
@@ -37,6 +40,7 @@ pub struct Discord {
     force_activity_update: bool,
     enabled: bool,
     connected: bool,
+    last_error: Option<SharedString>,
     status_tx: watch::Sender<DiscordRpcStatus>,
     client: DiscordIpcClient,
 }
@@ -57,6 +61,7 @@ impl Discord {
             force_activity_update: enabled,
             enabled,
             connected: false,
+            last_error: None,
             status_tx,
             client,
         };
@@ -76,7 +81,9 @@ impl Discord {
         } else if self.connected {
             DiscordRpcStatus::Connected
         } else {
-            DiscordRpcStatus::Disconnected
+            DiscordRpcStatus::Disconnected {
+                error: self.last_error.clone(),
+            }
         }
     }
 
@@ -84,18 +91,28 @@ impl Discord {
         let _ = self.status_tx.send(self.status());
     }
 
+    fn set_connected(&mut self) {
+        self.connected = true;
+        self.last_error = None;
+        self.publish_status();
+    }
+
+    fn set_disconnected(&mut self, error: impl std::fmt::Display) {
+        self.connected = false;
+        self.last_error = Some(error.to_string().into());
+        self.publish_status();
+    }
+
     fn connect(&mut self) -> bool {
         match self.client.connect() {
             Ok(()) => {
-                self.connected = true;
-                self.publish_status();
+                self.set_connected();
                 debug!("connected discord RPC client");
                 true
             }
             Err(error) => {
-                self.connected = false;
-                self.publish_status();
                 debug!(?error, "failed to connect discord RPC client");
+                self.set_disconnected(&error);
                 false
             }
         }
@@ -104,15 +121,13 @@ impl Discord {
     fn reconnect(&mut self) -> bool {
         match self.client.reconnect() {
             Ok(()) => {
-                self.connected = true;
-                self.publish_status();
+                self.set_connected();
                 debug!("reconnected discord RPC client");
                 true
             }
             Err(error) => {
-                self.connected = false;
-                self.publish_status();
                 debug!(?error, "failed to reconnect discord RPC client");
+                self.set_disconnected(&error);
                 false
             }
         }
@@ -137,18 +152,16 @@ impl Discord {
 
         if let Err(error) = self.client.clear_activity() {
             debug!(?error, context, "failed to clear discord RPC activity");
-            self.connected = false;
-            self.publish_status();
+            self.set_disconnected(&error);
 
             if self.reconnect()
                 && let Err(error) = self.client.clear_activity()
             {
-                self.connected = false;
-                self.publish_status();
                 debug!(
                     ?error,
                     context, "failed to clear discord RPC activity after reconnect"
                 );
+                self.set_disconnected(&error);
             }
         }
     }
@@ -211,15 +224,13 @@ impl Discord {
             .set_activity(activity.clone().assets(assets.clone()))
         {
             warn!(?error, "failed to set discord RPC activity");
-            self.connected = false;
-            self.publish_status();
+            self.set_disconnected(&error);
 
             if self.reconnect()
                 && let Err(error) = self.client.set_activity(activity.assets(assets))
             {
-                self.connected = false;
-                self.publish_status();
                 warn!(?error, "failed to set discord RPC activity after reconnect");
+                self.set_disconnected(&error);
             }
         }
     }

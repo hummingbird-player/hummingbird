@@ -6,6 +6,7 @@ use std::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use client::LastFMClient;
+use gpui::SharedString;
 use tracing::{debug, warn};
 use types::Session;
 
@@ -18,7 +19,7 @@ pub mod types;
 
 #[derive(Clone)]
 pub enum LastFMState {
-    Disconnected,
+    Disconnected { error: Option<SharedString> },
     AwaitingFinalization(String),
     Connected(Session),
 }
