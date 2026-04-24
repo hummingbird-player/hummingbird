@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -19,6 +19,9 @@ use crate::{
 };
 
 pub const MMBS_KEY: &str = "discord";
+
+const DISCORD_CLIENT_ID: &str = "1486108276218400818";
+const RECONNECT_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum DiscordRpcStatus {
@@ -43,13 +46,14 @@ pub struct Discord {
     enabled: bool,
     connected: bool,
     last_error: Option<SharedString>,
+    last_reconnect_attempt: Option<Instant>,
     status_tx: watch::Sender<DiscordRpcStatus>,
     client: DiscordIpcClient,
 }
 
 impl Discord {
     pub fn new(enabled: bool, status_tx: watch::Sender<DiscordRpcStatus>) -> Self {
-        let client = DiscordIpcClient::new("1486108276218400818");
+        let client = DiscordIpcClient::new(DISCORD_CLIENT_ID);
 
         let mut discord = Self {
             metadata: None,
@@ -64,6 +68,7 @@ impl Discord {
             enabled,
             connected: false,
             last_error: None,
+            last_reconnect_attempt: None,
             status_tx,
             client,
         };
@@ -96,6 +101,7 @@ impl Discord {
     fn set_connected(&mut self) {
         self.connected = true;
         self.last_error = None;
+        self.last_reconnect_attempt = None;
         self.publish_status();
     }
 
@@ -121,7 +127,19 @@ impl Discord {
     }
 
     fn reconnect(&mut self) -> bool {
-        match self.client.reconnect() {
+        if let Some(last_attempt) = self.last_reconnect_attempt
+            && last_attempt.elapsed() < RECONNECT_COOLDOWN
+        {
+            debug!("skipping discord RPC reconnect; reconnect cooldown active");
+            return false;
+        }
+
+        self.last_reconnect_attempt = Some(Instant::now());
+
+        let _ = self.client.close();
+        self.client = DiscordIpcClient::new(DISCORD_CLIENT_ID);
+
+        match self.client.connect() {
             Ok(()) => {
                 self.set_connected();
                 debug!("reconnected discord RPC client");
