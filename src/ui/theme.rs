@@ -41,6 +41,7 @@ pub struct Theme {
     pub playback_button_border: Rgba,
     pub playback_button_toggled: Rgba,
     pub playback_button_repeat_one: Rgba,
+    pub stop_after_current_indicator: Rgba,
 
     pub window_button: Rgba,
     pub window_button_hover: Rgba,
@@ -170,6 +171,7 @@ impl Default for Theme {
             playback_button_border: rgba(0x00000000),
             playback_button_toggled: rgb(0x688CF0),
             playback_button_repeat_one: rgb(0x63C58D),
+            stop_after_current_indicator: rgb(0xF0A868),
 
             window_button: rgba(0x00000000),
             window_button_hover: rgb(0x262D42),

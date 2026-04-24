@@ -632,7 +632,7 @@ impl Render for PlaybackSection {
                                         .right(px(3.0))
                                         .size(px(6.0))
                                         .rounded_full()
-                                        .bg(theme.playback_button_toggled)
+                                        .bg(theme.stop_after_current_indicator)
                                         .tooltip(build_tooltip(tr!(
                                             "STOP_AFTER_CURRENT_TOOLTIP",
                                             "Will stop after current track"
