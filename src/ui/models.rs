@@ -250,14 +250,19 @@ pub fn build_models(
         if LASTFM_CREDS.is_some() && let Ok(file) = File::open(path) {
             let reader = std::io::BufReader::new(file);
 
-            if let Ok(session) = serde_json::from_reader::<std::io::BufReader<File>, Session>(reader) {
-                let enabled = lastfm_enabled(cx);
-                create_last_fm_mmbs(cx, &mmbs, session.key.clone(), enabled);
-                LastFMState::Connected(session)
-            } else {
-                error!("The last.fm session information is stored on disk but the file could not be opened.");
-                warn!("You will not be logged in to last.fm.");
-                LastFMState::Disconnected { error: None }
+            match serde_json::from_reader::<std::io::BufReader<File>, Session>(reader) {
+                Ok(session) => {
+                    let enabled = lastfm_enabled(cx);
+                    create_last_fm_mmbs(cx, &mmbs, session.key.clone(), enabled);
+                    LastFMState::Connected(session)
+                }
+                Err(err) => {
+                    error!(?err, "The last.fm session information is stored on disk but the file could not be opened.");
+                    warn!("You will not be logged in to last.fm.");
+                    LastFMState::Disconnected {
+                        error: Some(format!("{err}").into()),
+                    }
+                }
             }
         } else {
             LastFMState::Disconnected { error: None }

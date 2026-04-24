@@ -58,13 +58,14 @@ impl Render for ServicesSettings {
             .child(section_header(tr!("SERVICES")));
 
         if is_available() {
-            body = body
-                .child(lastfm_ui::render_settings_row(
-                    &lastfm,
-                    self.lastfm.clone(),
-                    cx.global::<Theme>().text_secondary,
-                ))
-                .child(
+            body = body.child(lastfm_ui::render_settings_row(
+                &lastfm,
+                self.lastfm.clone(),
+                cx.global::<Theme>().text_secondary,
+            ));
+
+            if matches!(lastfm, LastFMState::Connected(_)) {
+                body = body.child(
                     label(
                         "services-lastfm-enabled",
                         tr!("SERVICES_LASTFM_ENABLED", "Enable last.fm scrobbling."),
@@ -76,15 +77,17 @@ impl Render for ServicesSettings {
                     .cursor_pointer()
                     .w_full()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.update_services(cx, |services| {
-                            services.lastfm_enabled = !services.lastfm_enabled;
-                        });
+                        let enabled = this.settings.read(cx).services.lastfm_enabled;
+                        let settings = this.settings.clone();
+                        let lastfm = this.lastfm.clone();
+                        lastfm_ui::toggle_lastfm(cx, enabled, settings, lastfm);
                     }))
                     .child(checkbox(
                         "services-lastfm-enabled-check",
                         services.lastfm_enabled,
                     )),
                 );
+            }
         }
 
         body.child(

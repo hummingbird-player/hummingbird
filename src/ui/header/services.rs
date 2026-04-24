@@ -60,6 +60,29 @@ enum ServiceKind {
     DiscordRpc,
 }
 
+impl ServiceKind {
+    fn name(self) -> SharedString {
+        match self {
+            Self::LastFm => lastfm_ui::title(),
+            Self::DiscordRpc => tr!("SERVICES_DISCORD_RPC_TITLE").into(),
+        }
+    }
+
+    fn row_id(self) -> &'static str {
+        match self {
+            Self::LastFm => "services-toggle-lastfm",
+            Self::DiscordRpc => "services-toggle-discord",
+        }
+    }
+
+    fn button_id(self) -> &'static str {
+        match self {
+            Self::LastFm => "services-toggle-lastfm-btn",
+            Self::DiscordRpc => "services-toggle-discord-btn",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ServiceStatus {
     Connected,
@@ -143,13 +166,6 @@ fn status_dot(entry: &ServiceEntry) -> StatusDotKind {
     }
 }
 
-fn service_name(kind: ServiceKind) -> SharedString {
-    match kind {
-        ServiceKind::LastFm => lastfm_ui::title(),
-        ServiceKind::DiscordRpc => tr!("SERVICES_DISCORD_RPC_TITLE").into(),
-    }
-}
-
 fn toggle_service(
     cx: &mut App,
     kind: ServiceKind,
@@ -222,21 +238,12 @@ impl Render for ServicesIndicator {
                         let settings = self.settings.clone();
                         let lastfm = self.lastfm.clone();
                         let status = status_dot(entry);
-                        let name = service_name(entry.kind);
-                        let (row_id, button_id) = match entry.kind {
-                            ServiceKind::LastFm => {
-                                ("services-toggle-lastfm", "services-toggle-lastfm-btn")
-                            }
-                            ServiceKind::DiscordRpc => {
-                                ("services-toggle-discord", "services-toggle-discord-btn")
-                            }
-                        };
                         let kind = entry.kind;
                         let enabled = entry.enabled;
                         let tooltip = entry.error.clone();
 
                         let toggle_button = div()
-                            .id(button_id)
+                            .id(kind.button_id())
                             .rounded(px(3.0))
                             .p(px(3.0))
                             .flex()
@@ -261,7 +268,7 @@ impl Render for ServicesIndicator {
                             .child(icon(POWER).size(px(16.0)));
 
                         menu_contents = menu_contents.item(
-                            status_menu_item(row_id, status, name, |_, _, _| {})
+                            status_menu_item(kind.row_id(), status, kind.name(), |_, _, _| {})
                                 .non_interactive()
                                 .tooltip(tooltip)
                                 .right_element(toggle_button),

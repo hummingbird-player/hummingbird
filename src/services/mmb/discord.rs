@@ -13,12 +13,12 @@ use gpui::SharedString;
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
-pub const MMBS_KEY: &str = "discord";
-
 use crate::{
     media::metadata::Metadata, playback::thread::PlaybackState,
     services::mmb::MediaMetadataBroadcastService,
 };
+
+pub const MMBS_KEY: &str = "discord";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum DiscordRpcStatus {

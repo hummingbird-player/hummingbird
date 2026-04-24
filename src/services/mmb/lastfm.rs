@@ -190,3 +190,59 @@ impl Drop for LastFM {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_lastfm(enabled: bool) -> LastFM {
+        let client = LastFMClient::new("test-key".into(), "test-secret".into());
+        LastFM::new(client, enabled)
+    }
+
+    #[tokio::test]
+    async fn set_enabled_false_clears_scrobble_state() {
+        let mut lastfm = make_lastfm(true);
+        lastfm.should_scrobble = true;
+        lastfm.accumulated_time = 100;
+        lastfm.duration = 200;
+        lastfm.last_postion = 120;
+        lastfm.start_timestamp = Some(Utc::now());
+
+        lastfm.set_enabled(false).await;
+
+        assert!(!lastfm.enabled);
+        assert!(!lastfm.should_scrobble);
+        assert_eq!(lastfm.accumulated_time, 0);
+        assert_eq!(lastfm.duration, 0);
+        assert_eq!(lastfm.last_postion, 0);
+        assert!(lastfm.start_timestamp.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_enabled_noop_preserves_state_when_unchanged() {
+        let mut lastfm = make_lastfm(true);
+        lastfm.should_scrobble = true;
+        lastfm.accumulated_time = 100;
+
+        lastfm.set_enabled(true).await;
+
+        assert!(lastfm.should_scrobble);
+        assert_eq!(lastfm.accumulated_time, 100);
+
+        // Drop would otherwise try to RUNTIME.block_on(scrobble()) from inside the test runtime.
+        lastfm.should_scrobble = false;
+    }
+
+    #[tokio::test]
+    async fn disabled_mmbs_ignores_playback_events() {
+        let mut lastfm = make_lastfm(false);
+
+        lastfm.position_changed(50).await;
+        lastfm.duration_changed(200).await;
+
+        assert_eq!(lastfm.accumulated_time, 0);
+        assert_eq!(lastfm.duration, 0);
+        assert!(!lastfm.should_scrobble);
+    }
+}

@@ -1069,13 +1069,13 @@
   },
   "SERVICES_DISCORD_RPC_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:96",
+    "definedIn": "src/ui/settings/services.rs:99",
     "plural": false,
     "description": null
   },
   "SERVICES_DISCORD_RPC_TITLE": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:93",
+    "definedIn": "src/ui/settings/services.rs:96",
     "plural": false,
     "description": null
   },
@@ -1111,13 +1111,13 @@
   },
   "SERVICES_LASTFM_ENABLED": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:70",
+    "definedIn": "src/ui/settings/services.rs:71",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_ENABLED_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:73",
+    "definedIn": "src/ui/settings/services.rs:74",
     "plural": false,
     "description": null
   },
@@ -1129,7 +1129,7 @@
   },
   "SERVICES_NO_ACTIVE": {
     "context": "services.rs",
-    "definedIn": "src/ui/header/services.rs:213",
+    "definedIn": "src/ui/header/services.rs:229",
     "plural": false,
     "description": null
   },

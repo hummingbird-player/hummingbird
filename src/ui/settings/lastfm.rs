@@ -149,10 +149,18 @@ pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
         cx.notify();
     });
 
-    let mmbs = cx.global::<Models>().mmbs.clone();
-    mmbs.update(cx, |m, _| {
+    let mmbs_list = cx.global::<Models>().mmbs.clone();
+    let lastfm_mmbs = mmbs_list.read(cx).0.get(lastfm::MMBS_KEY).cloned();
+
+    mmbs_list.update(cx, |m, _| {
         m.0.remove(lastfm::MMBS_KEY);
     });
+
+    if let Some(mmbs) = lastfm_mmbs {
+        crate::RUNTIME.spawn(async move {
+            mmbs.lock().await.set_enabled(false).await;
+        });
+    }
 
     let path = paths::data_dir().join("lastfm.json");
     if let Err(err) = std::fs::remove_file(&path) {
