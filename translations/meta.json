@@ -1099,7 +1099,7 @@
   },
   "SERVICES_LASTFM_CONFIRM": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:82",
+    "definedIn": "src/ui/settings/lastfm.rs:85",
     "plural": false,
     "description": null
   },
@@ -1171,7 +1171,7 @@
   },
   "SERVICES_LISTENBRAINZ_TOKEN_REQUIRED": {
     "context": "listenbrainz.rs",
-    "definedIn": "src/ui/settings/listenbrainz.rs:96",
+    "definedIn": "src/ui/settings/listenbrainz.rs:100",
     "plural": false,
     "description": null
   },
@@ -1255,13 +1255,13 @@
   },
   "SIGN_IN": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:72",
+    "definedIn": "src/ui/settings/lastfm.rs:75",
     "plural": false,
     "description": null
   },
   "SIGN_OUT": {
     "context": "lastfm.rs",
-    "definedIn": "src/ui/settings/lastfm.rs:94",
+    "definedIn": "src/ui/settings/lastfm.rs:97",
     "plural": false,
     "description": null
   },

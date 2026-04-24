@@ -48,11 +48,14 @@ pub fn render_settings_row(
     token_input: Entity<Textbox>,
     text_secondary: Rgba,
 ) -> impl IntoElement {
-    let row = div().flex().w_full().child(
+    let row = div().flex().w_full().gap(px(8.0)).child(
         div()
             .flex()
             .flex_col()
             .flex_grow()
+            .flex_shrink()
+            .min_w(px(0.0))
+            .overflow_hidden()
             .gap(px(2.0))
             .child(div().text_sm().child(title()))
             .child(
@@ -66,13 +69,14 @@ pub fn render_settings_row(
     match listenbrainz {
         ListenBrainzState::Disconnected { .. } => row.child(
             div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(div().w(px(280.0)).child(token_input)),
+                .my_auto()
+                .w(px(280.0))
+                .max_w(px(280.0))
+                .flex_shrink()
+                .child(token_input),
         ),
         ListenBrainzState::Connected(_) => row.child(
-            div().my_auto().child(
+            div().my_auto().flex_shrink_0().child(
                 button()
                     .id("services-listenbrainz-sign-out")
                     .intent(ButtonIntent::Secondary)

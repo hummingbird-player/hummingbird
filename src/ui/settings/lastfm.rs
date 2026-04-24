@@ -49,11 +49,14 @@ pub fn render_settings_row(
     state: Entity<LastFMState>,
     text_secondary: Rgba,
 ) -> impl IntoElement {
-    let row = div().flex().w_full().child(
+    let row = div().flex().w_full().gap(px(8.0)).child(
         div()
             .flex()
             .flex_col()
             .flex_grow()
+            .flex_shrink()
+            .min_w(px(0.0))
+            .overflow_hidden()
             .gap(px(2.0))
             .child(div().text_sm().child(title()))
             .child(
@@ -66,7 +69,7 @@ pub fn render_settings_row(
 
     match lastfm {
         LastFMState::Disconnected { .. } => row.child(
-            div().my_auto().child(
+            div().my_auto().flex_shrink_0().child(
                 button()
                     .id("services-lastfm-sign-in")
                     .child(tr!("SIGN_IN", "Sign in"))
@@ -76,7 +79,7 @@ pub fn render_settings_row(
         LastFMState::AwaitingFinalization(token) => {
             let token = token.clone();
             row.child(
-                div().my_auto().child(
+                div().my_auto().flex_shrink_0().child(
                     button()
                         .id("services-lastfm-confirm")
                         .child(tr!("SERVICES_LASTFM_CONFIRM", "Confirm sign in"))
@@ -87,7 +90,7 @@ pub fn render_settings_row(
             )
         }
         LastFMState::Connected(_) => row.child(
-            div().my_auto().child(
+            div().my_auto().flex_shrink_0().child(
                 button()
                     .id("services-lastfm-sign-out")
                     .intent(ButtonIntent::Secondary)
