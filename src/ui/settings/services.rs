@@ -1,15 +1,18 @@
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
+    Window, div, px,
 };
 
 use crate::{
-    services::mmb::lastfm::{LastFMState, is_available},
+    services::mmb::{lastfm, lastfm::LastFMState, listenbrainz::ListenBrainzState},
     settings::{Settings, SettingsGlobal, save_settings},
     ui::{
-        components::{checkbox::checkbox, label::label, section_header::section_header},
+        components::{
+            checkbox::checkbox, label::label, section_header::section_header, textbox::Textbox,
+        },
         models::Models,
-        settings::lastfm as lastfm_ui,
+        settings::{lastfm as lastfm_ui, listenbrainz as listenbrainz_ui},
         theme::Theme,
     },
 };
@@ -17,6 +20,8 @@ use crate::{
 pub struct ServicesSettings {
     settings: Entity<Settings>,
     lastfm: Entity<LastFMState>,
+    listenbrainz: Entity<ListenBrainzState>,
+    listenbrainz_token: Entity<Textbox>,
 }
 
 impl ServicesSettings {
@@ -24,11 +29,39 @@ impl ServicesSettings {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
             let lastfm = cx.global::<Models>().lastfm.clone();
+            let listenbrainz = cx.global::<Models>().listenbrainz.clone();
+            let submit_listenbrainz = listenbrainz.clone();
+            let listenbrainz_token =
+                Textbox::new_with_value_submit(cx, StyleRefinement::default(), move |token, cx| {
+                    listenbrainz_ui::connect_listenbrainz_token(
+                        cx,
+                        submit_listenbrainz.clone(),
+                        token,
+                    );
+                });
 
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
             cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
 
-            Self { settings, lastfm }
+            let token_for_reset = listenbrainz_token.clone();
+            cx.observe(&listenbrainz, move |_, listenbrainz, cx| {
+                if matches!(
+                    listenbrainz.read(cx),
+                    ListenBrainzState::Connected(_)
+                        | ListenBrainzState::Disconnected { error: None }
+                ) {
+                    token_for_reset.update(cx, |this, cx| this.reset(cx));
+                }
+                cx.notify();
+            })
+            .detach();
+
+            Self {
+                settings,
+                lastfm,
+                listenbrainz,
+                listenbrainz_token,
+            }
         })
     }
 
@@ -50,6 +83,7 @@ impl Render for ServicesSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let services = self.settings.read(cx).services.clone();
         let lastfm = self.lastfm.read(cx).clone();
+        let listenbrainz = self.listenbrainz.read(cx).clone();
 
         let mut body = div()
             .flex()
@@ -57,7 +91,7 @@ impl Render for ServicesSettings {
             .gap(px(12.0))
             .child(section_header(tr!("SERVICES")));
 
-        if is_available() {
+        if lastfm::is_available() {
             body = body.child(lastfm_ui::render_settings_row(
                 &lastfm,
                 self.lastfm.clone(),
@@ -88,6 +122,38 @@ impl Render for ServicesSettings {
                     )),
                 );
             }
+        }
+
+        body = body.child(listenbrainz_ui::render_settings_row(
+            &listenbrainz,
+            self.listenbrainz.clone(),
+            self.listenbrainz_token.clone(),
+            cx.global::<Theme>().text_secondary,
+        ));
+
+        if matches!(listenbrainz, ListenBrainzState::Connected(_)) {
+            body = body.child(
+                label(
+                    "services-listenbrainz-enabled",
+                    tr!("SERVICES_LISTENBRAINZ_ENABLED", "Scrobble to ListenBrainz"),
+                )
+                .subtext(tr!(
+                    "SERVICES_LISTENBRAINZ_ENABLED_SUBTEXT",
+                    "Turn off to pause scrobbling without signing out."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let enabled = this.settings.read(cx).services.listenbrainz_enabled;
+                    let settings = this.settings.clone();
+                    let listenbrainz = this.listenbrainz.clone();
+                    listenbrainz_ui::toggle_listenbrainz(cx, enabled, settings, listenbrainz);
+                }))
+                .child(checkbox(
+                    "services-listenbrainz-enabled-check",
+                    services.listenbrainz_enabled,
+                )),
+            );
         }
 
         body.child(

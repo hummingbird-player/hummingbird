@@ -5,6 +5,7 @@ use crate::{
     services::mmb::{
         discord::DiscordRpcStatus,
         lastfm::{LastFMState, is_available},
+        listenbrainz::ListenBrainzState,
     },
     settings::{Settings, SettingsGlobal, save_settings},
     ui::{
@@ -16,7 +17,10 @@ use crate::{
             tooltip::build_tooltip,
         },
         models::Models,
-        settings::{SettingsSectionKind, lastfm as lastfm_ui, open_settings_window_with_section},
+        settings::{
+            SettingsSectionKind, lastfm as lastfm_ui, listenbrainz as listenbrainz_ui,
+            open_settings_window_with_section,
+        },
         theme::Theme,
     },
 };
@@ -24,6 +28,7 @@ use crate::{
 pub struct ServicesIndicator {
     settings: Entity<Settings>,
     lastfm: Entity<LastFMState>,
+    listenbrainz: Entity<ListenBrainzState>,
     discord_rpc: Entity<DiscordRpcStatus>,
     show_popover: bool,
 }
@@ -33,15 +38,18 @@ impl ServicesIndicator {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
             let lastfm = cx.global::<Models>().lastfm.clone();
+            let listenbrainz = cx.global::<Models>().listenbrainz.clone();
             let discord_rpc = cx.global::<Models>().discord_rpc.clone();
 
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
             cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
+            cx.observe(&listenbrainz, |_, _, cx| cx.notify()).detach();
             cx.observe(&discord_rpc, |_, _, cx| cx.notify()).detach();
 
             Self {
                 settings,
                 lastfm,
+                listenbrainz,
                 discord_rpc,
                 show_popover: false,
             }
@@ -57,6 +65,7 @@ impl ServicesIndicator {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ServiceKind {
     LastFm,
+    ListenBrainz,
     DiscordRpc,
 }
 
@@ -64,6 +73,7 @@ impl ServiceKind {
     fn name(self) -> SharedString {
         match self {
             Self::LastFm => lastfm_ui::title(),
+            Self::ListenBrainz => listenbrainz_ui::title(),
             Self::DiscordRpc => tr!("SERVICES_DISCORD_RPC_TITLE").into(),
         }
     }
@@ -71,6 +81,7 @@ impl ServiceKind {
     fn row_id(self) -> &'static str {
         match self {
             Self::LastFm => "services-toggle-lastfm",
+            Self::ListenBrainz => "services-toggle-listenbrainz",
             Self::DiscordRpc => "services-toggle-discord",
         }
     }
@@ -78,6 +89,7 @@ impl ServiceKind {
     fn button_id(self) -> &'static str {
         match self {
             Self::LastFm => "services-toggle-lastfm-btn",
+            Self::ListenBrainz => "services-toggle-listenbrainz-btn",
             Self::DiscordRpc => "services-toggle-discord-btn",
         }
     }
@@ -107,6 +119,7 @@ struct ServiceEntry {
 fn collect_services(
     settings: &Settings,
     lastfm_state: &LastFMState,
+    listenbrainz_state: &ListenBrainzState,
     discord_rpc: &DiscordRpcStatus,
     lastfm_available: bool,
 ) -> Vec<ServiceEntry> {
@@ -127,6 +140,15 @@ fn collect_services(
                 error,
             });
         }
+    }
+
+    if matches!(listenbrainz_state, ListenBrainzState::Connected(_)) {
+        services.push(ServiceEntry {
+            kind: ServiceKind::ListenBrainz,
+            status: ServiceStatus::Connected,
+            enabled: settings.services.listenbrainz_enabled,
+            error: None,
+        });
     }
 
     let (discord_status, discord_error) = match discord_rpc {
@@ -172,10 +194,14 @@ fn toggle_service(
     enabled: bool,
     settings: Entity<Settings>,
     lastfm: Entity<LastFMState>,
+    listenbrainz: Entity<ListenBrainzState>,
 ) {
     match kind {
         ServiceKind::LastFm => {
             lastfm_ui::toggle_lastfm(cx, enabled, settings, lastfm);
+        }
+        ServiceKind::ListenBrainz => {
+            listenbrainz_ui::toggle_listenbrainz(cx, enabled, settings, listenbrainz);
         }
         ServiceKind::DiscordRpc => {
             settings.update(cx, |settings, cx| {
@@ -190,10 +216,12 @@ fn toggle_service(
 impl Render for ServicesIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lastfm = self.lastfm.read(cx).clone();
+        let listenbrainz = self.listenbrainz.read(cx).clone();
         let discord_rpc = self.discord_rpc.read(cx).clone();
         let services = collect_services(
             self.settings.read(cx),
             &lastfm,
+            &listenbrainz,
             &discord_rpc,
             is_available(),
         );
@@ -237,6 +265,7 @@ impl Render for ServicesIndicator {
                     for entry in &services {
                         let settings = self.settings.clone();
                         let lastfm = self.lastfm.clone();
+                        let listenbrainz = self.listenbrainz.clone();
                         let status = status_dot(entry);
                         let kind = entry.kind;
                         let enabled = entry.enabled;
@@ -263,7 +292,14 @@ impl Render for ServicesIndicator {
                                     .border_color(theme.button_secondary_border_active)
                             })
                             .on_click(move |_, _, cx| {
-                                toggle_service(cx, kind, enabled, settings.clone(), lastfm.clone());
+                                toggle_service(
+                                    cx,
+                                    kind,
+                                    enabled,
+                                    settings.clone(),
+                                    lastfm.clone(),
+                                    listenbrainz.clone(),
+                                );
                             })
                             .child(icon(POWER).size(px(16.0)));
 
@@ -321,6 +357,7 @@ mod tests {
         services::mmb::{
             discord::DiscordRpcStatus,
             lastfm::{LastFMState, types::Session},
+            listenbrainz::{ListenBrainzState, types::Session as ListenBrainzSession},
         },
         settings::Settings,
         ui::header::services::{
@@ -329,14 +366,6 @@ mod tests {
     };
 
     use super::{WORLD, WORLD_CHECK, WORLD_X};
-
-    fn connected_lastfm() -> LastFMState {
-        LastFMState::Connected(Session {
-            name: "huh".to_string(),
-            key: "wuh".to_string(),
-            subscriber: 0,
-        })
-    }
 
     fn entry(kind: ServiceKind, status: ServiceStatus, enabled: bool) -> ServiceEntry {
         ServiceEntry {
@@ -347,8 +376,27 @@ mod tests {
         }
     }
 
-    fn disconnected() -> LastFMState {
+    fn connected_lastfm() -> LastFMState {
+        LastFMState::Connected(Session {
+            name: "huh".to_string(),
+            key: "wuh".to_string(),
+            subscriber: 0,
+        })
+    }
+
+    fn disconnected_lastfm() -> LastFMState {
         LastFMState::Disconnected { error: None }
+    }
+
+    fn connected_listenbrainz() -> ListenBrainzState {
+        ListenBrainzState::Connected(ListenBrainzSession {
+            name: "huh".to_string(),
+            token: "wuh".to_string(),
+        })
+    }
+
+    fn disconnected_listenbrainz() -> ListenBrainzState {
+        ListenBrainzState::Disconnected { error: None }
     }
 
     fn discord_disconnected() -> DiscordRpcStatus {
@@ -360,10 +408,12 @@ mod tests {
         let mut settings = Settings::default();
         settings.services.discord_rpc_enabled = false;
         settings.services.lastfm_enabled = false;
+        settings.services.listenbrainz_enabled = false;
 
         let services = collect_services(
             &settings,
-            &disconnected(),
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Disabled,
             true,
         );
@@ -384,7 +434,8 @@ mod tests {
         let settings = Settings::default();
         let services = collect_services(
             &settings,
-            &disconnected(),
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Connected,
             true,
         );
@@ -394,7 +445,7 @@ mod tests {
             vec![entry(
                 ServiceKind::DiscordRpc,
                 ServiceStatus::Connected,
-                true
+                true,
             )]
         );
         assert_eq!(indicator_icon(&services), WORLD_CHECK);
@@ -403,14 +454,20 @@ mod tests {
     #[test]
     fn collect_services_marks_disconnected_discord_as_unhealthy_when_enabled() {
         let settings = Settings::default();
-        let services = collect_services(&settings, &disconnected(), &discord_disconnected(), true);
+        let services = collect_services(
+            &settings,
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
+            &discord_disconnected(),
+            true,
+        );
 
         assert_eq!(
             services,
             vec![entry(
                 ServiceKind::DiscordRpc,
                 ServiceStatus::Disconnected,
-                true
+                true,
             )]
         );
         assert_eq!(indicator_icon(&services), WORLD_X);
@@ -424,6 +481,7 @@ mod tests {
         let services = collect_services(
             &settings,
             &LastFMState::AwaitingFinalization("token".to_string()),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Disabled,
             true,
         );
@@ -446,6 +504,7 @@ mod tests {
         let services = collect_services(
             &settings,
             &connected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Disabled,
             false,
         );
@@ -468,7 +527,8 @@ mod tests {
 
         let services = collect_services(
             &settings,
-            &disconnected(),
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Disabled,
             true,
         );
@@ -490,6 +550,7 @@ mod tests {
         let services = collect_services(
             &settings,
             &connected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Connected,
             true,
         );
@@ -505,11 +566,59 @@ mod tests {
     }
 
     #[test]
+    fn collect_services_hides_disconnected_listenbrainz() {
+        let mut settings = Settings::default();
+        settings.services.discord_rpc_enabled = false;
+
+        let services = collect_services(
+            &settings,
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
+            &DiscordRpcStatus::Disabled,
+            true,
+        );
+
+        assert_eq!(
+            services,
+            vec![entry(
+                ServiceKind::DiscordRpc,
+                ServiceStatus::Disconnected,
+                false,
+            )]
+        );
+        assert_eq!(indicator_icon(&services), WORLD);
+    }
+
+    #[test]
+    fn collect_services_marks_connected_listenbrainz_as_healthy() {
+        let mut settings = Settings::default();
+        settings.services.discord_rpc_enabled = false;
+
+        let services = collect_services(
+            &settings,
+            &disconnected_lastfm(),
+            &connected_listenbrainz(),
+            &DiscordRpcStatus::Disabled,
+            true,
+        );
+
+        assert_eq!(
+            services,
+            vec![
+                entry(ServiceKind::ListenBrainz, ServiceStatus::Connected, true),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Disconnected, false),
+            ]
+        );
+        assert_eq!(indicator_icon(&services), WORLD_CHECK);
+    }
+
+    #[test]
     fn collect_services_propagates_discord_error_to_entry() {
         let settings = Settings::default();
         let services = collect_services(
             &settings,
-            &disconnected(),
+            &disconnected_lastfm(),
+            &disconnected_listenbrainz(),
             &DiscordRpcStatus::Disconnected {
                 error: Some("pipe closed".into()),
             },

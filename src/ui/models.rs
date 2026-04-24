@@ -6,7 +6,13 @@ use std::{
 
 use crate::{
     paths,
-    services::mmb::discord::{Discord, DiscordRpcStatus},
+    services::mmb::{
+        discord::{Discord, DiscordRpcStatus},
+        listenbrainz::{
+            self, ListenBrainz, ListenBrainzState, client::ListenBrainzClient,
+            types::Session as ListenBrainzSession,
+        },
+    },
     ui::library::NavigationHistory,
 };
 use gpui::{
@@ -52,6 +58,7 @@ pub struct ImageEvent(pub Box<[u8]>);
 impl EventEmitter<ImageEvent> for Option<Arc<RenderImage>> {}
 
 impl EventEmitter<Session> for LastFMState {}
+impl EventEmitter<ListenBrainzSession> for ListenBrainzState {}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct WindowInformation {
@@ -74,6 +81,7 @@ pub struct Models {
     pub settings_health: Entity<SettingsHealth>,
     pub mmbs: Entity<MMBSList>,
     pub lastfm: Entity<LastFMState>,
+    pub listenbrainz: Entity<ListenBrainzState>,
     pub discord_rpc: Entity<DiscordRpcStatus>,
     pub switcher_model: Entity<NavigationHistory>,
     pub show_about: Entity<bool>,
@@ -181,6 +189,14 @@ fn lastfm_enabled(cx: &App) -> bool {
         .lastfm_enabled
 }
 
+fn listenbrainz_enabled(cx: &App) -> bool {
+    cx.global::<SettingsGlobal>()
+        .model
+        .read(cx)
+        .services
+        .listenbrainz_enabled
+}
+
 fn sync_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
     let enabled = discord_rpc_enabled(cx);
     debug!(enabled, "syncing discord MMBS state");
@@ -269,6 +285,32 @@ pub fn build_models(
         }
     });
 
+    let listenbrainz: Entity<ListenBrainzState> = cx.new(|cx| {
+        let directory = paths::data_dir();
+        let path = directory.join("listenbrainz.json");
+
+        if let Ok(file) = File::open(path) {
+            let reader = std::io::BufReader::new(file);
+
+            match serde_json::from_reader::<std::io::BufReader<File>, ListenBrainzSession>(reader) {
+                Ok(session) => {
+                    let enabled = listenbrainz_enabled(cx);
+                    create_listenbrainz_mmbs(cx, &mmbs, session.token.clone(), enabled);
+                    ListenBrainzState::Connected(session)
+                }
+                Err(err) => {
+                    error!(?err, "The ListenBrainz session information is stored on disk but the file could not be opened.");
+                    warn!("You will not be logged in to ListenBrainz.");
+                    ListenBrainzState::Disconnected {
+                        error: Some(format!("{err}").into()),
+                    }
+                }
+            }
+        } else {
+            ListenBrainzState::Disconnected { error: None }
+        }
+    });
+
     let initial_discord_status = if discord_rpc_enabled(cx) {
         DiscordRpcStatus::Disconnected { error: None }
     } else {
@@ -301,9 +343,11 @@ pub fn build_models(
     let settings_model = cx.global::<SettingsGlobal>().model.clone();
     let discord_mmbs = mmbs.clone();
     let lastfm_sync_mmbs = mmbs.clone();
+    let listenbrainz_sync_mmbs = mmbs.clone();
     cx.observe(&settings_model, move |_, cx| {
         sync_discord_mmbs(cx, &discord_mmbs);
         sync_lastfm_mmbs(cx, &lastfm_sync_mmbs, lastfm_enabled(cx));
+        sync_listenbrainz_mmbs(cx, &listenbrainz_sync_mmbs, listenbrainz_enabled(cx));
     })
     .detach();
 
@@ -333,6 +377,37 @@ pub fn build_models(
             }
         } else {
             error!("Tried to write lastfm settings but could not open file!");
+            error!("You will have to sign in again when the application is next started.");
+        }
+    })
+    .detach();
+
+    let listenbrainz_mmbs = mmbs.clone();
+    cx.subscribe(&listenbrainz, move |m, ev, cx| {
+        let session_clone = ev.clone();
+        let enabled = listenbrainz_enabled(cx);
+        create_listenbrainz_mmbs(cx, &listenbrainz_mmbs, session_clone.token.clone(), enabled);
+        m.update(cx, |m, cx| {
+            *m = ListenBrainzState::Connected(session_clone);
+            cx.notify();
+        });
+
+        let directory = paths::data_dir();
+        let path = directory.join("listenbrainz.json");
+        let file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(path);
+
+        if let Ok(file) = file {
+            let writer = std::io::BufWriter::new(file);
+            if serde_json::to_writer_pretty(writer, ev).is_err() {
+                error!("Tried to write ListenBrainz settings but could not write to file!");
+                error!("You will have to sign in again when the application is next started.");
+            }
+        } else {
+            error!("Tried to write ListenBrainz settings but could not open file!");
             error!("You will have to sign in again when the application is next started.");
         }
     })
@@ -436,6 +511,7 @@ pub fn build_models(
         settings_health,
         mmbs,
         lastfm,
+        listenbrainz,
         discord_rpc,
         switcher_model,
         show_about,
@@ -499,6 +575,34 @@ pub fn sync_lastfm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: boo
     crate::RUNTIME.spawn(async move {
         let mut lastfm = lastfm.lock().await;
         lastfm.set_enabled(enabled).await;
+    });
+}
+
+pub fn create_listenbrainz_mmbs(
+    cx: &mut App,
+    mmbs_list: &Entity<MMBSList>,
+    token: String,
+    enabled: bool,
+) {
+    let client = ListenBrainzClient::new(token);
+    let mmbs = ListenBrainz::new(client, enabled);
+    mmbs_list.update(cx, |m, _| {
+        m.0.insert(
+            listenbrainz::MMBS_KEY.to_string(),
+            Arc::new(Mutex::new(mmbs)),
+        );
+    });
+}
+
+pub fn sync_listenbrainz_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: bool) {
+    let listenbrainz = mmbs_list.read(cx).0.get(listenbrainz::MMBS_KEY).cloned();
+    let Some(listenbrainz) = listenbrainz else {
+        return;
+    };
+
+    crate::RUNTIME.spawn(async move {
+        let mut listenbrainz = listenbrainz.lock().await;
+        listenbrainz.set_enabled(enabled).await;
     });
 }
 

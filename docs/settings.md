@@ -90,3 +90,15 @@ The current Last.FM session is stored in the following places:
 Deleting this file will disconnect your Last.FM account. This file should not
 be modified manually - it will be generated when you connect your Last.FM
 account.
+
+### ListenBrainz
+Connect your ListenBrainz account from **Settings > Services > ListenBrainz**.
+You can find your user token at <https://listenbrainz.org/settings/>.
+
+The current ListenBrainz session is stored in the following places:
+
+| Platform | Location                                                                  |
+|----------|---------------------------------------------------------------------------|
+| Linux    | `~/.local/share/hummingbird/listenbrainz.json`                            |
+| macOS    | `~/Library/Application Support/org.mailliw.hummingbird/listenbrainz.json` |
+| Windows  | `%appdata%\mailliw\hummingbird\data\listenbrainz.json`                    |

@@ -2,6 +2,7 @@ pub mod corrupt_settings_dialog;
 mod interface;
 pub mod lastfm;
 mod library;
+pub mod listenbrainz;
 mod playback;
 mod services;
 #[cfg(feature = "update")]

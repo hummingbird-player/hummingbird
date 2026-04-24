@@ -12,7 +12,7 @@ design standard.
 - Linux, macOS and Windows support
 - SQLite-backed library
 - Theming with hot reload
-- Scrobbling (last.fm) support
+- Scrobbling (Last.fm and ListenBrainz) support
 - Fuzzy-find search
 - ReplayGain
 - Desktop integration

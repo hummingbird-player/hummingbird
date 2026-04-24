@@ -1,5 +1,6 @@
 pub mod discord;
 pub mod lastfm;
+pub mod listenbrainz;
 
 use std::{path::PathBuf, sync::Arc};
 
