@@ -31,14 +31,6 @@ impl LastFMClient {
         Some(LastFMClient::new(key.to_owned(), secret.to_owned()))
     }
 
-    pub fn _set_endpoint<U: TryInto<url::Url>>(
-        &mut self,
-        endpoint: U,
-    ) -> Result<&mut Self, U::Error> {
-        self.endpoint = endpoint.try_into()?;
-        Ok(self)
-    }
-
     pub fn set_session(&mut self, session: String) {
         self.auth_session = Some(session);
     }
