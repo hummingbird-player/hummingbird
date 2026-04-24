@@ -1,6 +1,6 @@
 use std::sync::{Arc, atomic::Ordering};
 
-use cntp_i18n::tr;
+use cntp_i18n::{I18nString, tr};
 use gpui::{
     Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Global, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, actions, div, px,
@@ -26,27 +26,83 @@ use crate::ui::{
 
 actions!(hummingbird, [OpenPalette]);
 
-pub struct Command {
-    category: Option<SharedString>,
+#[derive(Clone, Copy)]
+pub enum CommandCategory {
+    Hummingbird,
+    Playback,
+    Queue,
+    Playlist,
+    Scan,
+}
+
+impl CommandCategory {
+    fn label(self) -> I18nString {
+        match self {
+            Self::Hummingbird => tr!("ACTION_GROUP_HUMMINGBIRD", "Hummingbird"),
+            Self::Playback => tr!("ACTION_GROUP_PLAYBACK", "Playback"),
+            Self::Queue => tr!("ACTION_GROUP_QUEUE", "Queue"),
+            Self::Playlist => tr!("ACTION_GROUP_PLAYLIST", "Playlist"),
+            Self::Scan => tr!("ACTION_GROUP_SCAN", "Scan"),
+        }
+    }
+
+    fn sort_key(self) -> usize {
+        match self {
+            Self::Hummingbird => 0,
+            Self::Playback => 1,
+            Self::Queue => 2,
+            Self::Playlist => 3,
+            Self::Scan => 4,
+        }
+    }
+}
+
+pub struct CommandSpec {
+    id: (&'static str, i64),
+    category: Option<CommandCategory>,
     name: SharedString,
     action: Box<dyn Action + Sync>,
     focus_handle: Option<FocusHandle>,
 }
 
-impl Command {
+impl CommandSpec {
     pub fn new(
-        category: Option<impl Into<SharedString>>,
+        id: (&'static str, i64),
+        category: Option<CommandCategory>,
         name: impl Into<SharedString>,
         action: impl Action + Sync,
-        focus_handle: Option<FocusHandle>,
-    ) -> Arc<Self> {
-        Arc::new(Command {
-            category: category.map(Into::into),
+    ) -> Self {
+        Self {
+            id,
+            category,
             name: name.into(),
             action: Box::new(action),
-            focus_handle,
-        })
+            focus_handle: None,
+        }
     }
+
+    pub fn focus_handle(mut self, focus_handle: FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle);
+        self
+    }
+
+    fn build(self) -> ((&'static str, i64), Arc<Command>) {
+        let id = self.id;
+        let command = Arc::new(Command {
+            category: self.category,
+            name: self.name,
+            action: self.action,
+            focus_handle: self.focus_handle,
+        });
+        (id, command)
+    }
+}
+
+pub struct Command {
+    category: Option<CommandCategory>,
+    name: SharedString,
+    action: Box<dyn Action + Sync>,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl PartialEq for Command {
@@ -67,7 +123,9 @@ impl PaletteItem for Command {
         &self,
         _: &mut gpui::App,
     ) -> Option<super::components::palette::FinderItemLeft> {
-        self.category.clone().map(FinderItemLeft::Text)
+        self.category
+            .map(CommandCategory::label)
+            .map(|label| FinderItemLeft::Text(label.into()))
     }
 
     fn middle_content(&self, _: &mut gpui::App) -> SharedString {
@@ -89,6 +147,113 @@ impl PaletteItem for Command {
                     .into()
             })
     }
+}
+
+fn sorted_commands(items: &FxHashMap<(&'static str, i64), Arc<Command>>) -> Vec<Arc<Command>> {
+    let mut commands: Vec<_> = items.values().cloned().collect();
+    commands.sort_by(|a, b| {
+        let a_category = a
+            .category
+            .map(CommandCategory::sort_key)
+            .unwrap_or(usize::MAX);
+        let b_category = b
+            .category
+            .map(CommandCategory::sort_key)
+            .unwrap_or(usize::MAX);
+
+        a_category
+            .cmp(&b_category)
+            .then_with(|| a.name.as_ref().cmp(b.name.as_ref()))
+            .then_with(|| a.action.name().cmp(b.action.name()))
+    });
+    commands
+}
+
+fn builtin_commands() -> Vec<CommandSpec> {
+    vec![
+        CommandSpec::new(
+            ("hummingbird::quit", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_QUIT", "Quit"),
+            Quit,
+        ),
+        CommandSpec::new(
+            ("hummingbird::about", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_ABOUT", "About"),
+            About,
+        ),
+        CommandSpec::new(
+            ("hummingbird::search", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_SEARCH", "Search"),
+            Search,
+        ),
+        CommandSpec::new(
+            ("hummingbird::settings", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_SETTINGS", "Settings"),
+            Settings,
+        ),
+        #[cfg(feature = "update")]
+        CommandSpec::new(
+            ("hummingbird::check_for_updates", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_CHECK_FOR_UPDATES", "Check for Updates"),
+            CheckForUpdates,
+        ),
+        CommandSpec::new(
+            ("hummingbird::open_log", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!("ACTION_OPEN_LOG", "Open Log"),
+            OpenLog,
+        ),
+        CommandSpec::new(
+            ("hummingbird::copy_troubleshooting_info", 0),
+            Some(CommandCategory::Hummingbird),
+            tr!(
+                "ACTION_COPY_TROUBLESHOOTING_INFO",
+                "Copy Troubleshooting Info"
+            ),
+            CopyTroubleshootingInfo,
+        ),
+        CommandSpec::new(
+            ("player::playpause", 0),
+            Some(CommandCategory::Playback),
+            tr!("ACTION_PLAYPAUSE", "Pause/Resume Current Track"),
+            PlayPause,
+        ),
+        CommandSpec::new(
+            ("player::next", 0),
+            Some(CommandCategory::Playback),
+            tr!("ACTION_NEXT", "Next Track"),
+            Next,
+        ),
+        CommandSpec::new(
+            ("player::previous", 0),
+            Some(CommandCategory::Playback),
+            tr!("ACTION_PREVIOUS", "Previous Track"),
+            Previous,
+        ),
+        CommandSpec::new(
+            ("shuffle::all", 0),
+            Some(CommandCategory::Playback),
+            tr!("ACTION_SHUFFLE_ALL", "Shuffle All Tracks"),
+            ShuffleAll,
+        ),
+        CommandSpec::new(
+            ("scan::forcescan", 0),
+            Some(CommandCategory::Scan),
+            tr!("ACTION_FORCESCAN", "Rescan Entire Library"),
+            ForceScan,
+        ),
+        CommandSpec::new(
+            ("undo::queue", 0),
+            Some(CommandCategory::Queue),
+            tr!("ACTION_UNDO_QUEUE", "Undo"),
+            Undo,
+        ),
+    ]
 }
 
 type MatcherFunc = Box<dyn Fn(&Arc<Command>, &mut App) -> Utf32String + 'static>;
@@ -139,150 +304,22 @@ impl CommandPalette {
                     CommandEvent::RemoveCommand(id) => this.items.remove(id),
                 };
 
-                let vec: Vec<_> = this.items.values().cloned().collect();
+                let commands = sorted_commands(&this.items);
 
                 this.palette.update(cx, |_, cx| {
-                    cx.emit(vec);
+                    cx.emit(commands);
                 });
 
                 cx.notify();
             })
             .detach();
 
-            // add basic items
-            items.insert(
-                ("hummingbird::quit", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD", "Hummingbird")),
-                    tr!("ACTION_QUIT", "Quit"),
-                    Quit,
-                    None,
-                ),
-            );
-            items.insert(
-                ("hummingbird::about", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!("ACTION_ABOUT", "About"),
-                    About,
-                    None,
-                ),
-            );
-            items.insert(
-                ("hummingbird::search", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!("ACTION_SEARCH", "Search"),
-                    Search,
-                    None,
-                ),
-            );
-            items.insert(
-                ("hummingbird::settings", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!("ACTION_SETTINGS", "Settings"),
-                    Settings,
-                    None,
-                ),
-            );
-            #[cfg(feature = "update")]
-            items.insert(
-                ("hummingbird::check_for_updates", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!("ACTION_CHECK_FOR_UPDATES", "Check for Updates"),
-                    CheckForUpdates,
-                    None,
-                ),
-            );
-            items.insert(
-                ("hummingbird::open_log", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!("ACTION_OPEN_LOG", "Open Log"),
-                    OpenLog,
-                    None,
-                ),
-            );
-            items.insert(
-                ("hummingbird::copy_troubleshooting_info", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_HUMMINGBIRD")),
-                    tr!(
-                        "ACTION_COPY_TROUBLESHOOTING_INFO",
-                        "Copy Troubleshooting Info"
-                    ),
-                    CopyTroubleshootingInfo,
-                    None,
-                ),
-            );
+            for spec in builtin_commands() {
+                let (id, command) = spec.build();
+                items.insert(id, command);
+            }
 
-            items.insert(
-                ("player::playpause", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYBACK", "Playback")),
-                    tr!("ACTION_PLAYPAUSE", "Pause/Resume Current Track"),
-                    PlayPause,
-                    None,
-                ),
-            );
-            items.insert(
-                ("player::next", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYBACK")),
-                    tr!("ACTION_NEXT", "Next Track"),
-                    Next,
-                    None,
-                ),
-            );
-            items.insert(
-                ("player::previous", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYBACK")),
-                    tr!("ACTION_PREVIOUS", "Previous Track"),
-                    Previous,
-                    None,
-                ),
-            );
-
-            items.insert(
-                ("scan::forcescan", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_SCAN", "Scan")),
-                    tr!("ACTION_FORCESCAN", "Rescan Entire Library"),
-                    ForceScan,
-                    None,
-                ),
-            );
-
-            items.insert(
-                ("shuffle::all", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYBACK")),
-                    tr!("ACTION_SHUFFLE_ALL", "Shuffle All Tracks"),
-                    ShuffleAll,
-                    None,
-                ),
-            );
-
-            items.insert(
-                ("undo::queue", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_QUEUE", "Queue")),
-                    tr!("ACTION_UNDO_QUEUE", "Undo"),
-                    Undo,
-                    None,
-                ),
-            );
-
-            let palette = Palette::new(
-                cx,
-                items.values().cloned().collect(),
-                matcher,
-                on_accept,
-                &show,
-            );
+            let palette = Palette::new(cx, sorted_commands(&items), matcher, on_accept, &show);
 
             let weak_self = cx.weak_entity();
             let show_clone = show.clone();
@@ -350,15 +387,16 @@ enum CommandEvent {
 impl EventEmitter<CommandEvent> for CommandPalette {}
 
 pub trait CommandManager {
-    fn register_command(&mut self, name: (&'static str, i64), command: Arc<Command>);
+    fn register_command(&mut self, spec: CommandSpec);
     fn unregister_command(&mut self, name: (&'static str, i64));
 }
 
 impl CommandManager for App {
-    fn register_command(&mut self, name: (&'static str, i64), command: Arc<Command>) {
+    fn register_command(&mut self, spec: CommandSpec) {
+        let (id, command) = spec.build();
         let commands = self.global::<CommandPaletteHolder>().0.clone();
         commands.update(self, move |_, cx| {
-            cx.emit(CommandEvent::NewCommand(name, command));
+            cx.emit(CommandEvent::NewCommand(id, command));
         })
     }
 

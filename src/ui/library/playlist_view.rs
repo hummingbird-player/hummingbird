@@ -19,7 +19,7 @@ use crate::{
     playback::queue::QueueItemData,
     ui::{
         caching::hummingbird_cache,
-        command_palette::{Command, CommandManager},
+        command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
             button::{ButtonSize, button},
             drag_drop::{
@@ -238,13 +238,13 @@ impl PlaylistView {
             let focus_handle = cx.focus_handle();
 
             cx.register_command(
-                ("playlist::export", playlist_id),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYLIST")),
+                CommandSpec::new(
+                    ("playlist::export", playlist_id),
+                    Some(CommandCategory::Playlist),
                     tr!("EXPORT_PLAYLIST_TO_M3U", "Export Playlist to M3U"),
                     Export,
-                    Some(focus_handle.clone()),
-                ),
+                )
+                .focus_handle(focus_handle.clone()),
             );
 
             cx.on_release(move |_, cx| {

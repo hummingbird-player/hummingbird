@@ -18,7 +18,7 @@ use crate::{
     library::db::LibraryAccess,
     settings::storage::DEFAULT_SPLIT_FRACTION,
     ui::{
-        command_palette::{Command, CommandManager},
+        command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
             resizable::{ResizeEdge, resizable},
             table::table_data::TABLE_MAX_WIDTH,
@@ -485,13 +485,13 @@ impl Library {
             let focus_handle = cx.focus_handle();
 
             cx.register_command(
-                ("playlist::import", 0),
-                Command::new(
-                    Some(tr!("ACTION_GROUP_PLAYLIST", "Playlist")),
+                CommandSpec::new(
+                    ("playlist::import", 0),
+                    Some(CommandCategory::Playlist),
                     tr!("ACTION_IMPORT_PLAYLIST", "Import M3U Playlist"),
                     Import,
-                    Some(focus_handle.clone()),
-                ),
+                )
+                .focus_handle(focus_handle.clone()),
             );
 
             cx.on_release(move |_, cx| {
