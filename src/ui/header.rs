@@ -1,4 +1,3 @@
-pub(crate) mod lastfm;
 mod services;
 
 #[cfg(feature = "update")]

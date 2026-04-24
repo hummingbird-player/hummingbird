@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use client::LastFMClient;
 use tracing::{debug, warn};
+use types::Session;
 
 use crate::{media::metadata::Metadata, playback::thread::PlaybackState};
 
@@ -14,6 +15,17 @@ use super::MediaMetadataBroadcastService;
 
 pub mod client;
 pub mod types;
+
+#[derive(Clone)]
+pub enum LastFMState {
+    Disconnected,
+    AwaitingFinalization(String),
+    Connected(Session),
+}
+
+pub fn is_available() -> bool {
+    LASTFM_CREDS.is_some()
+}
 
 pub static LASTFM_CREDS: LazyLock<Option<(&str, &str)>> = LazyLock::new(|| {
     let key = std::env::var("LASTFM_API_KEY")

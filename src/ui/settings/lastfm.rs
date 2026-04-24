@@ -1,3 +1,5 @@
+use std::{fs::File, io::BufReader};
+
 use cntp_i18n::tr;
 use futures::{FutureExt, TryFutureExt};
 use gpui::{App, Entity, IntoElement, ParentElement, Rgba, SharedString, Styled, div, px};
@@ -5,47 +7,16 @@ use tracing::error;
 
 use crate::{
     paths,
-    services::mmb::lastfm::{LASTFM_CREDS, client::LastFMClient},
+    services::mmb::lastfm::{LASTFM_CREDS, LastFMState, client::LastFMClient, types::Session},
+    settings::{Settings, save_settings},
     ui::{
         components::button::{ButtonIntent, button},
-        models::LastFMState,
+        models::{Models, create_last_fm_mmbs},
     },
 };
 
-use super::services::ServiceStatus;
-
-pub(crate) fn is_available() -> bool {
-    LASTFM_CREDS.is_some()
-}
-
-pub(super) fn active_status(lastfm: &LastFMState) -> Option<ServiceStatus> {
-    match lastfm {
-        LastFMState::Connected(_) => Some(ServiceStatus::Connected),
-        LastFMState::AwaitingFinalization(_) => Some(ServiceStatus::PendingSignIn),
-        LastFMState::Disconnected => None,
-    }
-}
-
-pub(super) fn title() -> SharedString {
-    tr!("SERVICES_LASTFM", "Last.fm").into()
-}
-
-pub(super) fn status_text(status: ServiceStatus, lastfm: &LastFMState) -> SharedString {
-    match status {
-        ServiceStatus::Connected => match lastfm {
-            LastFMState::Connected(session) => tr!(
-                "SERVICES_LASTFM_CONNECTED_AS",
-                "Connected as {{name}}",
-                name = session.name.as_str()
-            )
-            .into(),
-            _ => tr!("CONNECTED", "Connected").into(),
-        },
-        ServiceStatus::Disconnected => tr!("SERVICES_STATUS_NOT_CONNECTED").into(),
-        ServiceStatus::PendingSignIn => {
-            tr!("SERVICES_STATUS_SIGN_IN_PENDING", "Sign-in pending").into()
-        }
-    }
+pub fn title() -> SharedString {
+    tr!("SERVICES_LASTFM", "last.fm").into()
 }
 
 fn settings_description(lastfm: &LastFMState) -> SharedString {
@@ -69,7 +40,7 @@ fn settings_description(lastfm: &LastFMState) -> SharedString {
     }
 }
 
-pub(crate) fn render_settings_row(
+pub fn render_settings_row(
     lastfm: &LastFMState,
     state: Entity<LastFMState>,
     text_secondary: Rgba,
@@ -157,13 +128,13 @@ fn start_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>) {
     .detach();
 }
 
-fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
+pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
     state.update(cx, |lastfm, cx| {
         *lastfm = LastFMState::Disconnected;
         cx.notify();
     });
 
-    let mmbs = cx.global::<crate::ui::models::Models>().mmbs.clone();
+    let mmbs = cx.global::<Models>().mmbs.clone();
     mmbs.update(cx, |m, _| {
         m.0.remove("lastfm");
     });
@@ -202,4 +173,36 @@ fn confirm_lastfm_sign_in(cx: &mut App, state: Entity<LastFMState>, token: Strin
         anyhow::Ok(())
     })
     .detach();
+}
+
+pub fn toggle_lastfm(
+    cx: &mut App,
+    enabled: bool,
+    settings: Entity<Settings>,
+    lastfm: Entity<LastFMState>,
+) {
+    let new_enabled = !enabled;
+    settings.update(cx, |settings, cx| {
+        settings.services.lastfm_enabled = new_enabled;
+        save_settings(cx, settings);
+        cx.notify();
+    });
+
+    if !new_enabled {
+        sign_out_lastfm(cx, lastfm);
+    } else {
+        let directory = crate::paths::data_dir();
+        let path = directory.join("lastfm.json");
+        if let Ok(file) = File::open(&path) {
+            let reader = BufReader::new(file);
+            if let Ok(session) = serde_json::from_reader::<BufReader<File>, Session>(reader) {
+                let mmbs = cx.global::<Models>().mmbs.clone();
+                create_last_fm_mmbs(cx, &mmbs, session.key.clone());
+                lastfm.update(cx, |lastfm, cx| {
+                    *lastfm = LastFMState::Connected(session);
+                    cx.notify();
+                });
+            }
+        }
+    }
 }

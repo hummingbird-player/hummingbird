@@ -134,6 +134,10 @@ pub struct Theme {
     pub callout_text: Rgba,
 
     pub liked_song: Rgba,
+
+    pub status_success: Rgba,
+    pub status_error: Rgba,
+    pub status_disabled: Rgba,
 }
 
 impl Default for Theme {
@@ -258,6 +262,10 @@ impl Default for Theme {
             callout_text: rgb(0xF0EBDE),
 
             liked_song: rgb(0x688CF0),
+
+            status_success: rgb(0x63C58D),
+            status_error: rgb(0xE54D4D),
+            status_disabled: rgb(0x5F5F71),
         }
     }
 }

@@ -30,7 +30,7 @@ use crate::{
     },
     services::mmb::{
         MediaMetadataBroadcastService,
-        lastfm::{LASTFM_CREDS, LastFM, client::LastFMClient, types::Session},
+        lastfm::{LASTFM_CREDS, LastFM, LastFMState, client::LastFMClient, types::Session},
     },
     settings::{
         SettingsGlobal,
@@ -50,13 +50,6 @@ impl EventEmitter<Metadata> for Metadata {}
 pub struct ImageEvent(pub Box<[u8]>);
 
 impl EventEmitter<ImageEvent> for Option<Arc<RenderImage>> {}
-
-#[derive(Clone)]
-pub enum LastFMState {
-    Disconnected,
-    AwaitingFinalization(String),
-    Connected(Session),
-}
 
 impl EventEmitter<Session> for LastFMState {}
 

@@ -7,13 +7,99 @@ use crate::ui::{
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
-#[derive(IntoElement)]
-pub struct MenuItem {
+fn icon_container() -> Div {
+    div()
+        .w(px(18.0))
+        .h(px(18.0))
+        .mr(px(7.0))
+        .pt(px(0.5))
+        .my_auto()
+        .flex()
+        .items_center()
+        .justify_center()
+}
+
+/// Shared base for all menu item variants.
+///
+/// This is intentionally not a usable component. Do not use it directly *ever*. Always use a proper
+/// menu item component - never ever use this.
+struct BaseMenuItem {
     id: ElementId,
-    icon_path: Option<SharedString>,
     name: SharedString,
     on_click: ClickEvHandler,
     disabled: bool,
+}
+
+impl BaseMenuItem {
+    pub fn new(
+        id: impl Into<ElementId>,
+        text: impl Into<SharedString>,
+        func: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: text.into(),
+            on_click: Box::new(func),
+            disabled: false,
+        }
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn render(
+        self,
+        theme: &Theme,
+        icon_slot: impl IntoElement,
+        right_element: Option<AnyElement>,
+    ) -> impl IntoElement {
+        let base = div()
+            .id(self.id)
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .px(px(6.0))
+            .pt(px(5.0))
+            .pb(px(5.0))
+            .line_height(rems(1.25))
+            .min_w_full()
+            .bg(theme.menu_item)
+            .border_1()
+            .text_sm()
+            .font_weight(FontWeight::MEDIUM)
+            .child(icon_slot)
+            .child(
+                div()
+                    .child(self.name)
+                    .flex_1()
+                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
+            )
+            .when_some(right_element, |this, el| {
+                this.child(div().ml(px(12.0)).child(el))
+            });
+
+        if self.disabled {
+            base.cursor_default()
+        } else {
+            base.on_click(self.on_click)
+                .hover(|this| {
+                    this.bg(theme.menu_item_hover)
+                        .border_color(theme.menu_item_border_hover)
+                })
+                .active(|this| {
+                    this.bg(theme.menu_item_active)
+                        .border_color(theme.menu_item_border_active)
+                })
+        }
+    }
+}
+
+#[derive(IntoElement)]
+pub struct MenuItem {
+    base: BaseMenuItem,
+    icon_path: Option<SharedString>,
     never_icon: bool,
 }
 
@@ -25,17 +111,14 @@ impl MenuItem {
         func: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
-            id: id.into(),
+            base: BaseMenuItem::new(id, text, func),
             icon_path: icon.map(|v| v.into()),
-            name: text.into(),
-            on_click: Box::new(func),
-            disabled: false,
             never_icon: false,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.base = self.base.disabled(disabled);
         self
     }
 
@@ -49,74 +132,30 @@ impl RenderOnce for MenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
 
-        let base = div()
-            .id(self.id)
-            .rounded(px(4.0))
-            .flex()
-            .when_else(
-                self.never_icon,
-                |this| this.px(px(8.0)),
-                |this| this.px(px(6.0)),
-            )
-            .pt(px(5.0))
-            .pb(px(5.0))
-            .line_height(rems(1.25))
-            .min_w_full()
-            .bg(theme.menu_item)
-            .border_1()
-            .text_sm()
-            .font_weight(FontWeight::MEDIUM)
-            .when(!self.never_icon, |this| {
+        if self.never_icon {
+            self.base.render(theme, div(), None)
+        } else {
+            let icon = icon_container().when_some(self.icon_path, |this, icon_path| {
                 this.child(
-                    div()
-                        .w(px(18.0))
-                        .h(px(18.0))
-                        .mr(px(7.0))
-                        .pt(px(0.5))
-                        .my_auto()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when_some(self.icon_path, |this, icon_path| {
-                            this.child(icon(icon_path).size(px(18.0)).text_color(
-                                if self.disabled {
-                                    theme.text_disabled
-                                } else {
-                                    theme.text_secondary
-                                },
-                            ))
+                    icon(icon_path)
+                        .size(px(18.0))
+                        .text_color(if self.base.disabled {
+                            theme.text_disabled
+                        } else {
+                            theme.text_secondary
                         }),
                 )
-            })
-            .child(
-                div()
-                    .child(self.name)
-                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
-            );
+            });
 
-        if self.disabled {
-            base.cursor_default()
-        } else {
-            base.on_click(self.on_click)
-                .hover(|this| {
-                    this.bg(theme.menu_item_hover)
-                        .border_color(theme.menu_item_border_hover)
-                })
-                .active(|this| {
-                    this.bg(theme.menu_item_active)
-                        .border_color(theme.menu_item_border_active)
-                })
+            self.base.render(theme, icon, None)
         }
     }
 }
 
 #[derive(IntoElement)]
 pub struct CheckMenuItem {
-    id: ElementId,
+    base: BaseMenuItem,
     checked: bool,
-    name: SharedString,
-    on_click: ClickEvHandler,
-    disabled: bool,
 }
 
 impl CheckMenuItem {
@@ -127,16 +166,13 @@ impl CheckMenuItem {
         func: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
-            id: id.into(),
+            base: BaseMenuItem::new(id, text, func),
             checked,
-            name: text.into(),
-            on_click: Box::new(func),
-            disabled: false,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+        self.base = self.base.disabled(disabled);
         self
     }
 }
@@ -145,7 +181,7 @@ impl RenderOnce for CheckMenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
 
-        let icon_path = if self.disabled {
+        let icon_path = if self.base.disabled {
             Some(LOCK)
         } else if self.checked {
             Some(CHECK)
@@ -153,56 +189,75 @@ impl RenderOnce for CheckMenuItem {
             None
         };
 
-        let base = div()
-            .id(self.id)
-            .rounded(px(4.0))
-            .flex()
-            .px(px(6.0))
-            .pt(px(5.0))
-            .pb(px(5.0))
-            .line_height(rems(1.25))
-            .min_w_full()
-            .bg(theme.menu_item)
-            .border_1()
-            .text_sm()
-            .font_weight(FontWeight::MEDIUM)
-            .child(
-                div()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .mr(px(7.0))
-                    .pt(px(0.5))
-                    .my_auto()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(icon_path, |this, path| {
-                        this.child(icon(path).size(px(18.0)).text_color(if self.disabled {
-                            theme.text_disabled
-                        } else {
-                            theme.text_secondary
-                        }))
-                    }),
-            )
-            .child(
-                div()
-                    .child(self.name)
-                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
-            );
+        let icon = icon_container().when_some(icon_path, |this, path| {
+            this.child(icon(path).size(px(18.0)).text_color(if self.base.disabled {
+                theme.text_disabled
+            } else {
+                theme.text_secondary
+            }))
+        });
 
-        if self.disabled {
-            base.cursor_default()
-        } else {
-            base.on_click(self.on_click)
-                .hover(|this| {
-                    this.bg(theme.menu_item_hover)
-                        .border_color(theme.menu_item_border_hover)
-                })
-                .active(|this| {
-                    this.bg(theme.menu_item_active)
-                        .border_color(theme.menu_item_border_active)
-                })
+        self.base.render(theme, icon, None)
+    }
+}
+
+/// A colored status dot shown in place of an icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusDotKind {
+    Success,
+    Error,
+    Disabled,
+}
+
+impl StatusDotKind {
+    fn color(self, theme: &Theme) -> Rgba {
+        match self {
+            Self::Success => theme.status_success,
+            Self::Error => theme.status_error,
+            Self::Disabled => theme.status_disabled,
         }
+    }
+}
+
+#[derive(IntoElement)]
+pub struct StatusMenuItem {
+    base: BaseMenuItem,
+    status: StatusDotKind,
+    right_element: Option<AnyElement>,
+}
+
+impl StatusMenuItem {
+    pub fn new(
+        id: impl Into<ElementId>,
+        status: StatusDotKind,
+        text: impl Into<SharedString>,
+        func: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            base: BaseMenuItem::new(id, text, func),
+            status,
+            right_element: None,
+        }
+    }
+
+    pub fn right_element(mut self, element: impl IntoElement) -> Self {
+        self.right_element = Some(element.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for StatusMenuItem {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+
+        let dot = div()
+            .mr(px(8.0))
+            .w(px(8.0))
+            .h(px(8.0))
+            .rounded_full()
+            .bg(self.status.color(theme));
+
+        self.base.render(theme, dot, self.right_element)
     }
 }
 
@@ -244,6 +299,16 @@ pub fn menu_check_item(
     CheckMenuItem::new(id, checked, text, func)
 }
 
+/// Creates a status-dot menu item.
+pub fn status_menu_item(
+    id: impl Into<ElementId>,
+    status: StatusDotKind,
+    text: impl Into<SharedString>,
+    func: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> StatusMenuItem {
+    StatusMenuItem::new(id, status, text, func)
+}
+
 /// Creates a menu separator.
 pub fn menu_separator() -> MenuSeparator {
     MenuSeparator
@@ -261,6 +326,12 @@ impl Menu {
     pub fn item(mut self, item: impl IntoElement) -> Self {
         self.items.push(item.into_any_element());
         self
+    }
+}
+
+impl Styled for Menu {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.div.style()
     }
 }
 

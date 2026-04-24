@@ -1,5 +1,6 @@
 pub mod corrupt_settings_dialog;
 mod interface;
+pub mod lastfm;
 mod library;
 mod playback;
 mod services;

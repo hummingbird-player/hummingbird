@@ -24,7 +24,10 @@ use crate::{
         session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
     },
     power::PowerManager,
-    services::controllers::{init_pbc_task, register_pbc_event_handlers},
+    services::{
+        controllers::{init_pbc_task, register_pbc_event_handlers},
+        mmb::lastfm,
+    },
     settings::{
         SettingsGlobal, setup_settings,
         storage::{Storage, StorageData},
@@ -34,7 +37,6 @@ use crate::{
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
         components::dropdown,
-        header::lastfm,
         library::{self, missing_folder_dialog::MissingFolderDialog},
         models::WindowInformation,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,

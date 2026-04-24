@@ -2,24 +2,20 @@ use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    services::mmb::discord::DiscordRpcStatus,
-    settings::{Settings, SettingsGlobal},
+    services::mmb::{discord::DiscordRpcStatus, lastfm::{LastFMState, is_available}},
+    settings::{Settings, SettingsGlobal, save_settings},
     ui::{
         components::{
-            button::button,
-            icons::{WORLD, WORLD_CHECK, WORLD_X},
-            menu::menu_separator,
+            icons::{POWER, WORLD, WORLD_CHECK, WORLD_X, icon},
+            menu::{StatusDotKind, menu, menu_item, menu_separator, status_menu_item},
             nav_button::nav_button,
             popover::{PopoverPosition, popover},
             tooltip::build_tooltip,
         },
-        models::{LastFMState, Models},
-        settings::{SettingsSectionKind, open_settings_window_with_section},
-        theme::Theme,
+        models::Models,
+        settings::{SettingsSectionKind, lastfm as lastfm_ui, open_settings_window_with_section},
     },
 };
-
-use super::lastfm;
 
 pub struct ServicesIndicator {
     settings: Entity<Settings>,
@@ -77,9 +73,10 @@ impl ServiceStatus {
 struct ServiceEntry {
     kind: ServiceKind,
     status: ServiceStatus,
+    enabled: bool,
 }
 
-fn collect_active_services(
+fn collect_services(
     settings: &Settings,
     lastfm_state: &LastFMState,
     discord_rpc: DiscordRpcStatus,
@@ -87,91 +84,92 @@ fn collect_active_services(
 ) -> Vec<ServiceEntry> {
     let mut services = Vec::new();
 
-    if lastfm_available && let Some(status) = lastfm::active_status(lastfm_state) {
+    if lastfm_available {
         services.push(ServiceEntry {
             kind: ServiceKind::LastFm,
-            status,
+            status: match lastfm_state {
+                LastFMState::Connected(_) => ServiceStatus::Connected,
+                LastFMState::AwaitingFinalization(_) => ServiceStatus::PendingSignIn,
+                LastFMState::Disconnected => ServiceStatus::Disconnected,
+            },
+            enabled: settings.services.lastfm_enabled,
         });
     }
 
-    if settings.services.discord_rpc_enabled {
-        services.push(ServiceEntry {
-            kind: ServiceKind::DiscordRpc,
-            status: match discord_rpc {
-                DiscordRpcStatus::Connected => ServiceStatus::Connected,
-                DiscordRpcStatus::Disabled | DiscordRpcStatus::Disconnected => {
-                    ServiceStatus::Disconnected
-                }
-            },
-        });
-    }
+    services.push(ServiceEntry {
+        kind: ServiceKind::DiscordRpc,
+        status: match discord_rpc {
+            DiscordRpcStatus::Connected => ServiceStatus::Connected,
+            DiscordRpcStatus::Disabled | DiscordRpcStatus::Disconnected => {
+                ServiceStatus::Disconnected
+            }
+        },
+        enabled: settings.services.discord_rpc_enabled,
+    });
 
     services
 }
 
 fn indicator_icon(services: &[ServiceEntry]) -> &'static str {
-    if services.is_empty() {
+    let enabled: Vec<_> = services.iter().filter(|s| s.enabled).collect();
+    if enabled.is_empty() {
         WORLD
-    } else if services.iter().all(|service| service.status.is_healthy()) {
+    } else if enabled.iter().all(|service| service.status.is_healthy()) {
         WORLD_CHECK
     } else {
         WORLD_X
     }
 }
 
-fn service_title(service: ServiceEntry) -> SharedString {
-    match service.kind {
-        ServiceKind::LastFm => lastfm::title(),
+fn status_dot(entry: &ServiceEntry) -> StatusDotKind {
+    if !entry.enabled {
+        StatusDotKind::Disabled
+    } else if entry.status.is_healthy() {
+        StatusDotKind::Success
+    } else {
+        StatusDotKind::Error
+    }
+}
+
+fn service_name(entry: ServiceEntry) -> SharedString {
+    match entry.kind {
+        ServiceKind::LastFm => lastfm_ui::title(),
         ServiceKind::DiscordRpc => tr!("SERVICES_DISCORD_RPC_TITLE").into(),
     }
 }
 
-fn service_status_text(service: ServiceEntry, lastfm_state: &LastFMState) -> SharedString {
-    match service.kind {
-        ServiceKind::LastFm => lastfm::status_text(service.status, lastfm_state),
-        ServiceKind::DiscordRpc => match service.status {
-            ServiceStatus::Connected => tr!("CONNECTED").into(),
-            ServiceStatus::Disconnected => {
-                tr!("SERVICES_STATUS_NOT_CONNECTED", "Not connected").into()
-            }
-            ServiceStatus::PendingSignIn => tr!("CONNECTED").into(),
-        },
+fn toggle_service(
+    cx: &mut App,
+    entry: ServiceEntry,
+    settings: Entity<Settings>,
+    lastfm: Entity<LastFMState>,
+) {
+    match entry.kind {
+        ServiceKind::LastFm => {
+            lastfm_ui::toggle_lastfm(cx, entry.enabled, settings, lastfm);
+        }
+        ServiceKind::DiscordRpc => {
+            settings.update(cx, |settings, cx| {
+                settings.services.discord_rpc_enabled = !entry.enabled;
+                save_settings(cx, settings);
+                cx.notify();
+            });
+        }
     }
-}
-
-fn service_row(service: ServiceEntry, lastfm: &LastFMState, text_secondary: Rgba) -> Div {
-    div()
-        .px(px(8.0))
-        .py(px(6.0))
-        .flex()
-        .flex_col()
-        .gap(px(2.0))
-        .child(div().text_sm().child(service_title(service)))
-        .child(
-            div()
-                .text_xs()
-                .text_color(text_secondary)
-                .child(service_status_text(service, lastfm)),
-        )
 }
 
 impl Render for ServicesIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_secondary = cx.global::<Theme>().text_secondary;
         let lastfm = self.lastfm.read(cx).clone();
         let discord_rpc = *self.discord_rpc.read(cx);
-        let services = collect_active_services(
+        let services = collect_services(
             self.settings.read(cx),
             &lastfm,
             discord_rpc,
-            lastfm::is_available(),
+            is_available(),
         );
         let indicator = indicator_icon(&services);
         let weak_self = cx.entity().downgrade();
-        let open_settings = cx.listener(|this, _, _, cx| {
-            this.close_popover(cx);
-            open_settings_window_with_section(cx, SettingsSectionKind::Services);
-        });
 
         div()
             .relative()
@@ -192,6 +190,55 @@ impl Render for ServicesIndicator {
                 let dismiss = weak_self.clone();
                 let close_out = weak_self.clone();
 
+                let mut menu_contents = menu();
+
+                if services.is_empty() {
+                    menu_contents = menu_contents.item(
+                        menu_item(
+                            "services-no-active",
+                            None::<SharedString>,
+                            tr!("SERVICES_NO_ACTIVE", "No active services"),
+                            |_, _, _| {},
+                        )
+                        .disabled(true)
+                        .never_icon(),
+                    );
+                } else {
+                    for entry in services.iter().copied() {
+                        let settings = self.settings.clone();
+                        let lastfm = self.lastfm.clone();
+                        let status = status_dot(&entry);
+                        let name = service_name(entry);
+                        let id = match entry.kind {
+                            ServiceKind::LastFm => "services-toggle-lastfm",
+                            ServiceKind::DiscordRpc => "services-toggle-discord",
+                        };
+
+                        menu_contents = menu_contents.item(
+                            status_menu_item(id, status, name, move |_, _, cx| {
+                                toggle_service(cx, entry, settings.clone(), lastfm.clone());
+                            })
+                            .right_element(icon(POWER).size(px(16.0))),
+                        );
+                    }
+                }
+
+                let open_settings_weak = weak_self.clone();
+                menu_contents = menu_contents.item(menu_separator()).item(
+                    menu_item(
+                        "services-open-settings",
+                        None::<SharedString>,
+                        tr!("SETTINGS"),
+                        move |_, _, cx| {
+                            open_settings_weak
+                                .update(cx, |this, cx| this.close_popover(cx))
+                                .ok();
+                            open_settings_window_with_section(cx, SettingsSectionKind::Services);
+                        },
+                    )
+                    .never_icon(),
+                );
+
                 this.child(
                     popover()
                         .position(PopoverPosition::BottomRight)
@@ -205,37 +252,10 @@ impl Render for ServicesIndicator {
                         })
                         .child(
                             div()
-                                .min_w(px(240.0))
-                                .py(px(6.0))
                                 .on_any_mouse_down(|_, _, cx| {
                                     cx.stop_propagation();
                                 })
-                                .when(services.is_empty(), |this| {
-                                    this.child(
-                                        div()
-                                            .px(px(8.0))
-                                            .py(px(6.0))
-                                            .text_sm()
-                                            .text_color(text_secondary)
-                                            .child(tr!("SERVICES_NO_ACTIVE", "No active services")),
-                                    )
-                                })
-                                .when(!services.is_empty(), |this| {
-                                    this.children(services.iter().copied().map(|service| {
-                                        service_row(service, &lastfm, text_secondary)
-                                    }))
-                                })
-                                .child(menu_separator())
-                                .child(
-                                    div().px(px(6.0)).pt(px(6.0)).child(
-                                        button()
-                                            .id("services-open-settings")
-                                            .w_full()
-                                            .justify_center()
-                                            .child(tr!("SETTINGS"))
-                                            .on_click(open_settings),
-                                    ),
-                                ),
+                                .child(menu_contents),
                         ),
                 )
             })
@@ -245,13 +265,13 @@ impl Render for ServicesIndicator {
 #[cfg(test)]
 mod tests {
     use crate::{
-        services::mmb::{discord::DiscordRpcStatus, lastfm::types::Session},
+        services::mmb::{
+            discord::DiscordRpcStatus,
+            lastfm::{LastFMState, types::Session},
+        },
         settings::Settings,
-        ui::{
-            header::services::{
-                ServiceEntry, ServiceKind, ServiceStatus, collect_active_services, indicator_icon,
-            },
-            models::LastFMState,
+        ui::header::services::{
+            ServiceEntry, ServiceKind, ServiceStatus, collect_services, indicator_icon,
         },
     };
 
@@ -265,26 +285,41 @@ mod tests {
         })
     }
 
+    fn entry(kind: ServiceKind, status: ServiceStatus, enabled: bool) -> ServiceEntry {
+        ServiceEntry {
+            kind,
+            status,
+            enabled,
+        }
+    }
+
     #[test]
-    fn collect_active_services_returns_none_when_everything_is_inactive() {
+    fn collect_services_returns_none_when_everything_is_inactive() {
         let mut settings = Settings::default();
         settings.services.discord_rpc_enabled = false;
+        settings.services.lastfm_enabled = false;
 
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &LastFMState::Disconnected,
             DiscordRpcStatus::Disabled,
             true,
         );
 
-        assert!(services.is_empty());
+        assert_eq!(
+            services,
+            vec![
+                entry(ServiceKind::LastFm, ServiceStatus::Disconnected, false),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Disconnected, false),
+            ]
+        );
         assert_eq!(indicator_icon(&services), WORLD);
     }
 
     #[test]
-    fn collect_active_services_marks_connected_discord_as_healthy_when_enabled() {
+    fn collect_services_marks_connected_discord_as_healthy_when_enabled() {
         let settings = Settings::default();
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &LastFMState::Disconnected,
             DiscordRpcStatus::Connected,
@@ -293,18 +328,18 @@ mod tests {
 
         assert_eq!(
             services,
-            vec![ServiceEntry {
-                kind: ServiceKind::DiscordRpc,
-                status: ServiceStatus::Connected,
-            }]
+            vec![
+                entry(ServiceKind::LastFm, ServiceStatus::Disconnected, true),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Connected, true),
+            ]
         );
-        assert_eq!(indicator_icon(&services), WORLD_CHECK);
+        assert_eq!(indicator_icon(&services), WORLD_X);
     }
 
     #[test]
-    fn collect_active_services_marks_disconnected_discord_as_unhealthy_when_enabled() {
+    fn collect_services_marks_disconnected_discord_as_unhealthy_when_enabled() {
         let settings = Settings::default();
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &LastFMState::Disconnected,
             DiscordRpcStatus::Disconnected,
@@ -313,20 +348,20 @@ mod tests {
 
         assert_eq!(
             services,
-            vec![ServiceEntry {
-                kind: ServiceKind::DiscordRpc,
-                status: ServiceStatus::Disconnected,
-            }]
+            vec![
+                entry(ServiceKind::LastFm, ServiceStatus::Disconnected, true),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Disconnected, true),
+            ]
         );
         assert_eq!(indicator_icon(&services), WORLD_X);
     }
 
     #[test]
-    fn collect_active_services_marks_pending_lastfm_as_unhealthy() {
+    fn collect_services_marks_pending_lastfm_as_unhealthy() {
         let mut settings = Settings::default();
         settings.services.discord_rpc_enabled = false;
 
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &LastFMState::AwaitingFinalization("token".to_string()),
             DiscordRpcStatus::Disabled,
@@ -335,34 +370,41 @@ mod tests {
 
         assert_eq!(
             services,
-            vec![ServiceEntry {
-                kind: ServiceKind::LastFm,
-                status: ServiceStatus::PendingSignIn,
-            }]
+            vec![
+                entry(ServiceKind::LastFm, ServiceStatus::PendingSignIn, true,),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Disconnected, false),
+            ]
         );
         assert_eq!(indicator_icon(&services), WORLD_X);
     }
 
     #[test]
-    fn collect_active_services_hides_lastfm_when_unavailable() {
+    fn collect_services_hides_lastfm_when_unavailable() {
         let mut settings = Settings::default();
         settings.services.discord_rpc_enabled = false;
 
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &connected_lastfm(),
             DiscordRpcStatus::Disabled,
             false,
         );
 
-        assert!(services.is_empty());
+        assert_eq!(
+            services,
+            vec![entry(
+                ServiceKind::DiscordRpc,
+                ServiceStatus::Disconnected,
+                false,
+            )]
+        );
         assert_eq!(indicator_icon(&services), WORLD);
     }
 
     #[test]
-    fn collect_active_services_marks_connected_lastfm_as_healthy() {
+    fn collect_services_marks_connected_lastfm_as_healthy() {
         let settings = Settings::default();
-        let services = collect_active_services(
+        let services = collect_services(
             &settings,
             &connected_lastfm(),
             DiscordRpcStatus::Connected,
@@ -372,14 +414,8 @@ mod tests {
         assert_eq!(
             services,
             vec![
-                ServiceEntry {
-                    kind: ServiceKind::LastFm,
-                    status: ServiceStatus::Connected,
-                },
-                ServiceEntry {
-                    kind: ServiceKind::DiscordRpc,
-                    status: ServiceStatus::Connected,
-                },
+                entry(ServiceKind::LastFm, ServiceStatus::Connected, true),
+                entry(ServiceKind::DiscordRpc, ServiceStatus::Connected, true),
             ]
         );
         assert_eq!(indicator_icon(&services), WORLD_CHECK);

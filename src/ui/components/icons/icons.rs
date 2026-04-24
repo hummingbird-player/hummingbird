@@ -57,3 +57,4 @@ pub const PENCIL: &str = "!bundled:icons/pencil.svg";
 pub const UPDATE: &str = "!bundled:icons/arrow-big-down-lines.svg";
 pub const FILE_EXPORT: &str = "!bundled:icons/file-export.svg";
 pub const MUSIC: &str = "!bundled:icons/music.svg";
+pub const POWER: &str = "!bundled:icons/power.svg";

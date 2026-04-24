@@ -4,11 +4,12 @@ use gpui::{
 };
 
 use crate::{
+    services::mmb::lastfm::{LastFMState, is_available},
     settings::{Settings, SettingsGlobal, save_settings},
     ui::{
         components::{checkbox::checkbox, label::label, section_header::section_header},
-        header::lastfm as lastfm_ui,
-        models::{LastFMState, Models},
+        models::Models,
+        settings::lastfm as lastfm_ui,
         theme::Theme,
     },
 };
@@ -56,12 +57,34 @@ impl Render for ServicesSettings {
             .gap(px(12.0))
             .child(section_header(tr!("SERVICES")));
 
-        if lastfm_ui::is_available() {
-            body = body.child(lastfm_ui::render_settings_row(
-                &lastfm,
-                self.lastfm.clone(),
-                cx.global::<Theme>().text_secondary,
-            ));
+        if is_available() {
+            body = body
+                .child(lastfm_ui::render_settings_row(
+                    &lastfm,
+                    self.lastfm.clone(),
+                    cx.global::<Theme>().text_secondary,
+                ))
+                .child(
+                    label(
+                        "services-lastfm-enabled",
+                        tr!("SERVICES_LASTFM_ENABLED", "Enable last.fm scrobbling."),
+                    )
+                    .subtext(tr!(
+                        "SERVICES_LASTFM_ENABLED_SUBTEXT",
+                        "Requires a connected last.fm account."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_services(cx, |services| {
+                            services.lastfm_enabled = !services.lastfm_enabled;
+                        });
+                    }))
+                    .child(checkbox(
+                        "services-lastfm-enabled-check",
+                        services.lastfm_enabled,
+                    )),
+                );
         }
 
         body.child(
