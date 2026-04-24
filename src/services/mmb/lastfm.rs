@@ -46,7 +46,7 @@ pub struct LastFM {
     accumulated_time: u64,
     duration: u64,
     metadata: Option<Arc<Metadata>>,
-    last_postion: u64,
+    last_position: u64,
     should_scrobble: bool,
     enabled: bool,
 }
@@ -59,7 +59,7 @@ impl LastFM {
             accumulated_time: 0,
             metadata: None,
             duration: 0,
-            last_postion: 0,
+            last_position: 0,
             should_scrobble: false,
             enabled,
         }
@@ -99,7 +99,7 @@ impl MediaMetadataBroadcastService for LastFM {
 
         self.start_timestamp = Some(chrono::offset::Utc::now());
         self.accumulated_time = 0;
-        self.last_postion = 0;
+        self.last_position = 0;
         self.should_scrobble = false;
     }
 
@@ -139,11 +139,11 @@ impl MediaMetadataBroadcastService for LastFM {
             return;
         }
 
-        if position < self.last_postion + 2 && position > self.last_postion {
-            self.accumulated_time += position - self.last_postion;
+        if position < self.last_position + 2 && position > self.last_position {
+            self.accumulated_time += position - self.last_position;
         }
 
-        self.last_postion = position;
+        self.last_position = position;
 
         if self.duration >= 30
             && (self.accumulated_time > self.duration / 2 || self.accumulated_time > 240)
@@ -174,7 +174,7 @@ impl MediaMetadataBroadcastService for LastFM {
             self.accumulated_time = 0;
             self.start_timestamp = None;
             self.metadata = None;
-            self.last_postion = 0;
+            self.last_position = 0;
             self.duration = 0;
         }
 
@@ -206,7 +206,7 @@ mod tests {
         lastfm.should_scrobble = true;
         lastfm.accumulated_time = 100;
         lastfm.duration = 200;
-        lastfm.last_postion = 120;
+        lastfm.last_position = 120;
         lastfm.start_timestamp = Some(Utc::now());
 
         lastfm.set_enabled(false).await;
@@ -215,7 +215,7 @@ mod tests {
         assert!(!lastfm.should_scrobble);
         assert_eq!(lastfm.accumulated_time, 0);
         assert_eq!(lastfm.duration, 0);
-        assert_eq!(lastfm.last_postion, 0);
+        assert_eq!(lastfm.last_position, 0);
         assert!(lastfm.start_timestamp.is_none());
     }
 
