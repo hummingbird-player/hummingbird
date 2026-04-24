@@ -68,11 +68,11 @@ impl Render for ServicesSettings {
                 body = body.child(
                     label(
                         "services-lastfm-enabled",
-                        tr!("SERVICES_LASTFM_ENABLED", "Enable last.fm scrobbling."),
+                        tr!("SERVICES_LASTFM_ENABLED", "Scrobble to Last.fm"),
                     )
                     .subtext(tr!(
                         "SERVICES_LASTFM_ENABLED_SUBTEXT",
-                        "Requires a connected last.fm account."
+                        "Turn off to pause scrobbling without signing out."
                     ))
                     .cursor_pointer()
                     .w_full()
