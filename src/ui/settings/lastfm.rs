@@ -163,7 +163,9 @@ pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
     }
 
     let path = paths::data_dir().join("lastfm.json");
-    if let Err(err) = std::fs::remove_file(&path) {
+    if let Err(err) = std::fs::remove_file(&path)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
         error!(?err, "Failed to remove last.fm session file");
     }
 }
