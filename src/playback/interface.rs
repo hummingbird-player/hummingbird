@@ -127,6 +127,10 @@ impl PlaybackInterface {
         self.cmd_tx.send(PlaybackCommand::Stop).unwrap();
     }
 
+    pub fn stop_after_current(&self) {
+        self.cmd_tx.send(PlaybackCommand::StopAfterCurrent).unwrap();
+    }
+
     pub fn toggle_shuffle(&self) {
         self.cmd_tx.send(PlaybackCommand::ToggleShuffle).unwrap();
     }
@@ -315,6 +319,12 @@ impl PlaybackInterface {
                         }
                         PlaybackEvent::RepeatChanged(v) => {
                             playback_info.repeating.update(cx, |m, cx| {
+                                *m = v;
+                                cx.notify();
+                            })
+                        }
+                        PlaybackEvent::StopAfterCurrentChanged(v) => {
+                            playback_info.stop_after_current.update(cx, |m, cx| {
                                 *m = v;
                                 cx.notify();
                             })

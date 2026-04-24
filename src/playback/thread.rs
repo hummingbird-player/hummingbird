@@ -84,6 +84,7 @@ pub struct PlaybackThread {
     last_track_gain: Option<f64>,
     /// Cached album gain from last metadata update.
     last_album_gain: Option<f64>,
+    stop_after_current: bool,
 }
 
 impl PlaybackThread {
@@ -117,6 +118,7 @@ impl PlaybackThread {
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
                     last_track_gain: None,
                     last_album_gain: None,
+                    stop_after_current: false,
                 };
 
                 thread.run();
@@ -171,6 +173,7 @@ impl PlaybackThread {
                 PlaybackCommand::Pause => self.pause(),
                 PlaybackCommand::TogglePlayPause => self.toggle_play_pause(),
                 PlaybackCommand::Open(path) => {
+                    self.set_stop_after_current(false);
                     if let Err(err) = self.open(&path) {
                         error!(path = %path.display(), ?err, "Failed to open media: {err}");
                     }
@@ -204,6 +207,7 @@ impl PlaybackThread {
                 PlaybackCommand::ReplaceQueueWithIndex(v, idx) => {
                     self.replace_queue_with_index(v, idx)
                 }
+                PlaybackCommand::StopAfterCurrent => self.stop_after_current(),
             }
         }
     }
@@ -331,6 +335,10 @@ impl PlaybackThread {
 
     /// Skip to the next track in the queue.
     fn next(&mut self, user_initiated: bool) {
+        if user_initiated {
+            self.set_stop_after_current(false);
+        }
+
         match self.queue.next(user_initiated) {
             QueueNavigationResult::Changed {
                 index,
@@ -364,6 +372,8 @@ impl PlaybackThread {
 
     /// Skip to the previous track in the queue.
     fn previous(&mut self) {
+        self.set_stop_after_current(false);
+
         // If we're past 5 seconds, seek to start instead of going to previous track
         if self.state() == PlaybackState::Playing
             && self.playback_settings.prev_track_jump_first
@@ -575,6 +585,7 @@ impl PlaybackThread {
                 }
             }
             DequeueResult::RemovedCurrent { new_path } => {
+                self.set_stop_after_current(false);
                 self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
 
@@ -607,6 +618,7 @@ impl PlaybackThread {
                 }
             }
             DequeueManyResult::RemovedCurrent { new_path } => {
+                self.set_stop_after_current(false);
                 self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
 
@@ -780,6 +792,7 @@ impl PlaybackThread {
     fn jump(&mut self, index: usize) {
         match self.queue.jump(index) {
             JumpResult::Jumped { path } => {
+                self.set_stop_after_current(false);
                 if let Err(err) = self.open(&path) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
                 }
@@ -796,6 +809,7 @@ impl PlaybackThread {
     fn jump_unshuffled(&mut self, index: usize) {
         match self.queue.jump_unshuffled(index) {
             JumpResult::Jumped { path } => {
+                self.set_stop_after_current(false);
                 if let Err(err) = self.open(&path) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
                 }
@@ -813,6 +827,7 @@ impl PlaybackThread {
     /// Replace the current queue with the given paths.
     fn replace_queue(&mut self, paths: Vec<QueueItemData>) {
         debug!("Replacing queue with: '{}'", paths.iter().format(":"));
+        self.set_stop_after_current(false);
 
         match self.queue.replace_queue(paths) {
             ReplaceResult::Replaced { first_item } => {
@@ -833,6 +848,8 @@ impl PlaybackThread {
     }
 
     fn replace_queue_with_index(&mut self, paths: Vec<QueueItemData>, idx: usize) {
+        self.set_stop_after_current(false);
+
         match self.queue.replace_queue(paths) {
             ReplaceResult::Replaced { .. } => {
                 self.refresh_rg_auto_hint();
@@ -849,6 +866,8 @@ impl PlaybackThread {
 
     /// Clear the current queue.
     fn clear_queue(&mut self) {
+        self.set_stop_after_current(false);
+
         let keep_current = self.playback_settings.keep_current_on_queue_clear
             && self.state() != PlaybackState::Stopped;
         self.queue.clear(keep_current);
@@ -866,11 +885,27 @@ impl PlaybackThread {
 
     /// Stop the current playback.
     fn stop(&mut self) {
+        self.set_stop_after_current(false);
         self.engine.stop();
         self.last_track_gain = None;
         self.last_album_gain = None;
 
         self.send_event(PlaybackEvent::StateChanged(PlaybackState::Stopped));
+    }
+
+    fn stop_after_current(&mut self) {
+        if self.state() != PlaybackState::Stopped {
+            self.set_stop_after_current(true);
+        }
+    }
+
+    fn set_stop_after_current(&mut self, stop_after_current: bool) {
+        if self.stop_after_current == stop_after_current {
+            return;
+        }
+
+        self.stop_after_current = stop_after_current;
+        self.send_event(PlaybackEvent::StopAfterCurrentChanged(stop_after_current));
     }
 
     /// Toggle shuffle mode. This will result in the queue being duplicated and shuffled.
@@ -941,12 +976,22 @@ impl PlaybackThread {
                 self.update_ts(false);
             }
             EngineCycleResult::Eof => {
-                info!("EOF, moving to next song");
-                self.next(false);
+                if self.stop_after_current {
+                    info!("EOF, stopping after current track");
+                    self.stop();
+                } else {
+                    info!("EOF, moving to next song");
+                    self.next(false);
+                }
             }
             EngineCycleResult::FatalError(msg) => {
-                error!("Fatal error in audio engine: {}, moving to next song", msg);
-                self.next(false);
+                if self.stop_after_current {
+                    error!("Fatal error in audio engine: {}, stopping playback", msg);
+                    self.stop();
+                } else {
+                    error!("Fatal error in audio engine: {}, moving to next song", msg);
+                    self.next(false);
+                }
             }
             EngineCycleResult::NothingToDo => {
                 // Nothing to process

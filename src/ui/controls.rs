@@ -480,6 +480,8 @@ impl PlaybackSection {
             let info = cx.global::<PlaybackInfo>().clone();
             let state = info.playback_state.clone();
             let shuffling = info.shuffling.clone();
+            let repeating = info.repeating.clone();
+            let stop_after_current = info.stop_after_current.clone();
 
             cx.observe(&state, |_, _, cx| {
                 cx.notify();
@@ -487,6 +489,16 @@ impl PlaybackSection {
             .detach();
 
             cx.observe(&shuffling, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            cx.observe(&repeating, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            cx.observe(&stop_after_current, |_, _, cx| {
                 cx.notify();
             })
             .detach();
@@ -501,6 +513,7 @@ impl Render for PlaybackSection {
         let state = self.info.playback_state.read(cx);
         let shuffling = self.info.shuffling.read(cx);
         let repeating = *self.info.repeating.read(cx);
+        let stop_after_current = *self.info.stop_after_current.read(cx);
         let theme = cx.global::<Theme>();
         let always_repeat = cx
             .global::<SettingsGlobal>()
@@ -588,6 +601,7 @@ impl Render for PlaybackSection {
                             .border_l(px(1.0))
                             .border_r(px(1.0))
                             .border_color(theme.playback_button_border)
+                            .relative()
                             .flex()
                             .items_center()
                             .justify_center()
@@ -608,6 +622,22 @@ impl Render for PlaybackSection {
                             .when(*state != PlaybackState::Playing, |div| {
                                 div.child(icon(PLAY).size(px(16.0)))
                                     .tooltip(build_tooltip(tr!("PLAY")))
+                            })
+                            .when(stop_after_current, |this| {
+                                this.child(
+                                    div()
+                                        .id("stop-after-current-indicator")
+                                        .absolute()
+                                        .top(px(3.0))
+                                        .right(px(3.0))
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(theme.playback_button_toggled)
+                                        .tooltip(build_tooltip(tr!(
+                                            "STOP_AFTER_CURRENT_TOOLTIP",
+                                            "Will stop after current track"
+                                        ))),
+                                )
                             }),
                     )
                     .child(

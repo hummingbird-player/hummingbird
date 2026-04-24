@@ -67,6 +67,8 @@ pub enum PlaybackCommand {
     ReplaceQueue(Vec<QueueItemData>),
     /// Requests that the playback thread stop playback.
     Stop,
+    /// Requests that playback stop when the current track finishes.
+    StopAfterCurrent,
     /// Requests that the playback thread shuffle (or stop shuffling) the next tracks in the
     /// queue. Note that this currently results in duplication of the *entire* queue.
     ToggleShuffle,
@@ -125,4 +127,6 @@ pub enum PlaybackEvent {
     RepeatChanged(RepeatState),
     /// Indicates that the volume has changed. The f64 is the new volume, from 0.0 to 1.0.
     VolumeChanged(f64),
+    /// Indicates that stop-after-current has been set or cleared.
+    StopAfterCurrentChanged(bool),
 }

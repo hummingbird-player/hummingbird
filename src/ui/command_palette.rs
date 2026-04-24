@@ -20,6 +20,7 @@ use crate::ui::{
     },
     global_actions::{
         About, ForceScan, Next, PlayPause, Previous, Quit, Search, Settings, ShuffleAll,
+        StopAfterCurrent,
     },
     troubleshooting::{CopyTroubleshootingInfo, OpenLog},
 };
@@ -240,6 +241,12 @@ fn builtin_commands() -> Vec<CommandSpec> {
             Some(CommandCategory::Playback),
             tr!("ACTION_SHUFFLE_ALL", "Shuffle All Tracks"),
             ShuffleAll,
+        ),
+        CommandSpec::new(
+            ("player::stop_after_current", 0),
+            Some(CommandCategory::Playback),
+            tr!("ACTION_STOP_AFTER_CURRENT", "Stop After Current"),
+            StopAfterCurrent,
         ),
         CommandSpec::new(
             ("scan::forcescan", 0),

@@ -32,6 +32,7 @@
   "ACTION_SEARCH": "Search",
   "ACTION_SETTINGS": "Settings",
   "ACTION_SHUFFLE_ALL": "Shuffle All Tracks",
+  "ACTION_STOP_AFTER_CURRENT": "Stop After Current",
   "ACTION_UNDO_QUEUE": "Undo",
   "ADD_TO_PLAYLIST": "Add to playlist",
   "ADD_TO_QUEUE": "Add to queue",
@@ -240,6 +241,7 @@
     "one": "{{count}} track",
     "other": "{{count}} tracks"
   },
+  "STOP_AFTER_CURRENT_TOOLTIP": "Will stop after current track",
   "STOP_REPEATING": "Stop Repeating",
   "STOP_SHUFFLING": "Stop Shuffling",
   "TABLE_ALBUMS": "Albums",

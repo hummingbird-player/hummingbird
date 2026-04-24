@@ -21,7 +21,10 @@ use super::models::{Models, PlaybackInfo};
 actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
 #[cfg(feature = "update")]
 actions!(hummingbird, [CheckForUpdates]);
-actions!(player, [PlayPause, Next, Previous, ShuffleAll]);
+actions!(
+    player,
+    [PlayPause, Next, Previous, ShuffleAll, StopAfterCurrent]
+);
 actions!(scan, [ForceScan, Scan]);
 actions!(hummingbird, [HideSelf, HideOthers, ShowAll]);
 actions!(help, [Discord, Patreon, Issues]);
@@ -47,6 +50,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(undo);
     cx.on_action(issues);
     cx.on_action(shuffle_all);
+    cx.on_action(stop_after_current);
     cx.on_action(scan);
     cx.on_action(open_log);
     cx.on_action(copy_troubleshooting_info);
@@ -80,6 +84,11 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("alt-shift-s", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("alt-s", Scan, None)]);
     cx.bind_keys([KeyBinding::new("space", PlayPause, None)]);
+    cx.bind_keys([KeyBinding::new(
+        "ctrl-shift-space",
+        StopAfterCurrent,
+        Some("!TextInput"),
+    )]);
 
     let mut app_menu = MenuBuilder::new(tr!("APP_NAME"))
         .add_item(menu_item(
@@ -350,4 +359,9 @@ fn shuffle_all(_: &ShuffleAll, cx: &mut App) {
 fn undo(_: &Undo, cx: &mut App) {
     let interface = cx.global::<PlaybackInterface>();
     interface.undo();
+}
+
+fn stop_after_current(_: &StopAfterCurrent, cx: &mut App) {
+    let interface = cx.global::<PlaybackInterface>();
+    interface.stop_after_current();
 }
