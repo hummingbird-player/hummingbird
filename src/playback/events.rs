@@ -67,7 +67,7 @@ pub enum PlaybackCommand {
     ReplaceQueue(Vec<QueueItemData>),
     /// Requests that the playback thread stop playback.
     Stop,
-    /// Requests that playback stop when the current track finishes.
+    /// Toggles whether playback should stop when the current track finishes.
     StopAfterCurrent,
     /// Requests that the playback thread shuffle (or stop shuffling) the next tracks in the
     /// queue. Note that this currently results in duplication of the *entire* queue.

@@ -207,7 +207,7 @@ impl PlaybackThread {
                 PlaybackCommand::ReplaceQueueWithIndex(v, idx) => {
                     self.replace_queue_with_index(v, idx)
                 }
-                PlaybackCommand::StopAfterCurrent => self.stop_after_current(),
+                PlaybackCommand::StopAfterCurrent => self.toggle_stop_after_current(),
             }
         }
     }
@@ -893,9 +893,9 @@ impl PlaybackThread {
         self.send_event(PlaybackEvent::StateChanged(PlaybackState::Stopped));
     }
 
-    fn stop_after_current(&mut self) {
+    fn toggle_stop_after_current(&mut self) {
         if self.state() != PlaybackState::Stopped {
-            self.set_stop_after_current(true);
+            self.set_stop_after_current(!self.stop_after_current);
         }
     }
 

@@ -363,5 +363,5 @@ fn undo(_: &Undo, cx: &mut App) {
 
 fn stop_after_current(_: &StopAfterCurrent, cx: &mut App) {
     let interface = cx.global::<PlaybackInterface>();
-    interface.stop_after_current();
+    interface.toggle_stop_after_current();
 }

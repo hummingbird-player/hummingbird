@@ -127,7 +127,7 @@ impl PlaybackInterface {
         self.cmd_tx.send(PlaybackCommand::Stop).unwrap();
     }
 
-    pub fn stop_after_current(&self) {
+    pub fn toggle_stop_after_current(&self) {
         self.cmd_tx.send(PlaybackCommand::StopAfterCurrent).unwrap();
     }
 
