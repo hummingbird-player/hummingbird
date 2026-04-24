@@ -72,6 +72,7 @@ impl BaseMenuItem {
         icon_slot: impl IntoElement,
         right_element: Option<AnyElement>,
     ) -> impl IntoElement {
+        let has_tooltip = self.tooltip.is_some();
         let base = div()
             .id(self.id)
             .rounded(px(4.0))
@@ -96,7 +97,10 @@ impl BaseMenuItem {
             .when_some(right_element, |this, el| {
                 this.child(div().ml(px(12.0)).child(el))
             })
-            .when_some(self.tooltip, |this, text| this.tooltip(build_tooltip(text)));
+            .when_some(self.tooltip, |this, text| this.tooltip(build_tooltip(text)))
+            .when(has_tooltip, |this| {
+                this.on_hover(|_, window, _| window.refresh())
+            });
 
         if self.disabled || self.non_interactive {
             base.cursor_default()
