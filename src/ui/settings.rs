@@ -11,8 +11,8 @@ use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, TitlebarOptions,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
-    div, prelude::FluentBuilder, px,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle, WindowKind,
+    WindowOptions, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -37,10 +37,34 @@ use crate::{
 use crate::ui::settings::update::UpdateSettings;
 
 pub fn open_settings_window(cx: &mut App) {
-    open_settings_window_with_section(cx, SettingsSectionKind::Interface);
+    open_or_focus_settings_window(cx, None);
+}
+
+fn find_settings_window(cx: &App) -> Option<WindowHandle<SettingsWindow>> {
+    cx.windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>())
 }
 
 pub fn open_settings_window_with_section(cx: &mut App, section: SettingsSectionKind) {
+    open_or_focus_settings_window(cx, Some(section));
+}
+
+fn open_or_focus_settings_window(cx: &mut App, section: Option<SettingsSectionKind>) {
+    if let Some(window) = find_settings_window(cx) {
+        cx.activate(true);
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |settings, window, cx| {
+                if let Some(section) = section {
+                    settings.switch_section(section, cx);
+                }
+                window.activate_window();
+            });
+        });
+        return;
+    }
+
+    let section = section.unwrap_or(SettingsSectionKind::Interface);
     let bounds = WindowBounds::Windowed(gpui::Bounds::centered(
         None,
         gpui::size(px(900.0), px(600.0)),
@@ -203,6 +227,10 @@ impl SettingsWindow {
     }
 
     fn switch_section(&mut self, section: SettingsSectionKind, cx: &mut Context<Self>) {
+        if self.active.kind() == section {
+            return;
+        }
+
         self.active = SettingsSection::new(section, cx);
         self.scroll_handle.scroll_to_top_of_item(0);
         cx.notify();
