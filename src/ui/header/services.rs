@@ -17,6 +17,7 @@ use crate::{
         },
         models::Models,
         settings::{SettingsSectionKind, lastfm as lastfm_ui, open_settings_window_with_section},
+        theme::Theme,
     },
 };
 
@@ -216,25 +217,54 @@ impl Render for ServicesIndicator {
                         .never_icon(),
                     );
                 } else {
+                    let theme = cx.global::<Theme>().clone();
                     for entry in &services {
                         let settings = self.settings.clone();
                         let lastfm = self.lastfm.clone();
                         let status = status_dot(entry);
                         let name = service_name(entry.kind);
-                        let id = match entry.kind {
-                            ServiceKind::LastFm => "services-toggle-lastfm",
-                            ServiceKind::DiscordRpc => "services-toggle-discord",
+                        let (row_id, button_id) = match entry.kind {
+                            ServiceKind::LastFm => {
+                                ("services-toggle-lastfm", "services-toggle-lastfm-btn")
+                            }
+                            ServiceKind::DiscordRpc => {
+                                ("services-toggle-discord", "services-toggle-discord-btn")
+                            }
                         };
                         let kind = entry.kind;
                         let enabled = entry.enabled;
                         let tooltip = entry.error.clone();
 
-                        menu_contents = menu_contents.item(
-                            status_menu_item(id, status, name, move |_, _, cx| {
+                        let toggle_button = div()
+                            .id(button_id)
+                            .rounded(px(3.0))
+                            .p(px(3.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .border_1()
+                            .bg(theme.button_secondary)
+                            .border_color(theme.button_secondary_border)
+                            .text_color(theme.button_secondary_text)
+                            .hover(|this| {
+                                this.bg(theme.button_secondary_hover)
+                                    .border_color(theme.button_secondary_border_hover)
+                            })
+                            .active(|this| {
+                                this.bg(theme.button_secondary_active)
+                                    .border_color(theme.button_secondary_border_active)
+                            })
+                            .on_click(move |_, _, cx| {
                                 toggle_service(cx, kind, enabled, settings.clone(), lastfm.clone());
                             })
-                            .tooltip(tooltip)
-                            .right_element(icon(POWER).size(px(16.0))),
+                            .child(icon(POWER).size(px(16.0)));
+
+                        menu_contents = menu_contents.item(
+                            status_menu_item(row_id, status, name, |_, _, _| {})
+                                .non_interactive()
+                                .tooltip(tooltip)
+                                .right_element(toggle_button),
                         );
                     }
                 }

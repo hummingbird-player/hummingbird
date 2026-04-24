@@ -17,6 +17,8 @@ use super::MediaMetadataBroadcastService;
 pub mod client;
 pub mod types;
 
+pub const MMBS_KEY: &str = "lastfm";
+
 #[derive(Clone)]
 pub enum LastFMState {
     Disconnected { error: Option<SharedString> },
@@ -46,10 +48,11 @@ pub struct LastFM {
     metadata: Option<Arc<Metadata>>,
     last_postion: u64,
     should_scrobble: bool,
+    enabled: bool,
 }
 
 impl LastFM {
-    pub fn new(client: LastFMClient) -> Self {
+    pub fn new(client: LastFMClient, enabled: bool) -> Self {
         LastFM {
             client,
             start_timestamp: None,
@@ -58,6 +61,7 @@ impl LastFM {
             duration: 0,
             last_postion: 0,
             should_scrobble: false,
+            enabled,
         }
     }
 
@@ -84,6 +88,10 @@ impl LastFM {
 #[async_trait]
 impl MediaMetadataBroadcastService for LastFM {
     async fn new_track(&mut self, _: PathBuf) {
+        if !self.enabled {
+            return;
+        }
+
         if self.should_scrobble {
             debug!("attempting scrobble");
             self.scrobble().await;
@@ -96,6 +104,10 @@ impl MediaMetadataBroadcastService for LastFM {
     }
 
     async fn metadata_recieved(&mut self, info: Arc<Metadata>) {
+        if !self.enabled {
+            return;
+        }
+
         let Some((artist, track)) = info.artist.as_ref().zip(info.name.as_ref()) else {
             return;
         };
@@ -111,6 +123,10 @@ impl MediaMetadataBroadcastService for LastFM {
     }
 
     async fn state_changed(&mut self, state: PlaybackState) {
+        if !self.enabled {
+            return;
+        }
+
         if self.should_scrobble && state != PlaybackState::Playing {
             debug!("attempting scrobble");
             self.scrobble().await;
@@ -119,6 +135,10 @@ impl MediaMetadataBroadcastService for LastFM {
     }
 
     async fn position_changed(&mut self, position: u64) {
+        if !self.enabled {
+            return;
+        }
+
         if position < self.last_postion + 2 && position > self.last_postion {
             self.accumulated_time += position - self.last_postion;
         }
@@ -135,13 +155,36 @@ impl MediaMetadataBroadcastService for LastFM {
     }
 
     async fn duration_changed(&mut self, duration: u64) {
+        if !self.enabled {
+            return;
+        }
+
         self.duration = duration;
+    }
+
+    async fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled == enabled {
+            return;
+        }
+
+        debug!(from = self.enabled, to = enabled, "updating lastfm enabled");
+
+        if !enabled {
+            self.should_scrobble = false;
+            self.accumulated_time = 0;
+            self.start_timestamp = None;
+            self.metadata = None;
+            self.last_postion = 0;
+            self.duration = 0;
+        }
+
+        self.enabled = enabled;
     }
 }
 
 impl Drop for LastFM {
     fn drop(&mut self) {
-        if self.should_scrobble {
+        if self.enabled && self.should_scrobble {
             debug!("attempting scrobble before dropping LastFM, this will block");
             crate::RUNTIME.block_on(self.scrobble());
         }

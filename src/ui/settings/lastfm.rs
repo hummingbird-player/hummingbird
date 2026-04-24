@@ -5,7 +5,7 @@ use tracing::error;
 
 use crate::{
     paths,
-    services::mmb::lastfm::{LASTFM_CREDS, LastFMState, client::LastFMClient},
+    services::mmb::lastfm::{self, LASTFM_CREDS, LastFMState, client::LastFMClient},
     settings::{Settings, save_settings},
     ui::{
         components::button::{ButtonIntent, button},
@@ -151,7 +151,7 @@ pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
 
     let mmbs = cx.global::<Models>().mmbs.clone();
     mmbs.update(cx, |m, _| {
-        m.0.remove("lastfm");
+        m.0.remove(lastfm::MMBS_KEY);
     });
 
     let path = paths::data_dir().join("lastfm.json");
@@ -206,18 +206,12 @@ pub fn toggle_lastfm(
         cx.notify();
     });
 
-    let mmbs = cx.global::<Models>().mmbs.clone();
     if new_enabled {
-        let session_key = match lastfm.read(cx) {
-            LastFMState::Connected(session) => Some(session.key.clone()),
-            _ => None,
-        };
-        if let Some(key) = session_key {
-            create_last_fm_mmbs(cx, &mmbs, key);
+        let mmbs = cx.global::<Models>().mmbs.clone();
+        let has_mmbs = mmbs.read(cx).0.contains_key(lastfm::MMBS_KEY);
+        if !has_mmbs && let LastFMState::Connected(session) = lastfm.read(cx) {
+            let key = session.key.clone();
+            create_last_fm_mmbs(cx, &mmbs, key, true);
         }
-    } else {
-        mmbs.update(cx, |m, _| {
-            m.0.remove("lastfm");
-        });
     }
 }

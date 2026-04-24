@@ -31,6 +31,7 @@ struct BaseMenuItem {
     name: SharedString,
     on_click: ClickEvHandler,
     disabled: bool,
+    non_interactive: bool,
     tooltip: Option<SharedString>,
 }
 
@@ -45,12 +46,18 @@ impl BaseMenuItem {
             name: text.into(),
             on_click: Box::new(func),
             disabled: false,
+            non_interactive: false,
             tooltip: None,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn non_interactive(mut self, non_interactive: bool) -> Self {
+        self.non_interactive = non_interactive;
         self
     }
 
@@ -91,7 +98,7 @@ impl BaseMenuItem {
             })
             .when_some(self.tooltip, |this, text| this.tooltip(build_tooltip(text)));
 
-        if self.disabled {
+        if self.disabled || self.non_interactive {
             base.cursor_default()
         } else {
             base.on_click(self.on_click)
@@ -258,6 +265,11 @@ impl StatusMenuItem {
 
     pub fn tooltip(mut self, tooltip: Option<impl Into<SharedString>>) -> Self {
         self.base = self.base.tooltip(tooltip.map(Into::into));
+        self
+    }
+
+    pub fn non_interactive(mut self) -> Self {
+        self.base = self.base.non_interactive(true);
         self
     }
 }
