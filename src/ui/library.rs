@@ -51,16 +51,6 @@ mod update_playlist;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
-pub fn bind_actions(cx: &mut App) {
-    playlist_view::bind_actions(cx);
-    cx.bind_keys([
-        KeyBinding::new("backspace", NavigateBack, Some("Library")),
-        KeyBinding::new("alt-left", NavigateBack, Some("Library")),
-        KeyBinding::new("alt-right", NavigateForward, Some("Library")),
-        KeyBinding::new("escape", EscapeBack, Some("Library")),
-    ]);
-}
-
 /// The navigation history + a cursor noting what the current message is.
 #[derive(Debug)]
 pub struct NavigationHistory {

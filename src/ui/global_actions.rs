@@ -1,5 +1,5 @@
 use cntp_i18n::tr;
-use gpui::{App, AppContext, KeyBinding, MenuItem, actions};
+use gpui::{App, AppContext, MenuItem, actions};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -57,38 +57,6 @@ pub fn register_actions(cx: &mut App) {
 
     debug!("actions: {:?}", cx.all_action_names());
     debug!("action available: {:?}", cx.is_action_available(&Quit));
-    if cfg!(target_os = "macos") {
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.bind_keys([KeyBinding::new("cmd-right", Next, None)]);
-        cx.bind_keys([KeyBinding::new("cmd-left", Previous, None)]);
-        cx.bind_keys([KeyBinding::new("cmd-h", HideSelf, None)]);
-        cx.bind_keys([KeyBinding::new("cmd-alt-h", HideOthers, None)]);
-    } else {
-        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
-        cx.bind_keys([KeyBinding::new("ctrl-w", CloseWindow, None)]);
-    }
-
-    cx.bind_keys([KeyBinding::new("secondary-right", Next, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-left", Previous, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-p", Search, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-f", Search, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-shift-p", OpenPalette, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-,", Settings, None)]);
-    cx.bind_keys([KeyBinding::new(
-        "escape",
-        CloseWindow,
-        Some("SettingsWindow && !TextInput"),
-    )]);
-    cx.bind_keys([KeyBinding::new("secondary-z", Undo, Some("!TextInput"))]);
-
-    cx.bind_keys([KeyBinding::new("alt-shift-s", ForceScan, None)]);
-    cx.bind_keys([KeyBinding::new("alt-s", Scan, None)]);
-    cx.bind_keys([KeyBinding::new("space", PlayPause, None)]);
-    cx.bind_keys([KeyBinding::new(
-        "ctrl-shift-space",
-        StopAfterCurrent,
-        Some("!TextInput"),
-    )]);
 
     let mut app_menu = MenuBuilder::new(tr!("APP_NAME"))
         .add_item(menu_item(

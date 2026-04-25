@@ -11,6 +11,7 @@ mod controls;
 pub mod data;
 mod global_actions;
 mod header;
+mod keymap;
 pub mod library;
 mod lyrics;
 pub mod models;

@@ -36,8 +36,7 @@ use crate::{
         assets::HummingbirdAssetSource,
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
-        components::dropdown,
-        library::{self, missing_folder_dialog::MissingFolderDialog},
+        library::missing_folder_dialog::MissingFolderDialog,
         models::WindowInformation,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
     },
@@ -47,9 +46,7 @@ use super::{
     about::about_dialog,
     arguments::parse_args_and_prepare,
     components::{
-        context, input,
         modal::{self, ModalActive},
-        popover,
         window_chrome::window_chrome,
     },
     controls::Controls,
@@ -399,12 +396,7 @@ pub fn run() -> anyhow::Result<()> {
             initial_repeat,
         );
 
-        input::bind_actions(cx);
-        modal::bind_actions(cx);
-        library::bind_actions(cx);
-        dropdown::bind_actions(cx);
-        popover::bind_actions(cx);
-        context::bind_actions(cx);
+        super::keymap::load_default_keymap(cx);
 
         cx.set_global(modal::ModalActive(AtomicBool::new(false)));
 

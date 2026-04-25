@@ -1,0 +1,69 @@
+{
+  "bindings": [
+    { "key": "cmd-q", "action": "hummingbird::Quit", "platform": "macos" },
+    { "key": "cmd-right", "action": "player::Next", "platform": "macos" },
+    { "key": "cmd-left", "action": "player::Previous", "platform": "macos" },
+    { "key": "cmd-h", "action": "hummingbird::HideSelf", "platform": "macos" },
+    { "key": "cmd-alt-h", "action": "hummingbird::HideOthers", "platform": "macos" },
+
+    { "key": "ctrl-q", "action": "hummingbird::Quit", "platform": "!macos" },
+    { "key": "ctrl-w", "action": "hummingbird::CloseWindow", "platform": "!macos" },
+
+    { "key": "secondary-right", "action": "player::Next" },
+    { "key": "secondary-left", "action": "player::Previous" },
+    { "key": "secondary-p", "action": "hummingbird::Search" },
+    { "key": "secondary-f", "action": "hummingbird::Search" },
+    { "key": "secondary-shift-p", "action": "hummingbird::OpenPalette" },
+    { "key": "secondary-,", "action": "hummingbird::Settings" },
+    { "key": "escape", "action": "hummingbird::CloseWindow", "context": "SettingsWindow && !TextInput" },
+    { "key": "secondary-z", "action": "queue::Undo", "context": "!TextInput" },
+    { "key": "alt-shift-s", "action": "scan::ForceScan" },
+    { "key": "alt-s", "action": "scan::Scan" },
+    { "key": "space", "action": "player::PlayPause" },
+    { "key": "ctrl-shift-space", "action": "player::StopAfterCurrent", "context": "!TextInput" },
+
+    { "key": "backspace", "action": "library::NavigateBack", "context": "Library" },
+    { "key": "alt-left", "action": "library::NavigateBack", "context": "Library" },
+    { "key": "alt-right", "action": "library::NavigateForward", "context": "Library" },
+    { "key": "escape", "action": "library::EscapeBack", "context": "Library" },
+
+    { "key": "secondary-s", "action": "playlist::Export" },
+
+    { "key": "escape", "action": "modal::CloseModal" },
+    { "key": "escape", "action": "popover::ClosePopover" },
+    { "key": "escape", "action": "context::CloseContextMenu" },
+
+    { "key": "escape", "action": "dropdown::Close", "context": "Dropdown" },
+    { "key": "down", "action": "dropdown::SelectNext", "context": "Dropdown" },
+    { "key": "up", "action": "dropdown::SelectPrev", "context": "Dropdown" },
+    { "key": "tab", "action": "dropdown::SelectNext", "context": "Dropdown" },
+    { "key": "shift-tab", "action": "dropdown::SelectPrev", "context": "Dropdown" },
+    { "key": "enter", "action": "dropdown::Confirm", "context": "Dropdown" },
+    { "key": "space", "action": "dropdown::Confirm", "context": "Dropdown" },
+    { "key": "home", "action": "dropdown::SelectFirst", "context": "Dropdown" },
+    { "key": "end", "action": "dropdown::SelectLast", "context": "Dropdown" },
+
+    { "key": "backspace", "action": "text_input::Backspace", "context": "TextInput" },
+    { "key": "delete", "action": "text_input::Delete", "context": "TextInput" },
+    { "key": "left", "action": "text_input::Left", "context": "TextInput" },
+    { "key": "right", "action": "text_input::Right", "context": "TextInput" },
+    { "key": "shift-left", "action": "text_input::SelectLeft", "context": "TextInput" },
+    { "key": "shift-right", "action": "text_input::SelectRight", "context": "TextInput" },
+    { "key": "home", "action": "text_input::Home", "context": "TextInput" },
+    { "key": "end", "action": "text_input::End", "context": "TextInput" },
+    { "key": "enter", "action": "text_input::Accept", "context": "TextInput" },
+    { "key": "down", "action": "text_input::Next", "context": "TextInput" },
+    { "key": "up", "action": "text_input::Previous", "context": "TextInput" },
+
+    { "key": "cmd-a", "action": "text_input::SelectAll", "platform": "macos", "context": "TextInput" },
+    { "key": "cmd-v", "action": "text_input::Paste", "platform": "macos", "context": "TextInput" },
+    { "key": "cmd-c", "action": "text_input::Copy", "platform": "macos", "context": "TextInput" },
+    { "key": "cmd-x", "action": "text_input::Cut", "platform": "macos", "context": "TextInput" },
+    { "key": "ctrl-cmd-space", "action": "text_input::ShowCharacterPalette", "platform": "macos", "context": "TextInput" },
+
+    { "key": "ctrl-a", "action": "text_input::SelectAll", "platform": "!macos", "context": "TextInput" },
+    { "key": "ctrl-v", "action": "text_input::Paste", "platform": "!macos", "context": "TextInput" },
+    { "key": "ctrl-c", "action": "text_input::Copy", "platform": "!macos", "context": "TextInput" },
+    { "key": "ctrl-x", "action": "text_input::Cut", "platform": "!macos", "context": "TextInput" }
+  ]
+}

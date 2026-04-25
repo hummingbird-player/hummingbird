@@ -36,10 +36,6 @@ impl Modal {
 
 actions!(modal, [CloseModal]);
 
-pub fn bind_actions(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("escape", CloseModal, None)]);
-}
-
 impl ParentElement for Modal {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.div.extend(elements);

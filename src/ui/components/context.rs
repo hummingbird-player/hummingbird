@@ -4,10 +4,6 @@ use crate::ui::theme::Theme;
 
 actions!(context, [CloseContextMenu]);
 
-pub fn bind_actions(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("escape", CloseContextMenu, None)]);
-}
-
 #[derive(IntoElement)]
 pub struct ContextMenu {
     pub(self) id: ElementId,

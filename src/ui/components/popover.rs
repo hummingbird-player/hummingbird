@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Div, InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels,
-    RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window, deferred, div, px,
-    relative,
+    AnyElement, App, Div, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, deferred, div, px, relative,
 };
 use gpui::{actions, prelude::FluentBuilder};
 
@@ -12,10 +11,6 @@ use crate::ui::theme::Theme;
 pub type OnDismissHandler = dyn Fn(&mut Window, &mut App);
 
 actions!(popover, [ClosePopover]);
-
-pub fn bind_actions(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("escape", ClosePopover, None)]);
-}
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, Corner, Div, ElementId, InteractiveElement, IntoElement, KeyBinding, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions,
-    anchored, deferred, div, prelude::FluentBuilder, px,
+    App, Corner, Div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions, anchored,
+    deferred, div, prelude::FluentBuilder, px,
 };
 use smallvec::SmallVec;
 
@@ -27,20 +27,6 @@ actions!(
         SelectLast
     ]
 );
-
-pub fn bind_actions(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("escape", Close, None),
-        KeyBinding::new("down", SelectNext, None),
-        KeyBinding::new("up", SelectPrev, None),
-        KeyBinding::new("tab", SelectNext, None),
-        KeyBinding::new("shift-tab", SelectPrev, None),
-        KeyBinding::new("enter", Confirm, None),
-        KeyBinding::new("space", Confirm, None),
-        KeyBinding::new("home", SelectFirst, None),
-        KeyBinding::new("end", SelectLast, None),
-    ]);
-}
 
 #[derive(IntoElement)]
 pub struct Dropdown<T: Clone + PartialEq + 'static> {

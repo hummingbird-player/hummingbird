@@ -3,8 +3,8 @@ use std::sync::Arc;
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, DragMoveEvent, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder, px, rems, rgba,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
+    UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder, px, rems, rgba,
     uniform_list,
 };
 use rustc_hash::FxHashMap;
@@ -53,10 +53,6 @@ actions!(playlist, [Export, Import]);
 
 // height + border
 const PLAYLIST_ITEM_HEIGHT: f32 = 40.0;
-
-pub fn bind_actions(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("secondary-s", Export, None)]);
-}
 
 fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
     match method {
