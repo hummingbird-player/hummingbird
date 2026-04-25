@@ -22,9 +22,9 @@ use crate::{
             button::{ButtonIntent, button},
             context::context,
             drag_drop::{
-                AlbumDragData, DragData, DragDropItemState, DragDropListConfig, DragDropListManager,
-                DragPreview, DropIndicator, TrackDragData, check_drag_cancelled, handle_drag_move,
-                handle_drop,
+                AlbumDragData, DragData, DragDropItemState, DragDropListConfig,
+                DragDropListManager, DragPreview, DropIndicator, TrackDragData,
+                check_drag_cancelled, handle_drag_move, handle_drop,
             },
             icons::{CROSS, FILE_EXPORT, PENCIL, PLAY, PLAYLIST, PLUS, SHUFFLE, STAR},
             menu::{menu, menu_item, menu_separator},
@@ -350,14 +350,11 @@ impl Render for PlaylistList {
                                 return;
                             };
                             let queue = cx.global::<Models>().queue.read(cx);
-                            let queue_data =
-                                queue.data.read().expect("could not read queue");
+                            let queue_data = queue.data.read().expect("could not read queue");
                             let all_indices = drag_data.all_indices();
                             all_indices
                                 .into_iter()
-                                .filter_map(|i| {
-                                    queue_data.get(i).and_then(|item| item.get_db_id())
-                                })
+                                .filter_map(|i| queue_data.get(i).and_then(|item| item.get_db_id()))
                                 .collect()
                         } else {
                             drag_data.track_id.into_iter().collect()
@@ -368,8 +365,7 @@ impl Render for PlaylistList {
                         }
 
                         let pool = cx.global::<Pool>().0.clone();
-                        let playlist_tracker =
-                            cx.global::<Models>().playlist_tracker.clone();
+                        let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
                         cx.spawn(async move |_, cx| {
                             let task = crate::RUNTIME.spawn(async move {
@@ -410,8 +406,7 @@ impl Render for PlaylistList {
                         }
 
                         let pool = cx.global::<Pool>().0.clone();
-                        let playlist_tracker =
-                            cx.global::<Models>().playlist_tracker.clone();
+                        let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
                         cx.spawn(async move |_, cx| {
                             let task = crate::RUNTIME.spawn(async move {
@@ -426,9 +421,7 @@ impl Render for PlaylistList {
                                     return;
                                 }
                                 Err(err) => {
-                                    error!(
-                                        "add album tracks to playlist task panicked: {err:?}"
-                                    );
+                                    error!("add album tracks to playlist task panicked: {err:?}");
                                     return;
                                 }
                             }

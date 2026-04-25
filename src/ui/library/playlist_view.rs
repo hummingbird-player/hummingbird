@@ -25,7 +25,7 @@ use crate::{
             button::{ButtonSize, button},
             drag_drop::{
                 AlbumDragData, DragDropItemState, DragDropListConfig, DragDropListManager,
-                DragPreview, DropIndicator, TrackDragData, check_drag_cancelled,
+                DragPreview, DropIndicator, DropPosition, TrackDragData, check_drag_cancelled,
                 continue_edge_scroll, handle_external_drag_move, handle_track_drag_move,
                 handle_track_drop,
             },
@@ -402,6 +402,84 @@ impl PlaylistView {
         matches!(self.sort_method, PlaylistTrackSortMethod::Custom)
     }
 
+    fn resolve_target_position(
+        &self,
+        drop_target: Option<(usize, DropPosition)>,
+        cx: &mut Context<Self>,
+    ) -> Option<i64> {
+        let playlist_track_ids = self.playlist_track_ids.clone();
+        drop_target.and_then(|(target_index, position)| {
+            if playlist_track_ids.is_empty() {
+                return None;
+            }
+            if target_index < playlist_track_ids.len() {
+                let target_item_id = playlist_track_ids[target_index].0;
+                let target_item = cx.get_playlist_item(target_item_id).ok()?;
+                Some(match position {
+                    DropPosition::Before => target_item.position,
+                    DropPosition::After => target_item.position + 1,
+                })
+            } else {
+                let last_item_id = playlist_track_ids.last()?.0;
+                let last_item = cx.get_playlist_item(last_item_id).ok()?;
+                Some(last_item.position + 1)
+            }
+        })
+    }
+
+    fn add_tracks_to_playlist(
+        &mut self,
+        track_ids: Vec<i64>,
+        target_position: Option<i64>,
+        cx: &mut Context<Self>,
+    ) {
+        let playlist_id = self.playlist.id;
+        let pool = cx.global::<Pool>().0.clone();
+        let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+
+        cx.spawn(async move |_, cx| {
+            let pool_for_add = pool.clone();
+            let task = crate::RUNTIME.spawn(async move {
+                let mut new_item_ids: Vec<i64> = Vec::new();
+                for track_id in track_ids {
+                    let item_id =
+                        db::add_playlist_item(&pool_for_add, playlist_id, track_id).await?;
+                    new_item_ids.push(item_id);
+                }
+                Ok::<Vec<i64>, sqlx::Error>(new_item_ids)
+            });
+
+            let new_item_ids = match task.await {
+                Ok(Ok(ids)) => ids,
+                Ok(Err(err)) => {
+                    error!("could not add tracks to playlist: {err:?}");
+                    return;
+                }
+                Err(err) => {
+                    error!("add tracks to playlist task panicked: {err:?}");
+                    return;
+                }
+            };
+
+            if let Some(pos) = target_position {
+                for &item_id in new_item_ids.iter().rev() {
+                    let pool_for_move = pool.clone();
+                    let _ =
+                        crate::RUNTIME
+                            .spawn(async move {
+                                db::move_playlist_item(&pool_for_move, item_id, pos).await
+                            })
+                            .await;
+                }
+            }
+
+            playlist_tracker.update(cx, |_, cx| {
+                cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
+            });
+        })
+        .detach();
+    }
+
     fn schedule_edge_scroll(
         manager: Entity<DragDropListManager>,
         scroll_handle: ScrollableHandle,
@@ -752,8 +830,6 @@ impl Render for PlaylistView {
                             ))
                             .on_drop(cx.listener(
                                 move |this: &mut PlaylistView, drag_data: &TrackDragData, _, cx| {
-                                    use crate::ui::components::drag_drop::DropPosition;
-
                                     let is_internal = drag_data
                                         .source_list_id
                                         .as_ref()
@@ -798,65 +874,9 @@ impl Render for PlaylistView {
                                             },
                                         );
                                     } else if let Some(track_id) = drag_data.track_id {
-                                        let playlist_id = this.playlist.id;
                                         let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
-                                        let playlist_track_ids = this.playlist_track_ids.clone();
-
-                                        let target_position = drop_target.and_then(|(target_index, position)| {
-                                            if playlist_track_ids.is_empty() {
-                                                return None;
-                                            }
-                                            if target_index < playlist_track_ids.len() {
-                                                let target_item_id = playlist_track_ids[target_index].0;
-                                                let target_item = cx.get_playlist_item(target_item_id).ok()?;
-                                                Some(match position {
-                                                    DropPosition::Before => target_item.position,
-                                                    DropPosition::After => target_item.position + 1,
-                                                })
-                                            } else {
-                                                let last_item_id = playlist_track_ids.last()?.0;
-                                                let last_item = cx.get_playlist_item(last_item_id).ok()?;
-                                                Some(last_item.position + 1)
-                                            }
-                                        });
-
-                                        let pool = cx.global::<Pool>().0.clone();
-                                        let playlist_tracker =
-                                            cx.global::<Models>().playlist_tracker.clone();
-
-                                        cx.spawn(async move |_, cx| {
-                                            let pool_for_add = pool.clone();
-                                            let task = crate::RUNTIME.spawn(async move {
-                                                db::add_playlist_item(&pool_for_add, playlist_id, track_id).await
-                                            });
-
-                                            let new_item_id = match task.await {
-                                                Ok(Ok(id)) => id,
-                                                Ok(Err(err)) => {
-                                                    error!("could not add track to playlist: {err:?}");
-                                                    return;
-                                                }
-                                                Err(err) => {
-                                                    error!("add track to playlist task panicked: {err:?}");
-                                                    return;
-                                                }
-                                            };
-
-                                            if let Some(pos) = target_position {
-                                                let pool_for_move = pool.clone();
-                                                let _ = crate::RUNTIME
-                                                    .spawn(async move {
-                                                        db::move_playlist_item(&pool_for_move, new_item_id, pos).await
-                                                    })
-                                                    .await;
-                                            }
-
-                                            playlist_tracker.update(cx, |_, cx| {
-                                                cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
-                                            });
-                                        })
-                                        .detach();
-
+                                        let target_position = this.resolve_target_position(drop_target, cx);
+                                        this.add_tracks_to_playlist(vec![track_id], target_position, cx);
                                         this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
                                     } else {
                                         this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
@@ -866,80 +886,12 @@ impl Render for PlaylistView {
                             ))
                             .on_drop(cx.listener(
                                 move |this: &mut PlaylistView, drag_data: &AlbumDragData, _, cx| {
-                                    use crate::ui::components::drag_drop::DropPosition;
-
-                                    let playlist_id = this.playlist.id;
                                     let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
-                                    let playlist_track_ids = this.playlist_track_ids.clone();
-
-                                    let target_position = drop_target.and_then(|(target_index, position)| {
-                                        if playlist_track_ids.is_empty() {
-                                            return None;
-                                        }
-                                        if target_index < playlist_track_ids.len() {
-                                            let target_item_id = playlist_track_ids[target_index].0;
-                                            let target_item = cx.get_playlist_item(target_item_id).ok()?;
-                                            Some(match position {
-                                                DropPosition::Before => target_item.position,
-                                                DropPosition::After => target_item.position + 1,
-                                            })
-                                        } else {
-                                            let last_item_id = playlist_track_ids.last()?.0;
-                                            let last_item = cx.get_playlist_item(last_item_id).ok()?;
-                                            Some(last_item.position + 1)
-                                        }
-                                    });
+                                    let target_position = this.resolve_target_position(drop_target, cx);
 
                                     if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
-                                        let pool = cx.global::<Pool>().0.clone();
-                                        let playlist_tracker =
-                                            cx.global::<Models>().playlist_tracker.clone();
-
-                                        cx.spawn(async move |_, cx| {
-                                            let pool_for_add = pool.clone();
-                                            let task = crate::RUNTIME.spawn(async move {
-                                                let mut new_item_ids: Vec<i64> = Vec::new();
-                                                for track in tracks.iter() {
-                                                    let item_id = db::add_playlist_item(
-                                                        &pool_for_add,
-                                                        playlist_id,
-                                                        track.id,
-                                                    )
-                                                    .await?;
-                                                    new_item_ids.push(item_id);
-                                                }
-                                                Ok::<Vec<i64>, sqlx::Error>(new_item_ids)
-                                            });
-
-                                            let new_item_ids = match task.await {
-                                                Ok(Ok(ids)) => ids,
-                                                Ok(Err(err)) => {
-                                                    error!("could not add album tracks to playlist: {err:?}");
-                                                    return;
-                                                }
-                                                Err(err) => {
-                                                    error!("add album tracks to playlist task panicked: {err:?}");
-                                                    return;
-                                                }
-                                            };
-
-                                            if let Some(pos) = target_position {
-                                                for &item_id in new_item_ids.iter().rev() {
-                                                    let pool_for_move = pool.clone();
-                                                    let _ = crate::RUNTIME
-                                                        .spawn(async move {
-                                                            db::move_playlist_item(&pool_for_move, item_id, pos)
-                                                                .await
-                                                        })
-                                                        .await;
-                                                }
-                                            }
-
-                                            playlist_tracker.update(cx, |_, cx| {
-                                                cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
-                                            });
-                                        })
-                                        .detach();
+                                        let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+                                        this.add_tracks_to_playlist(track_ids, target_position, cx);
                                     }
 
                                     this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
