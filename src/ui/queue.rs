@@ -318,6 +318,13 @@ impl Render for QueueItem {
                                 let modifiers = event.modifiers();
                                 let ctrl = modifiers.control || modifiers.platform;
 
+                                let select_on_click = cx
+                                    .global::<SettingsGlobal>()
+                                    .model
+                                    .read(cx)
+                                    .interface
+                                    .queue_select_on_click;
+
                                 if event.click_count() == 2 {
                                     cx.global::<PlaybackInterface>().jump(idx);
                                 } else if ctrl {
@@ -325,8 +332,10 @@ impl Render for QueueItem {
                                 } else if modifiers.shift {
                                     selection
                                         .update(cx, |s, cx| s.shift_range(idx, Some(current), cx));
-                                } else {
+                                } else if select_on_click {
                                     selection.update(cx, |s, cx| s.select(idx, cx));
+                                } else {
+                                    cx.global::<PlaybackInterface>().jump(idx);
                                 }
                             })
                         })

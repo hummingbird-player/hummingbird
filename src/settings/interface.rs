@@ -18,6 +18,10 @@ fn default_grid_min_item_width() -> f32 {
     DEFAULT_GRID_MIN_ITEM_WIDTH
 }
 
+fn default_queue_select_on_click() -> bool {
+    true
+}
+
 pub fn clamp_grid_min_item_width(value: f32) -> f32 {
     if !value.is_finite() {
         return DEFAULT_GRID_MIN_ITEM_WIDTH;
@@ -44,6 +48,8 @@ pub struct InterfaceSettings {
     pub reduced_motion: bool,
     #[serde(default)]
     pub always_show_scrollbars: bool,
+    #[serde(default = "default_queue_select_on_click")]
+    pub queue_select_on_click: bool,
     #[cfg(not(target_os = "macos"))]
     #[serde(default)]
     pub swap_menu_and_nav: bool,
@@ -81,6 +87,7 @@ impl Default for InterfaceSettings {
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,
             always_show_scrollbars: false,
+            queue_select_on_click: true,
             #[cfg(not(target_os = "macos"))]
             swap_menu_and_nav: false,
         }

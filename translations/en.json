@@ -86,6 +86,8 @@
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": "Allows the library to take up the full width of the screen.",
   "INTERFACE_GRID_MIN_ITEM_WIDTH": "Grid item width",
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": "Adjusts the minimum width of items in grid view.",
+  "INTERFACE_QUEUE_SELECT_ON_CLICK": "Clicking on queue selects tracks",
+  "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": "Clicking on a queue item selects it, double clicking plays it.",
   "INTERFACE_REDUCED_MOTION": "Reduced motion",
   "INTERFACE_REDUCED_MOTION_SUBTEXT": "Disables smooth scrolling, fades, and other motion-heavy UI animations.",
   "INTERFACE_STARTUP_LIBRARY_VIEW": "Default startup view",

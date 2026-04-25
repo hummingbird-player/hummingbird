@@ -338,6 +338,27 @@ impl Render for InterfaceSettings {
                     "interface-always-show-scrollbars-check",
                     interface.always_show_scrollbars,
                 )),
+            )
+            .child(
+                label(
+                    "interface-queue-select-on-click",
+                    tr!("INTERFACE_QUEUE_SELECT_ON_CLICK", "Clicking on queue selects tracks"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT",
+                    "Clicking on a queue item selects it, double clicking plays it."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_interface(cx, |interface| {
+                        interface.queue_select_on_click = !interface.queue_select_on_click;
+                    });
+                }))
+                .child(checkbox(
+                    "interface-queue-select-on-click-check",
+                    interface.queue_select_on_click,
+                )),
             );
 
         #[cfg(not(target_os = "macos"))]

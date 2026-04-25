@@ -265,13 +265,13 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:786",
+    "definedIn": "src/ui/queue.rs:795",
     "plural": false,
     "description": null
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:797",
+    "definedIn": "src/ui/queue.rs:806",
     "plural": false,
     "description": null
   },
@@ -427,13 +427,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:548",
+    "definedIn": "src/ui/queue.rs:557",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:565",
+    "definedIn": "src/ui/queue.rs:574",
     "plural": false,
     "description": null
   },
@@ -503,6 +503,18 @@
     "plural": false,
     "description": null
   },
+  "INTERFACE_QUEUE_SELECT_ON_CLICK": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:345",
+    "plural": false,
+    "description": null
+  },
+  "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": {
+    "context": "interface.rs",
+    "definedIn": "src/ui/settings/interface.rs:348",
+    "plural": false,
+    "description": null
+  },
   "INTERFACE_REDUCED_MOTION": {
     "context": "interface.rs",
     "definedIn": "src/ui/settings/interface.rs:303",
@@ -529,13 +541,13 @@
   },
   "INTERFACE_SWAP_MENU_AND_NAV": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:348",
+    "definedIn": "src/ui/settings/interface.rs:369",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:353",
+    "definedIn": "src/ui/settings/interface.rs:374",
     "plural": false,
     "description": null
   },
@@ -769,7 +781,7 @@
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:778",
+    "definedIn": "src/ui/queue.rs:787",
     "plural": false,
     "description": null
   },
@@ -811,7 +823,7 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:627",
+    "definedIn": "src/ui/queue.rs:636",
     "plural": false,
     "description": null
   },
@@ -823,7 +835,7 @@
   },
   "REMOVE_N_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:530",
+    "definedIn": "src/ui/queue.rs:539",
     "plural": true,
     "description": null
   },
