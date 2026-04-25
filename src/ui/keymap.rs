@@ -16,7 +16,36 @@ struct KeymapEntry {
     #[serde(default)]
     context: Option<String>,
     #[serde(default)]
-    platform: Option<String>,
+    platform: Option<Platform>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+enum Platform {
+    #[serde(rename = "macos")]
+    Macos,
+    #[serde(rename = "linux")]
+    Linux,
+    #[serde(rename = "windows")]
+    Windows,
+    #[serde(rename = "!macos")]
+    NotMacos,
+    #[serde(rename = "!linux")]
+    NotLinux,
+    #[serde(rename = "!windows")]
+    NotWindows,
+}
+
+impl Platform {
+    fn matches(self) -> bool {
+        match self {
+            Self::Macos => cfg!(target_os = "macos"),
+            Self::Linux => cfg!(target_os = "linux"),
+            Self::Windows => cfg!(target_os = "windows"),
+            Self::NotMacos => !cfg!(target_os = "macos"),
+            Self::NotLinux => !cfg!(target_os = "linux"),
+            Self::NotWindows => !cfg!(target_os = "windows"),
+        }
+    }
 }
 
 fn parse_default_keybinds() -> KeymapFile {
@@ -29,7 +58,7 @@ pub fn load_default_keymap(cx: &mut App) {
     let bindings: Vec<KeyBinding> = file
         .bindings
         .into_iter()
-        .filter(|e| platform_matches(e.platform.as_deref()))
+        .filter(|e| e.platform.is_none_or(Platform::matches))
         .map(|e| {
             let action = cx
                 .build_action(&e.action, None)
@@ -55,19 +84,6 @@ pub fn load_default_keymap(cx: &mut App) {
     cx.bind_keys(bindings);
 }
 
-fn platform_matches(spec: Option<&str>) -> bool {
-    match spec {
-        None => true,
-        Some("macos") => cfg!(target_os = "macos"),
-        Some("linux") => cfg!(target_os = "linux"),
-        Some("windows") => cfg!(target_os = "windows"),
-        Some("!macos") => !cfg!(target_os = "macos"),
-        Some("!linux") => !cfg!(target_os = "linux"),
-        Some("!windows") => !cfg!(target_os = "windows"),
-        Some(other) => panic!("unknown platform spec: {other}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,7 +100,7 @@ mod tests {
         let filtered: Vec<_> = file
             .bindings
             .iter()
-            .filter(|e| platform_matches(e.platform.as_deref()))
+            .filter(|e| e.platform.is_none_or(Platform::matches))
             .collect();
         assert!(
             !filtered.is_empty(),
