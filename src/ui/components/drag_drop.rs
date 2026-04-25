@@ -17,7 +17,6 @@ pub enum DropPosition {
 #[derive(Clone, Debug)]
 pub struct DragData {
     pub source_index: usize,
-    pub additional_indices: Vec<usize>,
     pub list_id: ElementId,
 }
 
@@ -25,26 +24,12 @@ impl DragData {
     pub fn new(source_index: usize, list_id: impl Into<ElementId>) -> Self {
         Self {
             source_index,
-            additional_indices: Vec::new(),
             list_id: list_id.into(),
         }
     }
-
-    pub fn with_additional_indices(mut self, indices: Vec<usize>) -> Self {
-        self.additional_indices = indices;
-        self
-    }
-
-    pub fn all_indices(&self) -> Vec<usize> {
-        let mut all = vec![self.source_index];
-        all.extend_from_slice(&self.additional_indices);
-        all.sort_unstable();
-        all.dedup();
-        all
-    }
 }
 
-/// Drag data for individual tracks that can be dropped onto the queue.
+/// Drag data for individual tracks that can be dropped onto the queue or playlists.
 /// Also supports reordering when source_list_id and source_index are provided.
 #[derive(Clone, Debug)]
 pub struct TrackDragData {
@@ -52,12 +37,26 @@ pub struct TrackDragData {
     pub album_id: Option<i64>,
     pub path: PathBuf,
     pub display_name: SharedString,
-    /// Source list ID, if dragged from a reorderable list (e.g. a playlist).
+    /// Source list ID, if dragged from a reorderable list (e.g. a playlist or the queue).
     pub source_list_id: Option<ElementId>,
     pub source_index: Option<usize>,
+    /// Additional selected indices when dragging multiple items from a list.
+    pub additional_indices: Vec<usize>,
 }
 
 impl TrackDragData {
+    pub fn new(path: impl Into<PathBuf>, display_name: impl Into<SharedString>) -> Self {
+        Self {
+            track_id: None,
+            album_id: None,
+            path: path.into(),
+            display_name: display_name.into(),
+            source_list_id: None,
+            source_index: None,
+            additional_indices: Vec::new(),
+        }
+    }
+
     pub fn from_track(
         track_id: i64,
         album_id: Option<i64>,
@@ -71,6 +70,7 @@ impl TrackDragData {
             display_name: display_name.into(),
             source_list_id: None,
             source_index: None,
+            additional_indices: Vec::new(),
         }
     }
 
@@ -78,6 +78,20 @@ impl TrackDragData {
         self.source_list_id = Some(list_id.into());
         self.source_index = Some(index);
         self
+    }
+
+    pub fn with_additional_indices(mut self, indices: Vec<usize>) -> Self {
+        self.additional_indices = indices;
+        self
+    }
+
+    /// All indices being dragged (source_index + additional_indices), sorted and deduped.
+    pub fn all_indices(&self) -> Vec<usize> {
+        let mut all = self.source_index.into_iter().collect::<Vec<_>>();
+        all.extend_from_slice(&self.additional_indices);
+        all.sort_unstable();
+        all.dedup();
+        all
     }
 }
 
@@ -454,13 +468,13 @@ pub fn handle_drag_move<V: 'static>(
         return false;
     }
 
-    let all_indices = drag_data.all_indices();
+    let source_index = drag_data.source_index;
     let mouse_pos = event.event.position;
     let container_bounds = event.bounds;
 
     manager.update(cx, |m, _| {
         m.state.is_dragging = true;
-        m.state.dragging_indices = all_indices;
+        m.state.dragging_indices = vec![source_index];
         m.state.set_mouse_y(mouse_pos.y);
         m.container_bounds = Some(container_bounds);
     });
@@ -497,9 +511,10 @@ pub fn handle_drag_move<V: 'static>(
     scrolled
 }
 
-/// Handle a drag move event for TrackDragData in a reorderable list.
+/// Handle a drag move event for TrackDragData in a list.
 ///
-/// Only processes the event if the drag originated from the same list (source_list_id matches).
+/// Works for both internal reordering (when source_list_id matches) and external
+/// drops (when the drag originated from another list or component).
 /// Returns `true` if scrolling occurred.
 pub fn handle_track_drag_move<V: 'static>(
     manager: Entity<DragDropListManager>,
@@ -518,20 +533,18 @@ pub fn handle_track_drag_move<V: 'static>(
         .map(|id| *id == config.list_id)
         .unwrap_or(false);
 
-    if !is_internal {
-        return false;
-    }
-
-    let Some(source_index) = drag_data.source_index else {
-        return false;
-    };
-
     let mouse_pos = event.event.position;
     let container_bounds = event.bounds;
 
+    let dragging_indices = if is_internal {
+        drag_data.all_indices()
+    } else {
+        Vec::new()
+    };
+
     manager.update(cx, |m, _| {
         m.state.is_dragging = true;
-        m.state.dragging_indices = vec![source_index];
+        m.state.dragging_indices = dragging_indices;
         m.state.set_mouse_y(mouse_pos.y);
         m.container_bounds = Some(container_bounds);
     });
@@ -596,37 +609,6 @@ pub fn handle_drop<V: 'static, F>(
     manager.update(cx, |m, _| m.state.end_drag());
 }
 
-/// Handle a drop of DragData with potential multi-selection indices.
-/// Like `handle_drop`, but calls `on_multi_reorder` with the full DragData
-/// so the caller can dispatch single vs. multi-item moves.
-pub fn handle_drop_multi<V: 'static, F>(
-    manager: Entity<DragDropListManager>,
-    drag_data: &DragData,
-    cx: &mut Context<V>,
-    on_multi_reorder: F,
-) where
-    F: FnOnce(&DragData, usize, &mut Context<V>),
-{
-    let config_list_id = manager.read(cx).config.list_id.clone();
-
-    if drag_data.list_id != config_list_id {
-        return;
-    }
-
-    let target = manager.read(cx).state.drop_target;
-
-    if let Some((target_index, position)) = target {
-        let final_target = calculate_move_target(drag_data.source_index, target_index, position);
-
-        let is_multi = !drag_data.additional_indices.is_empty();
-        if is_multi || drag_data.source_index != final_target {
-            on_multi_reorder(drag_data, final_target, cx);
-        }
-    }
-
-    manager.update(cx, |m, _| m.state.end_drag());
-}
-
 /// Handle a drop of TrackDragData for reordering within a list.
 ///
 /// Only processes the drop if it originated from the same list (source_list_id matches).
@@ -670,6 +652,98 @@ pub fn handle_track_drop<V: 'static, F>(
     }
 
     manager.update(cx, |m, _| m.state.end_drag());
+}
+
+/// Handle a drop of TrackDragData with potential multi-selection indices.
+///
+/// Like `handle_track_drop`, but calls `on_multi_reorder` with the full
+/// `TrackDragData` so the caller can dispatch single vs. multi-item moves.
+pub fn handle_track_drop_multi<V: 'static, F>(
+    manager: Entity<DragDropListManager>,
+    drag_data: &TrackDragData,
+    cx: &mut Context<V>,
+    on_multi_reorder: F,
+) where
+    F: FnOnce(&TrackDragData, usize, &mut Context<V>),
+{
+    let config_list_id = manager.read(cx).config.list_id.clone();
+
+    let is_internal = drag_data
+        .source_list_id
+        .as_ref()
+        .map(|id| *id == config_list_id)
+        .unwrap_or(false);
+
+    if !is_internal {
+        manager.update(cx, |m, _| m.state.end_drag());
+        return;
+    }
+
+    let target = manager.read(cx).state.drop_target;
+
+    if let Some((target_index, position)) = target {
+        let source_index = drag_data.source_index.unwrap_or(0);
+        let final_target = calculate_move_target(source_index, target_index, position);
+
+        let is_multi = !drag_data.additional_indices.is_empty();
+        if is_multi || source_index != final_target {
+            on_multi_reorder(drag_data, final_target, cx);
+        }
+    }
+
+    manager.update(cx, |m, _| m.state.end_drag());
+}
+
+/// Updates drag-drop state for an external drag (e.g. AlbumDragData).
+///
+/// Computes drop target, performs edge scrolling, and returns `true` if scrolling occurred.
+/// Does not populate `dragging_indices`.
+pub fn handle_external_drag_move<V: 'static>(
+    manager: Entity<DragDropListManager>,
+    scroll_handle: ScrollableHandle,
+    mouse_pos: Point<Pixels>,
+    container_bounds: Bounds<Pixels>,
+    item_count: usize,
+    cx: &mut Context<V>,
+    reduced_motion: bool,
+) -> bool {
+    let config = manager.read(cx).config.clone();
+
+    manager.update(cx, |m, _| {
+        m.state.is_dragging = true;
+        m.state.dragging_indices.clear();
+        m.state.set_mouse_y(mouse_pos.y);
+        m.container_bounds = Some(container_bounds);
+    });
+
+    let direction = get_edge_scroll_direction(mouse_pos.y, container_bounds, &config.scroll_config);
+    let scrolled = if reduced_motion {
+        false
+    } else {
+        perform_edge_scroll(&scroll_handle, direction, &config.scroll_config)
+    };
+
+    if container_bounds.contains(&mouse_pos) {
+        let scroll_offset_y = scroll_handle.offset().y;
+        let drop_target = calculate_drop_target(
+            mouse_pos,
+            container_bounds,
+            scroll_offset_y,
+            config.item_height,
+            item_count,
+        );
+        manager.update(cx, |m, _| {
+            if let Some((item_index, drop_position)) = drop_target {
+                m.state.update_drop_target(item_index, drop_position);
+            } else {
+                m.state.clear_drop_target();
+            }
+        });
+    } else {
+        manager.update(cx, |m, _| m.state.clear_drop_target());
+    }
+
+    scrolled
 }
 
 pub fn check_drag_cancelled<V: 'static>(

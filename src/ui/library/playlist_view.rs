@@ -12,20 +12,22 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{LibraryAccess, PlaylistTrackSortMethod},
+        db::{self, LibraryAccess, PlaylistTrackSortMethod},
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
     playback::queue::QueueItemData,
     ui::{
+        app::Pool,
         caching::hummingbird_cache,
         command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
             button::{ButtonSize, button},
             drag_drop::{
-                DragDropItemState, DragDropListConfig, DragDropListManager, DragPreview,
-                DropIndicator, TrackDragData, check_drag_cancelled, continue_edge_scroll,
-                handle_track_drag_move, handle_track_drop,
+                AlbumDragData, DragDropItemState, DragDropListConfig, DragDropListManager,
+                DragPreview, DropIndicator, TrackDragData, check_drag_cancelled,
+                continue_edge_scroll, handle_external_drag_move, handle_track_drag_move,
+                handle_track_drop,
             },
             dropdown::dropdown,
             icons::{PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
@@ -151,7 +153,13 @@ impl Render for PlaylistTrackItem {
             .w_full()
             .h(px(PLAYLIST_ITEM_HEIGHT))
             .relative()
-            .when(item_state.is_being_dragged, |d| d.opacity(0.5));
+            .when(item_state.is_being_dragged, |d| d.opacity(0.5))
+            .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
+            .child(DropIndicator::with_state(
+                item_state.is_drop_target_before,
+                item_state.is_drop_target_after,
+                theme.button_primary,
+            ));
 
         if self.drag_enabled {
             let drag_data = TrackDragData::from_track(
@@ -162,16 +170,9 @@ impl Render for PlaylistTrackItem {
             )
             .with_reorder_info(self.list_id.clone(), idx);
 
-            element = element
-                .on_drag(drag_data, move |_, _, _, cx| {
-                    DragPreview::new(cx, track_title.clone())
-                })
-                .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
-                .child(DropIndicator::with_state(
-                    item_state.is_drop_target_before,
-                    item_state.is_drop_target_after,
-                    theme.button_primary,
-                ));
+            element = element.on_drag(drag_data, move |_, _, _, cx| {
+                DragPreview::new(cx, track_title.clone())
+            });
         }
 
         element.child(self.track_item.clone())
@@ -654,55 +655,112 @@ impl Render for PlaylistView {
                             .h_full()
                             .relative()
                             .mt(px(18.0))
-                            .when(is_custom_sort, |this| {
-                                this.on_drag_move::<TrackDragData>(cx.listener(
-                                    move |this: &mut PlaylistView,
-                                          event: &DragMoveEvent<TrackDragData>,
-                                          window,
-                                          cx| {
+                            .on_drag_move::<TrackDragData>(cx.listener(
+                                move |this: &mut PlaylistView,
+                                      event: &DragMoveEvent<TrackDragData>,
+                                      window,
+                                      cx| {
+                                    let scroll_handle: ScrollableHandle =
+                                        this.scroll_handle.clone().into();
+
+                                    let reduced_motion = cx
+                                        .global::<crate::settings::SettingsGlobal>()
+                                        .model
+                                        .read(cx)
+                                        .interface
+                                        .reduced_motion;
+                                    let scrolled = handle_track_drag_move(
+                                        this.drag_drop_manager.clone(),
+                                        scroll_handle,
+                                        event,
+                                        item_count,
+                                        cx,
+                                        reduced_motion,
+                                    );
+
+                                    if scrolled {
+                                        let entity = cx.entity().downgrade();
+                                        let manager = this.drag_drop_manager.clone();
                                         let scroll_handle: ScrollableHandle =
                                             this.scroll_handle.clone().into();
 
-                                        let reduced_motion = cx
-                                            .global::<crate::settings::SettingsGlobal>()
-                                            .model
-                                            .read(cx)
-                                            .interface
-                                            .reduced_motion;
-                                        let scrolled = handle_track_drag_move(
-                                            this.drag_drop_manager.clone(),
-                                            scroll_handle,
-                                            event,
-                                            item_count,
-                                            cx,
-                                            reduced_motion,
-                                        );
+                                        window.on_next_frame(move |window, cx| {
+                                            if let Some(entity) = entity.upgrade() {
+                                                entity.update(cx, |_, cx| {
+                                                    Self::schedule_edge_scroll(
+                                                        manager,
+                                                        scroll_handle,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        });
+                                    }
 
-                                        if scrolled {
-                                            let entity = cx.entity().downgrade();
-                                            let manager = this.drag_drop_manager.clone();
-                                            let scroll_handle: ScrollableHandle =
-                                                this.scroll_handle.clone().into();
+                                    cx.notify();
+                                },
+                            ))
+                            .on_drag_move::<AlbumDragData>(cx.listener(
+                                move |this: &mut PlaylistView,
+                                      event: &DragMoveEvent<AlbumDragData>,
+                                      window,
+                                      cx| {
+                                    let scroll_handle: ScrollableHandle =
+                                        this.scroll_handle.clone().into();
+                                    let mouse_pos = event.event.position;
+                                    let container_bounds = event.bounds;
 
-                                            window.on_next_frame(move |window, cx| {
-                                                if let Some(entity) = entity.upgrade() {
-                                                    entity.update(cx, |_, cx| {
-                                                        Self::schedule_edge_scroll(
-                                                            manager,
-                                                            scroll_handle,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            });
-                                        }
+                                    let reduced_motion = cx
+                                        .global::<crate::settings::SettingsGlobal>()
+                                        .model
+                                        .read(cx)
+                                        .interface
+                                        .reduced_motion;
+                                    let scrolled = handle_external_drag_move(
+                                        this.drag_drop_manager.clone(),
+                                        scroll_handle,
+                                        mouse_pos,
+                                        container_bounds,
+                                        item_count,
+                                        cx,
+                                        reduced_motion,
+                                    );
 
-                                        cx.notify();
-                                    },
-                                ))
-                                .on_drop(cx.listener(
-                                    move |this: &mut PlaylistView, drag_data: &TrackDragData, _, cx| {
+                                    if scrolled {
+                                        let entity = cx.entity().downgrade();
+                                        let manager = this.drag_drop_manager.clone();
+                                        let scroll_handle: ScrollableHandle =
+                                            this.scroll_handle.clone().into();
+
+                                        window.on_next_frame(move |window, cx| {
+                                            if let Some(entity) = entity.upgrade() {
+                                                entity.update(cx, |_, cx| {
+                                                    Self::schedule_edge_scroll(
+                                                        manager,
+                                                        scroll_handle,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        });
+                                    }
+
+                                    cx.notify();
+                                },
+                            ))
+                            .on_drop(cx.listener(
+                                move |this: &mut PlaylistView, drag_data: &TrackDragData, _, cx| {
+                                    use crate::ui::components::drag_drop::DropPosition;
+
+                                    let is_internal = drag_data
+                                        .source_list_id
+                                        .as_ref()
+                                        .map(|id| *id == this.list_id)
+                                        .unwrap_or(false);
+
+                                    if is_internal && this.is_custom_sort() {
                                         let playlist_track_ids = this.playlist_track_ids.clone();
                                         let playlist_id = this.playlist.id;
 
@@ -739,10 +797,155 @@ impl Render for PlaylistView {
                                                 });
                                             },
                                         );
-                                        cx.notify();
-                                    },
-                                ))
-                            })
+                                    } else if let Some(track_id) = drag_data.track_id {
+                                        let playlist_id = this.playlist.id;
+                                        let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
+                                        let playlist_track_ids = this.playlist_track_ids.clone();
+
+                                        let target_position = drop_target.and_then(|(target_index, position)| {
+                                            if playlist_track_ids.is_empty() {
+                                                return None;
+                                            }
+                                            if target_index < playlist_track_ids.len() {
+                                                let target_item_id = playlist_track_ids[target_index].0;
+                                                let target_item = cx.get_playlist_item(target_item_id).ok()?;
+                                                Some(match position {
+                                                    DropPosition::Before => target_item.position,
+                                                    DropPosition::After => target_item.position + 1,
+                                                })
+                                            } else {
+                                                let last_item_id = playlist_track_ids.last()?.0;
+                                                let last_item = cx.get_playlist_item(last_item_id).ok()?;
+                                                Some(last_item.position + 1)
+                                            }
+                                        });
+
+                                        let pool = cx.global::<Pool>().0.clone();
+                                        let playlist_tracker =
+                                            cx.global::<Models>().playlist_tracker.clone();
+
+                                        cx.spawn(async move |_, cx| {
+                                            let pool_for_add = pool.clone();
+                                            let task = crate::RUNTIME.spawn(async move {
+                                                db::add_playlist_item(&pool_for_add, playlist_id, track_id).await
+                                            });
+
+                                            let new_item_id = match task.await {
+                                                Ok(Ok(id)) => id,
+                                                Ok(Err(err)) => {
+                                                    error!("could not add track to playlist: {err:?}");
+                                                    return;
+                                                }
+                                                Err(err) => {
+                                                    error!("add track to playlist task panicked: {err:?}");
+                                                    return;
+                                                }
+                                            };
+
+                                            if let Some(pos) = target_position {
+                                                let pool_for_move = pool.clone();
+                                                let _ = crate::RUNTIME
+                                                    .spawn(async move {
+                                                        db::move_playlist_item(&pool_for_move, new_item_id, pos).await
+                                                    })
+                                                    .await;
+                                            }
+
+                                            playlist_tracker.update(cx, |_, cx| {
+                                                cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
+                                            });
+                                        })
+                                        .detach();
+
+                                        this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
+                                    } else {
+                                        this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                            .on_drop(cx.listener(
+                                move |this: &mut PlaylistView, drag_data: &AlbumDragData, _, cx| {
+                                    use crate::ui::components::drag_drop::DropPosition;
+
+                                    let playlist_id = this.playlist.id;
+                                    let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
+                                    let playlist_track_ids = this.playlist_track_ids.clone();
+
+                                    let target_position = drop_target.and_then(|(target_index, position)| {
+                                        if playlist_track_ids.is_empty() {
+                                            return None;
+                                        }
+                                        if target_index < playlist_track_ids.len() {
+                                            let target_item_id = playlist_track_ids[target_index].0;
+                                            let target_item = cx.get_playlist_item(target_item_id).ok()?;
+                                            Some(match position {
+                                                DropPosition::Before => target_item.position,
+                                                DropPosition::After => target_item.position + 1,
+                                            })
+                                        } else {
+                                            let last_item_id = playlist_track_ids.last()?.0;
+                                            let last_item = cx.get_playlist_item(last_item_id).ok()?;
+                                            Some(last_item.position + 1)
+                                        }
+                                    });
+
+                                    if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
+                                        let pool = cx.global::<Pool>().0.clone();
+                                        let playlist_tracker =
+                                            cx.global::<Models>().playlist_tracker.clone();
+
+                                        cx.spawn(async move |_, cx| {
+                                            let pool_for_add = pool.clone();
+                                            let task = crate::RUNTIME.spawn(async move {
+                                                let mut new_item_ids: Vec<i64> = Vec::new();
+                                                for track in tracks.iter() {
+                                                    let item_id = db::add_playlist_item(
+                                                        &pool_for_add,
+                                                        playlist_id,
+                                                        track.id,
+                                                    )
+                                                    .await?;
+                                                    new_item_ids.push(item_id);
+                                                }
+                                                Ok::<Vec<i64>, sqlx::Error>(new_item_ids)
+                                            });
+
+                                            let new_item_ids = match task.await {
+                                                Ok(Ok(ids)) => ids,
+                                                Ok(Err(err)) => {
+                                                    error!("could not add album tracks to playlist: {err:?}");
+                                                    return;
+                                                }
+                                                Err(err) => {
+                                                    error!("add album tracks to playlist task panicked: {err:?}");
+                                                    return;
+                                                }
+                                            };
+
+                                            if let Some(pos) = target_position {
+                                                for &item_id in new_item_ids.iter().rev() {
+                                                    let pool_for_move = pool.clone();
+                                                    let _ = crate::RUNTIME
+                                                        .spawn(async move {
+                                                            db::move_playlist_item(&pool_for_move, item_id, pos)
+                                                                .await
+                                                        })
+                                                        .await;
+                                                }
+                                            }
+
+                                            playlist_tracker.update(cx, |_, cx| {
+                                                cx.emit(PlaylistEvent::PlaylistUpdated(playlist_id));
+                                            });
+                                        })
+                                        .detach();
+                                    }
+
+                                    this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
+                                    cx.notify();
+                                },
+                            ))
                             .child(
                                 uniform_list("playlist-list", items_clone.len(), move |range, _, cx| {
                                     let start = range.start;

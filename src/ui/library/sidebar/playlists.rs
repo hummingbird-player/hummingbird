@@ -10,19 +10,21 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::LibraryAccess,
+        db::{self, LibraryAccess},
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
     playback::interface::PlaybackInterface,
     settings::SettingsGlobal,
     ui::{
+        app::Pool,
         components::{
             button::{ButtonIntent, button},
             context::context,
             drag_drop::{
-                DragData, DragDropItemState, DragDropListConfig, DragDropListManager, DragPreview,
-                DropIndicator, check_drag_cancelled, handle_drag_move, handle_drop,
+                AlbumDragData, DragData, DragDropItemState, DragDropListConfig, DragDropListManager,
+                DragPreview, DropIndicator, TrackDragData, check_drag_cancelled, handle_drag_move,
+                handle_drop,
             },
             icons::{CROSS, FILE_EXPORT, PENCIL, PLAY, PLAYLIST, PLUS, SHUFFLE, STAR},
             menu::{menu, menu_item, menu_separator},
@@ -332,7 +334,112 @@ impl Render for PlaylistList {
                         move |_, _, _, cx| DragPreview::new(cx, drag_label.clone()),
                     )
                     .drag_over::<DragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
-                });
+                })
+                .drag_over::<TrackDragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
+                .drag_over::<AlbumDragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
+                .on_drop(cx.listener(
+                    move |_: &mut PlaylistList, drag_data: &TrackDragData, _, cx| {
+                        let is_from_queue = drag_data
+                            .source_list_id
+                            .as_ref()
+                            .map(|id| *id == "queue".into())
+                            .unwrap_or(false);
+
+                        let track_ids: Vec<i64> = if is_from_queue {
+                            let Some(_source_index) = drag_data.source_index else {
+                                return;
+                            };
+                            let queue = cx.global::<Models>().queue.read(cx);
+                            let queue_data =
+                                queue.data.read().expect("could not read queue");
+                            let all_indices = drag_data.all_indices();
+                            all_indices
+                                .into_iter()
+                                .filter_map(|i| {
+                                    queue_data.get(i).and_then(|item| item.get_db_id())
+                                })
+                                .collect()
+                        } else {
+                            drag_data.track_id.into_iter().collect()
+                        };
+
+                        if track_ids.is_empty() {
+                            return;
+                        }
+
+                        let pool = cx.global::<Pool>().0.clone();
+                        let playlist_tracker =
+                            cx.global::<Models>().playlist_tracker.clone();
+
+                        cx.spawn(async move |_, cx| {
+                            let task = crate::RUNTIME.spawn(async move {
+                                db::add_tracks_to_playlist_if_missing(&pool, pl_id, &track_ids)
+                                    .await
+                            });
+
+                            match task.await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(err)) => {
+                                    error!("could not add tracks to playlist: {err:?}");
+                                    return;
+                                }
+                                Err(err) => {
+                                    error!("add tracks to playlist task panicked: {err:?}");
+                                    return;
+                                }
+                            }
+
+                            playlist_tracker.update(cx, |_, cx| {
+                                cx.emit(PlaylistEvent::PlaylistUpdated(pl_id));
+                            });
+                        })
+                        .detach();
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |_: &mut PlaylistList, drag_data: &AlbumDragData, _, cx| {
+                        let track_ids: Vec<i64> =
+                            if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
+                                tracks.iter().map(|t| t.id).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                        if track_ids.is_empty() {
+                            return;
+                        }
+
+                        let pool = cx.global::<Pool>().0.clone();
+                        let playlist_tracker =
+                            cx.global::<Models>().playlist_tracker.clone();
+
+                        cx.spawn(async move |_, cx| {
+                            let task = crate::RUNTIME.spawn(async move {
+                                db::add_tracks_to_playlist_if_missing(&pool, pl_id, &track_ids)
+                                    .await
+                            });
+
+                            match task.await {
+                                Ok(Ok(())) => {}
+                                Ok(Err(err)) => {
+                                    error!("could not add album tracks to playlist: {err:?}");
+                                    return;
+                                }
+                                Err(err) => {
+                                    error!(
+                                        "add album tracks to playlist task panicked: {err:?}"
+                                    );
+                                    return;
+                                }
+                            }
+
+                            playlist_tracker.update(cx, |_, cx| {
+                                cx.emit(PlaylistEvent::PlaylistUpdated(pl_id));
+                            });
+                        })
+                        .detach();
+                    },
+                ));
 
             let rename_open = self.rename_popover_playlist == Some(pl_id);
             let weak_self = weak_entity.clone();
