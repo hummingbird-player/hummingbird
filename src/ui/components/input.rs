@@ -24,6 +24,8 @@ actions!(
         SelectRight,
         SelectWordLeft,
         SelectWordRight,
+        WordLeft,
+        WordRight,
         SelectAll,
         Home,
         End,
@@ -158,6 +160,16 @@ impl TextInput {
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
         let target = next_word_boundary(&self.content, self.cursor_offset());
         self.select_to(target, cx);
+    }
+
+    fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        let target = previous_word_boundary(&self.content, self.cursor_offset());
+        self.move_to(target, cx);
+    }
+
+    fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        let target = next_word_boundary(&self.content, self.cursor_offset());
+        self.move_to(target, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -807,6 +819,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::select_word_left))
             .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
