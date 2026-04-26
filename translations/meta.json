@@ -91,55 +91,55 @@
   },
   "ACTION_ABOUT": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:184",
+    "definedIn": "src/ui/command_palette.rs:20",
     "plural": false,
     "description": null
   },
   "ACTION_CHECK_FOR_UPDATES": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:203",
+    "definedIn": "src/ui/command_palette.rs:23",
     "plural": false,
     "description": null
   },
   "ACTION_COPY_TROUBLESHOOTING_INFO": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:216",
+    "definedIn": "src/ui/command_palette.rs:26",
     "plural": false,
     "description": null
   },
   "ACTION_FORCESCAN": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:254",
+    "definedIn": "src/ui/command_palette.rs:34",
     "plural": false,
     "description": null
   },
   "ACTION_GROUP_HUMMINGBIRD": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:42",
+    "definedIn": "src/ui/command_palette.rs:50",
     "plural": false,
     "description": null
   },
   "ACTION_GROUP_PLAYBACK": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:43",
+    "definedIn": "src/ui/command_palette.rs:51",
     "plural": false,
     "description": null
   },
   "ACTION_GROUP_PLAYLIST": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:45",
+    "definedIn": "src/ui/command_palette.rs:53",
     "plural": false,
     "description": null
   },
   "ACTION_GROUP_QUEUE": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:44",
+    "definedIn": "src/ui/command_palette.rs:52",
     "plural": false,
     "description": null
   },
   "ACTION_GROUP_SCAN": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:46",
+    "definedIn": "src/ui/command_palette.rs:54",
     "plural": false,
     "description": null
   },
@@ -151,61 +151,61 @@
   },
   "ACTION_NEXT": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:230",
+    "definedIn": "src/ui/command_palette.rs:30",
     "plural": false,
     "description": null
   },
   "ACTION_OPEN_LOG": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:209",
+    "definedIn": "src/ui/command_palette.rs:24",
     "plural": false,
     "description": null
   },
   "ACTION_PLAYPAUSE": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:224",
+    "definedIn": "src/ui/command_palette.rs:29",
     "plural": false,
     "description": null
   },
   "ACTION_PREVIOUS": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:236",
+    "definedIn": "src/ui/command_palette.rs:31",
     "plural": false,
     "description": null
   },
   "ACTION_QUIT": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:178",
+    "definedIn": "src/ui/command_palette.rs:19",
     "plural": false,
     "description": null
   },
   "ACTION_SEARCH": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:190",
+    "definedIn": "src/ui/command_palette.rs:21",
     "plural": false,
     "description": null
   },
   "ACTION_SETTINGS": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:196",
+    "definedIn": "src/ui/command_palette.rs:22",
     "plural": false,
     "description": null
   },
   "ACTION_SHUFFLE_ALL": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:242",
+    "definedIn": "src/ui/command_palette.rs:32",
     "plural": false,
     "description": null
   },
   "ACTION_STOP_AFTER_CURRENT": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:248",
+    "definedIn": "src/ui/command_palette.rs:33",
     "plural": false,
     "description": null
   },
   "ACTION_UNDO_QUEUE": {
     "context": "command_palette.rs",
-    "definedIn": "src/ui/command_palette.rs:260",
+    "definedIn": "src/ui/command_palette.rs:35",
     "plural": false,
     "description": null
   },

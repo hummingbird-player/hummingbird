@@ -1,0 +1,89 @@
+{
+  "commands": [
+    {
+      "id": "hummingbird::quit",
+      "category": "Hummingbird",
+      "name_key": "ACTION_QUIT",
+      "action": "hummingbird::Quit"
+    },
+    {
+      "id": "hummingbird::about",
+      "category": "Hummingbird",
+      "name_key": "ACTION_ABOUT",
+      "action": "hummingbird::About"
+    },
+    {
+      "id": "hummingbird::search",
+      "category": "Hummingbird",
+      "name_key": "ACTION_SEARCH",
+      "action": "hummingbird::Search"
+    },
+    {
+      "id": "hummingbird::settings",
+      "category": "Hummingbird",
+      "name_key": "ACTION_SETTINGS",
+      "action": "hummingbird::Settings"
+    },
+    {
+      "id": "hummingbird::check_for_updates",
+      "category": "Hummingbird",
+      "name_key": "ACTION_CHECK_FOR_UPDATES",
+      "action": "hummingbird::CheckForUpdates",
+      "feature": "update"
+    },
+    {
+      "id": "hummingbird::open_log",
+      "category": "Hummingbird",
+      "name_key": "ACTION_OPEN_LOG",
+      "action": "hummingbird::OpenLog"
+    },
+    {
+      "id": "hummingbird::copy_troubleshooting_info",
+      "category": "Hummingbird",
+      "name_key": "ACTION_COPY_TROUBLESHOOTING_INFO",
+      "action": "hummingbird::CopyTroubleshootingInfo"
+    },
+    {
+      "id": "player::playpause",
+      "category": "Playback",
+      "name_key": "ACTION_PLAYPAUSE",
+      "action": "player::PlayPause"
+    },
+    {
+      "id": "player::next",
+      "category": "Playback",
+      "name_key": "ACTION_NEXT",
+      "action": "player::Next"
+    },
+    {
+      "id": "player::previous",
+      "category": "Playback",
+      "name_key": "ACTION_PREVIOUS",
+      "action": "player::Previous"
+    },
+    {
+      "id": "shuffle::all",
+      "category": "Playback",
+      "name_key": "ACTION_SHUFFLE_ALL",
+      "action": "player::ShuffleAll"
+    },
+    {
+      "id": "player::stop_after_current",
+      "category": "Playback",
+      "name_key": "ACTION_STOP_AFTER_CURRENT",
+      "action": "player::StopAfterCurrent"
+    },
+    {
+      "id": "scan::forcescan",
+      "category": "Scan",
+      "name_key": "ACTION_FORCESCAN",
+      "action": "scan::ForceScan"
+    },
+    {
+      "id": "undo::queue",
+      "category": "Queue",
+      "name_key": "ACTION_UNDO_QUEUE",
+      "action": "queue::Undo"
+    }
+  ]
+}
