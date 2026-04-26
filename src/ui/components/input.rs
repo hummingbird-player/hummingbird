@@ -22,6 +22,8 @@ actions!(
         Right,
         SelectLeft,
         SelectRight,
+        SelectWordLeft,
+        SelectWordRight,
         SelectAll,
         Home,
         End,
@@ -34,6 +36,33 @@ actions!(
         Accept
     ]
 );
+
+fn next_word_boundary(content: &str, offset: usize) -> usize {
+    for (start, segment) in content.split_word_bound_indices() {
+        if segment.chars().all(|c| c.is_whitespace()) {
+            continue;
+        }
+        let end = start + segment.len();
+        if end > offset {
+            return end;
+        }
+    }
+    content.len()
+}
+
+fn previous_word_boundary(content: &str, offset: usize) -> usize {
+    let mut last_start = 0;
+    for (start, segment) in content.split_word_bound_indices() {
+        if segment.chars().all(|c| c.is_whitespace()) {
+            continue;
+        }
+        if start >= offset {
+            return last_start;
+        }
+        last_start = start;
+    }
+    last_start
+}
 
 fn word_range_for_offset(content: &str, offset: usize) -> Range<usize> {
     if content.is_empty() {
@@ -119,6 +148,16 @@ impl TextInput {
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        let target = previous_word_boundary(&self.content, self.cursor_offset());
+        self.select_to(target, cx);
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        let target = next_word_boundary(&self.content, self.cursor_offset());
+        self.select_to(target, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -766,6 +805,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
@@ -894,5 +935,89 @@ mod tests {
             word_range_for_offset(content, world_start),
             world_start..world_end
         );
+    }
+
+    #[test]
+    fn next_word_boundary_empty() {
+        assert_eq!(next_word_boundary("", 0), 0);
+    }
+
+    #[test]
+    fn next_word_boundary_at_start() {
+        assert_eq!(next_word_boundary("hello", 0), 5);
+    }
+
+    #[test]
+    fn next_word_boundary_mid_word() {
+        assert_eq!(next_word_boundary("hello", 2), 5);
+    }
+
+    #[test]
+    fn next_word_boundary_at_word_end() {
+        assert_eq!(next_word_boundary("hello", 5), 5);
+    }
+
+    #[test]
+    fn next_word_boundary_between_words() {
+        assert_eq!(next_word_boundary("hello  world", 5), 12);
+    }
+
+    #[test]
+    fn next_word_boundary_past_last() {
+        assert_eq!(next_word_boundary("hello", 5), 5);
+    }
+
+    #[test]
+    fn next_word_boundary_unicode() {
+        let content = "hello 🌍 world";
+        let emoji_start = "hello ".len();
+        let emoji_end = emoji_start + "🌍".len();
+        let world_end = emoji_end + " world".len();
+
+        assert_eq!(next_word_boundary(content, 0), 5);
+        assert_eq!(next_word_boundary(content, emoji_start), emoji_end);
+        assert_eq!(next_word_boundary(content, emoji_end), world_end);
+    }
+
+    #[test]
+    fn previous_word_boundary_empty() {
+        assert_eq!(previous_word_boundary("", 0), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_at_start() {
+        assert_eq!(previous_word_boundary("hello", 0), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_mid_word() {
+        assert_eq!(previous_word_boundary("hello", 3), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_at_word_end() {
+        assert_eq!(previous_word_boundary("hello", 5), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_between_words() {
+        assert_eq!(previous_word_boundary("hello  world", 7), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_past_last() {
+        assert_eq!(previous_word_boundary("hello", 5), 0);
+    }
+
+    #[test]
+    fn previous_word_boundary_unicode() {
+        let content = "hello 🌍 world";
+        let emoji_start = "hello ".len();
+        let emoji_end = emoji_start + "🌍".len();
+        let world_start = emoji_end + " ".len();
+
+        assert_eq!(previous_word_boundary(content, 5), 0);
+        assert_eq!(previous_word_boundary(content, emoji_end), emoji_start);
+        assert_eq!(previous_word_boundary(content, world_start), emoji_start);
     }
 }
