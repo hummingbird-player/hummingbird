@@ -7,7 +7,7 @@ use gpui::{
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ScrollHandle, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
-    actions, div, fill, hsla, point, prelude::*, px, relative, rgba, size,
+    actions, div, fill, hsla, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::*;
 
@@ -35,6 +35,39 @@ actions!(
     ]
 );
 
+fn word_range_for_offset(content: &str, offset: usize) -> Range<usize> {
+    if content.is_empty() {
+        return 0..0;
+    }
+
+    let mut last_before: Option<Range<usize>> = None;
+
+    for (start, segment) in content.split_word_bound_indices() {
+        if segment.chars().all(|c| c.is_whitespace()) {
+            continue;
+        }
+        let end = start + segment.len();
+        if start <= offset && offset < end {
+            return start..end;
+        }
+        if end <= offset {
+            last_before = Some(start..end);
+        } else {
+            return last_before.unwrap_or(start..end);
+        }
+    }
+
+    last_before.unwrap_or(0..0)
+}
+
+#[derive(Copy, Clone, Default, PartialEq)]
+enum SelectionDragMode {
+    #[default]
+    Char,
+    Word,
+    All,
+}
+
 #[derive(Copy, Clone)]
 pub enum EnrichedInputAction {
     Next,
@@ -55,6 +88,9 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    selection_drag_mode: SelectionDragMode,
+    word_drag_anchor: usize,
+    word_drag_anchor_range: Range<usize>,
     enriched_input_handler: Option<EnrichedInputHandler>,
 }
 
@@ -118,22 +154,83 @@ impl TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let offset = self.index_for_mouse_position(event.position);
         self.is_selecting = true;
 
-        if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
-        } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+        match event.click_count {
+            2 => {
+                let word_range = self.word_range_for_offset(offset);
+                if event.modifiers.shift {
+                    let anchor = if self.selection_reversed {
+                        self.selected_range.end
+                    } else {
+                        self.selected_range.start
+                    };
+                    let cursor_target = if word_range.end <= anchor {
+                        word_range.start
+                    } else if word_range.start >= anchor || offset >= anchor {
+                        word_range.end
+                    } else {
+                        word_range.start
+                    };
+                    self.select_to(cursor_target, cx);
+                    self.word_drag_anchor = anchor;
+                    self.word_drag_anchor_range = self.word_range_for_offset(anchor);
+                } else {
+                    self.move_to(word_range.start, cx);
+                    self.select_to(word_range.end, cx);
+                    self.word_drag_anchor = offset;
+                    self.word_drag_anchor_range = word_range;
+                }
+                self.selection_drag_mode = SelectionDragMode::Word;
+            }
+            3 => {
+                self.move_to(0, cx);
+                self.select_to(self.content.len(), cx);
+                self.selection_drag_mode = SelectionDragMode::All;
+            }
+            _ => {
+                self.selection_drag_mode = SelectionDragMode::Char;
+                if event.modifiers.shift {
+                    self.select_to(offset, cx);
+                } else {
+                    self.move_to(offset, cx);
+                }
+            }
         }
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
         self.is_selecting = false;
+        self.selection_drag_mode = SelectionDragMode::Char;
+        self.word_drag_anchor_range = 0..0;
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+        if !self.is_selecting {
+            return;
+        }
+
+        let offset = self.index_for_mouse_position(event.position);
+
+        match self.selection_drag_mode {
+            SelectionDragMode::Char => self.select_to(offset, cx),
+            SelectionDragMode::Word => {
+                let current_word = self.word_range_for_offset(offset);
+                let new_range = if offset >= self.word_drag_anchor {
+                    self.word_drag_anchor_range.start..current_word.end
+                } else {
+                    current_word.start..self.word_drag_anchor_range.end
+                };
+                let new_reversed = offset < self.word_drag_anchor;
+
+                if self.selected_range != new_range || self.selection_reversed != new_reversed {
+                    self.selected_range = new_range;
+                    self.selection_reversed = new_reversed;
+                    cx.notify();
+                }
+            }
+            SelectionDragMode::All => {}
         }
     }
 
@@ -159,6 +256,7 @@ impl TextInput {
             ));
         }
     }
+
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
@@ -265,6 +363,10 @@ impl TextInput {
             .unwrap_or(self.content.len())
     }
 
+    fn word_range_for_offset(&self, offset: usize) -> Range<usize> {
+        word_range_for_offset(&self.content, offset)
+    }
+
     pub fn reset(&mut self) {
         self.content = "".into();
         self.selected_range = 0..0;
@@ -273,6 +375,9 @@ impl TextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.selection_drag_mode = SelectionDragMode::Char;
+        self.word_drag_anchor = 0;
+        self.word_drag_anchor_range = 0..0;
     }
 
     fn space(&mut self, _: &PlayPause, window: &mut Window, cx: &mut Context<Self>) {
@@ -566,7 +671,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3311ff30),
+                    theme.text_highlight_background,
                 )),
                 None,
             )
@@ -639,6 +744,9 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            selection_drag_mode: SelectionDragMode::Char,
+            word_drag_anchor: 0,
+            word_drag_anchor_range: 0..0,
             scroll_handle: ScrollHandle::new(),
             enriched_input_handler,
         })
@@ -691,5 +799,100 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_range_empty_content() {
+        assert_eq!(word_range_for_offset("", 0), 0..0);
+    }
+
+    #[test]
+    fn word_range_single_word_at_start() {
+        assert_eq!(word_range_for_offset("hello", 0), 0..5);
+    }
+
+    #[test]
+    fn word_range_single_word_at_end() {
+        assert_eq!(word_range_for_offset("hello", 4), 0..5);
+    }
+
+    #[test]
+    fn word_range_single_word_at_boundary() {
+        assert_eq!(word_range_for_offset("hello", 5), 0..5);
+    }
+
+    #[test]
+    fn word_range_two_words_inside_first() {
+        assert_eq!(word_range_for_offset("hello world", 2), 0..5);
+    }
+
+    #[test]
+    fn word_range_two_words_in_space_prefers_preceding() {
+        assert_eq!(word_range_for_offset("hello world", 5), 0..5);
+    }
+
+    #[test]
+    fn word_range_two_words_inside_second() {
+        assert_eq!(word_range_for_offset("hello world", 8), 6..11);
+    }
+
+    #[test]
+    fn word_range_two_words_at_second_start() {
+        assert_eq!(word_range_for_offset("hello world", 6), 6..11);
+    }
+
+    #[test]
+    fn word_range_multiple_spaces_prefers_preceding() {
+        assert_eq!(word_range_for_offset("hello   world", 7), 0..5);
+    }
+
+    #[test]
+    fn word_range_offset_before_first_word() {
+        assert_eq!(word_range_for_offset("  hello", 0), 2..7);
+    }
+
+    #[test]
+    fn word_range_only_whitespace() {
+        assert_eq!(word_range_for_offset("   ", 1), 0..0);
+    }
+
+    #[test]
+    fn word_range_only_punctuation() {
+        // Each "!" is a separate segment per UAX#29 word boundaries
+        assert_eq!(word_range_for_offset("!!!", 1), 1..2);
+    }
+
+    #[test]
+    fn word_range_punctuation_between_words() {
+        assert_eq!(word_range_for_offset("hello, world", 5), 5..6);
+    }
+
+    #[test]
+    fn word_range_punctuation_before_word() {
+        assert_eq!(word_range_for_offset("hello, world", 6), 5..6);
+    }
+
+    #[test]
+    fn word_range_unicode_emoji() {
+        let content = "hello 🌍 world";
+        let emoji_start = "hello ".len();
+        let emoji_end = emoji_start + "🌍".len();
+        let world_start = emoji_end + " ".len();
+        let world_end = world_start + "world".len();
+
+        assert_eq!(word_range_for_offset(content, 0), 0..5);
+        assert_eq!(
+            word_range_for_offset(content, emoji_start),
+            emoji_start..emoji_end
+        );
+        assert_eq!(
+            word_range_for_offset(content, world_start),
+            world_start..world_end
+        );
     }
 }
