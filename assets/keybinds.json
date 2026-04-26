@@ -59,6 +59,8 @@
     { "key": "ctrl-right", "action": "text_input::WordRight", "platform": "!macos", "context": "TextInput" },
     { "key": "home", "action": "text_input::Home", "context": "TextInput" },
     { "key": "end", "action": "text_input::End", "context": "TextInput" },
+    { "key": "shift-home", "action": "text_input::SelectToStart", "context": "TextInput" },
+    { "key": "shift-end", "action": "text_input::SelectToEnd", "context": "TextInput" },
     { "key": "enter", "action": "text_input::Accept", "context": "TextInput" },
     { "key": "down", "action": "text_input::Next", "context": "TextInput" },
     { "key": "up", "action": "text_input::Previous", "context": "TextInput" },
@@ -72,6 +74,12 @@
     { "key": "ctrl-a", "action": "text_input::SelectAll", "platform": "!macos", "context": "TextInput" },
     { "key": "ctrl-v", "action": "text_input::Paste", "platform": "!macos", "context": "TextInput" },
     { "key": "ctrl-c", "action": "text_input::Copy", "platform": "!macos", "context": "TextInput" },
-    { "key": "ctrl-x", "action": "text_input::Cut", "platform": "!macos", "context": "TextInput" }
+    { "key": "ctrl-x", "action": "text_input::Cut", "platform": "!macos", "context": "TextInput" },
+    { "key": "alt-backspace", "action": "text_input::DeleteWordBackward", "platform": "macos", "context": "TextInput" },
+    { "key": "alt-delete", "action": "text_input::DeleteWordForward", "platform": "macos", "context": "TextInput" },
+    { "key": "ctrl-backspace", "action": "text_input::DeleteWordBackward", "platform": "!macos", "context": "TextInput" },
+    { "key": "ctrl-delete", "action": "text_input::DeleteWordForward", "platform": "!macos", "context": "TextInput" },
+    { "key": "cmd-backspace", "action": "text_input::DeleteToBeginningOfLine", "platform": "macos", "context": "TextInput" },
+    { "key": "cmd-delete", "action": "text_input::DeleteToEndOfLine", "platform": "macos", "context": "TextInput" }
   ]
 }
