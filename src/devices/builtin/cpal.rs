@@ -120,7 +120,7 @@ impl<T> CpalSample for T where T: SizedSample + Default + Send + Sized + 'static
 
 fn create_stream_internal<T: CpalSample>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     buffer_size: usize,
     target_gain: Arc<AtomicF64>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
@@ -157,7 +157,7 @@ impl CpalDevice {
         let buffer_size = ((200 * config.sample_rate as usize) / 1000) * channels as usize;
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let (stream, prod) =
-            create_stream_internal::<T>(&self.device, &config, buffer_size, target_gain.clone())?;
+            create_stream_internal::<T>(&self.device, config, buffer_size, target_gain.clone())?;
 
         Ok(Box::new(CpalStream {
             ring_buf: prod,
@@ -294,7 +294,7 @@ where
     fn reset(&mut self) -> Result<(), ResetError> {
         let (stream, prod) = create_stream_internal::<T>(
             &self.device,
-            &self.config,
+            self.config,
             self.buffer_size,
             self.target_gain.clone(),
         )?;
@@ -404,11 +404,8 @@ where
 }
 
 make_unknown_error!(OpenError, ResetError);
-make_unknown_error!(cpal::PlayStreamError, StateError);
-make_unknown_error!(cpal::PauseStreamError, StateError);
-make_unknown_error!(cpal::DeviceNameError, InfoError);
-make_unknown_error!(cpal::DefaultStreamConfigError, InfoError);
-make_unknown_error!(cpal::SupportedStreamConfigsError, InfoError);
-make_unknown_error!(cpal::BuildStreamError, OpenError);
-make_unknown_error!(cpal::DevicesError, ListError);
-make_unknown_error!(cpal::DevicesError, FindError);
+make_unknown_error!(cpal::Error, StateError);
+make_unknown_error!(cpal::Error, InfoError);
+make_unknown_error!(cpal::Error, OpenError);
+make_unknown_error!(cpal::Error, ListError);
+make_unknown_error!(cpal::Error, FindError);
