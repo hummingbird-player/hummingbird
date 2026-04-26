@@ -46,53 +46,11 @@ use crate::{
             PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError,
             TrackDurationError,
         },
-        metadata::{
-            Metadata, ParsedReleaseDate, parse_disc_number, parse_release_date, parse_track_number,
-        },
+        metadata::{Metadata, MetadataTag, apply_tag},
         pipeline::{ChannelProducers, DecodeResult},
         traits::{F32DecodeResult, MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
-
-/// Parse a ReplayGain float value from a tag value.
-fn parse_rg_float(value: &Value) -> Option<f64> {
-    match value {
-        Value::Float(v) => Some(*v),
-        Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-/// Parse a ReplayGain gain value from a tag value.
-/// Handles strings like "-3.21 dB" or "-3.21", and float values.
-fn parse_rg_gain(value: &Value) -> Option<f64> {
-    match value {
-        Value::String(s) => {
-            let s = s.trim();
-            // Strip " dB" suffix (case-insensitive) before parsing
-            let s = if s.len() >= 2 && s[s.len() - 2..].eq_ignore_ascii_case("db") {
-                s[..s.len() - 2].trim()
-            } else {
-                s
-            };
-            s.parse().ok()
-        }
-        _ => parse_rg_float(value),
-    }
-}
-
-/// Parse an R128 gain value (Q7.8 integer stored as string) to dB.
-fn parse_r128_gain(value: &Value) -> Option<f64> {
-    match value {
-        Value::SignedInt(v) => Some(*v as f64 / 256.0),
-        Value::UnsignedInt(v) => Some(*v as i16 as f64 / 256.0),
-        Value::String(s) => {
-            let v: i16 = s.trim().parse().ok()?;
-            Some(v as f64 / 256.0)
-        }
-        _ => None,
-    }
-}
 
 fn time_to_millis(time: Time) -> u64 {
     time.seconds
@@ -119,190 +77,132 @@ pub struct SymphoniaStream {
 }
 
 impl SymphoniaStream {
+    fn tag_to_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => Some(s.clone()),
+            _ => Some(value.to_string()),
+        }
+    }
+
+    fn tag_to_u64(value: &Value) -> Option<u64> {
+        match value {
+            Value::String(s) => s.parse().ok(),
+            Value::UnsignedInt(v) => Some(*v),
+            _ => None,
+        }
+    }
+
     fn break_metadata(&mut self, tags: &[Tag]) {
         for tag in tags {
-            match tag.std_key {
+            let meta_tag = match tag.std_key {
                 Some(StandardTagKey::TrackTitle) => {
-                    self.current_metadata.name = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Name)
                 }
                 Some(StandardTagKey::Artist) => {
-                    self.current_metadata.artist = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Artist)
                 }
                 Some(StandardTagKey::AlbumArtist) => {
-                    self.current_metadata.album_artist = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::AlbumArtist)
                 }
                 Some(StandardTagKey::OriginalArtist) => {
-                    self.current_metadata.original_artist = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::OriginalArtist)
                 }
                 Some(StandardTagKey::Composer) => {
-                    self.current_metadata.composer = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Composer)
                 }
                 Some(StandardTagKey::Album) => {
-                    self.current_metadata.album = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Album)
                 }
                 Some(StandardTagKey::Genre) => {
-                    self.current_metadata.genre = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Genre)
                 }
                 Some(StandardTagKey::ContentGroup) => {
-                    self.current_metadata.grouping = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Grouping)
                 }
-                Some(StandardTagKey::Bpm) => {
-                    self.current_metadata.bpm = match &tag.value {
-                        Value::String(v) => v.clone().parse().ok(),
-                        Value::UnsignedInt(v) => Some(*v),
-                        _ => None,
-                    }
-                }
-                Some(StandardTagKey::Compilation) => {
-                    self.current_metadata.compilation = match tag.value {
-                        Value::Boolean(v) => v,
-                        Value::Flag => true,
-                        _ => false,
-                    }
-                }
+                Some(StandardTagKey::Bpm) => Self::tag_to_u64(&tag.value).map(MetadataTag::Bpm),
+                Some(StandardTagKey::Compilation) => match &tag.value {
+                    Value::Boolean(v) => Some(MetadataTag::Compilation(*v)),
+                    Value::Flag => Some(MetadataTag::Compilation(true)),
+                    _ => Some(MetadataTag::Compilation(false)),
+                },
                 Some(StandardTagKey::Date) => {
-                    self.current_metadata.date = None;
-                    self.current_metadata.year_month = None;
-                    self.current_metadata.year = None;
-
-                    match parse_release_date(&tag.value.to_string()) {
-                        Some(ParsedReleaseDate::FullDate(date)) => {
-                            self.current_metadata.date = Some(date);
-                        }
-                        Some(ParsedReleaseDate::YearMonth(year, month)) => {
-                            self.current_metadata.year_month = Some((year, month));
-                        }
-                        Some(ParsedReleaseDate::Year(year)) => {
-                            self.current_metadata.year = Some(year);
-                        }
-                        None => {}
-                    }
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Date)
                 }
                 Some(StandardTagKey::TrackNumber) => match &tag.value {
-                    Value::String(v) => {
-                        // check for vinyl style numbers
-                        let track_number_parsed = parse_track_number(v);
-
-                        if let Some(parsed) = track_number_parsed {
-                            self.current_metadata.track_current = Some(parsed.track);
-                            self.current_metadata.vinyl_numbering = parsed.is_vinyl;
-                            if let Some(disc) = parsed.disc {
-                                self.current_metadata.disc_current = Some(disc);
-                            }
-                            if let Some(max) = parsed.track_max {
-                                self.current_metadata.track_max = Some(max);
-                            }
-                        }
-                    }
-                    Value::UnsignedInt(v) => {
-                        self.current_metadata.track_current = Some(*v);
-                    }
-                    _ => (),
+                    Value::String(v) => Some(MetadataTag::TrackNumber(v.clone())),
+                    Value::UnsignedInt(v) => Some(MetadataTag::TrackNumber(v.to_string())),
+                    _ => None,
                 },
                 Some(StandardTagKey::TrackTotal) => {
-                    self.current_metadata.track_max = match &tag.value {
-                        Value::String(v) => v.clone().parse().ok(),
-                        Value::UnsignedInt(v) => Some(*v),
-                        _ => None,
-                    }
+                    Self::tag_to_u64(&tag.value).map(MetadataTag::TrackTotal)
                 }
                 Some(StandardTagKey::DiscNumber) => match &tag.value {
-                    Value::String(v) => {
-                        let disc_number_parsed = parse_disc_number(v);
-
-                        if let Some(parsed) = disc_number_parsed {
-                            self.current_metadata.disc_current = Some(parsed.disc);
-                            if let Some(total) = parsed.disc_max {
-                                self.current_metadata.disc_max = Some(total);
-                            }
-                            if let Some(subtitle) = parsed.disc_subtitle {
-                                self.current_metadata.disc_subtitle = Some(subtitle);
-                            }
-                        }
-                    }
-                    Value::UnsignedInt(v) => {
-                        self.current_metadata.disc_current = Some(*v);
-                    }
-                    _ => (),
+                    Value::String(v) => Some(MetadataTag::DiscNumber(v.clone())),
+                    Value::UnsignedInt(v) => Some(MetadataTag::DiscNumber(v.to_string())),
+                    _ => None,
                 },
                 Some(StandardTagKey::DiscTotal) => {
-                    self.current_metadata.disc_max = match &tag.value {
-                        Value::String(v) => v.clone().parse().ok(),
-                        Value::UnsignedInt(v) => Some(*v),
-                        _ => None,
-                    }
+                    Self::tag_to_u64(&tag.value).map(MetadataTag::DiscTotal)
                 }
                 Some(StandardTagKey::Label) => {
-                    self.current_metadata.label = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Label)
                 }
                 Some(StandardTagKey::IdentCatalogNumber) => {
-                    self.current_metadata.catalog = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Catalog)
                 }
                 Some(StandardTagKey::IdentIsrc) => {
-                    self.current_metadata.isrc = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Isrc)
                 }
                 Some(StandardTagKey::SortAlbum) => {
-                    self.current_metadata.sort_album = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::SortAlbum)
                 }
                 Some(StandardTagKey::SortAlbumArtist) => {
-                    self.current_metadata.artist_sort = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::ArtistSort)
                 }
                 Some(StandardTagKey::MusicBrainzAlbumId) => {
-                    self.current_metadata.mbid_album = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::MbidAlbum)
                 }
                 Some(StandardTagKey::Lyrics) => {
-                    self.current_metadata.lyrics = Some(tag.value.to_string())
+                    Self::tag_to_string(&tag.value).map(MetadataTag::Lyrics)
                 }
                 Some(StandardTagKey::ReplayGainTrackGain) => {
-                    self.current_metadata.replaygain_track_gain = parse_rg_gain(&tag.value);
+                    Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainTrackGain)
                 }
                 Some(StandardTagKey::ReplayGainTrackPeak) => {
-                    self.current_metadata.replaygain_track_peak = parse_rg_float(&tag.value);
+                    Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainTrackPeak)
                 }
                 Some(StandardTagKey::ReplayGainAlbumGain) => {
-                    self.current_metadata.replaygain_album_gain = parse_rg_gain(&tag.value);
+                    Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainAlbumGain)
                 }
                 Some(StandardTagKey::ReplayGainAlbumPeak) => {
-                    self.current_metadata.replaygain_album_peak = parse_rg_float(&tag.value);
+                    Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainAlbumPeak)
                 }
                 Some(StandardTagKey::DiscSubtitle) => {
-                    self.current_metadata.disc_subtitle = Some(tag.value.to_string());
+                    Self::tag_to_string(&tag.value).map(MetadataTag::DiscSubtitle)
                 }
                 _ => {
-                    // Handle non-standard ReplayGain tag keys and R128 tags
                     let key = tag.key.as_str();
                     if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_GAIN") {
-                        if self.current_metadata.replaygain_track_gain.is_none() {
-                            self.current_metadata.replaygain_track_gain = parse_rg_gain(&tag.value);
-                        }
+                        Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainTrackGain)
                     } else if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_PEAK") {
-                        if self.current_metadata.replaygain_track_peak.is_none() {
-                            self.current_metadata.replaygain_track_peak =
-                                parse_rg_float(&tag.value);
-                        }
+                        Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainTrackPeak)
                     } else if key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_GAIN") {
-                        if self.current_metadata.replaygain_album_gain.is_none() {
-                            self.current_metadata.replaygain_album_gain = parse_rg_gain(&tag.value);
-                        }
+                        Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainAlbumGain)
                     } else if key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_PEAK") {
-                        if self.current_metadata.replaygain_album_peak.is_none() {
-                            self.current_metadata.replaygain_album_peak =
-                                parse_rg_float(&tag.value);
-                        }
+                        Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainAlbumPeak)
                     } else if key.eq_ignore_ascii_case("R128_TRACK_GAIN") {
-                        if self.current_metadata.replaygain_track_gain.is_none() {
-                            self.current_metadata.replaygain_track_gain =
-                                parse_r128_gain(&tag.value);
-                        }
-                    } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN")
-                        && self.current_metadata.replaygain_album_gain.is_none()
-                    {
-                        self.current_metadata.replaygain_album_gain = parse_r128_gain(&tag.value);
-                    // ID3 shenanigans
+                        Self::tag_to_string(&tag.value).map(MetadataTag::R128TrackGain)
+                    } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN") {
+                        Self::tag_to_string(&tag.value).map(MetadataTag::R128AlbumGain)
                     } else if key.eq_ignore_ascii_case("TXXX:MusicBrainz Album Id") {
-                        self.current_metadata.mbid_album = Some(tag.value.to_string());
+                        Self::tag_to_string(&tag.value).map(MetadataTag::MbidAlbum)
+                    } else {
+                        None
                     }
                 }
+            };
+            if let Some(mt) = meta_tag {
+                apply_tag(mt, &mut self.current_metadata);
             }
         }
     }

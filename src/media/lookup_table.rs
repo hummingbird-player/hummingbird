@@ -61,12 +61,21 @@ pub fn try_open_media(
     required_features: MediaProviderFeatures,
 ) -> anyhow::Result<Option<Box<dyn MediaStream>>> {
     let read = LOOKUP_TABLE.blocking_read();
+    let mut last_error = None;
+
     for provider in read.iter() {
         if provider_can_read(path, required_features, provider)? {
             let file = File::open(path)?;
-            return Ok(Some(provider.open(file, path.extension())?));
+            match provider.open(file, path.extension()) {
+                Ok(stream) => return Ok(Some(stream)),
+                Err(e) => last_error = Some(e),
+            }
         }
     }
 
-    Ok(None)
+    if let Some(e) = last_error {
+        Err(e.into())
+    } else {
+        Ok(None)
+    }
 }

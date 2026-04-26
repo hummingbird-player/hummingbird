@@ -1,6 +1,143 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use regex::Regex;
 
+pub fn parse_rg_float_str(value: &str) -> Option<f64> {
+    value.trim().parse().ok()
+}
+
+pub fn parse_rg_gain_str(value: &str) -> Option<f64> {
+    let s = value.trim();
+    let s = if s.len() >= 2 && s[s.len() - 2..].eq_ignore_ascii_case("db") {
+        s[..s.len() - 2].trim()
+    } else {
+        s
+    };
+    s.parse().ok()
+}
+
+pub fn parse_r128_gain_str(value: &str) -> Option<f64> {
+    let v: i16 = value.trim().parse().ok()?;
+    Some(v as f64 / 256.0)
+}
+
+#[derive(Debug, Clone)]
+pub enum MetadataTag {
+    Name(String),
+    Artist(String),
+    AlbumArtist(String),
+    OriginalArtist(String),
+    Composer(String),
+    Album(String),
+    Genre(String),
+    Grouping(String),
+    Bpm(u64),
+    Compilation(bool),
+    Date(String),
+    TrackNumber(String),
+    TrackTotal(u64),
+    DiscNumber(String),
+    DiscTotal(u64),
+    Label(String),
+    Catalog(String),
+    Isrc(String),
+    SortAlbum(String),
+    ArtistSort(String),
+    MbidAlbum(String),
+    Lyrics(String),
+    ReplayGainTrackGain(String),
+    ReplayGainTrackPeak(String),
+    ReplayGainAlbumGain(String),
+    ReplayGainAlbumPeak(String),
+    R128TrackGain(String),
+    R128AlbumGain(String),
+    DiscSubtitle(String),
+}
+
+pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
+    match tag {
+        MetadataTag::Name(v) => metadata.name = Some(v),
+        MetadataTag::Artist(v) => metadata.artist = Some(v),
+        MetadataTag::AlbumArtist(v) => metadata.album_artist = Some(v),
+        MetadataTag::OriginalArtist(v) => metadata.original_artist = Some(v),
+        MetadataTag::Composer(v) => metadata.composer = Some(v),
+        MetadataTag::Album(v) => metadata.album = Some(v),
+        MetadataTag::Genre(v) => metadata.genre = Some(v),
+        MetadataTag::Grouping(v) => metadata.grouping = Some(v),
+        MetadataTag::Bpm(v) => metadata.bpm = Some(v),
+        MetadataTag::Compilation(v) => metadata.compilation = v,
+        MetadataTag::Date(v) => match parse_release_date(&v) {
+            Some(ParsedReleaseDate::FullDate(date)) => {
+                metadata.date = Some(date);
+                metadata.year_month = None;
+                metadata.year = None;
+            }
+            Some(ParsedReleaseDate::YearMonth(year, month)) => {
+                if metadata.date.is_none() {
+                    metadata.year_month = Some((year, month));
+                    metadata.year = None;
+                }
+            }
+            Some(ParsedReleaseDate::Year(year)) => {
+                if metadata.date.is_none() && metadata.year_month.is_none() {
+                    metadata.year = Some(year);
+                }
+            }
+            None => {}
+        },
+        MetadataTag::TrackNumber(v) => {
+            if let Some(parsed) = parse_track_number(&v) {
+                metadata.track_current = Some(parsed.track);
+                metadata.vinyl_numbering = parsed.is_vinyl;
+                if let Some(disc) = parsed.disc {
+                    metadata.disc_current = Some(disc);
+                }
+                if let Some(max) = parsed.track_max {
+                    metadata.track_max = Some(max);
+                }
+            }
+        }
+        MetadataTag::TrackTotal(v) => metadata.track_max = Some(v),
+        MetadataTag::DiscNumber(v) => {
+            if let Some(parsed) = parse_disc_number(&v) {
+                metadata.disc_current = Some(parsed.disc);
+                if let Some(total) = parsed.disc_max {
+                    metadata.disc_max = Some(total);
+                }
+                if let Some(subtitle) = parsed.disc_subtitle {
+                    metadata.disc_subtitle = Some(subtitle);
+                }
+            }
+        }
+        MetadataTag::DiscTotal(v) => metadata.disc_max = Some(v),
+        MetadataTag::Label(v) => metadata.label = Some(v),
+        MetadataTag::Catalog(v) => metadata.catalog = Some(v),
+        MetadataTag::Isrc(v) => metadata.isrc = Some(v),
+        MetadataTag::SortAlbum(v) => metadata.sort_album = Some(v),
+        MetadataTag::ArtistSort(v) => metadata.artist_sort = Some(v),
+        MetadataTag::MbidAlbum(v) => metadata.mbid_album = Some(v),
+        MetadataTag::Lyrics(v) => metadata.lyrics = Some(v),
+        MetadataTag::ReplayGainTrackGain(v) => {
+            metadata.replaygain_track_gain = parse_rg_gain_str(&v);
+        }
+        MetadataTag::ReplayGainTrackPeak(v) => {
+            metadata.replaygain_track_peak = parse_rg_float_str(&v);
+        }
+        MetadataTag::ReplayGainAlbumGain(v) => {
+            metadata.replaygain_album_gain = parse_rg_gain_str(&v);
+        }
+        MetadataTag::ReplayGainAlbumPeak(v) => {
+            metadata.replaygain_album_peak = parse_rg_float_str(&v);
+        }
+        MetadataTag::DiscSubtitle(v) => metadata.disc_subtitle = Some(v),
+        MetadataTag::R128TrackGain(v) => {
+            metadata.replaygain_track_gain = parse_r128_gain_str(&v);
+        }
+        MetadataTag::R128AlbumGain(v) => {
+            metadata.replaygain_album_gain = parse_r128_gain_str(&v);
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Metadata {
     pub name: Option<String>,
