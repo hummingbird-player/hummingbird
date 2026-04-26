@@ -71,18 +71,16 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
                 metadata.year_month = None;
                 metadata.year = None;
             }
-            Some(ParsedReleaseDate::YearMonth(year, month)) => {
-                if metadata.date.is_none() {
-                    metadata.year_month = Some((year, month));
-                    metadata.year = None;
-                }
+            Some(ParsedReleaseDate::YearMonth(year, month)) if metadata.date.is_none() => {
+                metadata.year_month = Some((year, month));
+                metadata.year = None;
             }
-            Some(ParsedReleaseDate::Year(year)) => {
-                if metadata.date.is_none() && metadata.year_month.is_none() {
-                    metadata.year = Some(year);
-                }
+            Some(ParsedReleaseDate::Year(year))
+                if metadata.date.is_none() && metadata.year_month.is_none() =>
+            {
+                metadata.year = Some(year);
             }
-            None => {}
+            _ => {}
         },
         MetadataTag::TrackNumber(v) => {
             if let Some(parsed) = parse_track_number(&v) {
