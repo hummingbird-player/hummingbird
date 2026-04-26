@@ -105,6 +105,7 @@ pub struct Theme {
 
     pub text_input_selection: Rgba,
     pub caret_color: Rgba,
+    pub text_highlight_background: Rgba,
 
     pub palette_item_hover: Rgba,
     pub palette_item_border_hover: Rgba,
@@ -235,6 +236,7 @@ impl Default for Theme {
 
             text_input_selection: rgba(0x01020388),
             caret_color: rgb(0xE8E8F2),
+            text_highlight_background: rgba(0x3311FF30),
 
             palette_item_hover: rgb(0x1F2334),
             palette_item_border_hover: rgb(0x2B2F44),
