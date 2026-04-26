@@ -40,6 +40,7 @@ indexmap = { version = "2", features = ["serde"] }
 infer = "0.19"
 intx = "0.1"
 itertools = "0.14"
+lofty = "0.24"
 md5 = "0.8"
 minisign-verify = { version = "0.2", optional = true }
 moka = { version = "0.12", features = ["sync"] }
@@ -76,7 +77,6 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, features = [
     # this was native-roots, but this caused intermittent issues on Windows
     "rustls-tls-webpki-roots",
 ] }
-
 
 [patch.crates-io]
 gpui = { git = "https://github.com/zed-industries/zed" }

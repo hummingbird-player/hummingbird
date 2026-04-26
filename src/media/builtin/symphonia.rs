@@ -1,8 +1,6 @@
 use std::{ffi::OsStr, fs::File};
 
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use intx::{I24, U24};
-use regex::Regex;
 use smallvec::SmallVec;
 use symphonia::{
     core::{
@@ -38,15 +36,19 @@ use symphonia::{
 use symphonia_adapter_libopus::OpusDecoder;
 
 use crate::{
-    devices::format::{ChannelSpec, SampleFormat},
-    devices::resample::SampleInto,
+    devices::{
+        format::{ChannelSpec, SampleFormat},
+        resample::SampleInto,
+    },
     media::{
         errors::{
             ChannelRetrievalError, CloseError, FrameDurationError, MetadataError, OpenError,
             PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError,
             TrackDurationError,
         },
-        metadata::Metadata,
+        metadata::{
+            Metadata, ParsedReleaseDate, parse_disc_number, parse_release_date, parse_track_number,
+        },
         pipeline::{ChannelProducers, DecodeResult},
         traits::{F32DecodeResult, MediaProvider, MediaProviderFeatures, MediaStream},
     },
@@ -98,94 +100,6 @@ fn time_to_millis(time: Time) -> u64 {
         .saturating_add((time.frac * 1_000.0) as u64)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParsedReleaseDate {
-    FullDate(DateTime<Utc>),
-    YearMonth(u16, u8),
-    Year(u16),
-}
-
-fn utc_midnight(date: NaiveDate) -> DateTime<Utc> {
-    DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
-}
-
-fn parse_fixed_u16(value: &str, len: usize) -> Option<u16> {
-    (value.len() == len && value.chars().all(|c| c.is_ascii_digit()))
-        .then(|| value.parse().ok())
-        .flatten()
-}
-
-fn parse_fixed_u8(value: &str, len: usize) -> Option<u8> {
-    (value.len() == len && value.chars().all(|c| c.is_ascii_digit()))
-        .then(|| value.parse().ok())
-        .flatten()
-}
-
-/// Parses exact ISO release dates before the generic parser.
-///
-/// This preserves the original precision for `YYYY`, `YYYY-MM`, and `YYYY-MM-DD` values.
-/// If a value is not ISO-like, we return `Ok(None)` so the generic parser can still handle
-/// free-form tags like `May 25, 2021`. If a value does look ISO-like but is invalid, we return
-/// `Err(())` so the generic parser does not silently invent a day or otherwise change precision.
-fn parse_iso_release_date(value: &str) -> Result<Option<ParsedReleaseDate>, ()> {
-    let value = value.trim();
-
-    if !value.bytes().all(|byte| {
-        byte.is_ascii_digit() || byte == b'-' || byte == b'.' || byte == b'/' || byte == b'_'
-    }) {
-        return Ok(None);
-    }
-
-    let mut parts = value.split(['-', '.', '/', '_']);
-    let first = parts.next().ok_or(())?;
-    let second = parts.next();
-    let third = parts.next();
-
-    if parts.next().is_some() {
-        return Err(());
-    }
-
-    match (second, third) {
-        (None, None) => parse_fixed_u16(first, 4)
-            .map(ParsedReleaseDate::Year)
-            .map(Some)
-            .ok_or(()),
-        (Some(month), None) => {
-            let year = parse_fixed_u16(first, 4).ok_or(())?;
-            let month = match parse_fixed_u8(month, 2) {
-                Some(month @ 1..=12) => month,
-                _ => return Err(()),
-            };
-
-            Ok(Some(ParsedReleaseDate::YearMonth(year, month)))
-        }
-        (Some(month), Some(day)) => {
-            parse_fixed_u16(first, 4).ok_or(())?;
-            parse_fixed_u8(month, 2).ok_or(())?;
-            parse_fixed_u8(day, 2).ok_or(())?;
-
-            NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                .map(|date| Some(ParsedReleaseDate::FullDate(utc_midnight(date))))
-                .map_err(|_| ())
-        }
-        (None, Some(_)) => Err(()),
-    }
-}
-
-fn parse_release_date(value: &str) -> Option<ParsedReleaseDate> {
-    match parse_iso_release_date(value) {
-        Ok(Some(date)) => Some(date),
-        Err(()) => None,
-        Ok(None) => {
-            // Non-ISO dates still go through the generic parser, but we pin date-only values to
-            // UTC midnight so they do not pick up local-current-time defaults.
-            dateparser::parse_with(value.trim(), &Utc, NaiveTime::MIN)
-                .ok()
-                .map(ParsedReleaseDate::FullDate)
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
@@ -206,10 +120,6 @@ pub struct SymphoniaStream {
 
 impl SymphoniaStream {
     fn break_metadata(&mut self, tags: &[Tag]) {
-        let id3_position_in_set_regex = Regex::new(r"(\d+)/(\d+)").unwrap();
-        let vinyl_track_regex = Regex::new(r"(?i)^([A-Z])(\d*)$").unwrap();
-        let disc_subtitle_regex = Regex::new(r"(?:Disc )?(\d+) (?:-|—|-) (.+)").unwrap();
-
         for tag in tags {
             match tag.std_key {
                 Some(StandardTagKey::TrackTitle) => {
@@ -271,31 +181,17 @@ impl SymphoniaStream {
                 Some(StandardTagKey::TrackNumber) => match &tag.value {
                     Value::String(v) => {
                         // check for vinyl style numbers
-                        if let Some(captures) = vinyl_track_regex.captures(v) {
-                            if let Some(side) = captures.get(1) {
-                                let side_char =
-                                    side.as_str().to_uppercase().chars().next().unwrap();
-                                let side_num = (side_char as u64) - ('A' as u64) + 1;
-                                self.current_metadata.disc_current = Some(side_num);
-                                self.current_metadata.vinyl_numbering = true;
+                        let track_number_parsed = parse_track_number(v);
+
+                        if let Some(parsed) = track_number_parsed {
+                            self.current_metadata.track_current = Some(parsed.track);
+                            self.current_metadata.vinyl_numbering = parsed.is_vinyl;
+                            if let Some(disc) = parsed.disc {
+                                self.current_metadata.disc_current = Some(disc);
                             }
-                            if let Some(track) = captures.get(2)
-                                && !track.is_empty()
-                            {
-                                self.current_metadata.track_current = track.as_str().parse().ok();
-                            } else {
-                                self.current_metadata.track_current = Some(1);
+                            if let Some(max) = parsed.track_max {
+                                self.current_metadata.track_max = Some(max);
                             }
-                        // check for MP3-style numbers
-                        } else if let Some(captures) = id3_position_in_set_regex.captures(v) {
-                            if let Some(track) = captures.get(1) {
-                                self.current_metadata.track_current = track.as_str().parse().ok();
-                            }
-                            if let Some(total) = captures.get(2) {
-                                self.current_metadata.track_max = total.as_str().parse().ok();
-                            }
-                        } else {
-                            self.current_metadata.track_current = v.clone().parse().ok();
                         }
                     }
                     Value::UnsignedInt(v) => {
@@ -312,25 +208,16 @@ impl SymphoniaStream {
                 }
                 Some(StandardTagKey::DiscNumber) => match &tag.value {
                     Value::String(v) => {
-                        if let Some(captures) = id3_position_in_set_regex.captures(v) {
-                            if let Some(disc) = captures.get(1) {
-                                self.current_metadata.disc_current = disc.as_str().parse().ok();
+                        let disc_number_parsed = parse_disc_number(v);
+
+                        if let Some(parsed) = disc_number_parsed {
+                            self.current_metadata.disc_current = Some(parsed.disc);
+                            if let Some(total) = parsed.disc_max {
+                                self.current_metadata.disc_max = Some(total);
                             }
-                            if let Some(total) = captures.get(2) {
-                                self.current_metadata.disc_max = total.as_str().parse().ok();
+                            if let Some(subtitle) = parsed.disc_subtitle {
+                                self.current_metadata.disc_subtitle = Some(subtitle);
                             }
-                        // try to capture disc subtitle if it's inside the disc tag for whatever reason
-                        // i think musicbee is responsible for this nonsense
-                        } else if let Some(captures) = disc_subtitle_regex.captures(v) {
-                            if let Some(disc) = captures.get(1) {
-                                self.current_metadata.disc_current = disc.as_str().parse().ok();
-                            }
-                            if let Some(subtitle) = captures.get(2) {
-                                self.current_metadata.disc_subtitle =
-                                    Some(subtitle.as_str().to_string());
-                            }
-                        } else {
-                            self.current_metadata.disc_current = v.clone().parse().ok();
                         }
                     }
                     Value::UnsignedInt(v) => {
@@ -974,59 +861,5 @@ impl MediaStream for SymphoniaStream {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ParsedReleaseDate, parse_release_date};
-    use chrono::{NaiveTime, TimeZone, Timelike, Utc};
-
-    #[test]
-    fn parses_year_only_release_dates() {
-        assert_eq!(
-            parse_release_date("1995"),
-            Some(ParsedReleaseDate::Year(1995))
-        );
-    }
-
-    #[test]
-    fn parses_year_month_release_dates() {
-        assert_eq!(
-            parse_release_date("1995-06"),
-            Some(ParsedReleaseDate::YearMonth(1995, 6))
-        );
-    }
-
-    #[test]
-    fn parses_full_release_dates() {
-        assert_eq!(
-            parse_release_date("1995-06-24"),
-            Some(ParsedReleaseDate::FullDate(
-                Utc.with_ymd_and_hms(1995, 6, 24, 0, 0, 0).single().unwrap(),
-            ))
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_partial_release_dates() {
-        assert_eq!(parse_release_date("1995-13"), None);
-    }
-
-    #[test]
-    fn rejects_malformed_release_dates() {
-        assert_eq!(parse_release_date("not-a-date"), None);
-    }
-
-    #[test]
-    fn generic_release_date_fallback_uses_utc_midnight() {
-        let date = Utc.with_ymd_and_hms(2021, 5, 25, 0, 0, 0).single().unwrap();
-
-        assert_eq!(
-            parse_release_date("May 25, 2021"),
-            Some(ParsedReleaseDate::FullDate(date))
-        );
-        assert_eq!(date.time(), NaiveTime::MIN);
-        assert_eq!(date.time().nanosecond(), 0);
     }
 }
