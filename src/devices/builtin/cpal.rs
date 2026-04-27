@@ -20,6 +20,7 @@ use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use tracing::info;
 
 /// Delay between requesting a fade-out and pausing the stream. Must exceed
 /// the gain ramp length (15 ms) plus a few callback periods to ensure the
@@ -41,6 +42,9 @@ impl Default for CpalProvider {
 impl DeviceProvider for CpalProvider {
     fn initialize(&mut self) -> Result<(), InitializationError> {
         self.host = cpal::default_host();
+
+        info!("Using cpal host {}", self.host.id().name());
+
         Ok(())
     }
 
@@ -154,7 +158,13 @@ impl CpalDevice {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
         let ChannelSpec::Count(channels) = format.channels;
-        let buffer_size = ((200 * config.sample_rate as usize) / 1000) * channels as usize;
+        let buffer_size = match format.buffer_size {
+            // take what ever the minimum buffer size is, but always at least 2048 samples
+            BufferSize::Range(min, max) => min.max(2048).min(max) as usize,
+            BufferSize::Fixed(size) => size as usize,
+            // if the buffer size is unknown, use a default of 200ms at the configured sample rate
+            BufferSize::Unknown => ((200 * config.sample_rate as usize) / 1000) * channels as usize,
+        };
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let (stream, prod) =
             create_stream_internal::<T>(&self.device, config, buffer_size, target_gain.clone())?;

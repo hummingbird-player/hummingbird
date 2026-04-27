@@ -1,6 +1,6 @@
 use std::env::consts::OS;
 
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     devices::{
@@ -108,7 +108,6 @@ impl DeviceController {
     /// Initialize the device provider based on the environment or platform defaults.
     pub fn initialize_provider(&mut self) {
         let default_device_provider = match OS {
-            "linux" => "cpal", // TODO: use pulseaudio
             "windows" => "win_audiograph",
             _ => "cpal",
         };
@@ -123,7 +122,7 @@ impl DeviceController {
     pub fn initialize_provider_by_name(&mut self, provider_name: &str) {
         match provider_name {
             "pulse" => {
-                warn!("pulseaudio support was removed");
+                warn!("pulseaudio supported by cpal");
                 warn!("Falling back to CPAL");
                 self.device_provider = Some(Box::new(CpalProvider::default()));
             }
@@ -150,6 +149,11 @@ impl DeviceController {
                 warn!("Falling back to CPAL");
                 self.device_provider = Some(Box::new(CpalProvider::default()));
             }
+        }
+
+        if let Err(e) = self.device_provider.as_mut().unwrap().initialize() {
+            error!("Failed to initialize device provider: {}", e);
+            warn!("Audio may not play");
         }
     }
 
