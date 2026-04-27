@@ -307,7 +307,7 @@ pub fn parse_track_number(value: &str) -> Option<ParsedTrackNumber> {
         }
         Some(parsed)
     } else {
-        parsed.track = value.parse().ok().unwrap_or(1);
+        parsed.track = value.parse().ok()?;
         Some(parsed)
     }
 }
@@ -417,6 +417,13 @@ mod tests {
                 is_vinyl: e_is_vinyl,
             })
         );
+    }
+
+    #[test]
+    fn parse_track_number_rejects_invalid_numbers() {
+        assert_eq!(super::parse_track_number("Intro"), None);
+        assert_eq!(super::parse_track_number("Side A"), None);
+        assert_eq!(super::parse_track_number(""), None);
     }
 
     #[test]

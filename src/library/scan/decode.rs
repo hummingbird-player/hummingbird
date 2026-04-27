@@ -28,25 +28,14 @@ fn scan_path(path: &Utf8Path) -> Result<FileInformation, ()> {
     let metadata = stream.read_metadata().cloned().map_err(|_| ())?;
     let image = stream.read_image().map_err(|_| ())?;
 
-    let len = match stream.duration_secs() {
-        Ok(len) => {
-            stream.close().map_err(|_| ())?;
-            len
-        }
-        Err(_) => {
-            // open it in a provider that actually decodes audio so we can guess based on the
-            // encoded audio
-            stream.close().ok();
-            let mut decoder =
-                try_open_media(path.as_std_path(), MediaProviderFeatures::PROVIDES_DECODER)
-                    .map_err(|_| ())?
-                    .ok_or(())?;
-            decoder.start_playback().map_err(|_| ())?;
-            let len = decoder.duration_secs().map_err(|_| ())?;
-            decoder.close().map_err(|_| ())?;
-            len
-        }
-    };
+    stream.close().map_err(|_| ())?;
+
+    let mut decoder = try_open_media(path.as_std_path(), MediaProviderFeatures::PROVIDES_DECODER)
+        .map_err(|_| ())?
+        .ok_or(())?;
+    decoder.start_playback().map_err(|_| ())?;
+    let len = decoder.duration_secs().map_err(|_| ())?;
+    decoder.close().map_err(|_| ())?;
 
     Ok((metadata, len, image))
 }
