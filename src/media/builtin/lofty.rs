@@ -3,7 +3,7 @@ use std::{ffi::OsStr, fs::File};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;
 use lofty::prelude::ItemKey;
-use lofty::tag::{ItemValue, Tag, TagItem};
+use lofty::tag::{ItemValue, Tag, TagItem, TagType};
 
 use crate::media::{
     errors::{
@@ -113,7 +113,16 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
     let mut metadata = Metadata::default();
     let mut image: Option<Box<[u8]>> = None;
 
+    let has_better_tag = tagged_file
+        .tags()
+        .iter()
+        .any(|tag| tag.tag_type() != TagType::Id3v1);
+
     for tag in tagged_file.tags() {
+        if has_better_tag && tag.tag_type() == TagType::Id3v1 {
+            continue;
+        }
+
         for item in tag.items() {
             if let Some(meta_tag) = map_standard_tag(item) {
                 apply_tag(meta_tag, &mut metadata);
