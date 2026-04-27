@@ -249,3 +249,115 @@ impl MediaStream for LoftyStream {
         Err(PlaybackReadError::InvalidState)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, path::Path};
+
+    use chrono::{TimeZone, Utc};
+
+    use super::LoftyProvider;
+    use crate::media::{metadata::Metadata, traits::MediaProvider};
+
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/tests/audio-fixtures")
+            .join(name)
+    }
+
+    fn read_fixture(name: &str) -> (Metadata, bool) {
+        let path = fixture_path(name);
+        let file = File::open(&path).unwrap_or_else(|err| panic!("failed to open {name}: {err}"));
+        let mut stream = LoftyProvider
+            .open(file, path.extension())
+            .unwrap_or_else(|err| panic!("failed to read {name}: {err}"));
+
+        stream.start_playback().unwrap();
+        let metadata = stream.read_metadata().unwrap().clone();
+        let has_image = stream.read_image().unwrap().is_some();
+        assert!(stream.read_image().unwrap().is_none());
+
+        (metadata, has_image)
+    }
+
+    const RICH_METADATA_FIXTURES: &[&str] = &[
+        "fixture.mp3",
+        "fixture.flac",
+        "fixture.ogg",
+        "fixture.m4a",
+        "fixture.wav",
+        "fixture.aiff",
+        "fixture.opus",
+        "fixture.aac",
+    ];
+
+    const DATE_FIXTURES: &[&str] = &[
+        "fixture.flac",
+        "fixture.ogg",
+        "fixture.m4a",
+        "fixture.wav",
+        "fixture.aiff",
+        "fixture.opus",
+    ];
+
+    // The WAV and AIFF fixtures are ID3-tagged and expose their rich fields/date, but Lofty does
+    // not normalize their USLT frame as Lyrics. Keep lyrics assertions to formats that expose it.
+    const LYRICS_FIXTURES: &[&str] =
+        &["fixture.flac", "fixture.ogg", "fixture.m4a", "fixture.opus"];
+
+    fn assert_rich_metadata(metadata: &Metadata) {
+        assert_eq!(metadata.name.as_deref(), Some("Test Track"));
+        assert_eq!(metadata.artist.as_deref(), Some("Test Artist"));
+        assert_eq!(metadata.album_artist.as_deref(), Some("Test Album Artist"));
+        assert_eq!(metadata.album.as_deref(), Some("Test Album"));
+        assert_eq!(metadata.genre.as_deref(), Some("Test Genre"));
+        assert_eq!(metadata.track_current, Some(2));
+        assert_eq!(metadata.track_max, Some(9));
+        assert_eq!(metadata.disc_current, Some(1));
+        assert_eq!(metadata.disc_max, Some(3));
+        assert_eq!(metadata.isrc.as_deref(), Some("QZHB12400001"));
+        assert_eq!(
+            metadata.mbid_album.as_deref(),
+            Some("12345678-1234-4234-9234-123456789abc")
+        );
+        assert_eq!(metadata.replaygain_track_gain, Some(-3.21));
+        assert_eq!(metadata.replaygain_track_peak, Some(0.987654));
+        assert_eq!(metadata.replaygain_album_gain, Some(-4.56));
+        assert_eq!(metadata.replaygain_album_peak, Some(0.876543));
+    }
+
+    #[test]
+    fn reads_rich_metadata_from_tagged_fixtures() {
+        for name in RICH_METADATA_FIXTURES {
+            let (metadata, has_image) = read_fixture(name);
+            assert_rich_metadata(&metadata);
+            assert!(has_image, "expected embedded image in {name}");
+        }
+    }
+
+    #[test]
+    fn reads_dates_from_fixtures_that_expose_them() {
+        let expected_date = Utc.with_ymd_and_hms(1995, 6, 24, 0, 0, 0).unwrap();
+
+        for name in DATE_FIXTURES {
+            let (metadata, _) = read_fixture(name);
+            assert_eq!(
+                metadata.date,
+                Some(expected_date),
+                "date mismatch in {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_lyrics_from_fixtures_that_expose_them() {
+        for name in LYRICS_FIXTURES {
+            let (metadata, _) = read_fixture(name);
+            assert_eq!(
+                metadata.lyrics.as_deref(),
+                Some("[00:00.00] Test lyrics"),
+                "lyrics mismatch in {name}"
+            );
+        }
+    }
+}
