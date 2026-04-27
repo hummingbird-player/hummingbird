@@ -158,8 +158,13 @@ impl CpalDevice {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
         let ChannelSpec::Count(channels) = format.channels;
-        // 200ms at the configured sample rate, scaled by the number of channels
-        let desired_buffer_size = ((200 * config.sample_rate as usize) / 1000) * channels as usize;
+        // 100ms at the configured sample rate, scaled by the number of channels
+        let desired_buffer_size =
+            ((100 * config.sample_rate as usize) / 1000) * 2 * channels as usize;
+        info!(
+            "Desired buffer size: {desired_buffer_size}, format allows: {:?}",
+            format.buffer_size
+        );
         let buffer_size = match format.buffer_size {
             // take what ever the minimum buffer size is, unless it's less than the
             // desired_buffer_size, in which case use the desired_buffer_size
@@ -170,6 +175,7 @@ impl CpalDevice {
             // if the buffer size is unknown, just use the desired_buffer_size
             BufferSize::Unknown => desired_buffer_size,
         };
+        info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let (stream, prod) =
             create_stream_internal::<T>(&self.device, config, buffer_size, target_gain.clone())?;
