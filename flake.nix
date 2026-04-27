@@ -46,7 +46,11 @@
                 ./translations
               ];
             };
-            nativeBuildInputs = [pkgs.cmake pkgs.pkg-config];
+            nativeBuildInputs = [
+              pkgs.cmake
+              pkgs.pkg-config
+              pkgs.pkgsBuildBuild.rustPlatform.bindgenHook
+            ];
             buildInputs = lib.flatten [
               (lib.optionals isLinux [
                 pkgs.libxkbcommon
