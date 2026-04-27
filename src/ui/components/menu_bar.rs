@@ -132,7 +132,7 @@ impl Render for MenuBar {
 
                             Some(
                                 anchored()
-                                    .anchor(Corner::TopLeft)
+                                    .anchor(Anchor::TopLeft)
                                     .offset(point(px(-8.0), px(10.0)))
                                     .child(deferred(
                                         div()

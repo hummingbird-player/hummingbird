@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    App, AppContext, Bounds, Context, Corner, Div, DragMoveEvent, ElementId, Entity, Hsla,
+    Anchor, App, AppContext, Bounds, Context, Div, DragMoveEvent, ElementId, Entity, Hsla,
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, SharedString, Styled, Window,
     anchored, div, point, prelude::FluentBuilder, px, size,
 };
@@ -308,7 +308,7 @@ impl Render for DragPreview {
 
         anchored()
             .position(position)
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .offset(point(px(12.0), px(12.0)))
             .child(
                 div()

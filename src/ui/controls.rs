@@ -28,7 +28,7 @@ use crate::{
     },
 };
 use cntp_i18n::tr;
-use gpui::{Corner, InteractiveElement, *};
+use gpui::{InteractiveElement, *};
 use prelude::FluentBuilder;
 use std::{path::PathBuf, rc::Rc};
 
@@ -288,7 +288,7 @@ impl Render for InfoSection {
                             .when_some(image_key, |this: Stateful<Div>, key| {
                                 this.when(self.is_hovering_art, |this: Stateful<Div>| {
                                     this.child(
-                                        anchored().anchor(Corner::BottomRight).child(deferred(
+                                        anchored().anchor(Anchor::BottomRight).child(deferred(
                                             div()
                                                 .id("album-art-preview")
                                                 .occlude()

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, Corner, Div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    Anchor, App, Div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
     SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions, anchored,
     deferred, div, prelude::FluentBuilder, px,
 };
@@ -290,7 +290,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
 
             Some(
                 anchored()
-                    .anchor(Corner::TopLeft)
+                    .anchor(Anchor::TopLeft)
                     .child(deferred(popup_content)),
             )
         } else {
