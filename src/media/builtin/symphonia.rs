@@ -74,6 +74,17 @@ pub struct SymphoniaStream {
     last_image: Option<Visual>,
     /// Pre-allocated buffer for sample format conversion, reused across decode calls
     conversion_buffer: Vec<Vec<f64>>,
+    /// Whether loop-point-aware decoding is active
+    looping: bool,
+    /// Loop start point in seconds (from LOOP_START metadata)
+    loop_start_seconds: Option<f64>,
+    /// Loop end point in seconds (from LOOP_END metadata)
+    loop_end_seconds: Option<f64>,
+    /// Set when a seek to loop_start is needed on the next decode call
+    pending_loop_seek: bool,
+    /// Set to true after a loop seek; the next decoded packet may need its
+    /// leading samples trimmed if the seek landed before the exact loop_start time
+    needs_loop_start_trim: bool,
 }
 
 impl SymphoniaStream {
@@ -181,7 +192,7 @@ impl SymphoniaStream {
                     Self::tag_to_string(&tag.value).map(MetadataTag::DiscSubtitle)
                 }
                 _ => {
-                    let key = tag.key.as_str();
+                    let key = tag.key.as_str().trim_start_matches("TXXX:");
                     if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_GAIN") {
                         Self::tag_to_string(&tag.value).map(MetadataTag::ReplayGainTrackGain)
                     } else if key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_PEAK") {
@@ -194,8 +205,17 @@ impl SymphoniaStream {
                         Self::tag_to_string(&tag.value).map(MetadataTag::R128TrackGain)
                     } else if key.eq_ignore_ascii_case("R128_ALBUM_GAIN") {
                         Self::tag_to_string(&tag.value).map(MetadataTag::R128AlbumGain)
-                    } else if key.eq_ignore_ascii_case("TXXX:MusicBrainz Album Id") {
+                    } else if key.eq_ignore_ascii_case("MusicBrainz Album Id") {
                         Self::tag_to_string(&tag.value).map(MetadataTag::MbidAlbum)
+                    } else if key.eq_ignore_ascii_case("LOOP_START") {
+                        Self::tag_to_string(&tag.value)
+                            .and_then(|v| v.parse::<f64>().ok())
+                            // Convert from microseconds to seconds
+                            .map(|v| MetadataTag::LoopStart(v / 1_000_000.0))
+                    } else if key.eq_ignore_ascii_case("LOOP_END") {
+                        Self::tag_to_string(&tag.value)
+                            .and_then(|v| v.parse::<f64>().ok())
+                            .map(|v| MetadataTag::LoopEnd(v / 1_000_000.0))
                     } else {
                         None
                     }
@@ -263,6 +283,11 @@ impl MediaProvider for SymphoniaProvider {
             pending_metadata_update: false,
             last_image: None,
             conversion_buffer: Vec::new(),
+            looping: false,
+            loop_start_seconds: None,
+            loop_end_seconds: None,
+            pending_loop_seek: false,
+            needs_loop_start_trim: false,
         };
 
         stream.read_base_metadata(&mut probed);
@@ -562,13 +587,49 @@ impl MediaStream for SymphoniaStream {
         };
 
         loop {
+            // Handle pending loop seek (after truncating at loop_end)
+            if self.pending_loop_seek {
+                if let Some(loop_start) = self.loop_start_seconds {
+                    format
+                        .seek(
+                            SeekMode::Accurate,
+                            SeekTo::Time {
+                                time: Time {
+                                    seconds: loop_start as u64,
+                                    frac: loop_start.fract(),
+                                },
+                                track_id: Some(self.current_track),
+                            },
+                        )
+                        .ok();
+                }
+                self.pending_loop_seek = false;
+                self.needs_loop_start_trim = true;
+            }
+
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
-                Err(Error::ResetRequired) => return Ok(DecodeResult::Eof),
-                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::ResetRequired) => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
                     return Ok(DecodeResult::Eof);
                 }
-                Err(_) => return Ok(DecodeResult::Eof),
+                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
+                    return Ok(DecodeResult::Eof);
+                }
+                Err(_) => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
+                    return Ok(DecodeResult::Eof);
+                }
             };
 
             while !format.metadata().is_latest() {
@@ -593,6 +654,56 @@ impl MediaStream for SymphoniaStream {
                         self.current_position_ms = time_to_millis(tb.calc_time(packet.ts()));
                     }
 
+                    // Handle beginning trim after a loop seek: the seek may land at
+                    // a packet boundary before loop_start, so skip those leading samples
+                    let start_offset = if self.needs_loop_start_trim {
+                        self.needs_loop_start_trim = false;
+                        if let (Some(loop_start), Some(tb)) =
+                            (self.loop_start_seconds, &self.current_timebase)
+                        {
+                            let current_time = tb.calc_time(packet.ts());
+                            let current_secs = current_time.seconds as f64 + current_time.frac;
+                            if current_secs < loop_start {
+                                ((loop_start - current_secs) * rate as f64) as usize
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    let after_start = decoded.frames().saturating_sub(start_offset);
+                    if after_start == 0 {
+                        continue;
+                    }
+
+                    // Determine if we need to truncate at loop_end
+                    let (max_samples, needs_loop_seek) = if self.looping
+                        && let Some(loop_end) = self.loop_end_seconds
+                        && let Some(tb) = &self.current_timebase
+                    {
+                        let current_time = tb.calc_time(packet.ts());
+                        let current_secs = current_time.seconds as f64 + current_time.frac;
+                        let frame_start = current_secs + start_offset as f64 / rate as f64;
+                        let frame_secs = after_start as f64 / rate as f64;
+
+                        if frame_start + frame_secs > loop_end {
+                            let keep = ((loop_end - frame_start).max(0.0) * rate as f64) as usize;
+                            if keep == 0 {
+                                self.pending_loop_seek = true;
+                                continue;
+                            }
+                            (keep, true)
+                        } else {
+                            (after_start, false)
+                        }
+                    } else {
+                        (after_start, false)
+                    };
+
                     // prepare buffers
                     while self.conversion_buffer.len() < channel_count {
                         self.conversion_buffer
@@ -607,81 +718,140 @@ impl MediaStream for SymphoniaStream {
                     let frames = match decoded {
                         AudioBufferRef::U8(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::U16(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::U24(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch].extend(v.chan(ch).iter().map(|s| {
-                                    U24::try_from(s.0).expect("u24 overflow").sample_into()
-                                }));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch).iter().skip(start_offset).take(max_samples).map(
+                                        |s| U24::try_from(s.0).expect("u24 overflow").sample_into(),
+                                    ),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::U32(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::S8(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::S16(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::S24(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch].extend(v.chan(ch).iter().map(|s| {
-                                    I24::try_from(s.0).expect("i24 overflow").sample_into()
-                                }));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch).iter().skip(start_offset).take(max_samples).map(
+                                        |s| I24::try_from(s.0).expect("i24 overflow").sample_into(),
+                                    ),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::S32(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::F32(v) => {
                             for ch in 0..channel_count {
-                                self.conversion_buffer[ch]
-                                    .extend(v.chan(ch).iter().map(|&s| s.sample_into()));
+                                self.conversion_buffer[ch].extend(
+                                    v.chan(ch)
+                                        .iter()
+                                        .skip(start_offset)
+                                        .take(max_samples)
+                                        .map(|&s| s.sample_into()),
+                                );
                             }
-                            v.frames()
+                            max_samples
                         }
                         AudioBufferRef::F64(v) => {
-                            let slices: SmallVec<[&[f64]; 8]> =
-                                (0..channel_count).map(|ch| v.chan(ch)).collect();
-                            output.write_slices(&slices[..channel_count]);
+                            if needs_loop_seek || start_offset > 0 {
+                                for ch in 0..channel_count {
+                                    self.conversion_buffer[ch].extend(
+                                        v.chan(ch)
+                                            .iter()
+                                            .skip(start_offset)
+                                            .take(max_samples)
+                                            .map(|&s| s.sample_into()),
+                                    );
+                                }
+                                output.write_vecs(&self.conversion_buffer[..channel_count]);
+                            } else {
+                                let slices: SmallVec<[&[f64]; 8]> =
+                                    (0..channel_count).map(|ch| v.chan(ch)).collect();
+                                output.write_slices(&slices[..channel_count]);
+                            }
+                            if needs_loop_seek {
+                                self.pending_loop_seek = true;
+                            }
                             return Ok(DecodeResult::Decoded {
-                                frames: v.frames(),
+                                frames: max_samples,
                                 rate,
                             });
                         }
                     };
 
                     output.write_vecs(&self.conversion_buffer[..channel_count]);
+
+                    if needs_loop_seek {
+                        self.pending_loop_seek = true;
+                    }
 
                     return Ok(DecodeResult::Decoded { frames, rate });
                 }
@@ -704,15 +874,49 @@ impl MediaStream for SymphoniaStream {
         };
 
         loop {
+            // Handle pending loop seek (after truncating at loop_end)
+            if self.pending_loop_seek {
+                if let Some(loop_start) = self.loop_start_seconds {
+                    format
+                        .seek(
+                            SeekMode::Accurate,
+                            SeekTo::Time {
+                                time: Time {
+                                    seconds: loop_start as u64,
+                                    frac: loop_start.fract(),
+                                },
+                                track_id: Some(self.current_track),
+                            },
+                        )
+                        .ok();
+                }
+                self.pending_loop_seek = false;
+                self.needs_loop_start_trim = true;
+            }
+
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
                 Err(Error::ResetRequired) => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
                     return Ok(F32DecodeResult::Decoded(DecodeResult::Eof));
                 }
                 Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
                     return Ok(F32DecodeResult::Decoded(DecodeResult::Eof));
                 }
-                Err(_) => return Ok(F32DecodeResult::Decoded(DecodeResult::Eof)),
+                Err(_) => {
+                    if self.looping && self.loop_start_seconds.is_some() {
+                        self.pending_loop_seek = true;
+                        continue;
+                    }
+                    return Ok(F32DecodeResult::Decoded(DecodeResult::Eof));
+                }
             };
 
             while !format.metadata().is_latest() {
@@ -737,16 +941,77 @@ impl MediaStream for SymphoniaStream {
                         self.current_position_ms = time_to_millis(tb.calc_time(packet.ts()));
                     }
 
+                    // Handle beginning trim after a loop seek: the seek may land at
+                    // a packet boundary before loop_start, so skip those leading samples
+                    let start_offset = if self.needs_loop_start_trim {
+                        self.needs_loop_start_trim = false;
+                        if let (Some(loop_start), Some(tb)) =
+                            (self.loop_start_seconds, &self.current_timebase)
+                        {
+                            let current_time = tb.calc_time(packet.ts());
+                            let current_secs = current_time.seconds as f64 + current_time.frac;
+                            if current_secs < loop_start {
+                                ((loop_start - current_secs) * rate as f64) as usize
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    let after_start = decoded.frames().saturating_sub(start_offset);
+                    if after_start == 0 {
+                        continue;
+                    }
+
+                    // Determine if we need to truncate at loop_end
+                    let (max_samples, needs_loop_seek) = if self.looping
+                        && let Some(loop_end) = self.loop_end_seconds
+                        && let Some(tb) = &self.current_timebase
+                    {
+                        let current_time = tb.calc_time(packet.ts());
+                        let current_secs = current_time.seconds as f64 + current_time.frac;
+                        let frame_start = current_secs + start_offset as f64 / rate as f64;
+                        let frame_secs = after_start as f64 / rate as f64;
+
+                        if frame_start + frame_secs > loop_end {
+                            let keep = ((loop_end - frame_start).max(0.0) * rate as f64) as usize;
+                            if keep == 0 {
+                                self.pending_loop_seek = true;
+                                continue;
+                            }
+                            (keep, true)
+                        } else {
+                            (after_start, false)
+                        }
+                    } else {
+                        (after_start, false)
+                    };
+
                     // Only handle F32, return NotF32 for other formats
                     let frames = match decoded {
                         AudioBufferRef::F32(v) => {
-                            let slices: SmallVec<[&[f32]; 8]> =
-                                (0..channel_count).map(|ch| v.chan(ch)).collect();
-                            output.write_slices(&slices);
-                            v.frames()
+                            if needs_loop_seek || start_offset > 0 {
+                                let slices: SmallVec<[&[f32]; 8]> = (0..channel_count)
+                                    .map(|ch| &v.chan(ch)[start_offset..start_offset + max_samples])
+                                    .collect();
+                                output.write_slices(&slices);
+                            } else {
+                                let slices: SmallVec<[&[f32]; 8]> =
+                                    (0..channel_count).map(|ch| v.chan(ch)).collect();
+                                output.write_slices(&slices);
+                            }
+                            max_samples
                         }
                         _ => return Ok(F32DecodeResult::NotF32),
                     };
+
+                    if needs_loop_seek {
+                        self.pending_loop_seek = true;
+                    }
 
                     return Ok(F32DecodeResult::Decoded(DecodeResult::Decoded {
                         frames,
@@ -760,6 +1025,21 @@ impl MediaStream for SymphoniaStream {
                     return Err(PlaybackReadError::DecodeFatal(e.to_string()));
                 }
             }
+        }
+    }
+
+    fn set_looping(&mut self, enabled: bool) {
+        self.looping = enabled;
+        if enabled {
+            self.loop_start_seconds = self.current_metadata.loop_start;
+            self.loop_end_seconds = self.current_metadata.loop_end;
+            self.pending_loop_seek = false;
+            self.needs_loop_start_trim = false;
+        } else {
+            self.loop_start_seconds = None;
+            self.loop_end_seconds = None;
+            self.pending_loop_seek = false;
+            self.needs_loop_start_trim = false;
         }
     }
 }

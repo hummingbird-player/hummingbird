@@ -143,4 +143,13 @@ pub trait MediaStream {
         &mut self,
         output: &ChannelProducers<f32>,
     ) -> Result<F32DecodeResult, PlaybackReadError>;
+
+    /// Whether or not the media stream should attempt to use it's internal loop handling. With
+    /// Symphonia, the media stream will seek to the loop start point from the EOF or loop end
+    /// point when looping is enabled.
+    ///
+    /// This is handled by the media stream itself instead of the audio engine so that the media
+    /// stream implementation can handle the loop behavior natively (for example, if a tracker
+    /// module supports looping natively).
+    fn set_looping(&mut self, enabled: bool);
 }

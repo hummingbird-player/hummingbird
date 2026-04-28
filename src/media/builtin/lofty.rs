@@ -257,6 +257,8 @@ impl MediaStream for LoftyStream {
     ) -> Result<F32DecodeResult, PlaybackReadError> {
         Err(PlaybackReadError::InvalidState)
     }
+
+    fn set_looping(&mut self, _enabled: bool) {}
 }
 
 #[cfg(test)]

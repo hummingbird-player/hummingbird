@@ -273,6 +273,10 @@ impl PlaybackThread {
 
         let info = self.engine.open(path)?;
 
+        // Enable loop-point-aware decoding if repeat-one is active
+        self.engine
+            .set_looping(self.queue.repeat_state() == RepeatState::RepeatingOne);
+
         self.send_event(PlaybackEvent::SongChanged(path.to_owned()));
 
         self.send_event(PlaybackEvent::DurationChanged(
@@ -769,7 +773,9 @@ impl PlaybackThread {
                     BACKGROUND_POSITION_BROADCAST_INTERVAL_MS
                 };
 
-                if self.last_broadcast_timestamp.saturating_add(min_interval) > timestamp {
+                if timestamp > self.last_broadcast_timestamp
+                    && self.last_broadcast_timestamp.saturating_add(min_interval) > timestamp
+                {
                     return;
                 }
             }
@@ -940,6 +946,7 @@ impl PlaybackThread {
     /// Sets the repeat mode.
     fn set_repeat(&mut self, state: RepeatState) {
         self.queue.set_repeat(state);
+        self.engine.set_looping(state == RepeatState::RepeatingOne);
 
         self.send_event(PlaybackEvent::RepeatChanged(self.queue.repeat_state()));
     }

@@ -322,6 +322,11 @@ impl AudioEngine {
         // This method exists for future extensibility.
     }
 
+    /// Enable or disable loop-aware decoding on the media stream.
+    pub fn set_looping(&mut self, enabled: bool) {
+        self.media.set_looping(enabled);
+    }
+
     /// Process one cycle of the audio pipeline.
     ///
     /// Returns a result indicating whether to continue, handle EOF, or handle errors.

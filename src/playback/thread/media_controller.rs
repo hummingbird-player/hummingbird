@@ -196,6 +196,12 @@ impl MediaController {
             .ok_or(ChannelRetrievalError::NeverStarted)?
             .sample_rate()
     }
+
+    pub fn set_looping(&mut self, enabled: bool) {
+        if let Some(stream) = &mut self.media_stream {
+            stream.set_looping(enabled);
+        }
+    }
 }
 
 impl Default for MediaController {

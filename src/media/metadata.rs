@@ -51,6 +51,8 @@ pub enum MetadataTag {
     R128TrackGain(String),
     R128AlbumGain(String),
     DiscSubtitle(String),
+    LoopStart(f64),
+    LoopEnd(f64),
 }
 
 pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
@@ -133,6 +135,8 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
         MetadataTag::R128AlbumGain(v) => {
             metadata.replaygain_album_gain = parse_r128_gain_str(&v);
         }
+        MetadataTag::LoopStart(v) => metadata.loop_start = Some(v),
+        MetadataTag::LoopEnd(v) => metadata.loop_end = Some(v),
     }
 }
 
@@ -178,6 +182,9 @@ pub struct Metadata {
     pub replaygain_album_peak: Option<f64>,
 
     pub lyrics: Option<String>,
+
+    pub loop_start: Option<f64>,
+    pub loop_end: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
