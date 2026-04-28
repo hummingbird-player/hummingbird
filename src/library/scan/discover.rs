@@ -457,8 +457,8 @@ mod tests {
     use crate::{
         settings::scan::MissingFolderPolicy,
         test_support::{
-            TestDir, create_test_pool, insert_metadata, register_test_media_providers,
-            track_metadata,
+            TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata,
+            register_test_media_providers, track_metadata,
         },
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -693,5 +693,378 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_removed_directories_removes_tracks_under_removed_dir() {
+        let (dir, pool) = create_test_pool("cleanup-removed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let path1 = dir_path.join("track1.flac");
+        let path2 = dir_path.join("track2.flac");
+        std::fs::write(&path1, b"").unwrap();
+        std::fs::write(&path2, b"").unwrap();
+
+        let meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        let meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+        drop(conn);
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.directories = vec![dir_path];
+        scan_record.records.insert(path1.clone(), UNIX_EPOCH);
+        scan_record.records.insert(path2.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[]).await;
+        assert!(updated.is_empty());
+        assert!(!scan_record.records.contains_key(&path1));
+        assert!(!scan_record.records.contains_key(&path2));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_removed_directories_preserves_tracks_in_remaining_dirs() {
+        let (dir, pool) = create_test_pool("cleanup-removed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let path_a = dir_path.join("track_a.flac");
+        // Use a subdirectory to simulate dirB being a separate tree
+        let sub = dir_path.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let path_b = sub.join("track_b.flac");
+
+        std::fs::write(&path_a, b"").unwrap();
+        std::fs::write(&path_b, b"").unwrap();
+
+        let meta1 = track_metadata("Album A", "Artist", "Track A", 1);
+        let meta2 = track_metadata("Album B", "Artist", "Track B", 1);
+        insert_metadata(&mut conn, &meta1, &path_a).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path_b).await.unwrap();
+        drop(conn);
+
+        // Both dir_path and sub are in old set; only dir_path remains
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.directories = vec![dir_path.clone(), sub.clone()];
+        scan_record.records.insert(path_a.clone(), UNIX_EPOCH);
+        scan_record.records.insert(path_b.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[dir_path]).await;
+        assert!(updated.is_empty());
+        // track_a (under dir_path) should remain
+        assert!(scan_record.records.contains_key(&path_a));
+        // track_b (under sub, which was removed) should be gone
+        assert!(!scan_record.records.contains_key(&path_b));
+
+        let count_a: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(path_a.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_a.0, 1);
+
+        let count_b: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(path_b.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_b.0, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_removed_directories_returns_empty_when_no_dirs_removed() {
+        let (dir, pool) = create_test_pool("cleanup-removed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path = dir.utf8_join("track.flac");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.directories = vec![dir.utf8_path()];
+        scan_record.records.insert(path, UNIX_EPOCH);
+
+        let updated =
+            cleanup_removed_directories(&pool, &mut scan_record, &[dir.utf8_path()]).await;
+        assert!(updated.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cleanup_removed_directories_returns_affected_playlist_ids() {
+        let (dir, pool) = create_test_pool("cleanup-removed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let path = dir_path.join("track.flac");
+        std::fs::write(&path, b"").unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        let playlist_id = add_track_to_playlist(&pool, &path, "Test Playlist").await;
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.directories = vec![dir_path];
+        scan_record.records.insert(path, UNIX_EPOCH);
+
+        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[]).await;
+        assert!(updated.contains(&playlist_id));
+
+        let pi_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist_item")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pi_count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_removes_multiple_missing_files() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path1 = dir.utf8_join("track1.flac");
+        let path2 = dir.utf8_join("track2.flac");
+        let path3 = dir.utf8_join("track3.flac");
+        std::fs::write(dir.join("track1.flac"), b"").unwrap();
+        std::fs::write(dir.join("track2.flac"), b"").unwrap();
+        std::fs::write(dir.join("track3.flac"), b"").unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta, &path2).await.unwrap();
+        insert_metadata(&mut conn, &meta, &path3).await.unwrap();
+        drop(conn);
+
+        std::fs::remove_file(dir.join("track1.flac")).unwrap();
+        std::fs::remove_file(dir.join("track2.flac")).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path1.clone(), UNIX_EPOCH);
+        scan_record.records.insert(path2.clone(), UNIX_EPOCH);
+        scan_record.records.insert(path3.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        assert!(updated.is_empty());
+        assert!(!scan_record.records.contains_key(&path1));
+        assert!(!scan_record.records.contains_key(&path2));
+        assert!(scan_record.records.contains_key(&path3));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_preserves_files_still_on_disk() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path1 = dir.utf8_join("track1.flac");
+        let path2 = dir.utf8_join("track2.flac");
+        std::fs::write(dir.join("track1.flac"), b"").unwrap();
+        std::fs::write(dir.join("track2.flac"), b"").unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta, &path2).await.unwrap();
+        drop(conn);
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path1.clone(), UNIX_EPOCH);
+        scan_record.records.insert(path2.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        assert!(updated.is_empty());
+        assert!(scan_record.records.contains_key(&path1));
+        assert!(scan_record.records.contains_key(&path2));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 2);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_removes_lyrics_for_deleted_tracks() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path = dir.utf8_join("track.flac");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.lyrics = Some("test lyrics".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        assert_eq!(count_rows(&pool, "lyrics").await, 1);
+
+        std::fs::remove_file(dir.join("track.flac")).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path, UNIX_EPOCH);
+
+        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        assert_eq!(count_rows(&pool, "lyrics").await, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_returns_affected_playlist_ids() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path = dir.utf8_join("track.flac");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        let playlist_id = add_track_to_playlist(&pool, &path, "Test Playlist").await;
+
+        std::fs::remove_file(dir.join("track.flac")).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path, UNIX_EPOCH);
+
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        assert!(updated.contains(&playlist_id));
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_cascades_album_and_artist_deletion() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path = dir.utf8_join("track.flac");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+
+        std::fs::remove_file(dir.join("track.flac")).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path, UNIX_EPOCH);
+
+        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+
+        assert_eq!(count_rows(&pool, "album").await, 0);
+        assert_eq!(count_rows(&pool, "artist").await, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_keeps_album_when_other_tracks_remain() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path1 = dir.utf8_join("track1.flac");
+        let path2 = dir.utf8_join("track2.flac");
+        std::fs::write(dir.join("track1.flac"), b"").unwrap();
+        std::fs::write(dir.join("track2.flac"), b"").unwrap();
+
+        let meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        let meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+        drop(conn);
+
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+
+        std::fs::remove_file(dir.join("track1.flac")).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path1, UNIX_EPOCH);
+        scan_record.records.insert(path2, UNIX_EPOCH);
+
+        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_handles_moved_file() {
+        let (dir, pool) = create_test_pool("cleanup-move-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // Insert a track at old path with lyrics
+        let old_path = dir.utf8_join("track.flac");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+        let mut meta = track_metadata("Album", "Artist", "Old Track", 1);
+        meta.lyrics = Some("old lyrics".to_string());
+        insert_metadata(&mut conn, &meta, &old_path).await.unwrap();
+
+        // Add to playlist
+        let playlist_id = add_track_to_playlist(&pool, &old_path, "Test Playlist").await;
+
+        // Delete old file (simulating move: old path no longer exists)
+        std::fs::remove_file(dir.join("track.flac")).unwrap();
+
+        // Create new file at a different path (the file after the move)
+        let new_path = dir.utf8_join("moved.flac");
+        std::fs::write(dir.join("moved.flac"), b"").unwrap();
+        let mut new_meta = track_metadata("Album", "Artist", "Moved Track", 1);
+        new_meta.lyrics = Some("moved lyrics".to_string());
+        insert_metadata(&mut conn, &new_meta, &new_path)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // Set up scan_record with both paths
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(old_path.clone(), UNIX_EPOCH);
+        scan_record.records.insert(new_path.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+
+        // Old track should be gone from records and DB
+        assert!(!scan_record.records.contains_key(&old_path));
+        let old_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(old_path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(old_count.0, 0);
+
+        // New track should remain
+        assert!(scan_record.records.contains_key(&new_path));
+        let new_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(new_path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(new_count.0, 1);
+
+        // Old lyrics should be cleaned up (only 1 set remains, for the new track)
+        assert_eq!(count_rows(&pool, "lyrics").await, 1);
+
+        // Playlist items for old track should be cleaned up
+        let pi_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist_item")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pi_count.0, 0);
+
+        // Updated should contain the playlist id from the removed track
+        assert!(updated.contains(&playlist_id));
     }
 }

@@ -107,6 +107,23 @@ pub(crate) async fn insert_metadata(
     .await
 }
 
+pub(crate) async fn add_track_to_playlist(
+    pool: &SqlitePool,
+    track_path: &Utf8Path,
+    playlist_name: &str,
+) -> i64 {
+    let playlist_id = db::create_playlist(pool, playlist_name).await.unwrap();
+    let (track_id,): (i64,) = sqlx::query_as("SELECT id FROM track WHERE location = $1")
+        .bind(track_path.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    db::add_playlist_item(pool, playlist_id, track_id)
+        .await
+        .unwrap();
+    playlist_id
+}
+
 pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
     let sql = format!("SELECT COUNT(*) FROM {table}");
     let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await.unwrap();
