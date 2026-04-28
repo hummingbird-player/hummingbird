@@ -448,6 +448,10 @@ impl MediaStream for SymphoniaStream {
         let Some(format) = &mut self.format else {
             return Err(SeekError::InvalidState);
         };
+
+        self.pending_loop_seek = false;
+        self.needs_loop_start_trim = false;
+
         let seek = format
             .seek(
                 SeekMode::Accurate,
@@ -589,8 +593,8 @@ impl MediaStream for SymphoniaStream {
         loop {
             // Handle pending loop seek (after truncating at loop_end)
             if self.pending_loop_seek {
-                if let Some(loop_start) = self.loop_start_seconds {
-                    format
+                if let Some(loop_start) = self.loop_start_seconds
+                    && format
                         .seek(
                             SeekMode::Accurate,
                             SeekTo::Time {
@@ -601,8 +605,11 @@ impl MediaStream for SymphoniaStream {
                                 track_id: Some(self.current_track),
                             },
                         )
-                        .ok();
+                        .is_err()
+                {
+                    return Err(PlaybackReadError::Eof);
                 }
+
                 self.pending_loop_seek = false;
                 self.needs_loop_start_trim = true;
             }
@@ -876,8 +883,8 @@ impl MediaStream for SymphoniaStream {
         loop {
             // Handle pending loop seek (after truncating at loop_end)
             if self.pending_loop_seek {
-                if let Some(loop_start) = self.loop_start_seconds {
-                    format
+                if let Some(loop_start) = self.loop_start_seconds
+                    && format
                         .seek(
                             SeekMode::Accurate,
                             SeekTo::Time {
@@ -888,8 +895,11 @@ impl MediaStream for SymphoniaStream {
                                 track_id: Some(self.current_track),
                             },
                         )
-                        .ok();
+                        .is_err()
+                {
+                    return Err(PlaybackReadError::Eof);
                 }
+
                 self.pending_loop_seek = false;
                 self.needs_loop_start_trim = true;
             }
