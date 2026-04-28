@@ -20,12 +20,17 @@ use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Delay between requesting a fade-out and pausing the stream. Must exceed
 /// the gain ramp length (15 ms) plus a few callback periods to ensure the
 /// audio thread drains a buffer at zero gain.
 const PAUSE_FADE_WAIT: Duration = Duration::from_millis(50);
+/// Target callback buffer size.
+const DEVICE_BUFFER_TARGET: Duration = Duration::from_millis(20);
+/// Internal ring buffer target. This stays larger than the device buffer so the
+/// decoder can absorb scheduling jitter without underrunning the stream.
+const RING_BUFFER_TARGET: Duration = Duration::from_millis(100);
 
 pub struct CpalProvider {
     host: Host,
@@ -110,12 +115,23 @@ fn cpal_config_from_info(format: &FormatInfo) -> Result<cpal::StreamConfig, ()> 
     if format.originating_provider != "cpal" {
         Err(())
     } else {
+        let target_frames = frames_for_duration(format.sample_rate, DEVICE_BUFFER_TARGET);
+        let buffer_size = match format.buffer_size {
+            BufferSize::Range(min, max) => cpal::BufferSize::Fixed(target_frames.clamp(min, max)),
+            BufferSize::Fixed(size) => cpal::BufferSize::Fixed(size),
+            BufferSize::Unknown => cpal::BufferSize::Default,
+        };
+
         Ok(cpal::StreamConfig {
             channels: format.channels.count(),
             sample_rate: format.sample_rate,
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size,
         })
     }
+}
+
+fn frames_for_duration(sample_rate: u32, duration: Duration) -> u32 {
+    ((u64::from(sample_rate) * duration.as_micros() as u64) / 1_000_000).max(1) as u32
 }
 
 trait CpalSample: SizedSample + Default + Send + Sized + 'static + Mute + Scale {}
@@ -158,23 +174,11 @@ impl CpalDevice {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
         let ChannelSpec::Count(channels) = format.channels;
-        // 100ms at the configured sample rate, scaled by the number of channels
-        let desired_buffer_size =
-            ((100 * config.sample_rate as usize) / 1000) * 2 * channels as usize;
-        info!(
-            "Desired buffer size: {desired_buffer_size}, format allows: {:?}",
-            format.buffer_size
+        let ring_buffer_frames = frames_for_duration(config.sample_rate, RING_BUFFER_TARGET);
+        let buffer_size = ring_buffer_frames as usize * channels as usize;
+        debug!(
+            "CPAL buffer size {buffer_size}, ring buffer {ring_buffer_frames} frames ({buffer_size} samples)",
         );
-        let buffer_size = match format.buffer_size {
-            // take what ever the minimum buffer size is, unless it's less than the
-            // desired_buffer_size, in which case use the desired_buffer_size
-            BufferSize::Range(min, max) => {
-                (min as usize).max(desired_buffer_size).min(max as usize)
-            }
-            BufferSize::Fixed(size) => size as usize,
-            // if the buffer size is unknown, just use the desired_buffer_size
-            BufferSize::Unknown => desired_buffer_size,
-        };
         info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let (stream, prod) =
