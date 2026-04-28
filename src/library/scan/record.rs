@@ -175,3 +175,72 @@ pub async fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestDir;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn missing_record_returns_current() {
+        let dir = TestDir::new("scan-record-test");
+        let record = load_scan_record(&dir.join("missing.hsr")).await;
+        assert!(!record.is_version_mismatch());
+        assert!(record.records.is_empty());
+        assert!(record.directories.is_empty());
+    }
+
+    #[tokio::test]
+    async fn corrupt_record_returns_current() {
+        let dir = TestDir::new("scan-record-test");
+        let path = dir.join("corrupt.hsr");
+        std::fs::write(&path, b"not valid postcard data").unwrap();
+        let record = load_scan_record(&path).await;
+        assert!(!record.is_version_mismatch());
+        assert!(record.records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_and_load_roundtrip() {
+        let dir = TestDir::new("scan-record-test");
+        let path = dir.join("record.hsr");
+        let mut record = ScanRecord::new_current();
+        let t1 = UNIX_EPOCH + Duration::from_secs(1_234_567_890);
+        let p1 = Utf8PathBuf::from("/music/track.flac");
+        record.records.insert(p1.clone(), t1);
+        record.directories.push(Utf8PathBuf::from("/music"));
+
+        write_scan_record(&record, &path).await;
+        let loaded = load_scan_record(&path).await;
+
+        assert_eq!(loaded.version, SCAN_VERSION);
+        assert_eq!(loaded.records.get(&p1), Some(&t1));
+        assert_eq!(loaded.directories, vec![Utf8PathBuf::from("/music")]);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_writes_loadable_record() {
+        let dir = TestDir::new("scan-record-test");
+        let path = dir.join("checkpoint.hsr");
+        let mut checkpoint = FxHashMap::default();
+        let t1 = UNIX_EPOCH + Duration::from_secs(1_000);
+        let p1 = Utf8PathBuf::from("/music/a.flac");
+        checkpoint.insert(p1.clone(), t1);
+
+        let guard = Arc::new(Mutex::new(checkpoint));
+        write_checkpoint(guard, vec![Utf8PathBuf::from("/music")], &path).await;
+
+        let loaded = load_scan_record(&path).await;
+        assert_eq!(loaded.version, SCAN_VERSION);
+        assert_eq!(loaded.records.get(&p1), Some(&t1));
+        assert_eq!(loaded.directories, vec![Utf8PathBuf::from("/music")]);
+    }
+
+    #[test]
+    fn version_mismatch_detected() {
+        let mut record = ScanRecord::new_current();
+        record.version = 1;
+        assert!(record.is_version_mismatch());
+    }
+}

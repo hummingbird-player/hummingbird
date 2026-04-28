@@ -450,3 +450,248 @@ pub fn discover(
 
     discovered_total
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        settings::scan::MissingFolderPolicy,
+        test_support::{
+            TestDir, create_test_pool, insert_metadata, register_test_media_providers,
+            track_metadata,
+        },
+    };
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc;
+
+    fn scan_settings(root: Utf8PathBuf) -> ScanSettings {
+        ScanSettings {
+            paths: vec![root],
+            missing_folder_policy: MissingFolderPolicy::default(),
+        }
+    }
+
+    #[test]
+    fn sidecar_lyrics_path_returns_lrc_next_to_track() {
+        let path = Utf8PathBuf::from("/music/album/song.flac");
+        assert_eq!(
+            sidecar_lyrics_path(&path),
+            Some(Utf8PathBuf::from("/music/album/song.lrc"))
+        );
+    }
+
+    #[test]
+    fn sidecar_lyrics_path_returns_none_without_stem() {
+        let path = Utf8PathBuf::from("/");
+        assert_eq!(sidecar_lyrics_path(&path), None);
+    }
+
+    #[test]
+    fn discover_emits_supported_files_recursively() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-test");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("track1.flac"), b"").unwrap();
+        std::fs::write(dir.join("readme.txt"), b"").unwrap();
+        std::fs::write(sub.join("track2.mp3"), b"").unwrap();
+
+        let settings = scan_settings(dir.utf8_path());
+        let scan_record = Arc::new(Mutex::new(ScanRecord::new_current()));
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(100);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = discover(settings, scan_record, path_tx, cancel);
+
+        let mut paths = Vec::new();
+        while let Some((path, _)) = path_rx.blocking_recv() {
+            paths.push(path);
+        }
+
+        assert_eq!(count, 2);
+        assert_eq!(paths.len(), 2);
+        let names: Vec<_> = paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"track1.flac".to_string()));
+        assert!(names.contains(&"track2.mp3".to_string()));
+    }
+
+    #[test]
+    fn discover_skips_unchanged_recorded_files() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-test");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let ts = file_scan_timestamp(&path).unwrap();
+
+        let mut record = ScanRecord::new_current();
+        record.records.insert(path, ts);
+
+        let settings = scan_settings(dir.utf8_path().canonicalize_utf8().unwrap());
+        let scan_record = Arc::new(Mutex::new(record));
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = discover(settings, scan_record, path_tx, cancel);
+        assert_eq!(count, 0);
+        assert!(path_rx.blocking_recv().is_none());
+    }
+
+    #[test]
+    fn discover_emits_file_when_timestamp_differs() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-test");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+
+        let mut record = ScanRecord::new_current();
+        record
+            .records
+            .insert(path.clone(), UNIX_EPOCH + Duration::from_secs(1));
+
+        let settings = scan_settings(dir.utf8_path().canonicalize_utf8().unwrap());
+        let scan_record = Arc::new(Mutex::new(record));
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = discover(settings, scan_record, path_tx, cancel);
+        assert_eq!(count, 1);
+        let emitted = path_rx.blocking_recv().unwrap();
+        assert_eq!(emitted.0, path);
+    }
+
+    #[test]
+    fn discover_emits_file_when_sidecar_lyrics_changes() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-test");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let old_ts = file_scan_timestamp(&path).unwrap();
+
+        std::fs::write(dir.join("track.lrc"), "[00:00.00] lyrics").unwrap();
+
+        let mut record = ScanRecord::new_current();
+        record.records.insert(path.clone(), old_ts);
+
+        let settings = scan_settings(dir.utf8_path().canonicalize_utf8().unwrap());
+        let scan_record = Arc::new(Mutex::new(record));
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = discover(settings, scan_record, path_tx, cancel);
+        assert_eq!(count, 1);
+        let emitted = path_rx.blocking_recv().unwrap();
+        assert_eq!(emitted.0, path);
+    }
+
+    #[test]
+    fn rescan_discover_deduplicates_paths() {
+        register_test_media_providers();
+        let dir = TestDir::new("rescan-test");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = rescan_discover(vec![path.clone(), dir_path], path_tx, cancel);
+        assert_eq!(count, 1);
+        let emitted = path_rx.blocking_recv().unwrap();
+        assert_eq!(emitted.0, path);
+        assert!(path_rx.blocking_recv().is_none());
+    }
+
+    #[test]
+    fn rescan_discover_expands_directories_one_level_only() {
+        register_test_media_providers();
+        let dir = TestDir::new("rescan-test");
+        std::fs::write(dir.join("top.flac"), b"").unwrap();
+        let nested = dir.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("deep.flac"), b"").unwrap();
+
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = rescan_discover(vec![dir_path], path_tx, cancel);
+        assert_eq!(count, 1);
+        let emitted = path_rx.blocking_recv().unwrap();
+        assert_eq!(emitted.0.file_name().unwrap(), "top.flac");
+    }
+
+    #[test]
+    fn rescan_discover_ignores_scan_record_state() {
+        register_test_media_providers();
+        let dir = TestDir::new("rescan-test");
+        std::fs::write(dir.join("track.flac"), b"").unwrap();
+
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let (path_tx, mut path_rx) = mpsc::channel::<(Utf8PathBuf, SystemTime)>(10);
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let count = rescan_discover(vec![path.clone()], path_tx, cancel);
+        assert_eq!(count, 1);
+        assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_removes_missing_tracks() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let file = dir.join("track.flac");
+        std::fs::write(&file, b"").unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        std::fs::remove_file(&file).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        assert!(updated.is_empty());
+        assert!(!scan_record.records.contains_key(&path));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_with_exclusions_keeps_missing_tracks_under_excluded_roots() {
+        let (dir, pool) = create_test_pool("cleanup-test").await;
+        let file = dir.join("track.flac");
+        std::fs::write(&file, b"").unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        std::fs::remove_file(&file).unwrap();
+
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.records.insert(path.clone(), UNIX_EPOCH);
+
+        let root = dir.utf8_path().canonicalize_utf8().unwrap();
+        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[root]).await;
+        assert!(updated.is_empty());
+        assert!(scan_record.records.contains_key(&path));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM track WHERE location = $1")
+            .bind(path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1);
+    }
+}

@@ -334,13 +334,7 @@ pub async fn update_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::bind_release_date;
-    use crate::{
-        library::types::{
-            DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
-        },
-        media::metadata::Metadata,
-    };
+    use super::*;
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -386,5 +380,184 @@ mod tests {
                 Some(DATE_PRECISION_FULL_DATE),
             )
         );
+    }
+
+    use crate::test_support::{count_rows, create_test_pool, insert_metadata, track_metadata};
+
+    #[tokio::test]
+    async fn update_metadata_inserts_artist_album_track() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "track").await, 1);
+        assert_eq!(count_rows(&pool, "album_path").await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_deduplicates_album() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        let meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+
+        insert_metadata(&mut conn, &meta1, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        insert_metadata(&mut conn, &meta2, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        assert_eq!(count_rows(&pool, "track").await, 2);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_keeps_different_artists_separate() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta1 = track_metadata("Album", "Artist A", "Track 1", 1);
+        meta1.mbid_album = Some("mbid-1".to_string());
+        let mut meta2 = track_metadata("Album", "Artist B", "Track 2", 1);
+        meta2.mbid_album = Some("mbid-2".to_string());
+
+        insert_metadata(&mut conn, &meta1, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        insert_metadata(&mut conn, &meta2, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "album").await, 2);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_updates_existing_track_title() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        meta.name = Some("Updated Track".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        let track: (String,) = sqlx::query_as("SELECT title FROM track WHERE location = $1")
+            .bind(path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(track.0, "Updated Track");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_mixed_folder_for_same_album_disc() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let folder_a = dir.join("disc1a");
+        let folder_b = dir.join("disc1b");
+        std::fs::create_dir_all(&folder_a).unwrap();
+        std::fs::create_dir_all(&folder_b).unwrap();
+
+        let path1 = Utf8PathBuf::from_path_buf(folder_a.join("track.flac")).unwrap();
+        let path2 = Utf8PathBuf::from_path_buf(folder_b.join("track.flac")).unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta, &path2).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "track").await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_allows_same_album_different_disc_in_different_folder() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let folder_a = dir.join("disc1");
+        let folder_b = dir.join("disc2");
+        std::fs::create_dir_all(&folder_a).unwrap();
+        std::fs::create_dir_all(&folder_b).unwrap();
+
+        let path1 = Utf8PathBuf::from_path_buf(folder_a.join("track.flac")).unwrap();
+        let mut meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        meta1.disc_current = Some(1);
+
+        let path2 = Utf8PathBuf::from_path_buf(folder_b.join("track.flac")).unwrap();
+        let mut meta2 = track_metadata("Album", "Artist", "Track 2", 1);
+        meta2.disc_current = Some(2);
+
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "track").await, 2);
+        assert_eq!(count_rows(&pool, "album_path").await, 2);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_upserts_and_deletes_lyrics() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.lyrics = Some("hello lyrics".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "lyrics").await, 1);
+
+        meta.lyrics = None;
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "lyrics").await, 0);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_uses_album_artist_for_artist_row() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.artist = Some("Track Artist".to_string());
+        meta.album_artist = Some("Album Artist".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        let artist_name: (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(artist_name.0, "Album Artist");
+
+        let track_artist: (String,) = sqlx::query_as("SELECT artist_names FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(track_artist.0, "Track Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_uses_artist_sort() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.artist_sort = Some("Sorted Name".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        let sort_name: (String,) = sqlx::query_as("SELECT name_sortable FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort_name.0, "Sorted Name");
     }
 }

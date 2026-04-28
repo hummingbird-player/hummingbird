@@ -152,3 +152,114 @@ pub fn read_metadata_for_path(
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{TestDir, register_test_media_providers};
+    use std::fs;
+
+    #[test]
+    fn resolve_lyrics_prefers_sidecar() {
+        let dir = TestDir::new("decode-lyrics-test");
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+        fs::write(dir.join("track.lrc"), "[00:00.00] sidecar lyrics").unwrap();
+
+        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
+        assert_eq!(result.as_deref(), Some("[00:00.00] sidecar lyrics"));
+    }
+
+    #[test]
+    fn resolve_lyrics_falls_back_to_embedded() {
+        let dir = TestDir::new("decode-lyrics-test");
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+
+        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
+        assert_eq!(result.as_deref(), Some("[00:00.00] embedded lyrics"));
+    }
+
+    #[test]
+    fn resolve_lyrics_ignores_empty_sidecar() {
+        let dir = TestDir::new("decode-lyrics-test");
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+        fs::write(dir.join("track.lrc"), "   \n").unwrap();
+
+        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
+        assert_eq!(result.as_deref(), Some("[00:00.00] embedded lyrics"));
+    }
+
+    #[test]
+    fn scan_path_for_album_art_finds_folder_jpg() {
+        let dir = TestDir::new("decode-art-test");
+        fs::write(dir.join("folder.jpg"), b"jpegbytes").unwrap();
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let result = scan_path_for_album_art(&track, &mut cache);
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap().as_ref(), b"jpegbytes");
+    }
+
+    #[test]
+    fn scan_path_for_album_art_is_case_insensitive() {
+        let dir = TestDir::new("decode-art-test");
+        fs::write(dir.join("Folder.JPG"), b"jpegbytes").unwrap();
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let result = scan_path_for_album_art(&track, &mut cache);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn scan_path_for_album_art_caches_none() {
+        let dir = TestDir::new("decode-art-test");
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let result = scan_path_for_album_art(&track, &mut cache);
+        assert!(result.is_none());
+        assert_eq!(cache.get(&dir.utf8_path()), Some(&None));
+    }
+
+    #[test]
+    fn process_album_art_creates_thumbnail() {
+        let image = fs::read("assets/tests/audio-fixtures/cover.jpg").unwrap();
+        let (full, thumb) = process_album_art(&image).unwrap();
+        assert!(!full.is_empty());
+        assert!(thumb.starts_with(b"BM"));
+    }
+
+    #[test]
+    fn read_metadata_for_path_prefers_sidecar_lyrics() {
+        register_test_media_providers();
+        let dir = TestDir::new("decode-meta-test");
+        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
+        let track = dir.utf8_join("track.flac");
+        fs::copy(src, &track).unwrap();
+        fs::write(dir.join("track.lrc"), "[00:00.00] override lyrics").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let info = read_metadata_for_path(&track, &mut cache).unwrap();
+        assert_eq!(info.0.lyrics.as_deref(), Some("[00:00.00] override lyrics"));
+    }
+
+    #[test]
+    fn read_metadata_for_path_keeps_embedded_lyrics_when_no_sidecar() {
+        register_test_media_providers();
+        let dir = TestDir::new("decode-meta-test");
+        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
+        let track = dir.utf8_join("track.flac");
+        fs::copy(src, &track).unwrap();
+
+        let mut cache = FxHashMap::default();
+        let info = read_metadata_for_path(&track, &mut cache).unwrap();
+        assert_eq!(info.0.lyrics.as_deref(), Some("[00:00.00] Test lyrics"));
+    }
+}

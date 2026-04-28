@@ -1,4 +1,4 @@
-mod database;
+pub(crate) mod database;
 mod decode;
 mod discover;
 mod record;
