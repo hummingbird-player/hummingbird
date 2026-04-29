@@ -3,7 +3,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -35,17 +35,13 @@ fn file_scan_timestamp(path: &Utf8Path) -> Option<SystemTime> {
     };
 
     let presence_offset = if lyrics_timestamp.is_some() {
-        Duration::from_nanos(1)
+        // Must be >= 100ns (Windows SystemTime resolution is 100ns).
+        Duration::from_micros(1)
     } else {
         Duration::ZERO
     };
-    UNIX_EPOCH
-        .checked_add(
-            base_timestamp
-                .duration_since(UNIX_EPOCH)
-                .ok()?
-                .checked_add(presence_offset)?,
-        )
+    base_timestamp
+        .checked_add(presence_offset)
         .or(Some(base_timestamp))
 }
 
