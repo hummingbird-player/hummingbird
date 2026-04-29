@@ -41,6 +41,7 @@ pub enum CommandCategory {
     Playback,
     Queue,
     Playlist,
+    Library,
     Scan,
 }
 
@@ -51,6 +52,7 @@ impl CommandCategory {
             Self::Playback => tr!("ACTION_GROUP_PLAYBACK", "Playback"),
             Self::Queue => tr!("ACTION_GROUP_QUEUE", "Queue"),
             Self::Playlist => tr!("ACTION_GROUP_PLAYLIST", "Playlist"),
+            Self::Library => tr!("ACTION_GROUP_LIBRARY", "Library"),
             Self::Scan => tr!("ACTION_GROUP_SCAN", "Scan"),
         }
     }
@@ -61,7 +63,8 @@ impl CommandCategory {
             Self::Playback => 1,
             Self::Queue => 2,
             Self::Playlist => 3,
-            Self::Scan => 4,
+            Self::Library => 4,
+            Self::Scan => 5,
         }
     }
 }

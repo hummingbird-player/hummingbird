@@ -484,8 +484,41 @@ impl Library {
                 .focus_handle(focus_handle.clone()),
             );
 
+            cx.register_command(
+                CommandSpec::new(
+                    ("library::go_back", 0),
+                    Some(CommandCategory::Library),
+                    tr!("ACTION_GO_BACK", "Go Back"),
+                    NavigateBack,
+                )
+                .focus_handle(focus_handle.clone()),
+            );
+
+            cx.register_command(
+                CommandSpec::new(
+                    ("library::go_forward", 0),
+                    Some(CommandCategory::Library),
+                    tr!("ACTION_GO_FORWARD", "Go Forward"),
+                    NavigateForward,
+                )
+                .focus_handle(focus_handle.clone()),
+            );
+
+            cx.register_command(
+                CommandSpec::new(
+                    ("library::close_detail_view", 0),
+                    Some(CommandCategory::Library),
+                    tr!("ACTION_CLOSE_DETAIL_VIEW", "Close Detail View"),
+                    EscapeBack,
+                )
+                .focus_handle(focus_handle.clone()),
+            );
+
             cx.on_release(move |_, cx| {
                 cx.unregister_command(("playlist::import", 0));
+                cx.unregister_command(("library::go_back", 0));
+                cx.unregister_command(("library::go_forward", 0));
+                cx.unregister_command(("library::close_detail_view", 0));
             })
             .detach();
 
