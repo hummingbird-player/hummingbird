@@ -332,7 +332,7 @@ fn test_toast(_: &TestToast, _cx: &mut App) {
                 "Error toast #{{n}} (with action)",
                 n = n
             ))
-            .with_action(tr!("TEST_TOAST_RETRY", "Retry").into(), |_cx| {
+            .with_action(tr!("TEST_TOAST_RETRY", "Retry"), |_cx| {
                 info!("test toast action clicked");
             }),
         ),
