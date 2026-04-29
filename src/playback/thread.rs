@@ -343,6 +343,14 @@ impl PlaybackThread {
             self.set_stop_after_current(false);
         }
 
+        if self.playback_settings.consume
+            && !user_initiated
+            && let Some(current_idx) = self.queue.current_position()
+        {
+            self.remove(current_idx);
+            return;
+        }
+
         match self.queue.next(user_initiated) {
             QueueNavigationResult::Changed {
                 index,
@@ -899,6 +907,16 @@ impl PlaybackThread {
         self.send_event(PlaybackEvent::StateChanged(PlaybackState::Stopped));
     }
 
+    fn consume_current_track(&mut self) {
+        if self.playback_settings.consume
+            && let Some(current_idx) = self.queue.current_position()
+            && let DequeueResult::RemovedCurrent { .. } = self.queue.dequeue(current_idx)
+        {
+            self.refresh_rg_auto_hint();
+            self.send_event(PlaybackEvent::QueueUpdated);
+        }
+    }
+
     fn toggle_stop_after_current(&mut self) {
         if self.state() != PlaybackState::Stopped {
             self.set_stop_after_current(!self.stop_after_current);
@@ -985,6 +1003,7 @@ impl PlaybackThread {
             EngineCycleResult::Eof => {
                 if self.stop_after_current {
                     info!("EOF, stopping after current track");
+                    self.consume_current_track();
                     self.stop();
                 } else {
                     info!("EOF, moving to next song");
@@ -994,6 +1013,7 @@ impl PlaybackThread {
             EngineCycleResult::FatalError(msg) => {
                 if self.stop_after_current {
                     error!("Fatal error in audio engine: {}, stopping playback", msg);
+                    self.consume_current_track();
                     self.stop();
                 } else {
                     error!("Fatal error in audio engine: {}, moving to next song", msg);

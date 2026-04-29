@@ -51,6 +51,12 @@ pub struct PlaybackSettings {
     /// Whether to prevent the system screensaver and sleep while playing.
     #[serde(default)]
     pub prevent_idle: bool,
+
+    /// When enabled, removes the current track from the queue when it finishes playing.
+    ///
+    /// Defaults to false.
+    #[serde(default)]
+    pub consume: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -62,6 +68,7 @@ impl Default for PlaybackSettings {
             keep_current_on_queue_clear: true,
             replaygain: ReplayGainSettings::default(),
             prevent_idle: false,
+            consume: false,
         }
     }
 }

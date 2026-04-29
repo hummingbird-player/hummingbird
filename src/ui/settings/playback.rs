@@ -117,6 +117,21 @@ impl Render for PlaybackSettings {
                     playback.keep_current_on_queue_clear,
                 )),
             )
+            .child(
+                label("playback-consume", tr!("PLAYBACK_CONSUME", "Consume mode"))
+                    .subtext(tr!(
+                        "PLAYBACK_CONSUME_SUBTEXT",
+                        "Removes songs from the queue after they finish playing."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_playback(cx, |playback| {
+                            playback.consume = !playback.consume;
+                        });
+                    }))
+                    .child(checkbox("playback-consume-check", playback.consume)),
+            )
             .child({
                 let settings = self.settings.clone();
                 label(

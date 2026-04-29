@@ -719,6 +719,18 @@
     "plural": false,
     "description": null
   },
+  "PLAYBACK_CONSUME": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:121",
+    "plural": false,
+    "description": null
+  },
+  "PLAYBACK_CONSUME_SUBTEXT": {
+    "context": "playback.rs",
+    "definedIn": "src/ui/settings/playback.rs:123",
+    "plural": false,
+    "description": null
+  },
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR": {
     "context": "playback.rs",
     "definedIn": "src/ui/settings/playback.rs:99",
@@ -733,13 +745,13 @@
   },
   "PLAYBACK_PREVENT_IDLE": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:152",
+    "definedIn": "src/ui/settings/playback.rs:167",
     "plural": false,
     "description": null
   },
   "PLAYBACK_PREVENT_IDLE_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:155",
+    "definedIn": "src/ui/settings/playback.rs:170",
     "plural": false,
     "description": null
   },
@@ -751,13 +763,13 @@
   },
   "PLAYBACK_RG_FALLBACK_PREAMP": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:124",
+    "definedIn": "src/ui/settings/playback.rs:139",
     "plural": false,
     "description": null
   },
   "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": {
     "context": "playback.rs",
-    "definedIn": "src/ui/settings/playback.rs:127",
+    "definedIn": "src/ui/settings/playback.rs:142",
     "plural": false,
     "description": null
   },

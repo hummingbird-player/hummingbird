@@ -125,6 +125,8 @@
   "PLAYBACK": "Playback",
   "PLAYBACK_ALWAYS_REPEAT": "Always repeat",
   "PLAYBACK_ALWAYS_REPEAT_SUBTEXT": "Disables the \"Off\" repeat mode.",
+  "PLAYBACK_CONSUME": "Consume mode",
+  "PLAYBACK_CONSUME_SUBTEXT": "Removes songs from the queue after they finish playing.",
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR": "Keep current track when clearing queue",
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR_SUBTEXT": "Preserves the currently playing song instead of removing all tracks.",
   "PLAYBACK_PREVENT_IDLE": "Prevent system idle when playing",
