@@ -1,12 +1,13 @@
 name: Bug Report
-description: Report a bug, crash, freeze, or hang in Hummingbird.
-labels: "needs triage"
-type: Bug
+about: Report a bug, crash, freeze, or hang in Hummingbird.
+labels:
+  - type/bug
+  - "needs triage"
 body:
   - type: markdown
     attributes:
       value: |
-        **Is this bug already reported?** Please search [existing issues](https://github.com/hummingbird-player/hummingbird/issues) to check.
+        **Is this bug already reported?** Please search [existing issues](https://codeberg.org/hummingbird/hummingbird/issues) to check.
   - type: textarea
     attributes:
       label: Reproduction steps
@@ -53,9 +54,7 @@ body:
         </details>
     validations:
       required: false
-  - type: upload
+  - type: markdown
     attributes:
-      label: Screenshots or recordings
-      description: If applicable, add screenshots or recordings to help explain your problem.
-    validations:
-      required: false
+      value: |
+        **If you have any relevant screenshots or videos, please attach them in a comment after creating the issue.**

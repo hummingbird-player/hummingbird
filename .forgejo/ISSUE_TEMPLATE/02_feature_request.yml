@@ -1,12 +1,13 @@
 name: Feature Request
-description: Suggest a new feature for Hummingbird.
-labels: "needs triage"
-type: Feature
+about: Suggest a new feature for Hummingbird.
+labels:
+  - type\feature
+  - "needs triage"
 body:
   - type: markdown
     attributes:
       value: |
-        **Has this feature been requested before?** Please search [existing issues](https://github.com/hummingbird-player/hummingbird/issues) to check.
+        **Has this feature been requested before?** Please search [existing issues](https://codeberg.org/hummingbird/hummingbird/issues) to check.
   - type: textarea
     attributes:
       label: Description
@@ -28,9 +29,7 @@ body:
         Any other context, mockups, references, or alternatives you've considered.
     validations:
       required: false
-  - type: upload
+  - type: markdown
     attributes:
-      label: Attachments
-      description: Screenshots, mockups, or diagrams to help explain your request.
-    validations:
-      required: false
+      value: |
+        **If you have any relevant screenshots or videos, please attach them in a comment after creating the issue.**
