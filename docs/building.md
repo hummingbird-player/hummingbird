@@ -30,7 +30,7 @@ If you wish to use last.fm support with your build, you'll have to set `LASTFM_A
 
 ## Building
 ```sh
-git clone https://github.com/143mailliw/hummingbird
+git clone https://codeberg.org/hummingbird/hummingbird
 cd hummingbird
 
 # debug mode will result in noticable slowdown in some cases

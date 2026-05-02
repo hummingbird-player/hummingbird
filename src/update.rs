@@ -70,7 +70,7 @@ pub fn start_update_task(cx: &mut App) {
 
         info!(
             "Update available: {}",
-            update.version.as_ref().unwrap_or(&update.digest)
+            update.version.as_ref().unwrap_or(&update.id.to_string())
         );
 
         let download = crate::RUNTIME

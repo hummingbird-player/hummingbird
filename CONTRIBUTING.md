@@ -15,7 +15,7 @@ When you file an issue, please provide the following information:
   - Graphics card model (including integrated)
 
 ### Reproducability
-When reporting an issue, please provide minimal steps that reproduce the issue. **If reproducing your issue requires distributing copyrighted material, please *DO NOT* attach this material to your Github issue.** Create the issue first, then we can establish further steps.
+When reporting an issue, please provide minimal steps that reproduce the issue. **If reproducing your issue requires distributing copyrighted material, please *DO NOT* attach this material to your issue.** Create the issue first, then we can establish further steps.
 
 ## PR Guidelines
 ### Code Style

@@ -311,6 +311,12 @@
     "plural": false,
     "description": null
   },
+  "CODEBERG_ISSUES": {
+    "context": "global_actions.rs",
+    "definedIn": "src/ui/global_actions.rs:127",
+    "plural": false,
+    "description": null
+  },
   "COLLAPSE_SIDEBAR": {
     "context": "sidebar.rs",
     "definedIn": "src/ui/library/sidebar.rs:121",
@@ -446,12 +452,6 @@
   "FILE": {
     "context": "global_actions.rs",
     "definedIn": "src/ui/global_actions.rs:157",
-    "plural": false,
-    "description": null
-  },
-  "GITHUB_ISSUES": {
-    "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:127",
     "plural": false,
     "description": null
   },

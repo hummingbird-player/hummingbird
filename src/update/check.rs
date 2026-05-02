@@ -3,33 +3,25 @@ use std::env::var_os;
 use chrono::{DateTime, Duration, Utc};
 use semver::Version;
 use serde::Deserialize;
-use tracing::{error, info, warn};
+use tracing::info;
 
 use crate::settings::update::ReleaseChannel;
 
 const LATEST_STABLE: &str =
-    "https://api.github.com/repos/hummingbird-player/hummingbird/releases/latest";
+    "https://codeberg.org/api/v1/repos/hummingbird/hummingbird/releases/latest";
 const UNSTABLE: &str =
-    "https://api.github.com/repos/hummingbird-player/hummingbird/releases/191890425";
-
-const ALLOWED_UPLOADERS: &[&str] = &["github-actions[bot]"];
-
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
-struct Uploader {
-    login: String,
-}
+    "https://codeberg.org/api/v1/repos/hummingbird/hummingbird/releases/tags/latest";
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 struct Asset {
+    id: u64,
     name: String,
     browser_download_url: String,
-    digest: String,
-    updated_at: DateTime<Utc>,
-    uploader: Uploader,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
-struct GithubRelease {
+struct ForgejoRelease {
     tag_name: String,
     assets: Vec<Asset>,
 }
@@ -37,7 +29,7 @@ struct GithubRelease {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Update {
     pub url: String,
-    pub digest: String,
+    pub id: u64,
     pub version: Option<String>,
 }
 
@@ -61,7 +53,7 @@ pub async fn check_for_updates(
         .user_agent(format!("Hummingbird/{version}"))
         .build()?;
 
-    let release_info: GithubRelease = if channel == ReleaseChannel::Stable {
+    let release_info: ForgejoRelease = if channel == ReleaseChannel::Stable {
         client.get(LATEST_STABLE).send().await?
     } else {
         client.get(UNSTABLE).send().await?
@@ -90,7 +82,7 @@ fn current_build_channel() -> ReleaseChannel {
 
 fn select_update(
     build: &CurrentBuild<'_>,
-    release_info: &GithubRelease,
+    release_info: &ForgejoRelease,
 ) -> anyhow::Result<Option<Update>> {
     let channel_switched = build.current_channel != build.target_channel;
 
@@ -101,32 +93,16 @@ fn select_update(
         return Ok(None);
     };
 
-    if !is_allowed_uploader(&update_available.uploader.login) {
-        warn!(
-            "Update available from disallowed uploader: {}",
-            update_available.uploader.login
-        );
-        warn!(
-            "This update will not be downloaded automatically. You may review the update's \
-            contents and install it manually if you wish."
-        );
-        error!(
-            "Release '{}' is available but will not be downloaded.",
-            release_info.tag_name
-        );
-        return Ok(None);
-    }
-
     Ok(Some(Update {
         url: update_available.browser_download_url,
-        digest: update_available.digest,
+        id: update_available.id,
         version: update_version(&release_info.tag_name),
     }))
 }
 
 fn select_stable_asset(
     build: &CurrentBuild<'_>,
-    release_info: &GithubRelease,
+    release_info: &ForgejoRelease,
     channel_switched: bool,
 ) -> anyhow::Result<Option<Asset>> {
     let current_version = Version::parse(build.version)?;
@@ -148,14 +124,14 @@ fn select_stable_asset(
 
 fn select_unstable_asset(
     build: &CurrentBuild<'_>,
-    release_info: &GithubRelease,
+    release_info: &ForgejoRelease,
     channel_switched: bool,
 ) -> Option<Asset> {
     let asset = platform_asset(build.platform_package, release_info).cloned();
     let minimum_acceptable_time = build.build_time + Duration::minutes(30);
 
     if let Some(asset) = asset
-        && (channel_switched || build.always_update || asset.updated_at > minimum_acceptable_time)
+        && (channel_switched || build.always_update || asset.created_at > minimum_acceptable_time)
     {
         info!("Found unstable asset: {}", asset.name);
         return Some(asset);
@@ -166,16 +142,12 @@ fn select_unstable_asset(
 
 fn platform_asset<'a>(
     platform_package: &str,
-    release_info: &'a GithubRelease,
+    release_info: &'a ForgejoRelease,
 ) -> Option<&'a Asset> {
     release_info
         .assets
         .iter()
         .find(|asset| asset.name == platform_package)
-}
-
-fn is_allowed_uploader(login: &str) -> bool {
-    ALLOWED_UPLOADERS.contains(&login)
 }
 
 fn update_version(tag_name: &str) -> Option<String> {
@@ -210,25 +182,22 @@ mod tests {
         }
     }
 
-    /// Builds a GitHub release with the provided `tag_name` and `assets`.
-    fn release(tag_name: &str, assets: Vec<Asset>) -> GithubRelease {
-        GithubRelease {
+    /// Builds a Forgejo release with the provided `tag_name` and `assets`.
+    fn release(tag_name: &str, assets: Vec<Asset>) -> ForgejoRelease {
+        ForgejoRelease {
             tag_name: tag_name.to_string(),
             assets,
         }
     }
 
     /// Builds a release asset for the given package, update time, and uploader, using
-    /// `https://test/{name}` as the download URL and `sha256:{name}` as the digest.
-    fn asset(name: &str, updated_at: &str, uploader: &str) -> Asset {
+    /// `https://test/{name}` as the download URL. The `id` is always 1.
+    fn asset(name: &str, created_at: &str) -> Asset {
         Asset {
+            id: 1,
             name: name.to_string(),
             browser_download_url: format!("https://test/{name}"),
-            digest: format!("sha256:{name}"),
-            updated_at: at(updated_at),
-            uploader: Uploader {
-                login: uploader.to_string(),
-            },
+            created_at: at(created_at),
         }
     }
 
@@ -237,11 +206,7 @@ mod tests {
     fn newer_stable_version_returns_update() {
         let release = release(
             "0.3.1",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -253,8 +218,8 @@ mod tests {
         assert_eq!(
             update,
             Some(Update {
+                id: 1,
                 url: format!("https://test/{TEST_PLATFORM_PACKAGE}"),
-                digest: format!("sha256:{TEST_PLATFORM_PACKAGE}"),
                 version: Some("0.3.1".to_string()),
             })
         );
@@ -265,11 +230,7 @@ mod tests {
     fn same_stable_version_returns_no_update() {
         let release = release(
             "0.3.0",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -286,32 +247,7 @@ mod tests {
     fn stable_release_without_matching_platform_asset_returns_no_update() {
         let release = release(
             "0.3.1",
-            vec![asset(
-                "hummingbird-arm.zip",
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
-        );
-
-        let update = select_update(
-            &build(ReleaseChannel::Stable, ReleaseChannel::Stable),
-            &release,
-        )
-        .unwrap();
-
-        assert_eq!(update, None);
-    }
-
-    /// Rejects stable updates uploaded by an untrusted account.
-    #[test]
-    fn stable_release_from_disallowed_uploader_returns_no_update() {
-        let release = release(
-            "0.3.1",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "someone-else",
-            )],
+            vec![asset("hummingbird-arm.zip", "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -331,11 +267,7 @@ mod tests {
 
         let release = release(
             "0.3.0",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(&build, &release).unwrap();
@@ -354,11 +286,7 @@ mod tests {
 
         let release = release(
             "latest",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-01T00:30:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-01T00:30:00Z")],
         );
 
         let update = select_update(&build, &release).unwrap();
@@ -371,11 +299,7 @@ mod tests {
     fn unstable_asset_newer_than_threshold_returns_update() {
         let release = release(
             "latest",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-01T02:00:01Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-01T02:00:01Z")],
         );
 
         let update = select_update(
@@ -395,11 +319,7 @@ mod tests {
     fn unstable_asset_inside_threshold_returns_no_update() {
         let release = release(
             "latest",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-01T00:29:59Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-01T00:29:59Z")],
         );
 
         let update = select_update(
@@ -416,32 +336,7 @@ mod tests {
     fn unstable_release_without_matching_platform_asset_returns_no_update() {
         let release = release(
             "latest",
-            vec![asset(
-                "other-package.zip",
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
-        );
-
-        let update = select_update(
-            &build(ReleaseChannel::Unstable, ReleaseChannel::Unstable),
-            &release,
-        )
-        .unwrap();
-
-        assert_eq!(update, None);
-    }
-
-    /// Rejects unstable updates uploaded by an untrusted account.
-    #[test]
-    fn unstable_release_from_disallowed_uploader_returns_no_update() {
-        let release = release(
-            "latest",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "secret-third-uploader",
-            )],
+            vec![asset("other-package.zip", "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -458,11 +353,7 @@ mod tests {
     fn switching_from_unstable_to_stable_offers_same_version_stable_release() {
         let release = release(
             "0.3.0",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -479,11 +370,7 @@ mod tests {
     fn switching_from_unstable_to_stable_offers_older_stable_release() {
         let release = release(
             "0.2.9",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-02T00:00:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-02T00:00:00Z")],
         );
 
         let update = select_update(
@@ -501,11 +388,7 @@ mod tests {
     fn switching_from_stable_to_unstable_offers_asset_that_would_fail_normal_freshness_check() {
         let release = release(
             "latest",
-            vec![asset(
-                TEST_PLATFORM_PACKAGE,
-                "2026-03-01T00:30:00Z",
-                "github-actions[bot]",
-            )],
+            vec![asset(TEST_PLATFORM_PACKAGE, "2026-03-01T00:30:00Z")],
         );
 
         let update = select_update(
