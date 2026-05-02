@@ -1,0 +1,26 @@
+when:
+  - event: pull_request
+    branch: master
+  - event: push
+    branch: master
+
+steps:
+  - name: cargo fmt
+    image: rust:1.95-bookworm
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - rustup update
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
+
+  - name: cargo clippy
+    image: rust:1.95-bookworm
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends cmake libasound2-dev pkg-config libclang-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev libpipewire-0.3-dev libspa-0.2-dev
+      - rustup update
+      - rustup component add clippy
+      - cargo clippy --all-targets --all-features -- -D warnings
