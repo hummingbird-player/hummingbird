@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 192.0;
 pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 128.0;
@@ -33,7 +33,7 @@ pub fn clamp_grid_min_item_width(value: f32) -> f32 {
     value.clamp(MIN_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, PartialOrd)]
 pub struct UiDensity(f32);
 
 impl UiDensity {
@@ -67,16 +67,6 @@ impl UiDensity {
 impl Default for UiDensity {
     fn default() -> Self {
         Self::DEFAULT
-    }
-}
-
-impl Serialize for UiDensity {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let hundredths = (self.value() * 100.0).round() as i32;
-        serializer.serialize_f64(f64::from(hundredths) / 100.0)
     }
 }
 

@@ -133,7 +133,7 @@ impl RenderOnce for SidebarItem {
         let state = window.use_keyed_state(self.state_id.clone(), cx, |_, _| false);
         let theme = cx.global::<Theme>();
         let density = ui_density(cx);
-        let icon_size = density.px(18.0, 0.0);
+        let icon_size = density.px(18.0, 2.0);
         let item_block_padding = density.px_range(5.0, 7.0, 10.0);
         // william's pro tip :D
         let item_line_height = icon_size;
@@ -152,7 +152,7 @@ impl RenderOnce for SidebarItem {
             .overflow_x_hidden()
             .when(!self.collapsed, |this| this.w_full().h(item_height))
             .when(self.collapsed, |this| {
-                this.size(density.px(36.0, 0.0))
+                this.size(density.px(36.0, 4.0))
                     .items_center()
                     .justify_center()
                     .flex_shrink_0()
@@ -172,10 +172,10 @@ impl RenderOnce for SidebarItem {
                     .border_color(theme.nav_button_pressed_border)
             })
             .rounded(px(4.0))
-            .when(!self.collapsed, |this| this.px(density.px(9.0, 2.0)))
-            .py(item_block_padding)
+            .when(!self.collapsed, |this| {
+                this.px(density.px(9.0, 2.0)).gap(density.px(6.0, 2.0))
+            })
             .line_height(item_line_height)
-            .gap(density.px(6.0, 2.0))
             .font_weight(FontWeight::SEMIBOLD)
             .hover(|this| {
                 this.bg(theme.nav_button_hover)

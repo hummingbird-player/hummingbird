@@ -656,6 +656,7 @@ impl Render for PlaylistList {
 
         let popover_open = self.popover_open;
         let new_playlist_input = self.new_playlist_input.clone();
+        let new_playlist_label = tr!("NEW_PLAYLIST", "New Playlist");
         let weak_self = cx.entity().downgrade();
 
         main = main.child(
@@ -664,7 +665,10 @@ impl Render for PlaylistList {
                 .child(
                     sidebar_item("new-playlist-btn")
                         .icon(PLUS)
-                        .child(tr!("NEW_PLAYLIST", "New Playlist"))
+                        .when(!collapsed, |this| this.child(new_playlist_label.clone()))
+                        .when(collapsed, |this| {
+                            this.collapsed().collapsed_label(new_playlist_label)
+                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.popover_open = !this.popover_open;
                             if this.popover_open {

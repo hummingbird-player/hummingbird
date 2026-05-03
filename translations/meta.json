@@ -289,7 +289,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:709",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:713",
     "plural": false,
     "description": null
   },
@@ -397,7 +397,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:718",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:722",
     "plural": false,
     "description": null
   },
@@ -697,7 +697,7 @@
   },
   "NEW_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:667",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:659",
     "plural": false,
     "description": null
   },
