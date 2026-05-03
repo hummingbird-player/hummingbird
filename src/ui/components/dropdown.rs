@@ -13,6 +13,7 @@ use crate::ui::{
         icons::{CHECK, CHEVRON_DOWN, icon},
         segmented_control::ChangeHandler,
     },
+    density::ui_density,
     theme::Theme,
 };
 
@@ -70,6 +71,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .read(cx);
 
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         let display_text = if let Some(option) = &self.selected {
             self.options
@@ -85,6 +87,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
 
         let button = self
             .div
+            .px(density.px(12.0, 2.0))
+            .pt(density.px(4.0, 1.0))
+            .pb(density.px(3.0, 1.0))
+            .gap(density.px(8.0, 2.0))
             .bg(theme.button_secondary)
             .border_color(theme.button_secondary_border)
             .id(self.id)
@@ -100,7 +106,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             )
             .child(
                 icon(CHEVRON_DOWN)
-                    .size(px(16.0))
+                    .size(density.px(16.0, 2.0))
                     .flex_shrink_0()
                     .text_color(theme.text_secondary),
             )
@@ -149,7 +155,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 .border_color(theme.elevated_border_color)
                 .rounded(px(6.0))
                 .shadow_md()
-                .p(px(3.0))
+                .p(density.px(3.0, 1.0))
                 .mt(px(4.0))
                 .track_focus(focus_handle)
                 .key_context("Dropdown")
@@ -237,13 +243,13 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
 
                     div()
                         .id(ElementId::Name(format!("option-{}", idx).into()))
-                        .px(px(6.0))
-                        .py(px(5.0))
+                        .px(density.px_range(5.0, 6.0, 8.0))
+                        .py(density.px(5.0, 2.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .flex()
                         .items_center()
-                        .gap(px(7.0))
+                        .gap(density.px(7.0, 2.0))
                         .text_sm()
                         .when(is_highlighted, |this| {
                             this.bg(theme.menu_item_hover)
@@ -253,15 +259,17 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                         .when(!is_highlighted, |this| this.border_1())
                         .child(
                             div()
-                                .w(px(18.0))
-                                .h(px(18.0))
+                                .w(density.px(18.0, 2.0))
+                                .h(density.px(18.0, 2.0))
                                 .pt(px(0.5))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .when(is_selected, |this| {
                                     this.child(
-                                        icon(CHECK).size(px(18.0)).text_color(theme.text_secondary),
+                                        icon(CHECK)
+                                            .size(density.px(18.0, 2.0))
+                                            .text_color(theme.text_secondary),
                                     )
                                 }),
                         )

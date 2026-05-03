@@ -5,7 +5,7 @@ use gpui::{
     StyleRefinement, Styled, Window, div, px, relative,
 };
 
-use crate::ui::{components::slider::slider, theme::Theme};
+use crate::ui::{components::slider::slider, density::ui_density, theme::Theme};
 
 type ChangeHandler = dyn FnMut(f32, &mut Window, &mut App);
 type ValueFormatter = dyn Fn(f32) -> SharedString;
@@ -72,6 +72,7 @@ impl Styled for LabeledSlider {
 impl RenderOnce for LabeledSlider {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let low = self.min.min(self.max);
         let high = self.min.max(self.max);
         let clamped = self.value.clamp(low, high);
@@ -99,7 +100,7 @@ impl RenderOnce for LabeledSlider {
                 slider()
                     .id(slider_id)
                     .w_full()
-                    .h(px(8.0))
+                    .h(density.px(8.0, 2.0))
                     .rounded(px(4.0))
                     .value(normalized)
                     .on_change(move |v, window, cx| {
@@ -115,7 +116,7 @@ impl RenderOnce for LabeledSlider {
             None => slider()
                 .id(slider_id)
                 .w_full()
-                .h(px(8.0))
+                .h(density.px(8.0, 2.0))
                 .rounded(px(4.0))
                 .value(normalized),
         };
@@ -128,7 +129,7 @@ impl RenderOnce for LabeledSlider {
                 div()
                     .relative()
                     .w_full()
-                    .h(px(26.0))
+                    .h(density.px(26.0, 4.0))
                     .text_xs()
                     .text_color(theme.text_secondary)
                     .child(div().absolute().left(px(0.0)).top(px(4.0)).child(min_text))
@@ -149,8 +150,8 @@ impl RenderOnce for LabeledSlider {
                                     .border_color(theme.elevated_border_color)
                                     .bg(theme.elevated_background)
                                     .rounded(px(4.0))
-                                    .px(px(6.0))
-                                    .py(px(1.0))
+                                    .px(density.px_range(5.0, 6.0, 8.0))
+                                    .py(density.px(1.0, 1.0))
                                     .child(current_text),
                             )
                             .child(div().h(px(1.0)).w(relative(right_flex))),

@@ -10,8 +10,9 @@ use crate::{
     settings::{
         SettingsGlobal,
         interface::{
-            DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MIN_GRID_MIN_ITEM_WIDTH,
-            StartupLibraryView, clamp_grid_min_item_width,
+            DEFAULT_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH, MAX_UI_DENSITY,
+            MIN_GRID_MIN_ITEM_WIDTH, MIN_UI_DENSITY, StartupLibraryView, UiDensity,
+            clamp_grid_min_item_width,
         },
         save_settings,
     },
@@ -19,6 +20,7 @@ use crate::{
         checkbox::checkbox, dropdown::dropdown, label::label, labeled_slider::labeled_slider,
         section_header::section_header,
     },
+    ui::density::ui_density,
     ui::theme::{Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path},
 };
 
@@ -121,8 +123,10 @@ impl InterfaceSettings {
 impl Render for InterfaceSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let interface = self.settings.read(cx).interface.clone();
         let settings = self.settings.clone();
+        let density_settings = settings.clone();
 
         let language_dropdown = {
             let settings_c = settings.clone();
@@ -187,7 +191,7 @@ impl Render for InterfaceSettings {
         let body = div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
+            .gap(density.px(14.0, 4.0))
             .child(section_header(tr!("INTERFACE")))
             .child(
                 label("language-selector", tr!("LANGUAGE", "Language"))
@@ -296,6 +300,35 @@ impl Render for InterfaceSettings {
                             });
                         }),
                 ),
+            )
+            .child(
+                label("interface-ui-density", tr!("INTERFACE_UI_DENSITY", "UI density"))
+                    .subtext(tr!(
+                        "INTERFACE_UI_DENSITY_SUBTEXT",
+                        "Adjusts spacing and row density."
+                    ))
+                    .w_full()
+                    .child(
+                        labeled_slider("interface-ui-density-slider")
+                            .slider_id("interface-ui-density-slider-track")
+                            .w(px(250.0))
+                            .min(MIN_UI_DENSITY)
+                            .max(MAX_UI_DENSITY)
+                            .default_value(UiDensity::DEFAULT.slider_value())
+                            .value(interface.ui_density.slider_value())
+                            .format_value(|v| UiDensity::from_slider_value(v).label().into())
+                            .on_change(move |value, _, cx| {
+                                density_settings.update(cx, |settings, cx| {
+                                    if settings
+                                        .interface
+                                        .set_ui_density_from_slider_value(value)
+                                    {
+                                        save_settings(cx, settings);
+                                        cx.notify();
+                                    }
+                                });
+                            }),
+                    ),
             )
             .child(
                 label(

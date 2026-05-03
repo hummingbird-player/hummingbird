@@ -1,9 +1,9 @@
 use gpui::{
     App, Div, FontWeight, IntoElement, ParentElement, RenderOnce, SharedString, StyleRefinement,
-    Styled, Window, div, prelude::FluentBuilder, px,
+    Styled, Window, div, prelude::FluentBuilder,
 };
 
-use crate::ui::theme::Theme;
+use crate::ui::{density::ui_density, theme::Theme};
 
 #[derive(IntoElement)]
 pub struct SectionHeader {
@@ -35,17 +35,18 @@ impl ParentElement for SectionHeader {
 impl RenderOnce for SectionHeader {
     fn render(self, _: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         self.parent_div
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(density.px(4.0, 1.0))
             .child(
                 div()
                     .flex()
                     .child(
                         div()
-                            .h(px(30.0))
+                            .h(density.px_range(28.0, 30.0, 34.0))
                             .flex()
                             .items_center()
                             .text_lg()

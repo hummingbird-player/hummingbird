@@ -6,7 +6,12 @@ use gpui::{
 
 use crate::{
     settings::storage::DEFAULT_SIDEBAR_WIDTH,
-    ui::{components::icons::icon, theme::Theme, util::MaybeStateful},
+    ui::{
+        components::icons::icon,
+        density::{density_row_height, ui_density},
+        theme::Theme,
+        util::MaybeStateful,
+    },
 };
 
 #[derive(IntoElement)]
@@ -44,12 +49,17 @@ impl ParentElement for Sidebar {
 }
 
 impl RenderOnce for Sidebar {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let density = ui_density(cx);
         let width: Pixels = match self.width {
             Some(w) => w,
             None => DEFAULT_SIDEBAR_WIDTH,
         };
-        self.div.w(width).flex().gap(px(2.0)).flex_col()
+        self.div
+            .w(width)
+            .flex()
+            .gap(density.px(2.0, 1.0))
+            .flex_col()
     }
 }
 
@@ -69,6 +79,7 @@ pub struct SidebarItem {
     collapsed: bool,
     label: Option<SharedString>,
     state_id: ElementId,
+    height: Option<Pixels>,
 }
 
 impl SidebarItem {
@@ -89,6 +100,11 @@ impl SidebarItem {
 
     pub fn collapsed_label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    pub fn height(mut self, height: Pixels) -> Self {
+        self.height = Some(height);
         self
     }
 }
@@ -116,14 +132,27 @@ impl RenderOnce for SidebarItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.state_id.clone(), cx, |_, _| false);
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
+        let icon_size = density.px(18.0, 0.0);
+        let item_block_padding = density.px_range(5.0, 7.0, 10.0);
+        // william's pro tip :D
+        let item_line_height = icon_size;
+        let item_height = self.height.unwrap_or_else(|| {
+            density_row_height! {
+                density.px_range(30.0, 34.0, 40.0);
+                item_line_height + (item_block_padding * 2.0);
+                icon_size + (item_block_padding * 2.0);
+            }
+        });
 
         let item = self
             .parent_div
             .flex()
+            .items_center()
             .overflow_x_hidden()
-            .when(!self.collapsed, |this| this.w_full())
+            .when(!self.collapsed, |this| this.w_full().h(item_height))
             .when(self.collapsed, |this| {
-                this.size(px(36.0))
+                this.size(density.px(36.0, 0.0))
                     .items_center()
                     .justify_center()
                     .flex_shrink_0()
@@ -143,10 +172,10 @@ impl RenderOnce for SidebarItem {
                     .border_color(theme.nav_button_pressed_border)
             })
             .rounded(px(4.0))
-            .when(!self.collapsed, |this| this.px(px(9.0)))
-            .py(px(7.0))
-            .line_height(px(18.0))
-            .gap(px(6.0))
+            .when(!self.collapsed, |this| this.px(density.px(9.0, 2.0)))
+            .py(item_block_padding)
+            .line_height(item_line_height)
+            .gap(density.px(6.0, 2.0))
             .font_weight(FontWeight::SEMIBOLD)
             .hover(|this| {
                 this.bg(theme.nav_button_hover)
@@ -157,14 +186,14 @@ impl RenderOnce for SidebarItem {
                     .border_color(theme.nav_button_active_border)
             })
             .when_none(&self.icon, |this| {
-                this.child(div().size(px(18.0)).flex_shrink_0().min_w(px(18.0)))
+                this.child(div().size(icon_size).flex_shrink_0().min_w(icon_size))
             })
             .when_some(self.icon, |this, used_icon| {
                 this.child(
                     icon(used_icon)
-                        .size(px(18.0))
+                        .size(icon_size)
                         .flex_shrink_0()
-                        .min_w(px(18.0)),
+                        .min_w(icon_size),
                 )
             })
             .when(!self.collapsed, |this| {
@@ -206,9 +235,9 @@ impl RenderOnce for SidebarItem {
                             .border_color(theme.elevated_border_color)
                             .rounded(px(4.0))
                             .shadow_sm()
-                            .px(px(12.0))
-                            .pt(px(6.0))
-                            .pb(px(5.0))
+                            .px(density.px(12.0, 2.0))
+                            .pt(density.px(6.0, 1.0))
+                            .pb(density.px(5.0, 1.0))
                             .text_sm()
                             .text_color(theme.text)
                             .whitespace_nowrap()
@@ -233,6 +262,7 @@ pub fn sidebar_item(id: impl Into<ElementId>) -> SidebarItem {
         collapsed: false,
         label: None,
         state_id,
+        height: None,
     }
 }
 

@@ -1,11 +1,11 @@
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, IntoElement, ParentElement,
     RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    prelude::FluentBuilder,
 };
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::{density::ui_density, theme::Theme};
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -49,13 +49,14 @@ impl ParentElement for Label {
 impl RenderOnce for Label {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         self.div
             .id(self.id)
             .flex()
             .overflow_hidden()
             .text_sm()
-            .gap(px(6.0))
+            .gap(density.px(6.0, 2.0))
             .child(
                 div()
                     .flex()

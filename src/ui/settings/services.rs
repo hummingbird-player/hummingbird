@@ -1,7 +1,7 @@
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
-    Window, div, px,
+    Window, div,
 };
 
 use crate::{
@@ -11,6 +11,7 @@ use crate::{
         components::{
             checkbox::checkbox, label::label, section_header::section_header, textbox::Textbox,
         },
+        density::ui_density,
         models::Models,
         settings::{lastfm as lastfm_ui, listenbrainz as listenbrainz_ui},
         theme::Theme,
@@ -84,11 +85,12 @@ impl Render for ServicesSettings {
         let services = self.settings.read(cx).services.clone();
         let lastfm = self.lastfm.read(cx).clone();
         let listenbrainz = self.listenbrainz.read(cx).clone();
+        let density = ui_density(cx);
 
         let mut body = div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(density.px(12.0, 3.0))
             .child(section_header(tr!("SERVICES")));
 
         if lastfm::is_available() {

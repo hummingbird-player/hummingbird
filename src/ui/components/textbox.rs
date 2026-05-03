@@ -7,6 +7,7 @@ use gpui::{
 
 use crate::ui::{
     components::input::{EnrichedInputAction, TextInput},
+    density::ui_density,
     theme::Theme,
 };
 
@@ -105,6 +106,7 @@ impl Textbox {
 impl Render for Textbox {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let mut main = div();
 
         main.style().refine(&self.style);
@@ -115,8 +117,8 @@ impl Render for Textbox {
             .border_color(theme.textbox_border)
             .rounded(px(4.0))
             .bg(theme.textbox_background)
-            .px(px(8.0))
-            .py(px(6.0))
+            .px(density.px(8.0, 2.0))
+            .py(density.px(6.0, 2.0))
             .line_height(px(14.0))
             .child(self.input.clone())
     }

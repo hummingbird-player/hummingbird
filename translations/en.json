@@ -103,6 +103,8 @@
   "INTERFACE_THEME_SUBTEXT": "Choose a built-in theme or add your own. Place custom theme files in the themes folder. Changes apply immediately.",
   "INTERFACE_TWO_COLUMN_LIBRARY": "Two-column library",
   "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": "Show navigation pages (like Artists) and content pages (like an album) side by side.",
+  "INTERFACE_UI_DENSITY": "UI density",
+  "INTERFACE_UI_DENSITY_SUBTEXT": "Adjusts spacing and row density.",
   "LANGUAGE": "Language",
   "LANGUAGE_SUBTEXT": "Select your preferred language for the application. Changes to the language will take effect after restarting the application.",
   "LANGUAGE_SYSTEM_DEFAULT": "System Default",

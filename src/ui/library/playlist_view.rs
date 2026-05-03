@@ -36,6 +36,7 @@ use crate::{
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
+        density::{density_row_height, ui_density},
         library::collection_summary::format_collection_summary,
         library::track_listing::{
             ArtistNameVisibility,
@@ -51,8 +52,18 @@ use super::track_listing::track_item::TrackPlaylistInfo;
 
 actions!(playlist, [Export, Import]);
 
-// height + border
-const PLAYLIST_ITEM_HEIGHT: f32 = 40.0;
+fn playlist_item_height(cx: &impl AppContext) -> gpui::Pixels {
+    let density = ui_density(cx);
+    let track_row_block_padding = density.px(6.0, 2.0);
+    let track_art_size = density.px(22.0, 4.0);
+    let track_row_height = density_row_height! {
+        density.px_range(34.0, 39.0, 46.0);
+        px(18.0) + (track_row_block_padding * 2.0);
+        track_art_size + (track_row_block_padding * 2.0);
+    };
+
+    density.px(40.0, 6.0).max(track_row_height)
+}
 
 fn sort_method_label(method: PlaylistTrackSortMethod) -> SharedString {
     match method {
@@ -139,6 +150,7 @@ impl PlaylistTrackItem {
 impl Render for PlaylistTrackItem {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let item_height = playlist_item_height(cx);
         let item_state = DragDropItemState::for_index(self.drag_drop_manager.read(cx), self.idx);
 
         let idx = self.idx;
@@ -147,7 +159,7 @@ impl Render for PlaylistTrackItem {
         let mut element = div()
             .id(("playlist-track-item", self.playlist_item_id as u64))
             .w_full()
-            .h(px(PLAYLIST_ITEM_HEIGHT))
+            .h(item_height)
             .relative()
             .when(item_state.is_being_dragged, |d| d.opacity(0.5))
             .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
@@ -194,7 +206,7 @@ impl PlaylistView {
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
             let list_id: gpui::ElementId = format!("playlist-{}", playlist_id).into();
-            let config = DragDropListConfig::new(list_id.clone(), px(PLAYLIST_ITEM_HEIGHT));
+            let config = DragDropListConfig::new(list_id.clone(), playlist_item_height(cx));
             let drag_drop_manager = DragDropListManager::new(cx, config);
 
             let playlist = cx.get_playlist(playlist_id).unwrap();
@@ -525,6 +537,12 @@ impl Render for PlaylistView {
         let current_sort = self.sort_method;
         let collection_summary =
             format_collection_summary(self.playlist.track_count, self.playlist.total_duration);
+        let item_height = playlist_item_height(cx);
+        // Density can change while this view is open; keep drop targets lined up
+        // with the playlist rows on screen.
+        self.drag_drop_manager.update(cx, |manager, _| {
+            manager.config.item_height = item_height;
+        });
 
         if self.first_render {
             self.first_render = false;
@@ -916,7 +934,7 @@ impl Render for PlaylistView {
                                             let playlist_item_id = item.0;
                                             let track_id = item.1;
 
-                                            div().h(px(PLAYLIST_ITEM_HEIGHT)).child(
+                                            div().h(item_height).child(
                                                 create_or_retrieve_view(
                                                     &views_model,
                                                     idx,

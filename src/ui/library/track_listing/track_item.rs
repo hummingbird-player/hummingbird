@@ -19,6 +19,7 @@ use crate::library::{db::LibraryAccess, types::Track};
 use crate::ui::{
     availability::is_track_available,
     components::context::context,
+    density::{density_row_height, ui_density},
     library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
     models::PlaybackInfo,
     theme::Theme,
@@ -126,12 +127,20 @@ impl Render for TrackItem {
         );
 
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
+        let row_block_padding = density.px(6.0, 2.0);
+        let art_size = density.px(22.0, 4.0);
+        let row_height = density_row_height! {
+            density.px_range(34.0, 39.0, 46.0);
+            px(18.0) + (row_block_padding * 2.0);
+            art_size + (row_block_padding * 2.0);
+        };
 
         let track_num_width = self
             .max_track_num_str
             .as_ref()
             .map(|max_num_str| measure_track_number_width(window, max_num_str))
-            .unwrap_or(px(22.0));
+            .unwrap_or(art_size);
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
 
@@ -193,13 +202,15 @@ impl Render for TrackItem {
                                         .text_color(theme.text_secondary)
                                         .text_sm()
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        // 22px (from track # width) + 18 + 11
-                                        .px(px(track_num_width.to_f64() as f32 + 18.0 + 13.0))
+                                        // the disc label starts where track titles start;
+                                        // that is the track-number/art slot plus the row's left padding
+                                        // and the gap between the number/art and title
+                                        .px(track_num_width + density.px(31.0, 4.0))
                                         .border_b_1()
                                         .w_full()
                                         .border_color(theme.border_color)
-                                        .mt(px(18.0))
-                                        .pb(px(6.0))
+                                        .mt(density.px_range(12.0, 18.0, 22.0))
+                                        .pb(row_block_padding)
                                         .text_ellipsis()
                                         .when_some(self.track.disc_number, |this, num| {
                                             if self.vinyl_numbering {
@@ -235,14 +246,14 @@ impl Render for TrackItem {
                                     .flex()
                                     .flex_row()
                                     .border_b_1()
-                                    .h(px(39.0))
+                                    .h(row_height)
                                     .id(("track", self.track.id as u64))
                                     .w_full()
                                     .border_color(theme.border_color)
                                     .when(is_available, |this| this.cursor_pointer())
                                     .when(!is_available, |this| this.cursor_default())
-                                    .px(px(18.0))
-                                    .py(px(6.0))
+                                    .px(density.px(18.0, 4.0))
+                                    .py(row_block_padding)
                                     .group(self.hover_group.clone())
                                     .when(is_available, |this| {
                                         this.hover(|this| this.bg(theme.nav_button_hover))
@@ -277,7 +288,7 @@ impl Render for TrackItem {
                                                 .min_w(track_num_width)
                                                 .flex_shrink_0()
                                                 .text_align(TextAlign::Right)
-                                                .mr(px(13.0))
+                                                .mr(density.px_range(10.0, 13.0, 16.0))
                                                 .text_color(theme.text_secondary)
                                                 // TODO: handle these numerals better
                                                 .child(format!(
@@ -289,17 +300,17 @@ impl Render for TrackItem {
                                     .when(self.left_field == TrackItemLeftField::Art, |this| {
                                         this.child(
                                             div()
-                                                .w(px(22.0))
-                                                .h(px(22.0))
-                                                .mr(px(12.0))
+                                                .w(art_size)
+                                                .h(art_size)
+                                                .mr(density.px(12.0, 2.0))
                                                 .my_auto()
                                                 .rounded(px(3.0))
                                                 .bg(theme.album_art_background)
                                                 .when_some(self.album_art.clone(), |this, art| {
                                                     this.child(
                                                         img(art)
-                                                            .w(px(22.0))
-                                                            .h(px(22.0))
+                                                            .w(art_size)
+                                                            .h(art_size)
                                                             .rounded(px(3.0)),
                                                     )
                                                 }),
@@ -322,7 +333,7 @@ impl Render for TrackItem {
                                             .text_ellipsis()
                                             .overflow_x_hidden()
                                             .flex_shrink()
-                                            .ml(px(12.0))
+                                            .ml(density.px(12.0, 2.0))
                                             .when(show_artist_name, |this| {
                                                 this.when_some(
                                                     self.track.artist_names.clone(),
@@ -335,15 +346,15 @@ impl Render for TrackItem {
                                             .id("like")
                                             .my_auto()
                                             .rounded_sm()
-                                            .ml(px(10.0))
-                                            .p(px(4.0))
+                                            .ml(density.px(10.0, 2.0))
+                                            .p(density.px(4.0, 1.0))
                                             .child(
                                                 icon(if self.is_liked.is_some() {
                                                     STAR_FILLED
                                                 } else {
                                                     STAR
                                                 })
-                                                .size(px(14.0))
+                                                .size(density.px(14.0, 2.0))
                                                 .text_color(if self.is_liked.is_some() {
                                                     theme.liked_song
                                                 } else {
@@ -366,11 +377,11 @@ impl Render for TrackItem {
                                     )
                                     .child(
                                         div()
-                                            .ml(px(10.0))
+                                            .ml(density.px(10.0, 2.0))
                                             .flex_shrink_0()
-                                            .min_w(px(60.0))
+                                            .min_w(density.px(60.0, 6.0))
                                             .border_l_1()
-                                            .pl(px(10.0))
+                                            .pl(density.px(10.0, 2.0))
                                             .border_color(theme.border_color)
                                             .text_align(TextAlign::Right)
                                             .child(format_duration(self.track.duration, false)),

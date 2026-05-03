@@ -5,16 +5,17 @@ use crate::ui::{
         icons::{CHECK, LOCK, icon},
         tooltip::build_tooltip,
     },
+    density::{Density, ui_density},
     theme::Theme,
 };
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
-fn icon_container() -> Div {
+fn icon_container(density: Density) -> Div {
     div()
-        .w(px(18.0))
-        .h(px(18.0))
-        .mr(px(7.0))
+        .w(density.px(18.0, 2.0))
+        .h(density.px(18.0, 2.0))
+        .mr(density.px(7.0, 2.0))
         .pt(px(0.5))
         .my_auto()
         .flex()
@@ -69,6 +70,7 @@ impl BaseMenuItem {
     pub fn render(
         self,
         theme: &Theme,
+        density: Density,
         icon_slot: impl IntoElement,
         right_element: Option<AnyElement>,
     ) -> impl IntoElement {
@@ -78,9 +80,9 @@ impl BaseMenuItem {
             .rounded(px(4.0))
             .flex()
             .items_center()
-            .px(px(6.0))
-            .pt(px(5.0))
-            .pb(px(5.0))
+            .px(density.px_range(5.0, 6.0, 8.0))
+            .pt(density.px(5.0, 2.0))
+            .pb(density.px(5.0, 2.0))
             .line_height(rems(1.25))
             .min_w_full()
             .bg(theme.menu_item)
@@ -95,7 +97,7 @@ impl BaseMenuItem {
                     .when(self.disabled, |this| this.text_color(theme.text_disabled)),
             )
             .when_some(right_element, |this, el| {
-                this.child(div().ml(px(12.0)).child(el))
+                this.child(div().ml(density.px(12.0, 2.0)).child(el))
             })
             .when_some(self.tooltip, |this, text| this.tooltip(build_tooltip(text)))
             .when(has_tooltip, |this| {
@@ -153,23 +155,22 @@ impl MenuItem {
 impl RenderOnce for MenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         if self.never_icon {
-            self.base.render(theme, div(), None)
+            self.base.render(theme, density, div(), None)
         } else {
-            let icon = icon_container().when_some(self.icon_path, |this, icon_path| {
-                this.child(
-                    icon(icon_path)
-                        .size(px(18.0))
-                        .text_color(if self.base.disabled {
-                            theme.text_disabled
-                        } else {
-                            theme.text_secondary
-                        }),
-                )
+            let icon = icon_container(density).when_some(self.icon_path, |this, icon_path| {
+                this.child(icon(icon_path).size(density.px(18.0, 2.0)).text_color(
+                    if self.base.disabled {
+                        theme.text_disabled
+                    } else {
+                        theme.text_secondary
+                    },
+                ))
             });
 
-            self.base.render(theme, icon, None)
+            self.base.render(theme, density, icon, None)
         }
     }
 }
@@ -202,6 +203,7 @@ impl CheckMenuItem {
 impl RenderOnce for CheckMenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         let icon_path = if self.base.disabled {
             Some(LOCK)
@@ -211,15 +213,18 @@ impl RenderOnce for CheckMenuItem {
             None
         };
 
-        let icon = icon_container().when_some(icon_path, |this, path| {
-            this.child(icon(path).size(px(18.0)).text_color(if self.base.disabled {
-                theme.text_disabled
-            } else {
-                theme.text_secondary
-            }))
-        });
+        let icon =
+            icon_container(density).when_some(icon_path, |this, path| {
+                this.child(icon(path).size(density.px(18.0, 2.0)).text_color(
+                    if self.base.disabled {
+                        theme.text_disabled
+                    } else {
+                        theme.text_secondary
+                    },
+                ))
+            });
 
-        self.base.render(theme, icon, None)
+        self.base.render(theme, density, icon, None)
     }
 }
 
@@ -281,15 +286,16 @@ impl StatusMenuItem {
 impl RenderOnce for StatusMenuItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         let dot = div()
-            .mr(px(8.0))
-            .w(px(8.0))
-            .h(px(8.0))
+            .mr(density.px(8.0, 2.0))
+            .w(density.px(8.0, 1.0))
+            .h(density.px(8.0, 1.0))
             .rounded_full()
             .bg(self.status.color(theme));
 
-        self.base.render(theme, dot, self.right_element)
+        self.base.render(theme, density, dot, self.right_element)
     }
 }
 
@@ -368,11 +374,13 @@ impl Styled for Menu {
 }
 
 impl RenderOnce for Menu {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let density = ui_density(cx);
+
         self.div
             .min_w(px(200.0))
-            .px(px(3.0))
-            .py(px(3.0))
+            .px(density.px(3.0, 1.0))
+            .py(density.px(3.0, 1.0))
             .flex()
             .flex_col()
             .children(self.items)

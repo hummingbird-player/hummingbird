@@ -22,6 +22,7 @@ use crate::{
             scrollbar::{RightPad, floating_scrollbar},
             uniform_grid::uniform_grid,
         },
+        density::{density_row_height, ui_density},
         models::Models,
         theme::Theme,
         util::{create_or_retrieve_view, prune_views},
@@ -32,8 +33,7 @@ use gpui::{prelude::FluentBuilder, *};
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use table_data::{
-    Column, ColumnReorderDrag, GridContext, TABLE_HEADER_GROUP, TABLE_IMAGE_COLUMN_WIDTH,
-    TableData, TableSort,
+    Column, ColumnReorderDrag, GridContext, TABLE_HEADER_GROUP, TableData, TableSort,
 };
 use table_item::TableItem;
 
@@ -427,6 +427,7 @@ where
 {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let sort_method = self.sort_method.read(cx);
         let items = self.items.clone();
         let views_model = self.views.clone();
@@ -449,6 +450,13 @@ where
         let columns_read = self.columns.read(cx);
         let column_count = columns_read.len();
         let default_columns = T::default_columns();
+        let table_cell_block_padding = density.px(6.0, 2.0);
+        let table_thumb_size = density.px(22.0, 4.0);
+        let table_row_height = density_row_height! {
+            density.px(36.0, 6.0);
+            px(18.0) + (table_cell_block_padding * 2.0);
+            table_thumb_size + (table_cell_block_padding * 2.0);
+        };
 
         let mut header = div()
             .w_full()
@@ -459,11 +467,11 @@ where
         if T::has_images() {
             header = header.child(
                 div()
-                    .w(px(TABLE_IMAGE_COLUMN_WIDTH))
-                    .h(px(36.0))
-                    .pl(px(18.0))
-                    .pr(px(10.0))
-                    .py(px(2.0))
+                    .w(density.px_range(39.0, 47.0, 55.0))
+                    .h(table_row_height)
+                    .pl(density.px(18.0, 4.0))
+                    .pr(density.px(10.0, 2.0))
+                    .py(density.px(2.0, 1.0))
                     .text_sm()
                     .flex_shrink_0()
                     .text_ellipsis()
@@ -490,10 +498,12 @@ where
                     .flex()
                     .when(!is_last, |this| this.w(px(base_width)))
                     .when(is_last, |this| this.flex_grow().min_w(px(base_width)))
-                    .h(px(36.0))
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .when(!T::has_images() && i == 0, |div| div.pl(px(18.0)))
+                    .h(table_row_height)
+                    .px(density.px(12.0, 2.0))
+                    .py(table_cell_block_padding)
+                    .when(!T::has_images() && i == 0, |div| {
+                        div.pl(density.px(18.0, 4.0))
+                    })
                     .text_sm()
                     .flex_shrink_0()
                     .border_b_1()
@@ -514,8 +524,8 @@ where
                                 } else {
                                     CHEVRON_DOWN
                                 })
-                                .size(px(14.0))
-                                .ml(px(4.0))
+                                .size(density.px(14.0, 2.0))
+                                .ml(density.px(4.0, 1.0))
                                 .flex_shrink_0()
                                 .my_auto(),
                             )

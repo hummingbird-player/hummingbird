@@ -1,7 +1,10 @@
 use gpui::{prelude::FluentBuilder, *};
 
-use crate::ui::components::icons::{CHECK, icon};
-use crate::ui::theme::Theme;
+use crate::ui::{
+    components::icons::{CHECK, icon},
+    density::ui_density,
+    theme::Theme,
+};
 
 #[derive(IntoElement)]
 pub struct Checkbox {
@@ -21,14 +24,15 @@ impl Checkbox {
 impl RenderOnce for Checkbox {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
 
         div()
             .flex_shrink_0()
             .id(self.id)
             .rounded(px(4.0))
             .flex()
-            .w(px(20.0))
-            .h(px(20.0))
+            .w(density.px(20.0, 2.0))
+            .h(density.px(20.0, 2.0))
             .items_center()
             .justify_center()
             .line_height(rems(1.25))
@@ -68,7 +72,7 @@ impl RenderOnce for Checkbox {
             .when(self.checked, |this| {
                 this.child(
                     icon(CHECK)
-                        .size(px(16.0))
+                        .size(density.px(16.0, 2.0))
                         .text_color(theme.checkbox_checked)
                         .m_auto()
                         .pr(px(2.0)),

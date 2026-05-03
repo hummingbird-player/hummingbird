@@ -23,7 +23,6 @@ pub struct ColumnReorderDrag {
 
 // table layout constants
 pub const TABLE_MAX_WIDTH: f32 = 1000.0;
-pub const TABLE_IMAGE_COLUMN_WIDTH: f32 = 47.0;
 
 // column resize constants
 pub const COLUMN_MIN_WIDTH: f32 = 50.0;

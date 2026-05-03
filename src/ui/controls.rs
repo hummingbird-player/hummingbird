@@ -17,6 +17,7 @@ use crate::{
             tooltip::build_tooltip,
             volume_tooltip::build_volume_tooltip,
         },
+        density::ui_density,
         library::context_menus::{
             info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
             navigate_to_track_artist, resolve_library_track_by_path,
@@ -243,6 +244,13 @@ impl Render for InfoSection {
             .map(|p| ManagedImageKey::TrackFile(p.clone()));
         let image_element_key = self.image_element_key;
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
+        // art, text, and like button are laid out separately here so its a bit awkward.
+        // using the same size and margin values so they move together when density changes
+        let album_art_size = density.px_range(32.0, 36.0, 42.0);
+        let info_bottom_margin = density.px(6.0, 2.0);
+        let line_height = density.px_range(15.0, 16.0, 18.0);
+        let text_size = density.px_range(14.0, 15.0, 16.0);
         let state = self.playback_info.playback_state.read(cx);
         let album_navigation_track = self
             .can_navigate_to_album
@@ -261,10 +269,10 @@ impl Render for InfoSection {
             .flex_shrink_0()
             .child(
                 div()
-                    .mx(px(12.0))
-                    .mt(px(12.0))
-                    .mb(px(6.0))
-                    .gap(px(10.0))
+                    .mx(density.px(12.0, 2.0))
+                    .mt(density.px_range(8.0, 12.0, 14.0))
+                    .mb(info_bottom_margin)
+                    .gap(density.px(10.0, 2.0))
                     .flex()
                     .w_full()
                     .overflow_x_hidden()
@@ -275,9 +283,9 @@ impl Render for InfoSection {
                             .rounded(px(4.0))
                             .bg(theme.album_art_background)
                             .shadow_sm()
-                            .w(px(36.0))
-                            .h(px(36.0))
-                            .mb(px(6.0))
+                            .w(album_art_size)
+                            .h(album_art_size)
+                            .mb(info_bottom_margin)
                             .flex_shrink_0()
                             .on_hover(cx.listener(|this, is_hovering: &bool, _, cx| {
                                 if this.is_hovering_art != *is_hovering {
@@ -311,8 +319,8 @@ impl Render for InfoSection {
                                 })
                                 .child(
                                     managed_image(("album-art-thumb", image_element_key), key)
-                                        .w(px(36.0))
-                                        .h(px(36.0))
+                                        .w(album_art_size)
+                                        .h(album_art_size)
                                         .object_fit(ObjectFit::Fill)
                                         .rounded(px(4.0))
                                         .thumb(),
@@ -322,13 +330,13 @@ impl Render for InfoSection {
                     .when(*state == PlaybackState::Stopped, |e| {
                         e.child(
                             div()
-                                .line_height(rems(1.0))
+                                .line_height(line_height)
                                 .font_weight(FontWeight::EXTRA_BOLD)
-                                .text_size(px(15.0))
+                                .text_size(text_size)
                                 .flex()
                                 .h_full()
                                 .items_center()
-                                .pb(px(6.0))
+                                .pb(info_bottom_margin)
                                 .child(tr!(
                                     "APP_NAME",
                                     "Hummingbird",
@@ -346,9 +354,9 @@ impl Render for InfoSection {
                             div()
                                 .flex()
                                 .flex_col()
-                                .line_height(rems(1.0))
-                                .text_size(px(15.0))
-                                .gap_1()
+                                .line_height(line_height)
+                                .text_size(text_size)
+                                .gap(density.px_range(2.0, 4.0, 6.0))
                                 .w_full()
                                 .overflow_x_hidden()
                                 .child(
@@ -383,39 +391,44 @@ impl Render for InfoSection {
                         )
                         .when(has_track, |e| {
                             e.child(
-                                div().pb(px(6.0)).h_full().flex().ml_auto().child(
-                                    div()
-                                        .id("info-like")
-                                        .my_auto()
-                                        .rounded_sm()
-                                        .p(px(4.0))
-                                        .cursor_pointer()
-                                        .hover(|this| this.bg(theme.button_secondary_hover))
-                                        .active(|this| this.bg(theme.button_secondary_active))
-                                        .child(
-                                            icon(if is_liked.is_some() {
-                                                STAR_FILLED
-                                            } else {
-                                                STAR
+                                div()
+                                    .pb(info_bottom_margin)
+                                    .h_full()
+                                    .flex()
+                                    .ml_auto()
+                                    .child(
+                                        div()
+                                            .id("info-like")
+                                            .my_auto()
+                                            .rounded_sm()
+                                            .p(density.px(4.0, 1.0))
+                                            .cursor_pointer()
+                                            .hover(|this| this.bg(theme.button_secondary_hover))
+                                            .active(|this| this.bg(theme.button_secondary_active))
+                                            .child(
+                                                icon(if is_liked.is_some() {
+                                                    STAR_FILLED
+                                                } else {
+                                                    STAR
+                                                })
+                                                .size(density.px(14.0, 2.0))
+                                                .text_color(if is_liked.is_some() {
+                                                    theme.liked_song
+                                                } else {
+                                                    theme.text_secondary
+                                                }),
+                                            )
+                                            .when(is_liked.is_some(), |this| {
+                                                this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
                                             })
-                                            .size(px(14.0))
-                                            .text_color(if is_liked.is_some() {
-                                                theme.liked_song
-                                            } else {
-                                                theme.text_secondary
-                                            }),
-                                        )
-                                        .when(is_liked.is_some(), |this| {
-                                            this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
-                                        })
-                                        .when(is_liked.is_none(), |this| {
-                                            this.tooltip(build_tooltip(tr!("LIKE", "Like")))
-                                        })
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            let Some(track_id) = track_id else { return };
-                                            toggle_like(track_id, cx.entity().clone(), cx);
-                                        })),
-                                ),
+                                            .when(is_liked.is_none(), |this| {
+                                                this.tooltip(build_tooltip(tr!("LIKE", "Like")))
+                                            })
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                let Some(track_id) = track_id else { return };
+                                                toggle_like(track_id, cx.entity().clone(), cx);
+                                            })),
+                                    ),
                             )
                         })
                     }),
@@ -515,6 +528,7 @@ impl Render for PlaybackSection {
         let repeating = *self.info.repeating.read(cx);
         let stop_after_current = *self.info.stop_after_current.read(cx);
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let always_repeat = cx
             .global::<SettingsGlobal>()
             .model
@@ -530,17 +544,17 @@ impl Render for PlaybackSection {
         div()
             .mr(auto())
             .ml(auto())
-            .mt(px(5.0))
+            .mt(density.px(5.0, 1.0))
             .flex()
             .w_full()
             .absolute()
             .child(
                 div()
                     .rounded(px(3.0))
-                    .w(px(28.0))
-                    .h(px(25.0))
-                    .mt(px(3.0))
-                    .mr(px(6.0))
+                    .w(density.px_range(26.0, 28.0, 32.0))
+                    .h(density.px_range(23.0, 25.0, 29.0))
+                    .mt(density.px(3.0, 1.0))
+                    .mr(density.px(6.0, 2.0))
                     .ml_auto()
                     .border_color(theme.playback_button_border)
                     .flex()
@@ -556,9 +570,13 @@ impl Render for PlaybackSection {
                     .on_click(|_, _, cx| {
                         cx.global::<PlaybackInterface>().toggle_shuffle();
                     })
-                    .child(icon(SHUFFLE).size(px(14.0)).when(*shuffling, |this| {
-                        this.text_color(theme.playback_button_toggled)
-                    }))
+                    .child(
+                        icon(SHUFFLE)
+                            .size(density.px(14.0, 2.0))
+                            .when(*shuffling, |this| {
+                                this.text_color(theme.playback_button_toggled)
+                            }),
+                    )
                     .when_else(
                         *shuffling,
                         |this| this.tooltip(build_tooltip(tr!("STOP_SHUFFLING", "Stop Shuffling"))),
@@ -573,8 +591,8 @@ impl Render for PlaybackSection {
                     .flex()
                     .child(
                         div()
-                            .w(px(30.0))
-                            .h(px(28.0))
+                            .w(density.px_range(28.0, 30.0, 34.0))
+                            .h(density.px_range(26.0, 28.0, 32.0))
                             .rounded_l(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
@@ -590,15 +608,15 @@ impl Render for PlaybackSection {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Previous), cx);
                             })
-                            .child(icon(PREV_TRACK).size(px(16.0)))
+                            .child(icon(PREV_TRACK).size(density.px(16.0, 2.0)))
                             .tooltip(build_tooltip(tr!("PREVIOUS_TRACK", "Previous Track"))),
                     )
                     .child(
                         context("header-play-button-context")
                             .with(
                                 div()
-                                    .w(px(32.0))
-                                    .h(px(28.0))
+                                    .w(density.px_range(30.0, 32.0, 36.0))
+                                    .h(density.px_range(26.0, 28.0, 32.0))
                                     .bg(theme.playback_button)
                                     .border_l(px(1.0))
                                     .border_r(px(1.0))
@@ -620,11 +638,11 @@ impl Render for PlaybackSection {
                                         window.dispatch_action(Box::new(PlayPause), cx);
                                     })
                                     .when(*state == PlaybackState::Playing, |div| {
-                                        div.child(icon(PAUSE).size(px(16.0)))
+                                        div.child(icon(PAUSE).size(density.px(16.0, 2.0)))
                                             .tooltip(build_tooltip(tr!("PAUSE")))
                                     })
                                     .when(*state != PlaybackState::Playing, |div| {
-                                        div.child(icon(PLAY).size(px(16.0)))
+                                        div.child(icon(PLAY).size(density.px(16.0, 2.0)))
                                             .tooltip(build_tooltip(tr!("PLAY")))
                                     })
                                     .when(stop_after_current, |this| {
@@ -655,8 +673,8 @@ impl Render for PlaybackSection {
                     )
                     .child(
                         div()
-                            .w(px(30.0))
-                            .h(px(28.0))
+                            .w(density.px_range(28.0, 30.0, 34.0))
+                            .h(density.px_range(26.0, 28.0, 32.0))
                             .rounded_r(px(3.0))
                             .bg(theme.playback_button)
                             .flex()
@@ -672,7 +690,7 @@ impl Render for PlaybackSection {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Next), cx);
                             })
-                            .child(icon(NEXT_TRACK).size(px(16.0)))
+                            .child(icon(NEXT_TRACK).size(density.px(16.0, 2.0)))
                             .tooltip(build_tooltip(tr!("NEXT_TRACK", "Next Track"))),
                     ),
             )
@@ -682,10 +700,10 @@ impl Render for PlaybackSection {
                         .with(
                             div()
                                 .rounded(px(3.0))
-                                .w(px(28.0))
-                                .h(px(25.0))
-                                .mt(px(3.0))
-                                .ml(px(6.0))
+                                .w(density.px_range(26.0, 28.0, 32.0))
+                                .h(density.px_range(23.0, 25.0, 29.0))
+                                .mt(density.px(3.0, 1.0))
+                                .ml(density.px(6.0, 2.0))
                                 .border_color(theme.playback_button_border)
                                 .flex()
                                 .items_center()
@@ -730,7 +748,7 @@ impl Render for PlaybackSection {
                                         }
                                         RepeatState::RepeatingOne => REPEAT_ONCE,
                                     })
-                                    .size(px(14.0))
+                                    .size(density.px(14.0, 2.0))
                                     .text_color(repeat_icon_color),
                                 ),
                         )
@@ -807,6 +825,8 @@ impl Scrubber {
 impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
+        let line_height = density.px_range(15.0, 16.0, 18.0);
         let position_ms = *self.position.read(cx);
         let duration_secs = *self.duration.read(cx);
         let position_secs = position_ms / 1_000;
@@ -816,14 +836,14 @@ impl Render for Scrubber {
         let window_width = window.viewport_size().width;
 
         div()
-            .pl(px(13.0))
-            .pr(px(13.0))
+            .pl(density.px_range(10.0, 13.0, 16.0))
+            .pr(density.px_range(10.0, 13.0, 16.0))
             .border_x(px(1.0))
             .border_color(theme.border_color)
             .flex_grow()
             .flex()
             .flex_col()
-            .text_size(px(15.0))
+            .text_size(density.px_range(14.0, 15.0, 16.0))
             .font_weight(FontWeight::SEMIBOLD)
             .relative()
             .child(
@@ -832,38 +852,38 @@ impl Render for Scrubber {
                     .flex()
                     .relative()
                     .items_end()
-                    .mt(px(6.0))
-                    .mb(px(6.0))
+                    .mt(density.px(6.0, 2.0))
+                    .mb(density.px(6.0, 2.0))
                     .child(
                         div()
-                            .mr(px(6.0))
-                            .line_height(rems(1.0))
+                            .mr(density.px(6.0, 2.0))
+                            .line_height(line_height)
                             .child(format_duration(position_secs as i64, true)),
                     )
                     .when(window_width > px(900.0), |this| {
                         this.child(
                             div()
-                                .line_height(rems(1.0))
+                                .line_height(line_height)
                                 .border_color(rgb(0x4b5563))
                                 .border_l(px(2.0))
-                                .pl(px(6.0))
+                                .pl(density.px(6.0, 2.0))
                                 .text_color(rgb(0xcbd5e1))
                                 .child(format_duration(duration_secs as i64, true)),
                         )
                     })
                     .child(self.playback_section.clone())
-                    .child(div().h(px(30.0)))
+                    .child(div().h(density.px_range(28.0, 30.0, 34.0)))
                     .child(
                         div()
                             .ml(auto())
-                            .line_height(rems(1.0))
+                            .line_height(line_height)
                             .child(format!("-{}", format_duration(remaining_secs as i64, true))),
                     ),
             )
             .child(
                 slider()
                     .w_full()
-                    .h(px(6.0))
+                    .h(density.px(6.0, 1.0))
                     .rounded(px(3.0))
                     .id("scrubber-back")
                     .value(if duration_ms > 0 {
@@ -909,6 +929,7 @@ impl Styled for SidebarToggleButton {
 impl RenderOnce for SidebarToggleButton {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let icon_color = if self.active {
             theme.playback_button_toggled
         } else {
@@ -917,9 +938,9 @@ impl RenderOnce for SidebarToggleButton {
 
         self.div
             .rounded(px(3.0))
-            .w(px(25.0))
-            .h(px(25.0))
-            .mt(px(2.0))
+            .w(density.px_range(23.0, 25.0, 29.0))
+            .h(density.px_range(23.0, 25.0, 29.0))
+            .mt(density.px(2.0, 1.0))
             .flex()
             .items_center()
             .justify_center()
@@ -928,7 +949,11 @@ impl RenderOnce for SidebarToggleButton {
             .cursor_pointer()
             .hover(|this| this.bg(theme.playback_button_hover))
             .active(|this| this.bg(theme.playback_button_active))
-            .child(icon(self.icon_path).size(px(14.0)).text_color(icon_color))
+            .child(
+                icon(self.icon_path)
+                    .size(density.px(14.0, 2.0))
+                    .text_color(icon_color),
+            )
     }
 }
 
@@ -981,107 +1006,113 @@ impl Render for SecondaryControls {
         let show_lyrics = self.show_lyrics.clone();
         let lyrics_active = *self.show_lyrics.read(cx);
         let queue_active = *self.show_queue.read(cx);
+        let density = ui_density(cx);
 
-        div().px(px(18.0)).flex().w_full().h_full().child(
-            div()
-                .flex()
-                .w_full()
-                .my_auto()
-                .pb(px(2.0))
-                .child(
-                    div()
-                        .rounded(px(3.0))
-                        .w(px(25.0))
-                        .h(px(25.0))
-                        .mt(px(2.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .border_color(theme.playback_button_border)
-                        .id("volume-button")
-                        .cursor_pointer()
-                        .bg(theme.playback_button)
-                        .hover(|this| this.bg(theme.playback_button_hover))
-                        .active(|this| this.bg(theme.playback_button_active))
-                        .when(volume <= 0.0, |div| {
-                            div.child(icon(VOLUME_OFF).size(px(14.0)))
-                                .on_click(move |_, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(prev_volume);
-                                })
-                                .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
-                        })
-                        .when(volume > 0.0, |div| {
-                            div.child(icon(VOLUME).size(px(14.0)))
-                                .on_click(move |_, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(0 as f64);
-                                })
-                                .tooltip(build_tooltip(tr!("MUTE", "Mute")))
-                        }),
-                )
-                .child(
-                    div()
-                        .id("volume-container")
-                        .mx(px(4.0))
-                        .flex_1()
-                        .min_w(px(50.0))
-                        .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
-                        .child(
-                            slider()
-                                .w_full()
-                                .h(px(6.0))
-                                .mt(px(11.0))
-                                .rounded(px(3.0))
-                                .id("volume")
-                                .value((volume) as f32)
-                                .on_double_click(|_, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(1.0_f64);
-                                })
-                                .on_change(move |v, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(v as f64);
-                                }),
-                        )
-                        .on_scroll_wheel(move |ev, _, cx| {
-                            let delta: f64 = if ev.delta.precise() {
-                                f64::from(ev.delta.pixel_delta(px(1.0)).y) * 0.01666666
-                            } else {
-                                ev.delta.pixel_delta(px(0.01666666)).y.into()
-                            };
-                            cx.global::<PlaybackInterface>().set_volume(f64::clamp(
-                                volume + delta,
-                                0_f64,
-                                1_f64,
-                            ));
-                        }),
-                )
-                .child(self.replaygain_button.clone())
-                .child(
-                    div()
-                        .h(px(24.0))
-                        .w(px(1.0))
-                        .mt(px(3.0))
-                        .mx(px(4.0))
-                        .bg(theme.border_color),
-                )
-                .child(
-                    sidebar_toggle_button("queue-button", MENU, queue_active)
-                        .on_click(move |_, _, cx| {
-                            show_queue.update(cx, |m, cx| {
-                                *m = !*m;
-                                cx.notify();
+        div()
+            .px(density.px_range(14.0, 18.0, 22.0))
+            .flex()
+            .w_full()
+            .h_full()
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .my_auto()
+                    .pb(density.px(2.0, 1.0))
+                    .child(
+                        div()
+                            .rounded(px(3.0))
+                            .w(density.px_range(23.0, 25.0, 29.0))
+                            .h(density.px_range(23.0, 25.0, 29.0))
+                            .mt(density.px(2.0, 1.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .border_color(theme.playback_button_border)
+                            .id("volume-button")
+                            .cursor_pointer()
+                            .bg(theme.playback_button)
+                            .hover(|this| this.bg(theme.playback_button_hover))
+                            .active(|this| this.bg(theme.playback_button_active))
+                            .when(volume <= 0.0, |div| {
+                                div.child(icon(VOLUME_OFF).size(density.px(14.0, 2.0)))
+                                    .on_click(move |_, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(prev_volume);
+                                    })
+                                    .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
                             })
-                        })
-                        .tooltip(build_tooltip(tr!("QUEUE_TITLE"))),
-                )
-                .child(
-                    sidebar_toggle_button("lyrics-button", MICROPHONE, lyrics_active)
-                        .on_click(move |_, _, cx| {
-                            show_lyrics.update(cx, |m, cx| {
-                                *m = !*m;
-                                cx.notify();
+                            .when(volume > 0.0, |div| {
+                                div.child(icon(VOLUME).size(density.px(14.0, 2.0)))
+                                    .on_click(move |_, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(0 as f64);
+                                    })
+                                    .tooltip(build_tooltip(tr!("MUTE", "Mute")))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("volume-container")
+                            .mx(px(4.0))
+                            .flex_1()
+                            .min_w(px(50.0))
+                            .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
+                            .child(
+                                slider()
+                                    .w_full()
+                                    .h(density.px(6.0, 1.0))
+                                    .mt(density.px_range(9.0, 11.0, 13.0))
+                                    .rounded(px(3.0))
+                                    .id("volume")
+                                    .value((volume) as f32)
+                                    .on_double_click(|_, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(1.0_f64);
+                                    })
+                                    .on_change(move |v, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(v as f64);
+                                    }),
+                            )
+                            .on_scroll_wheel(move |ev, _, cx| {
+                                let delta: f64 = if ev.delta.precise() {
+                                    f64::from(ev.delta.pixel_delta(px(1.0)).y) * 0.01666666
+                                } else {
+                                    ev.delta.pixel_delta(px(0.01666666)).y.into()
+                                };
+                                cx.global::<PlaybackInterface>().set_volume(f64::clamp(
+                                    volume + delta,
+                                    0_f64,
+                                    1_f64,
+                                ));
+                            }),
+                    )
+                    .child(self.replaygain_button.clone())
+                    .child(
+                        div()
+                            .h(density.px(24.0, 2.0))
+                            .w(px(1.0))
+                            .mt(density.px(3.0, 1.0))
+                            .mx(density.px(4.0, 1.0))
+                            .bg(theme.border_color),
+                    )
+                    .child(
+                        sidebar_toggle_button("queue-button", MENU, queue_active)
+                            .on_click(move |_, _, cx| {
+                                show_queue.update(cx, |m, cx| {
+                                    *m = !*m;
+                                    cx.notify();
+                                })
                             })
-                        })
-                        .tooltip(build_tooltip(tr!("LYRICS", "Lyrics"))),
-                ),
-        )
+                            .tooltip(build_tooltip(tr!("QUEUE_TITLE"))),
+                    )
+                    .child(
+                        sidebar_toggle_button("lyrics-button", MICROPHONE, lyrics_active)
+                            .on_click(move |_, _, cx| {
+                                show_lyrics.update(cx, |m, cx| {
+                                    *m = !*m;
+                                    cx.notify();
+                                })
+                            })
+                            .tooltip(build_tooltip(tr!("LYRICS", "Lyrics"))),
+                    ),
+            )
     }
 }

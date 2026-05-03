@@ -26,6 +26,7 @@ use crate::{
             window_chrome::window_chrome,
             window_header::header,
         },
+        density::ui_density,
         settings::{
             interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
             services::ServicesSettings,
@@ -269,6 +270,7 @@ impl Render for SettingsWindow {
         }
 
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let active = &self.active;
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_always_visible = {
@@ -286,10 +288,10 @@ impl Render for SettingsWindow {
         let sidebar = sidebar()
             .width(DEFAULT_SIDEBAR_WIDTH)
             .h_full()
-            .pt(px(8.0))
-            .pb(px(8.0))
-            .pl(px(8.0))
-            .pr(px(7.0))
+            .pt(density.px(8.0, 2.0))
+            .pb(density.px(8.0, 2.0))
+            .pl(density.px(8.0, 2.0))
+            .pr(density.px_range(6.0, 7.0, 9.0))
             .border_r_1()
             .border_color(theme.border_color)
             .overflow_hidden()
@@ -339,10 +341,10 @@ impl Render for SettingsWindow {
                                         .child(
                                             div()
                                                 .w_full()
-                                                .p(px(16.0))
+                                                .p(density.px(16.0, 4.0))
                                                 .when(scrollbar_always_visible, |div| {
                                                     // 16px padding + 10px buffer
-                                                    div.pr(px(26.0))
+                                                    div.pr(density.px(26.0, 4.0))
                                                 })
                                                 .child(content),
                                         ),

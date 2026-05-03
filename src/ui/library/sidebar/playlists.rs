@@ -33,6 +33,7 @@ use crate::{
             sidebar::sidebar_item,
             textbox::Textbox,
         },
+        density::{density_row_height, ui_density},
         library::{NavigationHistory, ViewSwitchMessage, playlist_view::find_playlist_tracks},
         models::{Models, PlaybackInfo, PlaylistEvent},
         theme::Theme,
@@ -40,7 +41,19 @@ use crate::{
 };
 
 const PLAYLIST_SIDEBAR_LIST_ID: &str = "sidebar-playlists";
-const PLAYLIST_SIDEBAR_ITEM_HEIGHT: f32 = 55.0; // effective height is + 1 px because of gap
+
+// Sidebar playlist rows are taller than normal sidebar items </3
+// reordering uses this height too, so keep the row and drop target in sync
+fn playlist_sidebar_item_height(cx: &impl AppContext) -> gpui::Pixels {
+    let density = ui_density(cx);
+    let block_padding = density.px_range(5.0, 7.0, 10.0);
+    let line_height = density.px(18.0, 0.0);
+
+    density_row_height! {
+        density.px_range(49.0, 55.0, 63.0);
+        (line_height * 2.0) + (block_padding * 2.0);
+    }
+}
 
 pub struct PlaylistList {
     playlists: Arc<Vec<Playlist>>,
@@ -96,7 +109,7 @@ impl PlaylistList {
                 });
 
             let drag_drop_config =
-                DragDropListConfig::new(PLAYLIST_SIDEBAR_LIST_ID, px(PLAYLIST_SIDEBAR_ITEM_HEIGHT));
+                DragDropListConfig::new(PLAYLIST_SIDEBAR_LIST_ID, playlist_sidebar_item_height(cx));
             let drag_drop_manager = DragDropListManager::new(cx, drag_drop_config);
 
             cx.observe(&drag_drop_manager, |_, _, cx| cx.notify())
@@ -170,13 +183,23 @@ impl Render for PlaylistList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         check_drag_cancelled(self.drag_drop_manager.clone(), cx);
 
+        let density = ui_density(cx);
+        let item_height = playlist_sidebar_item_height(cx);
+        // Reordering uses a fixed item height internally
+        // (which breaks my add heart), refresh it when density
+        // changes so the drop indicator matches the rendered playlist rows
+        self.drag_drop_manager.update(cx, |manager, _| {
+            manager.config.item_height = item_height;
+        });
+
         let theme = cx.global::<Theme>();
         let collapsed = *cx.global::<Models>().sidebar_collapsed.read(cx);
         let scroll_handle = self.scroll_handle.clone();
         let playlist_count = self.playlists.len();
         let allow_reorder = !collapsed;
+
         let mut main = div()
-            .pt(px(6.0))
+            .pt(density.px(6.0, 2.0))
             .id("sidebar-playlist")
             .flex_grow()
             .min_h(px(0.0))
@@ -305,7 +328,7 @@ impl Render for PlaylistList {
                             .flex_shrink()
                             .w_full()
                             .overflow_x_hidden()
-                            .mt(px(2.0))
+                            .mt(density.px(2.0, 1.0))
                             .child(trn!(
                                 "PLAYLIST_TRACK_COUNT",
                                 "{{count}} track",
@@ -318,6 +341,7 @@ impl Render for PlaylistList {
             let is_system_playlist = playlist.playlist_type == PlaylistType::System;
 
             let item = item
+                .height(item_height)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.nav_model.update(cx, move |_, cx| {
                         cx.emit(ViewSwitchMessage::Playlist(pl_id));

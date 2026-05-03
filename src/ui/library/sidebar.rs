@@ -2,15 +2,13 @@ use std::sync::Arc;
 
 use cntp_i18n::{tr, trn};
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Pixels, Render,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::settings::SettingsGlobal;
 
 use crate::settings::storage::DEFAULT_SIDEBAR_WIDTH;
-
-const COLLAPSED_SIDEBAR_WIDTH: Pixels = px(52.0);
 
 use crate::ui::components::icons::{MUSIC, SIDEBAR, SIDEBAR_INACTIVE};
 use crate::ui::components::tooltip::build_tooltip;
@@ -23,6 +21,7 @@ use crate::{
             resizable::{ResizeEdge, resizable},
             sidebar::{sidebar, sidebar_item, sidebar_separator},
         },
+        density::ui_density,
         global_actions::Search,
         library::{NavigationHistory, ViewSwitchMessage, sidebar::playlists::PlaylistList},
         models::Models,
@@ -70,6 +69,7 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let stats_minutes = self.track_stats.total_duration / 60;
         let current_view = self.nav_model.read(cx).current();
         let two_column = cx
@@ -93,17 +93,18 @@ impl Render for Sidebar {
         let sidebar_collapsed_entity = cx.global::<Models>().sidebar_collapsed.clone();
         let sidebar_collapsed_entity_bottom = sidebar_collapsed_entity.clone();
         let collapsed = *sidebar_collapsed_entity.read(cx);
+        let collapsed_sidebar_width = density.px_range(48.0, 52.0, 58.0);
 
         let toggle_icon = if collapsed { SIDEBAR_INACTIVE } else { SIDEBAR };
 
         let search_and_toggle = div()
             .flex()
             .when(collapsed, |this| {
-                this.flex_col().items_center().gap(px(4.0))
+                this.flex_col().items_center().gap(density.px(4.0, 1.0))
             })
-            .mt(px(2.0))
-            .mb(px(4.0))
-            .pb(px(10.0))
+            .mt(density.px(2.0, 1.0))
+            .mb(density.px(4.0, 1.0))
+            .pb(density.px(10.0, 2.0))
             .border_b_1()
             .border_color(theme.border_color)
             .child(
@@ -131,17 +132,17 @@ impl Render for Sidebar {
 
         let sidebar_content = sidebar()
             .width(if collapsed {
-                COLLAPSED_SIDEBAR_WIDTH
+                collapsed_sidebar_width
             } else {
                 *sidebar_width.read(cx)
             })
             .id("main-sidebar")
             .h_full()
             .max_h_full()
-            .pt(px(8.0))
-            .pb(px(8.0))
-            .pl(px(7.0))
-            .pr(px(8.0))
+            .pt(density.px(8.0, 2.0))
+            .pb(density.px(8.0, 2.0))
+            .pl(density.px(7.0, 1.0))
+            .pr(density.px(8.0, 1.0))
             .when(!collapsed, |this| this.overflow_hidden())
             .flex()
             .flex_col()
@@ -228,7 +229,7 @@ impl Render for Sidebar {
                         .flex_col()
                         .mt_auto()
                         .text_xs()
-                        .pt(px(8.0))
+                        .pt(density.px(8.0, 2.0))
                         .text_color(theme.text_secondary)
                         .child(trn!(
                             "STATS_TRACKS",
@@ -247,7 +248,7 @@ impl Render for Sidebar {
 
         if collapsed {
             div()
-                .w(COLLAPSED_SIDEBAR_WIDTH)
+                .w(collapsed_sidebar_width)
                 .h_full()
                 .flex_shrink_0()
                 .border_r_1()

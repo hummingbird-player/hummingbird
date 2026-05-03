@@ -11,6 +11,7 @@ use crate::{
         checkbox::checkbox, label::label, labeled_slider::labeled_slider,
         section_header::section_header,
     },
+    ui::density::ui_density,
 };
 
 pub struct PlaybackSettings {
@@ -44,11 +45,12 @@ impl PlaybackSettings {
 impl Render for PlaybackSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let playback = self.settings.read(cx).playback.clone();
+        let density = ui_density(cx);
 
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(density.px(12.0, 3.0))
             .child(section_header(tr!("PLAYBACK")))
             .child(
                 label(

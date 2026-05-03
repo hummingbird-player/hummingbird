@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{density::ui_density, theme::Theme};
 
 use super::styling::AdditionalStyleUtil;
 
@@ -59,18 +59,24 @@ impl ButtonStyle {
 }
 
 impl ButtonSize {
-    fn base<T>(&self, dest: T) -> T
+    fn base<T>(&self, dest: T, cx: &mut App) -> T
     where
         T: Styled,
     {
+        let density = ui_density(cx);
+
         match self {
-            ButtonSize::Regular => dest.px(px(10.0)).py(px(3.0)).text_sm().gap(px(8.0)),
-            ButtonSize::Large => dest
-                .px(px(12.0))
-                .pt(px(4.0))
-                .pb(px(3.0))
+            ButtonSize::Regular => dest
+                .px(density.px(10.0, 2.0))
+                .py(density.px(3.0, 1.0))
                 .text_sm()
-                .gap(px(8.0)),
+                .gap(density.px(8.0, 2.0)),
+            ButtonSize::Large => dest
+                .px(density.px(12.0, 2.0))
+                .pt(density.px(4.0, 1.0))
+                .pb(density.px(3.0, 1.0))
+                .text_sm()
+                .gap(density.px(8.0, 2.0)),
         }
     }
 
@@ -211,8 +217,10 @@ impl RenderOnce for Button {
         let size = self.size;
         let intent = self.intent;
 
-        let mut div = style
-            .base(size.base(intent.base(self.div.hover(|v| style.hover(intent.hover(v, cx))), cx)));
+        let mut div = style.base(size.base(
+            intent.base(self.div.hover(|v| style.hover(intent.hover(v, cx))), cx),
+            cx,
+        ));
         div.style().refine(&self.refinement);
         div
     }
@@ -289,6 +297,7 @@ impl RenderOnce for InteractiveButton {
                         .active(|v| style.active(size.active(intent.active(v, cx)))),
                     cx,
                 ),
+                cx,
             ),
         );
 

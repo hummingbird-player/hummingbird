@@ -4,6 +4,7 @@ use crate::{
         checkbox::checkbox, label::label, section_header::section_header,
         segmented_control::segmented_control,
     },
+    ui::density::ui_density,
 };
 use cntp_i18n::tr;
 use gpui::{
@@ -43,11 +44,12 @@ impl UpdateSettings {
 impl Render for UpdateSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let channel = self.settings.read(cx).update.release_channel;
+        let density = ui_density(cx);
 
         div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
+            .gap(density.px(14.0, 4.0))
             .child(section_header(tr!("UPDATE")))
             .child(
                 label(

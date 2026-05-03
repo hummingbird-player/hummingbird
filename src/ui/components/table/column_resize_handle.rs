@@ -5,7 +5,10 @@ use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
 use super::table_data::{COLUMN_MIN_WIDTH, COLUMN_RESIZE_HANDLE_WIDTH, Column, TABLE_HEADER_GROUP};
-use crate::ui::theme::Theme;
+use crate::ui::{
+    density::{density_row_height, ui_density},
+    theme::Theme,
+};
 
 #[derive(Default)]
 struct ResizeState {
@@ -76,11 +79,21 @@ where
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let border_color = cx.global::<Theme>().border_color;
+        let density = ui_density(cx);
+        let cell_block_padding = density.px(6.0, 2.0);
+        let thumb_size = density.px(22.0, 4.0);
+        let table_row_height = density_row_height! {
+            density.px(36.0, 6.0);
+            px(18.0) + (cell_block_padding * 2.0);
+            thumb_size + (cell_block_padding * 2.0);
+        };
 
         let mut element = div()
             .id(self.id.clone())
             .w(px(COLUMN_RESIZE_HANDLE_WIDTH))
-            .h(px(36.0)) // Match header height
+            // This was 36px in master because the table header was 36px.
+            // The header height now scales, so the resize hit area needs the same height.
+            .h(table_row_height)
             .flex_shrink_0()
             .cursor_col_resize()
             .ml(px(-COLUMN_RESIZE_HANDLE_WIDTH / 2.0))

@@ -20,6 +20,7 @@ use crate::{
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             tooltip::build_tooltip,
         },
+        density::{density_row_height, ui_density},
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
     },
 };
@@ -42,10 +43,24 @@ use super::{
 
 /// The list identifier for queue drag-drop operations
 const QUEUE_LIST_ID: &str = "queue";
-/// Height of each queue item in pixels
-const QUEUE_ITEM_HEIGHT: f32 = 60.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
+
+// Queue row height feeds rendering, drag/drop hit testing, and follow-current scrolling,
+// keep those callers on this helper so they agree when density changes
+fn queue_item_height(cx: &impl AppContext) -> Pixels {
+    let density = ui_density(cx);
+    let block_padding = density.px_range(8.0, 11.0, 13.0);
+    let art_size = density.px_range(32.0, 36.0, 42.0);
+    let line_height = density.px_range(15.0, 16.0, 18.0);
+    let title_gap = density.px_range(2.0, 4.0, 5.0);
+
+    density_row_height! {
+        density.px(60.0, 8.0);
+        art_size + (block_padding * 2.0);
+        (line_height * 2.0) + title_gap + (block_padding * 2.0);
+    }
+}
 
 /// Shared selection state for the queue.
 pub struct QueueSelection {
@@ -227,6 +242,13 @@ impl Render for QueueItem {
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
         let theme = cx.global::<Theme>().clone();
+        let density = ui_density(cx);
+        let row_height = queue_item_height(cx);
+        let row_block_padding = density.px_range(8.0, 11.0, 13.0);
+        let art_size = density.px_range(32.0, 36.0, 42.0);
+        let line_height = density.px_range(15.0, 16.0, 18.0);
+        let text_size = density.px_range(14.0, 15.0, 16.0);
+        let title_gap = density.px_range(2.0, 4.0, 5.0);
         let show_add_to = self.show_add_to.clone();
         let is_available = self
             .item
@@ -290,13 +312,15 @@ impl Render for QueueItem {
                         .flex()
                         .flex_shrink_0()
                         .overflow_x_hidden()
-                        .gap(px(11.0))
-                        .h(px(QUEUE_ITEM_HEIGHT))
-                        .px(px(17.0))
-                        .py(px(11.0))
+                        .gap(density.px_range(8.0, 11.0, 14.0))
+                        .h(row_height)
+                        .px(density.px_range(13.0, 17.0, 21.0))
+                        .py(row_block_padding)
                         // add extra padding when the scrollbar is always drawn
                         // 11px queue item pad + 4px scrollbar + 10px buffer
-                        .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
+                        .when(scrollbar_always_visible, |div| {
+                            div.pr(density.px_range(21.0, 25.0, 29.0))
+                        })
                         .when(is_available, |div| div.cursor_pointer())
                         .when(!is_available, |div| div.cursor_default().opacity(0.5))
                         .relative()
@@ -405,14 +429,14 @@ impl Render for QueueItem {
                                 .rounded(px(4.0))
                                 .bg(theme.album_art_background)
                                 .shadow_sm()
-                                .w(px(36.0))
-                                .h(px(36.0))
+                                .w(art_size)
+                                .h(art_size)
                                 .flex_shrink_0()
                                 .when_some(image_key, |div, key| {
                                     div.child(
                                         managed_image(("queue-art", idx), key)
-                                            .w(px(36.0))
-                                            .h(px(36.0))
+                                            .w(art_size)
+                                            .h(art_size)
                                             .object_fit(ObjectFit::Fill)
                                             .rounded(px(4.0))
                                             .thumb(),
@@ -423,9 +447,9 @@ impl Render for QueueItem {
                             div()
                                 .flex()
                                 .flex_col()
-                                .line_height(rems(1.0))
-                                .text_size(px(15.0))
-                                .gap_1()
+                                .line_height(line_height)
+                                .text_size(text_size)
+                                .gap(title_gap)
                                 .w_full()
                                 .overflow_x_hidden()
                                 .child(
@@ -459,7 +483,7 @@ impl Render for QueueItem {
                                             child.child(
                                                 div()
                                                     .flex_shrink_0()
-                                                    .ml(px(6.0))
+                                                    .ml(density.px(6.0, 2.0))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(theme.text_secondary)
                                                     .child(format_duration(duration, true)),
@@ -657,7 +681,7 @@ impl Render for QueueItem {
         } else {
             // TODO: Skeleton for this
             div()
-                .h(px(QUEUE_ITEM_HEIGHT))
+                .h(row_height)
                 .border_t(px(1.0))
                 .border_color(theme.border_color)
                 .w_full()
@@ -689,7 +713,7 @@ impl Queue {
             let initial_has_current_track =
                 cx.global::<PlaybackInfo>().current_track.read(cx).is_some();
 
-            let config = DragDropListConfig::new(QUEUE_LIST_ID, px(QUEUE_ITEM_HEIGHT));
+            let config = DragDropListConfig::new(QUEUE_LIST_ID, queue_item_height(cx));
             let drag_drop_manager = DragDropListManager::new(cx, config);
             let selection = QueueSelection::new(cx);
 
@@ -740,6 +764,8 @@ impl Render for Queue {
         check_drag_cancelled(self.drag_drop_manager.clone(), cx);
 
         let theme = cx.global::<Theme>().clone();
+        let density = ui_density(cx);
+        let item_height = queue_item_height(cx);
         let queue_len = cx
             .global::<Models>()
             .queue
@@ -761,6 +787,11 @@ impl Render for Queue {
             .interface
             .reduced_motion;
         let is_dragging = self.drag_drop_manager.read(cx).state.is_dragging;
+        // The drag/drop manager keeps its own copy of item_height,
+        // Density can change without recreating the manager so update that copy here
+        self.drag_drop_manager.update(cx, |manager, _| {
+            manager.config.item_height = item_height;
+        });
 
         if self.scroll_follow.is_active() && (self.queue_hovered || is_dragging) {
             self.scroll_follow.cancel();
@@ -785,9 +816,9 @@ impl Render for Queue {
             .child(
                 div()
                     .w_full()
-                    .py(px(11.0))
-                    .pl(px(18.0))
-                    .pr(px(12.0))
+                    .py(density.px_range(8.0, 11.0, 13.0))
+                    .pl(density.px_range(14.0, 18.0, 22.0))
+                    .pr(density.px_range(10.0, 12.0, 14.0))
                     .flex()
                     .items_center()
                     .border_b_1()
@@ -804,7 +835,11 @@ impl Render for Queue {
                             .ml_auto()
                             .style(ButtonStyle::Minimal)
                             .size(ButtonSize::Large)
-                            .child(icon(TRASH).size(px(14.0)).my_auto())
+                            .child(
+                                icon(TRASH)
+                                    .size(density.px_range(12.0, 14.0, 16.0))
+                                    .my_auto(),
+                            )
                             .child(tr!("CLEAR_QUEUE", "Clear"))
                             .id("clear-queue")
                             .on_click(|_, _, cx| {
@@ -1196,8 +1231,11 @@ impl Queue {
         let current_scroll_bottom = current_scroll_top + viewport_height;
         let max_scroll_top = scroll_handle.max_offset().y.max(px(0.0));
 
-        let item_top = px(position as f32 * QUEUE_ITEM_HEIGHT);
-        let item_bottom = item_top + px(QUEUE_ITEM_HEIGHT);
+        // Use the same height as the rendered rows so follow-current scrolls to
+        // the visible item after density changes.
+        let item_height = queue_item_height(cx);
+        let item_top = item_height * position as f32;
+        let item_bottom = item_top + item_height;
 
         let target_scroll_top = if item_top < current_scroll_top {
             item_top

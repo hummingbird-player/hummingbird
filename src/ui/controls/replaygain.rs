@@ -7,6 +7,7 @@ use crate::{
         segmented_control::segmented_control,
         tooltip::build_tooltip,
     },
+    ui::density::ui_density,
 };
 use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
@@ -48,15 +49,16 @@ impl Render for ReplayGainButton {
         let rg_mode = rg_settings.mode;
         let settings = self.settings.clone();
         let show_popover = self.show_popover;
+        let density = ui_density(cx);
 
         div()
             .relative()
             .child(
                 div()
                     .rounded(px(3.0))
-                    .w(px(25.0))
-                    .h(px(25.0))
-                    .mt(px(2.0))
+                    .w(density.px_range(23.0, 25.0, 29.0))
+                    .h(density.px_range(23.0, 25.0, 29.0))
+                    .mt(density.px(2.0, 1.0))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -77,7 +79,7 @@ impl Render for ReplayGainButton {
                     }))
                     .child(
                         icon(ADJUSTMENTS)
-                            .size(px(14.0))
+                            .size(density.px(14.0, 2.0))
                             .when(rg_mode != ReplayGainMode::Off, |this| {
                                 this.text_color(theme.playback_button_toggled)
                             }),

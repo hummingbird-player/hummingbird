@@ -36,6 +36,7 @@ use crate::{
             label::label,
             section_header::section_header,
         },
+        density::ui_density,
         theme::Theme,
     },
 };
@@ -132,6 +133,7 @@ impl LibrarySettings {
 impl Render for LibrarySettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
         let view = cx.entity().downgrade();
         let scanning = self.settings.read(cx).scanning.clone();
         let paths = scanning.paths;
@@ -206,7 +208,7 @@ impl Render for LibrarySettings {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(density.px(12.0, 3.0))
             .child(
                 section_header(tr!(
                     "SCANNING",

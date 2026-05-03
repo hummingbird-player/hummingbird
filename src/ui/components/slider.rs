@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{density::ui_density, theme::Theme};
 
 type ClickHandler = dyn FnMut(f32, &mut Window, &mut App);
 type DoubleClickHandler = dyn FnMut(&mut Window, &mut App);
@@ -83,11 +83,12 @@ impl Element for Slider {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
+        let density = ui_density(cx);
         let hitbox_bounds = bounds.extend(Edges {
-            top: px(4.0),
-            bottom: px(4.0),
+            top: density.px(4.0, 1.0),
+            bottom: density.px(4.0, 1.0),
             ..Default::default()
         });
 

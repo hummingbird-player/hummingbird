@@ -6,11 +6,12 @@ use rustc_hash::FxBuildHasher;
 
 use super::{
     OnSelectHandler,
-    table_data::{Column, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData},
+    table_data::{Column, GridContext, TableData, TableDragData},
 };
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    density::{density_row_height, ui_density},
     theme::Theme,
 };
 
@@ -96,6 +97,14 @@ where
             row.get_context_menu(window, cx, &self.context_menu_context, GridContext::Table)
         });
         let theme = cx.global::<Theme>();
+        let density = ui_density(cx);
+        let cell_block_padding = density.px(6.0, 2.0);
+        let thumb_size = density.px(22.0, 4.0);
+        let row_height = density_row_height! {
+            density.px(36.0, 6.0);
+            px(18.0) + (cell_block_padding * 2.0);
+            thumb_size + (cell_block_padding * 2.0);
+        };
         let drag_data = if is_available {
             self.row.as_ref().and_then(|row| row.get_drag_data())
         } else {
@@ -157,10 +166,10 @@ where
         if T::has_images() {
             row = row.child(
                 div()
-                    .w(px(TABLE_IMAGE_COLUMN_WIDTH))
-                    .h(px(36.0))
+                    .w(density.px_range(39.0, 47.0, 55.0))
+                    .h(row_height)
                     .text_sm()
-                    .pl(px(11.0))
+                    .pl(density.px(11.0, 2.0))
                     .flex_shrink_0()
                     .text_ellipsis()
                     //.border_r_1()
@@ -171,12 +180,12 @@ where
                     .child(
                         div()
                             .m_auto()
-                            .w(px(22.0))
-                            .h(px(22.0))
+                            .w(thumb_size)
+                            .h(thumb_size)
                             .rounded(px(3.0))
                             .bg(theme.album_art_background)
                             .when_some(self.image_path.clone(), |div, image| {
-                                div.child(img(image).w(px(22.0)).h(px(22.0)).rounded(px(3.0)))
+                                div.child(img(image).w(thumb_size).h(thumb_size).rounded(px(3.0)))
                             }),
                     ),
             );
@@ -197,10 +206,12 @@ where
                     div()
                         .when(!is_last, |this| this.w(px(base_width)))
                         .when(is_last, |this| this.flex_grow().min_w(px(base_width)))
-                        .h(px(36.0))
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .when(!T::has_images() && i == 0, |div| div.pl(px(17.0)))
+                        .h(row_height)
+                        .px(density.px(12.0, 2.0))
+                        .py(cell_block_padding)
+                        .when(!T::has_images() && i == 0, |div| {
+                            div.pl(density.px(17.0, 4.0))
+                        })
                         .when(monospace, |div| div.font_family("Roboto Mono"))
                         .text_sm()
                         .flex_shrink_0()

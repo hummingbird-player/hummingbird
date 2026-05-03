@@ -1,8 +1,14 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer, de,
+    de::{Unexpected, Visitor},
+};
 
 pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 192.0;
 pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 128.0;
 pub const MAX_GRID_MIN_ITEM_WIDTH: f32 = 384.0;
+pub const MIN_UI_DENSITY: f32 = -1.0;
+pub const DEFAULT_UI_DENSITY: f32 = 0.0;
+pub const MAX_UI_DENSITY: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +36,127 @@ pub fn clamp_grid_min_item_width(value: f32) -> f32 {
     value.clamp(MIN_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH)
 }
 
+fn normalize_ui_density(value: f32) -> f32 {
+    if !value.is_finite() {
+        return DEFAULT_UI_DENSITY;
+    }
+
+    let value = value.clamp(MIN_UI_DENSITY, MAX_UI_DENSITY);
+    /* hey, math wizard here:
+     *      round to two decimals so tiny slider float
+     *      changes don't keep readjusting density
+     */
+    let value = (value * 100.0).round() / 100.0;
+
+    if value == -0.0 { 0.0 } else { value }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct UiDensity(f32);
+
+impl UiDensity {
+    pub const COMPACT: Self = Self(MIN_UI_DENSITY);
+    pub const DEFAULT: Self = Self(DEFAULT_UI_DENSITY);
+    pub const COMFORTABLE: Self = Self(MAX_UI_DENSITY);
+
+    pub fn from_level(value: f32) -> Self {
+        Self(normalize_ui_density(value))
+    }
+
+    pub fn level(self) -> f32 {
+        self.0
+    }
+
+    pub fn slider_value(self) -> f32 {
+        self.level()
+    }
+
+    pub fn from_slider_value(value: f32) -> Self {
+        Self::from_level(value)
+    }
+
+    pub fn label(self) -> String {
+        match self.level() {
+            MIN_UI_DENSITY => "Compact".to_string(),
+            DEFAULT_UI_DENSITY => "Default".to_string(),
+            MAX_UI_DENSITY => "Comfortable".to_string(),
+            value => format!("{value:+.0}%", value = value * 100.0),
+        }
+    }
+}
+
+impl Default for UiDensity {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl Serialize for UiDensity {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let hundredths = (self.level() * 100.0).round() as i32;
+        serializer.serialize_f64(f64::from(hundredths) / 100.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for UiDensity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct UiDensityVisitor;
+
+        impl Visitor<'_> for UiDensityVisitor {
+            type Value = UiDensity;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a density number from -1.0 to 1.0")
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value.is_finite() {
+                    Ok(UiDensity::from_level(value as f32))
+                } else {
+                    Err(E::invalid_value(Unexpected::Float(value), &self))
+                }
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(UiDensity::from_level(value as f32))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(UiDensity::from_level(value as f32))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "compact" => Ok(UiDensity::COMPACT),
+                    "default" => Ok(UiDensity::DEFAULT),
+                    "comfortable" => Ok(UiDensity::COMFORTABLE),
+                    _ => Err(E::invalid_value(Unexpected::Str(value), &self)),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(UiDensityVisitor)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InterfaceSettings {
     #[serde(default)]
@@ -45,6 +172,8 @@ pub struct InterfaceSettings {
     #[serde(default = "default_grid_min_item_width")]
     pub grid_min_item_width: f32,
     #[serde(default)]
+    pub ui_density: UiDensity,
+    #[serde(default)]
     pub reduced_motion: bool,
     #[serde(default)]
     pub always_show_scrollbars: bool,
@@ -58,6 +187,16 @@ pub struct InterfaceSettings {
 impl InterfaceSettings {
     pub fn normalized_grid_min_item_width(&self) -> f32 {
         clamp_grid_min_item_width(self.grid_min_item_width)
+    }
+
+    pub fn set_ui_density_from_slider_value(&mut self, value: f32) -> bool {
+        let density = UiDensity::from_slider_value(value);
+        if self.ui_density == density {
+            return false;
+        }
+
+        self.ui_density = density;
+        true
     }
 
     pub fn effective_full_width(&self) -> bool {
@@ -85,11 +224,66 @@ impl Default for InterfaceSettings {
             two_column_library: false,
             startup_library_view: StartupLibraryView::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
+            ui_density: UiDensity::DEFAULT,
             reduced_motion: false,
             always_show_scrollbars: false,
             queue_select_on_click: true,
             #[cfg(not(target_os = "macos"))]
             swap_menu_and_nav: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn ui_density_clamps_and_quantizes() {
+        assert_eq!(UiDensity::from_level(-2.0), UiDensity::COMPACT);
+        assert_eq!(UiDensity::from_level(2.0), UiDensity::COMFORTABLE);
+        assert_eq!(UiDensity::from_level(0.124).level(), 0.12);
+        assert_eq!(UiDensity::from_level(0.125).level(), 0.13);
+        assert_eq!(UiDensity::from_level(f32::NAN), UiDensity::DEFAULT);
+    }
+
+    #[test]
+    fn ui_density_serializes_as_number() {
+        assert_eq!(
+            serde_json::to_value(UiDensity::from_level(0.42)).unwrap(),
+            json!(0.42)
+        );
+    }
+
+    #[test]
+    fn ui_density_deserializes_numbers_and_legacy_strings() {
+        assert_eq!(
+            serde_json::from_value::<UiDensity>(json!(0.42)).unwrap(),
+            UiDensity::from_level(0.42)
+        );
+        assert_eq!(
+            serde_json::from_value::<UiDensity>(json!("compact")).unwrap(),
+            UiDensity::COMPACT
+        );
+        assert_eq!(
+            serde_json::from_value::<UiDensity>(json!("default")).unwrap(),
+            UiDensity::DEFAULT
+        );
+        assert_eq!(
+            serde_json::from_value::<UiDensity>(json!("comfortable")).unwrap(),
+            UiDensity::COMFORTABLE
+        );
+    }
+
+    #[test]
+    fn interface_density_update_reports_actual_changes() {
+        let mut settings = InterfaceSettings::default();
+
+        assert!(!settings.set_ui_density_from_slider_value(0.0));
+        assert!(settings.set_ui_density_from_slider_value(-0.34));
+        assert_eq!(settings.ui_density.level(), -0.34);
+        assert!(!settings.set_ui_density_from_slider_value(-0.335));
     }
 }
