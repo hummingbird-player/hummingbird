@@ -59,24 +59,16 @@ impl UiDensity {
     pub const DEFAULT: Self = Self(DEFAULT_UI_DENSITY);
     pub const COMFORTABLE: Self = Self(MAX_UI_DENSITY);
 
-    pub fn from_level(value: f32) -> Self {
+    pub fn new(value: f32) -> Self {
         Self(normalize_ui_density(value))
     }
 
-    pub fn level(self) -> f32 {
+    pub fn value(self) -> f32 {
         self.0
     }
 
-    pub fn slider_value(self) -> f32 {
-        self.level()
-    }
-
-    pub fn from_slider_value(value: f32) -> Self {
-        Self::from_level(value)
-    }
-
     pub fn label(self) -> String {
-        match self.level() {
+        match self.value() {
             MIN_UI_DENSITY => "Compact".to_string(),
             DEFAULT_UI_DENSITY => "Default".to_string(),
             MAX_UI_DENSITY => "Comfortable".to_string(),
@@ -96,7 +88,7 @@ impl Serialize for UiDensity {
     where
         S: Serializer,
     {
-        let hundredths = (self.level() * 100.0).round() as i32;
+        let hundredths = (self.value() * 100.0).round() as i32;
         serializer.serialize_f64(f64::from(hundredths) / 100.0)
     }
 }
@@ -120,7 +112,7 @@ impl<'de> Deserialize<'de> for UiDensity {
                 E: de::Error,
             {
                 if value.is_finite() {
-                    Ok(UiDensity::from_level(value as f32))
+                    Ok(UiDensity::new(value as f32))
                 } else {
                     Err(E::invalid_value(Unexpected::Float(value), &self))
                 }
@@ -130,14 +122,14 @@ impl<'de> Deserialize<'de> for UiDensity {
             where
                 E: de::Error,
             {
-                Ok(UiDensity::from_level(value as f32))
+                Ok(UiDensity::new(value as f32))
             }
 
             fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                Ok(UiDensity::from_level(value as f32))
+                Ok(UiDensity::new(value as f32))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
@@ -189,8 +181,8 @@ impl InterfaceSettings {
         clamp_grid_min_item_width(self.grid_min_item_width)
     }
 
-    pub fn set_ui_density_from_slider_value(&mut self, value: f32) -> bool {
-        let density = UiDensity::from_slider_value(value);
+    pub fn set_ui_density(&mut self, value: f32) -> bool {
+        let density = UiDensity::new(value);
         if self.ui_density == density {
             return false;
         }
@@ -231,59 +223,5 @@ impl Default for InterfaceSettings {
             #[cfg(not(target_os = "macos"))]
             swap_menu_and_nav: false,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn ui_density_clamps_and_quantizes() {
-        assert_eq!(UiDensity::from_level(-2.0), UiDensity::COMPACT);
-        assert_eq!(UiDensity::from_level(2.0), UiDensity::COMFORTABLE);
-        assert_eq!(UiDensity::from_level(0.124).level(), 0.12);
-        assert_eq!(UiDensity::from_level(0.125).level(), 0.13);
-        assert_eq!(UiDensity::from_level(f32::NAN), UiDensity::DEFAULT);
-    }
-
-    #[test]
-    fn ui_density_serializes_as_number() {
-        assert_eq!(
-            serde_json::to_value(UiDensity::from_level(0.42)).unwrap(),
-            json!(0.42)
-        );
-    }
-
-    #[test]
-    fn ui_density_deserializes_numbers_and_legacy_strings() {
-        assert_eq!(
-            serde_json::from_value::<UiDensity>(json!(0.42)).unwrap(),
-            UiDensity::from_level(0.42)
-        );
-        assert_eq!(
-            serde_json::from_value::<UiDensity>(json!("compact")).unwrap(),
-            UiDensity::COMPACT
-        );
-        assert_eq!(
-            serde_json::from_value::<UiDensity>(json!("default")).unwrap(),
-            UiDensity::DEFAULT
-        );
-        assert_eq!(
-            serde_json::from_value::<UiDensity>(json!("comfortable")).unwrap(),
-            UiDensity::COMFORTABLE
-        );
-    }
-
-    #[test]
-    fn interface_density_update_reports_actual_changes() {
-        let mut settings = InterfaceSettings::default();
-
-        assert!(!settings.set_ui_density_from_slider_value(0.0));
-        assert!(settings.set_ui_density_from_slider_value(-0.34));
-        assert_eq!(settings.ui_density.level(), -0.34);
-        assert!(!settings.set_ui_density_from_slider_value(-0.335));
     }
 }

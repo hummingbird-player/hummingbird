@@ -499,13 +499,13 @@
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:357",
+    "definedIn": "src/ui/settings/interface.rs:354",
     "plural": false,
     "description": null
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:360",
+    "definedIn": "src/ui/settings/interface.rs:357",
     "plural": false,
     "description": null
   },
@@ -535,25 +535,25 @@
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:378",
+    "definedIn": "src/ui/settings/interface.rs:375",
     "plural": false,
     "description": null
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:381",
+    "definedIn": "src/ui/settings/interface.rs:378",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:336",
+    "definedIn": "src/ui/settings/interface.rs:333",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:339",
+    "definedIn": "src/ui/settings/interface.rs:336",
     "plural": false,
     "description": null
   },
@@ -571,13 +571,13 @@
   },
   "INTERFACE_SWAP_MENU_AND_NAV": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:402",
+    "definedIn": "src/ui/settings/interface.rs:399",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:407",
+    "definedIn": "src/ui/settings/interface.rs:404",
     "plural": false,
     "description": null
   },

@@ -314,15 +314,12 @@ impl Render for InterfaceSettings {
                             .w(px(250.0))
                             .min(MIN_UI_DENSITY)
                             .max(MAX_UI_DENSITY)
-                            .default_value(UiDensity::DEFAULT.slider_value())
-                            .value(interface.ui_density.slider_value())
-                            .format_value(|v| UiDensity::from_slider_value(v).label().into())
+                            .default_value(UiDensity::DEFAULT.value())
+                            .value(interface.ui_density.value())
+                            .format_value(|v| UiDensity::new(v).label().into())
                             .on_change(move |value, _, cx| {
                                 density_settings.update(cx, |settings, cx| {
-                                    if settings
-                                        .interface
-                                        .set_ui_density_from_slider_value(value)
-                                    {
+                                    if settings.interface.set_ui_density(value) {
                                         save_settings(cx, settings);
                                         cx.notify();
                                     }

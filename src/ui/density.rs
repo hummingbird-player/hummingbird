@@ -10,7 +10,7 @@ pub struct Density {
 impl Density {
     pub fn new(ui_density: UiDensity) -> Self {
         Self {
-            level: ui_density.level(),
+            level: ui_density.value(),
         }
     }
 
