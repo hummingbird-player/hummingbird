@@ -1,7 +1,4 @@
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer, de,
-    de::{Unexpected, Visitor},
-};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 192.0;
 pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 128.0;
@@ -36,21 +33,6 @@ pub fn clamp_grid_min_item_width(value: f32) -> f32 {
     value.clamp(MIN_GRID_MIN_ITEM_WIDTH, MAX_GRID_MIN_ITEM_WIDTH)
 }
 
-fn normalize_ui_density(value: f32) -> f32 {
-    if !value.is_finite() {
-        return DEFAULT_UI_DENSITY;
-    }
-
-    let value = value.clamp(MIN_UI_DENSITY, MAX_UI_DENSITY);
-    /* hey, math wizard here:
-     *      round to two decimals so tiny slider float
-     *      changes don't keep readjusting density
-     */
-    let value = (value * 100.0).round() / 100.0;
-
-    if value == -0.0 { 0.0 } else { value }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct UiDensity(f32);
 
@@ -60,7 +42,12 @@ impl UiDensity {
     pub const COMFORTABLE: Self = Self(MAX_UI_DENSITY);
 
     pub fn new(value: f32) -> Self {
-        Self(normalize_ui_density(value))
+        if !value.is_finite() {
+            return Self::DEFAULT;
+        }
+
+        let value = (value.clamp(MIN_UI_DENSITY, MAX_UI_DENSITY) * 100.0).round() / 100.0;
+        Self(if value == -0.0 { 0.0 } else { value })
     }
 
     pub fn value(self) -> f32 {
@@ -93,59 +80,29 @@ impl Serialize for UiDensity {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UiDensityValue {
+    Number(f32),
+    Name(String),
+}
+
 impl<'de> Deserialize<'de> for UiDensity {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct UiDensityVisitor;
-
-        impl Visitor<'_> for UiDensityVisitor {
-            type Value = UiDensity;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a density number from -1.0 to 1.0")
-            }
-
-            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if value.is_finite() {
-                    Ok(UiDensity::new(value as f32))
-                } else {
-                    Err(E::invalid_value(Unexpected::Float(value), &self))
-                }
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(UiDensity::new(value as f32))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(UiDensity::new(value as f32))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                match value {
-                    "compact" => Ok(UiDensity::COMPACT),
-                    "default" => Ok(UiDensity::DEFAULT),
-                    "comfortable" => Ok(UiDensity::COMFORTABLE),
-                    _ => Err(E::invalid_value(Unexpected::Str(value), &self)),
-                }
-            }
+        match UiDensityValue::deserialize(deserializer)? {
+            UiDensityValue::Number(value) => Ok(UiDensity::new(value)),
+            UiDensityValue::Name(value) => match value.as_str() {
+                "compact" => Ok(UiDensity::COMPACT),
+                "default" => Ok(UiDensity::DEFAULT),
+                "comfortable" => Ok(UiDensity::COMFORTABLE),
+                _ => Err(de::Error::custom(
+                    "expected density number or compact/default/comfortable",
+                )),
+            },
         }
-
-        deserializer.deserialize_any(UiDensityVisitor)
     }
 }
 
