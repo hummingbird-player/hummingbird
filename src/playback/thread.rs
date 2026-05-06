@@ -588,13 +588,7 @@ impl PlaybackThread {
             DequeueResult::Removed { new_position } => {
                 self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
-
-                // If position changed, notify
-                if let Some(current) = self.queue.current_position()
-                    && current != new_position
-                {
-                    self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
-                }
+                self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
             }
             DequeueResult::RemovedCurrent { new_path } => {
                 self.set_stop_after_current(false);
@@ -622,12 +616,7 @@ impl PlaybackThread {
             DequeueManyResult::Removed { new_position } => {
                 self.refresh_rg_auto_hint();
                 self.send_event(PlaybackEvent::QueueUpdated);
-
-                if let Some(current) = self.queue.current_position()
-                    && current != new_position
-                {
-                    self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
-                }
+                self.send_event(PlaybackEvent::QueuePositionChanged(new_position));
             }
             DequeueManyResult::RemovedCurrent { new_path } => {
                 self.set_stop_after_current(false);
