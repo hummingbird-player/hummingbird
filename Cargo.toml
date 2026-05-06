@@ -125,7 +125,7 @@ objc2-foundation = { version = "0.3", features = [
 objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-mpris-server = "0.9"
+mpris-server = "0.10"
 zbus = "5"
 
 [profile.dev]

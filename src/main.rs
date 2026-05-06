@@ -5,6 +5,7 @@
 )]
 
 use cntp_i18n::{I18N_MANAGER, tr_load};
+use gpui::set_enabled;
 #[cfg(not(target_os = "macos"))]
 use std::path::Path;
 use std::sync::LazyLock;
@@ -46,6 +47,9 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     windows::init()?;
+
+    // disable the GPUI mini profiler immediately to avoid unnecessary allocations
+    set_enabled(false);
 
     I18N_MANAGER.write().unwrap().load_source(tr_load!());
     crate::logging::init()?;
