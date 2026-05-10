@@ -263,8 +263,8 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
         })
         .detach();
 
-        let show_queue = cx.new(|_| true);
-        let show_lyrics = cx.new(|_| false);
+        let show_queue = cx.global::<Models>().show_queue.clone();
+        let show_lyrics = cx.global::<Models>().show_lyrics.clone();
         let show_about = cx.global::<Models>().show_about.clone();
         let about_focus = cx.focus_handle();
 

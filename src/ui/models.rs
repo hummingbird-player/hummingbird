@@ -88,6 +88,8 @@ pub struct Models {
     pub playlist_tracker: Entity<PlaylistInfoTransfer>,
     pub sidebar_width: Entity<Pixels>,
     pub queue_width: Entity<Pixels>,
+    pub show_queue: Entity<bool>,
+    pub show_lyrics: Entity<bool>,
     pub split_widths: std::collections::HashMap<String, Entity<Pixels>>,
     pub table_settings: Entity<std::collections::HashMap<String, TableSettings>>,
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
@@ -461,6 +463,8 @@ pub fn build_models(
             DEFAULT_QUEUE_WIDTH
         }
     });
+    let show_queue: Entity<bool> = cx.new(|_| storage_data.show_queue);
+    let show_lyrics: Entity<bool> = cx.new(|_| storage_data.show_lyrics);
     let split_widths: std::collections::HashMap<String, Entity<Pixels>> = {
         use crate::settings::storage::SPLIT_FRACTION_KEYS;
         SPLIT_FRACTION_KEYS
@@ -519,6 +523,8 @@ pub fn build_models(
         playlist_tracker,
         sidebar_width,
         queue_width,
+        show_queue,
+        show_lyrics,
         split_widths,
         table_settings,
         liked_tracks_sort_method,

@@ -51,6 +51,10 @@ fn default_lyrics_fraction() -> f32 {
     f32::from(DEFAULT_LYRICS_FRACTION)
 }
 
+fn default_show_queue() -> bool {
+    true
+}
+
 fn default_controls_left_width() -> f32 {
     f32::from(DEFAULT_CONTROLS_LEFT_WIDTH)
 }
@@ -100,6 +104,10 @@ pub struct StorageData {
     /// Width of the queue panel in pixels
     #[serde(default = "default_queue_width")]
     pub queue_width: f32,
+    #[serde(default = "default_show_queue")]
+    pub show_queue: bool,
+    #[serde(default)]
+    pub show_lyrics: bool,
     /// Legacy single split fraction – kept for backward compatibility when
     /// reading old config files.  New saves always populate `split_fractions`.
     #[serde(default = "default_split_fraction")]
@@ -148,6 +156,8 @@ impl StorageData {
             volume: *playback.volume.read(cx),
             sidebar_width: (*models.sidebar_width.read(cx)).into(),
             queue_width: (*models.queue_width.read(cx)).into(),
+            show_queue: *models.show_queue.read(cx),
+            show_lyrics: *models.show_lyrics.read(cx),
             split_fraction,
             split_fractions,
             table_settings: models.table_settings.read(cx).clone(),
@@ -205,6 +215,8 @@ impl Default for StorageData {
             volume: default_volume(),
             sidebar_width: f32::from(DEFAULT_SIDEBAR_WIDTH),
             queue_width: f32::from(DEFAULT_QUEUE_WIDTH),
+            show_queue: default_show_queue(),
+            show_lyrics: false,
             split_fraction: f32::from(DEFAULT_SPLIT_FRACTION),
             split_fractions: HashMap::new(),
             table_settings: HashMap::new(),
@@ -288,6 +300,8 @@ mod tests {
         assert_eq!(data.volume, StorageData::default().volume);
         assert_eq!(data.sidebar_width, StorageData::default().sidebar_width);
         assert_eq!(data.queue_width, StorageData::default().queue_width);
+        assert_eq!(data.show_queue, StorageData::default().show_queue);
+        assert_eq!(data.show_lyrics, StorageData::default().show_lyrics);
         assert_eq!(data.split_fraction, StorageData::default().split_fraction);
         assert_eq!(data.lyrics_fraction, StorageData::default().lyrics_fraction);
     }
@@ -305,6 +319,8 @@ mod tests {
         assert_eq!(data.volume, StorageData::default().volume);
         assert_eq!(data.sidebar_width, StorageData::default().sidebar_width);
         assert_eq!(data.queue_width, StorageData::default().queue_width);
+        assert_eq!(data.show_queue, StorageData::default().show_queue);
+        assert_eq!(data.show_lyrics, StorageData::default().show_lyrics);
         assert_eq!(data.split_fraction, StorageData::default().split_fraction);
         assert_eq!(data.lyrics_fraction, StorageData::default().lyrics_fraction);
     }
@@ -335,6 +351,8 @@ mod tests {
             volume: 0.42,
             sidebar_width: 300.0,
             queue_width: 410.0,
+            show_queue: false,
+            show_lyrics: true,
             split_fraction: 0.6,
             split_fractions: HashMap::from([
                 ("albums".to_string(), 0.55),
@@ -367,6 +385,8 @@ mod tests {
         assert_eq!(loaded.volume, expected.volume);
         assert_eq!(loaded.sidebar_width, expected.sidebar_width);
         assert_eq!(loaded.queue_width, expected.queue_width);
+        assert_eq!(loaded.show_queue, expected.show_queue);
+        assert_eq!(loaded.show_lyrics, expected.show_lyrics);
         assert_eq!(loaded.split_fraction, expected.split_fraction);
         assert_eq!(loaded.split_fractions, expected.split_fractions);
         assert_eq!(
@@ -410,6 +430,8 @@ mod tests {
             volume: 0.33,
             sidebar_width: 280.0,
             queue_width: 350.0,
+            show_queue: false,
+            show_lyrics: true,
             split_fraction: 0.55,
             split_fractions: HashMap::from([("artists".to_string(), 0.60)]),
             table_settings,
@@ -432,6 +454,8 @@ mod tests {
         assert_eq!(loaded.volume, stored.volume);
         assert_eq!(loaded.sidebar_width, stored.sidebar_width);
         assert_eq!(loaded.queue_width, stored.queue_width);
+        assert_eq!(loaded.show_queue, stored.show_queue);
+        assert_eq!(loaded.show_lyrics, stored.show_lyrics);
         assert_eq!(loaded.split_fraction, stored.split_fraction);
         assert_eq!(loaded.split_fractions, stored.split_fractions);
         assert_eq!(
