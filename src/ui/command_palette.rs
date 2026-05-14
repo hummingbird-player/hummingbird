@@ -33,6 +33,7 @@ tr_noop!("ACTION_SHUFFLE_ALL", "Shuffle All Tracks");
 tr_noop!("ACTION_STOP_AFTER_CURRENT", "Stop After Current");
 tr_noop!("ACTION_FORCESCAN", "Rescan Entire Library");
 tr_noop!("ACTION_UNDO_QUEUE", "Undo");
+tr_noop!("ACTION_OPEN_THEME_FOLDER", "Open Theme Folder");
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "PascalCase")]

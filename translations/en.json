@@ -30,6 +30,7 @@
   "ACTION_IMPORT_PLAYLIST": "Import M3U Playlist",
   "ACTION_NEXT": "Next Track",
   "ACTION_OPEN_LOG": "Open Log",
+  "ACTION_OPEN_THEME_FOLDER": "Open Theme Folder",
   "ACTION_PLAYPAUSE": "Pause/Resume Current Track",
   "ACTION_PREVIOUS": "Previous Track",
   "ACTION_QUIT": "Quit",
@@ -119,6 +120,7 @@
   "NEW_PLAYLIST": "New Playlist",
   "NEXT_TRACK": "Next Track",
   "NO_LYRICS": "No lyrics",
+  "OPEN_THEMES_FOLDER": "Open Themes Folder",
   "PALETTE_SHOW_MORE": {
     "one": "Show {{count}} more...",
     "other": "Show {{count}} more..."

@@ -16,9 +16,14 @@ use crate::{
         save_settings,
     },
     ui::components::{
-        checkbox::checkbox, dropdown::dropdown, label::label, labeled_slider::labeled_slider,
+        button::{ButtonIntent, ButtonStyle, button},
+        checkbox::checkbox,
+        dropdown::dropdown,
+        label::label,
+        labeled_slider::labeled_slider,
         section_header::section_header,
     },
+    ui::global_actions::OpenThemeFolder,
     ui::theme::{Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path},
 };
 
@@ -207,7 +212,20 @@ impl Render for InterfaceSettings {
                         themes folder. Changes apply immediately."
                     ))
                     .w_full()
-                    .child(theme_dropdown),
+                    .child(
+                        div().flex().flex_col().gap(px(8.0)).child(theme_dropdown).child(
+                            button()
+                                .style(ButtonStyle::Regular)
+                                .intent(ButtonIntent::Secondary)
+                                .child(tr!("OPEN_THEMES_FOLDER", "Open Themes Folder"))
+                                .id("open-themes-folder-button")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.defer(move |cx| {
+                                        cx.dispatch_action(&OpenThemeFolder);
+                                    });
+                                })),
+                        ),
+                    ),
             )
             .child(
                 label(

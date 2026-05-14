@@ -19,6 +19,7 @@ use crate::{
 use super::models::{Models, PlaybackInfo};
 
 actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
+actions!(hummingbird, [OpenThemeFolder]);
 #[cfg(feature = "update")]
 actions!(hummingbird, [CheckForUpdates]);
 actions!(
@@ -54,6 +55,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(scan);
     cx.on_action(open_log);
     cx.on_action(copy_troubleshooting_info);
+    cx.on_action(open_theme_folder);
 
     debug!("actions: {:?}", cx.all_action_names());
     debug!("action available: {:?}", cx.is_action_available(&Quit));
@@ -332,4 +334,10 @@ fn undo(_: &Undo, cx: &mut App) {
 fn stop_after_current(_: &StopAfterCurrent, cx: &mut App) {
     let interface = cx.global::<PlaybackInterface>();
     interface.toggle_stop_after_current();
+}
+
+fn open_theme_folder(_: &OpenThemeFolder, cx: &mut App) {
+    let themes_dir = crate::paths::data_dir().join(crate::ui::theme::THEMES_DIR_NAME);
+    let _ = std::fs::create_dir_all(&themes_dir);
+    cx.open_with_system(&themes_dir);
 }

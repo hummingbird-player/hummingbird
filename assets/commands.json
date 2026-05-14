@@ -84,6 +84,12 @@
       "category": "Queue",
       "name_key": "ACTION_UNDO_QUEUE",
       "action": "queue::Undo"
+    },
+    {
+      "id": "hummingbird::open_theme_folder",
+      "category": "Hummingbird",
+      "name_key": "ACTION_OPEN_THEME_FOLDER",
+      "action": "hummingbird::OpenThemeFolder"
     }
   ]
 }
