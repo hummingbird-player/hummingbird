@@ -72,6 +72,7 @@
   "CREATE": "Create",
   "CREATE_PLAYLIST": "Create new playlist '{{name}}'",
   "DELETE_PLAYLIST": "Delete playlist",
+  "DELETE_PLAYLIST_CONFIRM": "Click again to delete",
   "DISCORD": "Join us on Discord",
   "DROPDOWN_PLACEHOLDER": "Select...",
   "EDIT": "Edit",

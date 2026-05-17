@@ -50,6 +50,7 @@ pub struct PlaylistList {
     new_playlist_input: Entity<Textbox>,
     rename_popover_playlist: Option<i64>,
     rename_playlist_input: Entity<Textbox>,
+    pending_delete_playlist: Option<i64>,
     drag_drop_manager: Entity<DragDropListManager>,
 }
 
@@ -110,6 +111,7 @@ impl PlaylistList {
                 new_playlist_input,
                 rename_popover_playlist: None,
                 rename_playlist_input,
+                pending_delete_playlist: None,
                 drag_drop_manager,
             }
         })
@@ -164,6 +166,34 @@ impl PlaylistList {
         self.rename_popover_playlist = None;
         cx.notify();
     }
+
+    fn clear_pending_delete_playlist(&mut self, cx: &mut Context<Self>) {
+        if self.pending_delete_playlist.take().is_some() {
+            cx.notify();
+        }
+    }
+}
+
+fn delete_playlist_and_refresh(pl_id: i64, cx: &mut App) {
+    if let Err(err) = cx.delete_playlist(pl_id) {
+        error!("Failed to delete playlist: {}", err);
+        return;
+    }
+
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+    playlist_tracker.update(cx, |_, cx| cx.emit(PlaylistEvent::PlaylistDeleted(pl_id)));
+
+    let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
+    playlist_sort_methods.update(cx, |map, _| {
+        map.remove(&pl_id);
+    });
+
+    let switcher_model = cx.global::<Models>().switcher_model.clone();
+    switcher_model.update(cx, |history, cx| {
+        history.retain(|v| *v != ViewSwitchMessage::Playlist(pl_id));
+        cx.emit(ViewSwitchMessage::Refresh);
+        cx.notify();
+    })
 }
 
 impl Render for PlaylistList {
@@ -437,6 +467,7 @@ impl Render for PlaylistList {
             let rename_open = self.rename_popover_playlist == Some(pl_id);
             let weak_self = weak_entity.clone();
             let weak_self2 = weak_entity.clone();
+            let weak_context = weak_entity.clone();
             let name = playlist.name.0.clone();
 
             main = main.child(
@@ -444,136 +475,158 @@ impl Render for PlaylistList {
                     .relative()
                     .when(item_state.is_being_dragged, |this| this.opacity(0.5))
                     .child(
-                        context(("playlist", pl_id as usize)).with(item).child(
-                            div().bg(theme.elevated_background).child(
-                                menu()
-                                    .item(menu_item(
-                                        "playlist_play",
-                                        Some(PLAY),
-                                        tr!("PLAY"),
-                                        move |_, _, cx| {
-                                            let tracks = find_playlist_tracks(cx, pl_id);
-                                            let interface = cx.global::<PlaybackInterface>();
-                                            interface.replace_queue(tracks);
-                                        },
-                                    ))
-                                    .item(menu_item(
-                                        "playlist_play_next",
-                                        None::<&'static str>,
-                                        tr!("PLAY_NEXT"),
-                                        move |_, _, cx| {
-                                            let tracks = find_playlist_tracks(cx, pl_id);
-                                            let queue_position =
-                                                cx.global::<Models>().queue.read(cx).position;
-                                            let interface = cx.global::<PlaybackInterface>();
-                                            interface.insert_list_at(tracks, queue_position + 1);
-                                        },
-                                    ))
-                                    .item(menu_item(
-                                        "playlist_shuffle",
-                                        Some(SHUFFLE),
-                                        tr!("SHUFFLE"),
-                                        move |_, _, cx| {
-                                            let tracks = find_playlist_tracks(cx, pl_id);
-                                            let interface = cx.global::<PlaybackInterface>();
-                                            if !(*cx.global::<PlaybackInfo>().shuffling.read(cx)) {
-                                                interface.toggle_shuffle();
-                                            }
-                                            interface.replace_queue(tracks);
-                                        },
-                                    ))
-                                    .item(menu_item(
-                                        "playlist_add_to_queue",
-                                        Some(PLUS),
-                                        tr!("ADD_TO_QUEUE"),
-                                        move |_, _, cx| {
-                                            let tracks = find_playlist_tracks(cx, pl_id);
-                                            let interface = cx.global::<PlaybackInterface>();
-                                            interface.queue_list(tracks);
-                                        },
-                                    ))
-                                    .item(menu_separator())
-                                    .when(!is_system_playlist, |menu| {
-                                        menu.item(menu_item(
-                                            "rename_playlist",
-                                            Some(PENCIL),
-                                            tr!("RENAME_PLAYLIST", "Rename playlist"),
-                                            move |_, window, cx| {
-                                                if let Some(entity) = weak_self.upgrade() {
-                                                    let name = name.clone();
-                                                    entity.update(cx, move |this, cx| {
-                                                        this.rename_popover_playlist = Some(pl_id);
-                                                        this.rename_playlist_input
-                                                            .read(cx)
-                                                            .focus_handle()
-                                                            .focus(window, cx);
+                        context(("playlist", pl_id as usize))
+                            .with(item)
+                            .on_close(move |_, cx| {
+                                if let Some(entity) = weak_context.upgrade() {
+                                    entity.update(cx, |this, cx| {
+                                        this.clear_pending_delete_playlist(cx);
+                                    });
+                                }
+                            })
+                            .child(
+                                div().bg(theme.elevated_background).child(
+                                    menu()
+                                        .item(menu_item(
+                                            "playlist_play",
+                                            Some(PLAY),
+                                            tr!("PLAY"),
+                                            move |_, _, cx| {
+                                                let tracks = find_playlist_tracks(cx, pl_id);
+                                                let interface = cx.global::<PlaybackInterface>();
+                                                interface.replace_queue(tracks);
+                                            },
+                                        ))
+                                        .item(menu_item(
+                                            "playlist_play_next",
+                                            None::<&'static str>,
+                                            tr!("PLAY_NEXT"),
+                                            move |_, _, cx| {
+                                                let tracks = find_playlist_tracks(cx, pl_id);
+                                                let queue_position =
+                                                    cx.global::<Models>().queue.read(cx).position;
+                                                let interface = cx.global::<PlaybackInterface>();
+                                                interface
+                                                    .insert_list_at(tracks, queue_position + 1);
+                                            },
+                                        ))
+                                        .item(menu_item(
+                                            "playlist_shuffle",
+                                            Some(SHUFFLE),
+                                            tr!("SHUFFLE"),
+                                            move |_, _, cx| {
+                                                let tracks = find_playlist_tracks(cx, pl_id);
+                                                let interface = cx.global::<PlaybackInterface>();
+                                                if !(*cx
+                                                    .global::<PlaybackInfo>()
+                                                    .shuffling
+                                                    .read(cx))
+                                                {
+                                                    interface.toggle_shuffle();
+                                                }
+                                                interface.replace_queue(tracks);
+                                            },
+                                        ))
+                                        .item(menu_item(
+                                            "playlist_add_to_queue",
+                                            Some(PLUS),
+                                            tr!("ADD_TO_QUEUE"),
+                                            move |_, _, cx| {
+                                                let tracks = find_playlist_tracks(cx, pl_id);
+                                                let interface = cx.global::<PlaybackInterface>();
+                                                interface.queue_list(tracks);
+                                            },
+                                        ))
+                                        .item(menu_separator())
+                                        .when(!is_system_playlist, |menu| {
+                                            menu.item(menu_item(
+                                                "rename_playlist",
+                                                Some(PENCIL),
+                                                tr!("RENAME_PLAYLIST", "Rename playlist"),
+                                                move |_, window, cx| {
+                                                    if let Some(entity) = weak_self.upgrade() {
+                                                        let name = name.clone();
+                                                        entity.update(cx, move |this, cx| {
+                                                            this.rename_popover_playlist =
+                                                                Some(pl_id);
+                                                            this.rename_playlist_input
+                                                                .read(cx)
+                                                                .focus_handle()
+                                                                .focus(window, cx);
 
-                                                        this.rename_playlist_input.update(
-                                                            cx,
-                                                            move |input, cx| {
-                                                                input.set_value(cx, name);
-                                                            },
-                                                        );
+                                                            this.rename_playlist_input.update(
+                                                                cx,
+                                                                move |input, cx| {
+                                                                    input.set_value(cx, name);
+                                                                },
+                                                            );
 
-                                                        cx.notify();
-                                                    });
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                },
+                                            ))
+                                        })
+                                        .item(menu_item(
+                                            "export_playlist",
+                                            Some(FILE_EXPORT),
+                                            tr!("EXPORT_PLAYLIST", "Export to M3U"),
+                                            {
+                                                move |_, _, cx| {
+                                                    // TODO: when toasts are added show this error
+                                                    let _ =
+                                                        export_playlist(cx, pl_id, &playlist_label);
                                                 }
                                             },
                                         ))
-                                    })
-                                    .item(menu_item(
-                                        "export_playlist",
-                                        Some(FILE_EXPORT),
-                                        tr!("EXPORT_PLAYLIST", "Export to M3U"),
-                                        {
-                                            move |_, _, cx| {
-                                                // TODO: when toasts are added show this error
-                                                let _ = export_playlist(cx, pl_id, &playlist_label);
+                                        .when(!is_system_playlist, |menu| {
+                                            if self.pending_delete_playlist == Some(pl_id) {
+                                                let weak_for_delete = weak_entity.clone();
+                                                menu.item(
+                                                    menu_item(
+                                                        "delete_playlist_confirm",
+                                                        Some(CROSS),
+                                                        tr!(
+                                                            "DELETE_PLAYLIST_CONFIRM",
+                                                            "Click again to delete"
+                                                        ),
+                                                        move |_, _, cx| {
+                                                            if let Some(entity) =
+                                                                weak_for_delete.upgrade()
+                                                            {
+                                                                entity.update(cx, |this, cx| {
+                                                                    this.clear_pending_delete_playlist(cx);
+                                                                });
+                                                            }
+                                                            delete_playlist_and_refresh(pl_id, cx);
+                                                        },
+                                                    )
+                                                    .text_color(theme.status_error)
+                                                    .icon_color(theme.status_error),
+                                                )
+                                            } else {
+                                                let weak_for_confirm = weak_entity.clone();
+                                                menu.item(menu_item(
+                                                    "delete_playlist",
+                                                    Some(CROSS),
+                                                    tr!("DELETE_PLAYLIST", "Delete playlist"),
+                                                    move |_, _, cx| {
+                                                        if let Some(entity) =
+                                                            weak_for_confirm.upgrade()
+                                                        {
+                                                            entity.update(cx, |this, cx| {
+                                                                this.pending_delete_playlist =
+                                                                    Some(pl_id);
+                                                                cx.notify();
+                                                            });
+                                                        }
+                                                        cx.stop_propagation();
+                                                    },
+                                                ))
                                             }
-                                        },
-                                    ))
-                                    .when(!is_system_playlist, |menu| {
-                                        menu.item(menu_item(
-                                            "delete_playlist",
-                                            Some(CROSS),
-                                            tr!("DELETE_PLAYLIST", "Delete playlist"),
-                                            move |_, _, cx| {
-                                                if let Err(err) = cx.delete_playlist(pl_id) {
-                                                    error!("Failed to delete playlist: {}", err);
-                                                }
-
-                                                let playlist_tracker =
-                                                    cx.global::<Models>().playlist_tracker.clone();
-
-                                                playlist_tracker.update(cx, |_, cx| {
-                                                    cx.emit(PlaylistEvent::PlaylistDeleted(pl_id))
-                                                });
-
-                                                let playlist_sort_methods = cx
-                                                    .global::<Models>()
-                                                    .playlist_sort_methods
-                                                    .clone();
-                                                playlist_sort_methods.update(cx, |map, _| {
-                                                    map.remove(&pl_id);
-                                                });
-
-                                                let switcher_model =
-                                                    cx.global::<Models>().switcher_model.clone();
-
-                                                switcher_model.update(cx, |history, cx| {
-                                                    history.retain(|v| {
-                                                        *v != ViewSwitchMessage::Playlist(pl_id)
-                                                    });
-
-                                                    cx.emit(ViewSwitchMessage::Refresh);
-
-                                                    cx.notify();
-                                                })
-                                            },
-                                        ))
-                                    }),
+                                        }),
+                                ),
                             ),
-                        ),
                     )
                     .when(rename_open && !is_system_playlist, |this| {
                         this.child(

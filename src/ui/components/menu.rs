@@ -33,6 +33,7 @@ struct BaseMenuItem {
     disabled: bool,
     non_interactive: bool,
     tooltip: Option<SharedString>,
+    text_color: Option<Rgba>,
 }
 
 impl BaseMenuItem {
@@ -48,6 +49,7 @@ impl BaseMenuItem {
             disabled: false,
             non_interactive: false,
             tooltip: None,
+            text_color: None,
         }
     }
 
@@ -66,6 +68,11 @@ impl BaseMenuItem {
         self
     }
 
+    pub fn text_color(mut self, color: Rgba) -> Self {
+        self.text_color = Some(color);
+        self
+    }
+
     pub fn render(
         self,
         theme: &Theme,
@@ -73,6 +80,11 @@ impl BaseMenuItem {
         right_element: Option<AnyElement>,
     ) -> impl IntoElement {
         let has_tooltip = self.tooltip.is_some();
+        let text_color = if self.disabled {
+            Some(theme.text_disabled)
+        } else {
+            self.text_color
+        };
         let base = div()
             .id(self.id)
             .rounded(px(4.0))
@@ -92,7 +104,7 @@ impl BaseMenuItem {
                 div()
                     .child(self.name)
                     .flex_1()
-                    .when(self.disabled, |this| this.text_color(theme.text_disabled)),
+                    .when_some(text_color, |this, color| this.text_color(color)),
             )
             .when_some(right_element, |this, el| {
                 this.child(div().ml(px(12.0)).child(el))
@@ -122,6 +134,7 @@ impl BaseMenuItem {
 pub struct MenuItem {
     base: BaseMenuItem,
     icon_path: Option<SharedString>,
+    icon_color: Option<Rgba>,
     never_icon: bool,
 }
 
@@ -135,12 +148,23 @@ impl MenuItem {
         Self {
             base: BaseMenuItem::new(id, text, func),
             icon_path: icon.map(|v| v.into()),
+            icon_color: None,
             never_icon: false,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
+        self
+    }
+
+    pub fn text_color(mut self, color: Rgba) -> Self {
+        self.base = self.base.text_color(color);
+        self
+    }
+
+    pub fn icon_color(mut self, color: Rgba) -> Self {
+        self.icon_color = Some(color);
         self
     }
 
@@ -157,16 +181,13 @@ impl RenderOnce for MenuItem {
         if self.never_icon {
             self.base.render(theme, div(), None)
         } else {
+            let icon_color = if self.base.disabled {
+                theme.text_disabled
+            } else {
+                self.icon_color.unwrap_or(theme.text_secondary)
+            };
             let icon = icon_container().when_some(self.icon_path, |this, icon_path| {
-                this.child(
-                    icon(icon_path)
-                        .size(px(18.0))
-                        .text_color(if self.base.disabled {
-                            theme.text_disabled
-                        } else {
-                            theme.text_secondary
-                        }),
-                )
+                this.child(icon(icon_path).size(px(18.0)).text_color(icon_color))
             });
 
             self.base.render(theme, icon, None)
