@@ -226,6 +226,7 @@ impl Render for ServicesIndicator {
             is_available(),
         );
         let indicator = indicator_icon(&services);
+        let show_popover = self.show_popover;
         let weak_self = cx.entity().downgrade();
 
         div()
@@ -234,16 +235,18 @@ impl Render for ServicesIndicator {
             .child(
                 nav_button("services-indicator", indicator)
                     .tooltip(build_tooltip(tr!("SERVICES")))
-                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                        window.prevent_default();
-                        cx.stop_propagation();
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_popover = !this.show_popover;
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+
+                            this.show_popover = !show_popover;
+                            cx.notify();
+                        }),
+                    ),
             )
-            .when(self.show_popover, |this| {
+            .when(show_popover, |this| {
                 let dismiss = weak_self.clone();
                 let close_out = weak_self.clone();
 

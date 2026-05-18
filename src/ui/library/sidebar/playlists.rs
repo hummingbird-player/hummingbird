@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use cntp_i18n::{tr, trn};
 use gpui::{
-    App, AppContext, Context, DragMoveEvent, Entity, FontWeight, InteractiveElement, ParentElement,
-    Render, ScrollHandle, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder, px, rgba,
+    App, AppContext, Context, DragMoveEvent, Entity, FontWeight, InteractiveElement, MouseButton,
+    ParentElement, Render, ScrollHandle, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, div, prelude::FluentBuilder, px, rgba,
 };
 use tracing::error;
 
@@ -694,24 +694,30 @@ impl Render for PlaylistList {
                     sidebar_item("new-playlist-btn")
                         .icon(PLUS)
                         .child(tr!("NEW_PLAYLIST", "New Playlist"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.popover_open = !this.popover_open;
-                            if this.popover_open {
-                                this.new_playlist_input
-                                    .read(cx)
-                                    .focus_handle()
-                                    .focus(window, cx);
-                            }
-                            cx.notify();
-                        })),
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+
+                                this.popover_open = !popover_open;
+                                if !popover_open {
+                                    this.new_playlist_input
+                                        .read(cx)
+                                        .focus_handle()
+                                        .focus(window, cx);
+                                }
+                                cx.notify();
+                            }),
+                        ),
                 )
                 .when(popover_open, |this| {
+                    let weak_self_for_dismiss = weak_self.clone();
                     this.child(
                         popover()
                             .position(PopoverPosition::RightTop)
                             .edge_offset(px(12.0))
                             .on_dismiss(move |_, cx| {
-                                if let Some(entity) = weak_self.upgrade() {
+                                if let Some(entity) = weak_self_for_dismiss.upgrade() {
                                     entity.update(cx, |this, cx| this.close_popover(cx));
                                 }
                             })

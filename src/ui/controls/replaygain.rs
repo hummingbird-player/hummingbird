@@ -67,14 +67,16 @@ impl Render for ReplayGainButton {
                     .bg(theme.playback_button)
                     .hover(|this| this.bg(theme.playback_button_hover))
                     .active(|this| this.bg(theme.playback_button_active))
-                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                        cx.stop_propagation();
-                        window.prevent_default();
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_popover = !this.show_popover;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+
+                            this.show_popover = !show_popover;
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         icon(ADJUSTMENTS)
                             .size(px(14.0))

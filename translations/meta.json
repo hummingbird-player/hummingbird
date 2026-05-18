@@ -295,7 +295,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:738",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:744",
     "plural": false,
     "description": null
   },
@@ -403,7 +403,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:747",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:753",
     "plural": false,
     "description": null
   },
@@ -853,13 +853,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:408",
+    "definedIn": "src/ui/library/release_view.rs:412",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:423",
+    "definedIn": "src/ui/library/release_view.rs:427",
     "plural": false,
     "description": null
   },
@@ -949,37 +949,37 @@
   },
   "RG_ALBUM": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:134",
+    "definedIn": "src/ui/controls/replaygain.rs:136",
     "plural": false,
     "description": null
   },
   "RG_AUTO": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:126",
+    "definedIn": "src/ui/controls/replaygain.rs:128",
     "plural": false,
     "description": null
   },
   "RG_MODE_LABEL": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:117",
+    "definedIn": "src/ui/controls/replaygain.rs:119",
     "plural": false,
     "description": null
   },
   "RG_OFF": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:123",
+    "definedIn": "src/ui/controls/replaygain.rs:125",
     "plural": false,
     "description": null
   },
   "RG_PREAMP_LABEL": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:157",
+    "definedIn": "src/ui/controls/replaygain.rs:159",
     "plural": false,
     "description": null
   },
   "RG_TRACK": {
     "context": "replaygain.rs",
-    "definedIn": "src/ui/controls/replaygain.rs:130",
+    "definedIn": "src/ui/controls/replaygain.rs:132",
     "plural": false,
     "description": null
   },
@@ -1249,7 +1249,7 @@
   },
   "SERVICES_NO_ACTIVE": {
     "context": "services.rs",
-    "definedIn": "src/ui/header/services.rs:257",
+    "definedIn": "src/ui/header/services.rs:260",
     "plural": false,
     "description": null
   },

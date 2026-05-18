@@ -74,12 +74,11 @@ impl Render for MenuBar {
                                     cx.stop_propagation();
                                     window.prevent_default();
 
-                                    if this.open_menu == Some(menu_index) {
+                                    if is_open {
                                         this.open_menu = None;
                                     } else {
                                         this.open_menu = Some(menu_index);
                                     }
-
                                     cx.notify();
                                 }),
                             );

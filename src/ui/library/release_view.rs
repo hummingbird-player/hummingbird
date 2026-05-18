@@ -326,6 +326,8 @@ impl ReleaseView {
     }
 
     fn render_menu_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let menu_open = self.menu_open;
+
         div()
             .relative()
             .flex()
@@ -334,16 +336,18 @@ impl ReleaseView {
                     .id("release-menu-button")
                     .size(ButtonSize::Large)
                     .flex_none()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.menu_open = !this.menu_open;
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+
+                            this.menu_open = !menu_open;
+                            cx.notify();
+                        }),
+                    )
                     .child(icon(DOTS_VERTICAL).size(px(16.0)).my_auto()),
             )
-            .when(self.menu_open, |this| {
+            .when(menu_open, |this| {
                 let album = Rc::new((*self.album).clone());
                 let weak_self = cx.entity().downgrade();
                 let close = {

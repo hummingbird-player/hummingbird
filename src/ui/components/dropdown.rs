@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use cntp_i18n::tr;
 use gpui::{
-    Anchor, App, Div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions, anchored,
-    deferred, div, prelude::FluentBuilder, px,
+    Anchor, App, Div, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions,
+    anchored, deferred, div, prelude::FluentBuilder, px,
 };
 use smallvec::SmallVec;
 
@@ -112,7 +112,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 this.bg(theme.button_secondary_active)
                     .border_color(theme.button_secondary_border_active)
             })
-            .on_click({
+            .on_mouse_down(MouseButton::Left, {
+                let was_open = *is_open.read(cx);
                 let is_open = is_open.clone();
                 let highlighted = highlighted_index.clone();
                 let focus_handle = focus_handle.clone();
@@ -122,12 +123,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                     .and_then(|v| self.options.iter().position(|(x, _)| x == v));
 
                 move |_, window, cx| {
-                    is_open.update(cx, |v, cx| {
-                        *v = !*v;
-                        cx.notify();
-                    });
-                    highlighted.write(cx, selected_index);
-                    focus_handle.focus(window, cx);
+                    cx.stop_propagation();
+                    window.prevent_default();
+
+                    is_open.write(cx, !was_open);
+                    if !was_open {
+                        highlighted.write(cx, selected_index);
+                        focus_handle.focus(window, cx);
+                    }
                 }
             });
 
