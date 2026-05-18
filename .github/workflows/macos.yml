@@ -21,7 +21,7 @@ jobs:
       ARCH: "${{ endsWith(matrix.os, 'intel') && 'intel' || 'arm' }}"
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -123,13 +123,12 @@ jobs:
           path: |
             hummingbird-${{ env.ARCH }}.dmg
             hummingbird-${{ env.ARCH }}.dmg.minisig
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            hummingbird-${{ env.ARCH }}.zip
-            hummingbird-${{ env.ARCH }}.zip.minisig
-            hummingbird-${{ env.ARCH }}.dmg
+      - name: Upload release assets to Forgejo
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          ./.woodpecker/scripts/upload-release.sh \
+            hummingbird-${{ env.ARCH }}.zip \
+            hummingbird-${{ env.ARCH }}.zip.minisig \
+            hummingbird-${{ env.ARCH }}.dmg \
             hummingbird-${{ env.ARCH }}.dmg.minisig
-          prerelease: true
-          name: latest
-          tag_name: latest

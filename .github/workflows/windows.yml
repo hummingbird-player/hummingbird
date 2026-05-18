@@ -21,7 +21,7 @@ jobs:
       ARCH: "${{ endsWith(matrix.os, 'arm') && 'aarch64' || 'x86_64' }}"
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -83,13 +83,13 @@ jobs:
           path: |
             package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe
             package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe.minisig
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe
-            target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe.minisig
-            package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe
+      - name: Upload release assets to Forgejo
+        shell: pwsh
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          .\.woodpecker\scripts\upload-release.ps1 `
+            target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe `
+            target/bundle/${{ env.TARGET_TRIPLE }}/release/Hummingbird-${{ env.ARCH }}.exe.minisig `
+            package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe `
             package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe.minisig
-          prerelease: true
-          name: latest
-          tag_name: latest
