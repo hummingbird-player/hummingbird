@@ -21,6 +21,8 @@ pub struct ScanSettings {
     pub paths: Vec<Utf8PathBuf>,
     #[serde(default)]
     pub missing_folder_policy: MissingFolderPolicy,
+    #[serde(default)]
+    pub slow_disk_mode: bool,
 }
 
 impl Default for ScanSettings {
@@ -28,6 +30,7 @@ impl Default for ScanSettings {
         Self {
             paths: retrieve_default_paths(),
             missing_folder_policy: MissingFolderPolicy::default(),
+            slow_disk_mode: false,
         }
     }
 }

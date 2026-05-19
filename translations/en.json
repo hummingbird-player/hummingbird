@@ -195,6 +195,8 @@
   "SCANNING_RESCAN_REQUIRED": "Your changes will be applied on your next scan.",
   "SCANNING_RESCAN_REQUIRED_TITLE": "Rescan Required",
   "SCANNING_SELECT_FOLDERS": "Select folders to scan...",
+  "SCANNING_SLOW_DISK": "Slow Disk Mode",
+  "SCANNING_SLOW_DISK_SUBTEXT": "Reduce scanning threads to avoid thrashing on hard drives. Recommended when your music library is on a slow disk.",
   "SCANNING_SUBTITLE": "Changes apply on your next scan. Duplicate folders are ignored.",
   "SCAN_COMPLETE_WATCHING": "Watching for updates",
   "SCAN_PROGRESS_DISCOVERING": "Scanning {{current}} files...",

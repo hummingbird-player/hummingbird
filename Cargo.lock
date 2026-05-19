@@ -3539,6 +3539,7 @@ dependencies = [
  "infer",
  "intx",
  "itertools 0.14.0",
+ "libc",
  "lofty",
  "md5",
  "minisign-verify",

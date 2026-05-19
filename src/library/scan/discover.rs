@@ -450,12 +450,9 @@ pub fn discover(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        settings::scan::MissingFolderPolicy,
-        test_support::{
-            TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata,
-            register_test_media_providers, track_metadata,
-        },
+    use crate::test_support::{
+        TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata,
+        register_test_media_providers, track_metadata,
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc;
@@ -463,7 +460,7 @@ mod tests {
     fn scan_settings(root: Utf8PathBuf) -> ScanSettings {
         ScanSettings {
             paths: vec![root],
-            missing_folder_policy: MissingFolderPolicy::default(),
+            ..Default::default()
         }
     }
 

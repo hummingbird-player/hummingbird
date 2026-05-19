@@ -31,6 +31,7 @@ use crate::{
         components::{
             button::{ButtonIntent, ButtonStyle, button},
             callout::callout,
+            checkbox::checkbox,
             dropdown::dropdown,
             icons::{ALERT_CIRCLE, CIRCLE_PLUS, FOLDER_SEARCH, TRASH, icon},
             label::label,
@@ -273,6 +274,28 @@ impl Render for LibrarySettings {
                                 cx.notify();
                             });
                         })
+                }),
+            )
+            .child(
+                label(
+                    "slow-disk-mode",
+                    tr!("SCANNING_SLOW_DISK", "Slow Disk Mode"),
+                )
+                .subtext(tr!(
+                    "SCANNING_SLOW_DISK_SUBTEXT",
+                    "Reduce scanning threads to avoid thrashing on hard drives. Recommended when your music library is on a slow disk."
+                ))
+                .w_full()
+                .child(checkbox("slow-disk-mode-checkbox", scanning.slow_disk_mode))
+                .on_click({
+                    let settings_c = self.settings.clone();
+                    move |_, _, cx| {
+                        settings_c.update(cx, |s, cx| {
+                            s.scanning.slow_disk_mode = !s.scanning.slow_disk_mode;
+                            save_settings(cx, s);
+                            cx.notify();
+                        });
+                    }
                 }),
             )
             .when(self.scanning_modified, |this| {

@@ -139,7 +139,11 @@ pub fn read_metadata_for_path(
     art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
 ) -> Option<FileInformation> {
     if let Ok(mut metadata) = scan_path(path) {
+        // Only scan for directory-level album art when the DB writer will use it
+        // (track 1 or unknown, disc 1 or unknown; see database.rs insert_track guard).
         if metadata.2.is_none()
+            && metadata.0.track_current.is_none_or(|t| t == 1 || t == 0)
+            && metadata.0.disc_current.is_none_or(|d| d == 1 || d == 0)
             && let Some(art) = scan_path_for_album_art(path, art_cache)
         {
             metadata.2 = Some(art.to_vec().into_boxed_slice());

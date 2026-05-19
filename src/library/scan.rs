@@ -1,6 +1,7 @@
 pub(crate) mod database;
 mod decode;
 mod discover;
+mod disk;
 mod record;
 
 use std::{
@@ -234,6 +235,38 @@ async fn resolve_missing_folder_action(
     }
 }
 
+/// Shared metadata reader loop used by both normal and slow-disk scanning modes.
+/// The caller provides a `recv` closure that abstracts over how paths are received
+/// (direct receiver vs. mutex-guarded shared receiver).
+fn run_metadata_reader(
+    mut recv: impl FnMut() -> Option<(Utf8PathBuf, SystemTime)>,
+    meta_tx: Sender<(Utf8PathBuf, SystemTime, FileInformation)>,
+    decode_fail_tx: Sender<(Utf8PathBuf, SystemTime)>,
+    cancel_flag: Arc<AtomicBool>,
+) {
+    let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
+    loop {
+        if cancel_flag.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let Some((path, timestamp)) = recv() else {
+            break;
+        };
+
+        if let Some(info) = read_metadata_for_path(&path, &mut art_cache) {
+            if meta_tx.blocking_send((path, timestamp, info)).is_err() {
+                break;
+            }
+        } else {
+            warn!("Could not read metadata for file: {:?}", path);
+            if decode_fail_tx.blocking_send((path, timestamp)).is_err() {
+                break;
+            }
+        }
+    }
+}
+
 async fn run_scanner(
     pool: SqlitePool,
     mut scan_settings: ScanSettings,
@@ -445,85 +478,159 @@ async fn run_scanner(
             .clamp(2, 8)
             - 1;
 
-        // we run the discovery and metadata reading stages in separate tasks, that way they can
-        // run concurrently and no step in the scanning process blocks the other
-        let (path_tx, path_rx) = tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
+        let meta_capacity = if scan_settings.slow_disk_mode {
+            64
+        } else {
+            num_workers * 8
+        };
         let (meta_tx, mut meta_rx) =
-            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, FileInformation)>(
-                num_workers * 8,
-            );
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, FileInformation)>(meta_capacity);
         // Channel for files that failed metadata decoding - these should be added to scan_record
         // immediately since rescanning won't help until the file changes
         let (decode_fail_tx, mut decode_fail_rx) =
-            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(num_workers * 8);
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(meta_capacity);
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
-        // Discovery
-        let cancel_for_discover = Arc::clone(&cancel_flag);
-        let discover_handle = match &mode {
-            ScanMode::Full { .. } => {
-                let mut settings_for_discover = scan_settings.clone();
-                settings_for_discover.paths = full_available_paths;
-                let scan_record_for_discover = scan_record_shared.clone();
-                spawn_blocking(move || {
-                    discover(
-                        settings_for_discover,
-                        scan_record_for_discover,
-                        path_tx,
-                        cancel_for_discover,
-                    )
-                })
-            }
-            ScanMode::Targeted { paths } => {
-                let paths = paths.clone();
-                spawn_blocking(move || rescan_discover(paths, path_tx, cancel_for_discover))
+        // we run the discovery and metadata reading stages in separate tasks, that way they can
+        // run concurrently and no step in the scanning process blocks the other
+        let spawn_discover = |path_tx: tokio::sync::mpsc::Sender<(Utf8PathBuf, SystemTime)>,
+                              cancel: Arc<AtomicBool>|
+         -> tokio::task::JoinHandle<u64> {
+            let settings = scan_settings.clone();
+            let paths = full_available_paths.clone();
+            let sr = scan_record_shared.clone();
+            match &mode {
+                ScanMode::Full { .. } => {
+                    let mut settings = settings;
+                    settings.paths = paths;
+                    spawn_blocking(move || discover(settings, sr, path_tx, cancel))
+                }
+                ScanMode::Targeted { paths } => {
+                    let paths = paths.clone();
+                    spawn_blocking(move || rescan_discover(paths, path_tx, cancel))
+                }
             }
         };
 
-        let path_rx_shared = Arc::new(Mutex::new(path_rx));
+        let mut slow_discover_task: Option<tokio::task::JoinHandle<u64>> = None;
 
-        for _ in 0..num_workers {
-            let path_rx = Arc::clone(&path_rx_shared);
-            let meta_tx = meta_tx.clone();
-            let decode_fail_tx = decode_fail_tx.clone();
-            let cancel_flag = Arc::clone(&cancel_flag);
-            spawn_blocking(move || {
-                let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
-                loop {
-                    if cancel_flag.load(Ordering::Relaxed) {
+        let (discover_handle, path_rx_shared) = if scan_settings.slow_disk_mode {
+            let paths_for_disks = full_available_paths.clone();
+            let (disk_groups, mounts_sorted, mount_to_channel) =
+                tokio::task::spawn_blocking(move || disk::group_paths_by_disk(&paths_for_disks))
+                    .await
+                    .expect("disk grouping task panicked");
+            let num_disks = disk_groups.len().max(1);
+
+            // Create per-disk channels and collect receivers
+            let mut disk_txs: Vec<tokio::sync::mpsc::Sender<(Utf8PathBuf, SystemTime)>> =
+                Vec::with_capacity(num_disks);
+            let mut disk_rxs: Vec<tokio::sync::mpsc::Receiver<(Utf8PathBuf, SystemTime)>> =
+                Vec::with_capacity(num_disks);
+            for _ in 0..num_disks {
+                let (tx, rx) = tokio::sync::mpsc::channel(64);
+                disk_txs.push(tx);
+                disk_rxs.push(rx);
+            }
+
+            // Shared discover path_tx / path_rx
+            let (path_tx, mut path_rx) =
+                tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
+
+            let cancel_for_discover = Arc::clone(&cancel_flag);
+            let discover_task = spawn_discover(path_tx, cancel_for_discover);
+            slow_discover_task = Some(discover_task);
+
+            let router_cancel = Arc::clone(&cancel_flag);
+            let router_disk_txs = disk_txs.clone();
+            let router = spawn_blocking(move || {
+                let mut dir_cache: FxHashMap<Utf8PathBuf, usize> = FxHashMap::default();
+                let mut routed: u64 = 0;
+
+                while let Some((path, timestamp)) = path_rx.blocking_recv() {
+                    if router_cancel.load(Ordering::Relaxed) {
                         break;
                     }
 
-                    let item = {
-                        let mut rx = path_rx.blocking_lock();
-                        rx.blocking_recv()
-                    };
-                    let Some((path, timestamp)) = item else {
-                        break; // channel closed, discovery complete
-                    };
+                    // Find the mount point for this path (cached by parent dir)
+                    let parent = path.parent().map(|p| p.to_path_buf());
+                    let disk_idx = parent
+                        .as_ref()
+                        .and_then(|p| dir_cache.get(p).copied())
+                        .or_else(|| {
+                            // paths from discovery are already canonical
+                            let mount_point = mounts_sorted
+                                .iter()
+                                .find(|m| path.as_std_path().starts_with(m.as_std_path()))?;
+                            let channel = match mount_to_channel.get(mount_point).copied() {
+                                Some(ch) => ch,
+                                None => {
+                                    warn!(
+                                        "no physical device ID for mount point {:?}, routing to fallback channel 0",
+                                        mount_point
+                                    );
+                                    0
+                                }
+                            };
+                            if let Some(p) = &parent {
+                                dir_cache.insert(p.clone(), channel);
+                            }
+                            Some(channel)
+                        })
+                        .unwrap_or(0);
 
-                    if cancel_flag.load(Ordering::Relaxed) {
+                    if router_disk_txs[disk_idx]
+                        .blocking_send((path, timestamp))
+                        .is_err()
+                    {
                         break;
                     }
-
-                    if let Some(info) = read_metadata_for_path(&path, &mut art_cache) {
-                        if cancel_flag.load(Ordering::Relaxed) {
-                            break;
-                        }
-
-                        if meta_tx.blocking_send((path, timestamp, info)).is_err() {
-                            break;
-                        }
-                    } else {
-                        warn!("Could not read metadata for file: {:?}", path);
-                        if decode_fail_tx.blocking_send((path, timestamp)).is_err() {
-                            break;
-                        }
-                    }
+                    routed += 1;
                 }
+
+                routed
             });
-        }
+
+            for mut rx in disk_rxs {
+                let meta_tx = meta_tx.clone();
+                let decode_fail_tx = decode_fail_tx.clone();
+                let cancel_flag = Arc::clone(&cancel_flag);
+                spawn_blocking(move || {
+                    run_metadata_reader(|| rx.blocking_recv(), meta_tx, decode_fail_tx, cancel_flag)
+                });
+            }
+
+            (router, None)
+        } else {
+            let (path_tx, path_rx) = tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
+
+            let cancel_for_discover = Arc::clone(&cancel_flag);
+            let discover = spawn_discover(path_tx, cancel_for_discover);
+
+            let path_rx_shared = Arc::new(Mutex::new(path_rx));
+
+            for _ in 0..num_workers {
+                let path_rx = Arc::clone(&path_rx_shared);
+                let meta_tx = meta_tx.clone();
+                let decode_fail_tx = decode_fail_tx.clone();
+                let cancel_flag = Arc::clone(&cancel_flag);
+                spawn_blocking(move || {
+                    run_metadata_reader(
+                        || {
+                            let mut rx = path_rx.blocking_lock();
+                            rx.blocking_recv()
+                        },
+                        meta_tx,
+                        decode_fail_tx,
+                        cancel_flag,
+                    )
+                });
+            }
+
+            (discover, Some(path_rx_shared))
+        };
+
         // Drop the original senders so the channels close when all worker clones are dropped.
         drop(meta_tx);
         drop(decode_fail_tx);
@@ -711,10 +818,15 @@ async fn run_scanner(
         }
 
         cancel_flag.store(true, Ordering::Relaxed);
-        drop(path_rx_shared);
+        if let Some(path_rx_shared) = path_rx_shared {
+            drop(path_rx_shared);
+        }
 
         if !discovery_complete {
             let _ = discover_handle.await.expect("discover task panicked");
+        }
+        if let Some(task) = slow_discover_task {
+            let _ = task.await.expect("discover task panicked");
         }
 
         // drain remaining decode failures
@@ -814,4 +926,75 @@ pub fn start_scanner(pool: SqlitePool, settings: ScanSettings) -> ScanInterface 
     crate::RUNTIME.spawn(run_scanner(pool, settings, command_rx, event_tx));
 
     ScanInterface::new(Some(events_rx), cmd_tx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestDir;
+
+    #[test]
+    fn run_metadata_reader_exits_on_cancel_flag() {
+        let cancel_flag = Arc::new(AtomicBool::new(true));
+        let (meta_tx, _meta_rx) = channel(1);
+        let (fail_tx, _fail_rx) = channel(1);
+
+        // recv should never be called because cancel_flag is set
+        let mut called = false;
+        run_metadata_reader(
+            || {
+                called = true;
+                None
+            },
+            meta_tx,
+            fail_tx,
+            cancel_flag,
+        );
+
+        assert!(!called, "recv should not be called when cancelled");
+    }
+
+    #[test]
+    fn run_metadata_reader_exits_on_channel_close() {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (meta_tx, _meta_rx) = channel(1);
+        let (fail_tx, _fail_rx) = channel(1);
+
+        // recv returns None simulating a closed channel
+        run_metadata_reader(|| None, meta_tx, fail_tx, cancel_flag);
+        // function should return without panicking
+    }
+
+    #[test]
+    fn run_metadata_reader_forwards_decode_failure() {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (meta_tx, _meta_rx) = channel(1);
+        let (fail_tx, mut fail_rx) = channel(1);
+
+        let dir = TestDir::new("decode-fail-test");
+        let nonexistent = dir.utf8_join("nonexistent.flac");
+        let ts = SystemTime::now();
+        let path_for_recv = nonexistent.clone();
+
+        let mut call_count = 0;
+        run_metadata_reader(
+            move || {
+                call_count += 1;
+                if call_count == 1 {
+                    Some((path_for_recv.clone(), ts))
+                } else {
+                    None // close after one item
+                }
+            },
+            meta_tx,
+            fail_tx,
+            cancel_flag,
+        );
+
+        let received = fail_rx
+            .try_recv()
+            .expect("should have received decode failure");
+        assert_eq!(received.0, nonexistent);
+        assert_eq!(received.1, ts);
+    }
 }
