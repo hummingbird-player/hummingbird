@@ -5,6 +5,7 @@ when:
 steps:
   - name: build linux amd64 appimage
     image: hummingbird-ci:rust-1.95-bookworm
+    pull: false
     environment:
       CARGO_TERM_COLOR: always
       APPIMAGE_EXTRACT_AND_RUN: 1

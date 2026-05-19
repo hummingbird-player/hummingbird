@@ -1,0 +1,25 @@
+when:
+  - event: push
+    branch: master
+
+steps:
+  - name: build linux arm64 appimage
+    image: hummingbird-ci:rust-1.95-bookworm
+    pull: false
+    environment:
+      CARGO_TERM_COLOR: always
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      LASTFM_API_KEY:
+        from_secret: LASTFM_API_KEY
+      LASTFM_API_SECRET:
+        from_secret: LASTFM_API_SECRET
+      MINISIGN_PRIV_KEY:
+        from_secret: MINISIGN_PRIV_KEY
+      FORGEJO_TOKEN:
+        from_secret: FORGEJO_TOKEN
+    commands:
+      - set +x
+      - ./.woodpecker/scripts/build-linux-arm64.sh
+      - printf '%s' "$MINISIGN_PRIV_KEY" > minisign.key
+      - minisign -S -s minisign.key -m hummingbird-aarch64.AppImage
+      - ./.woodpecker/scripts/upload-release.sh hummingbird-aarch64.AppImage hummingbird-aarch64.AppImage.minisig
