@@ -1,0 +1,56 @@
+FROM rust:1.95-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+ENV CARGO_TERM_COLOR=always
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+RUN dpkg --add-architecture arm64 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        desktop-file-utils \
+        file \
+        g++-aarch64-linux-gnu \
+        gcc-aarch64-linux-gnu \
+        git \
+        jq \
+        libasound2-dev \
+        libasound2-dev:arm64 \
+        libclang-dev \
+        libfontconfig1-dev \
+        libfontconfig1-dev:arm64 \
+        libpipewire-0.3-dev \
+        libpipewire-0.3-dev:arm64 \
+        libpulse-dev \
+        libpulse-dev:arm64 \
+        libspa-0.2-dev \
+        libspa-0.2-dev:arm64 \
+        libx11-xcb-dev \
+        libx11-xcb-dev:arm64 \
+        libxkbcommon-dev \
+        libxkbcommon-dev:arm64 \
+        libxkbcommon-x11-dev \
+        libxkbcommon-x11-dev:arm64 \
+        minisign \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add --toolchain stable rustfmt clippy \
+    && rustup target add --toolchain stable aarch64-unknown-linux-gnu
+
+RUN cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle \
+    && cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
+
+WORKDIR /opt/hummingbird
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src \
+    && echo '// placeholder for cargo fetch' > src/lib.rs \
+    && cargo fetch --locked \
+    && rm -rf /opt/hummingbird
+
+WORKDIR /woodpecker/src

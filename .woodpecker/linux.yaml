@@ -4,7 +4,7 @@ when:
 
 steps:
   - name: build linux amd64 appimage
-    image: rust:1.95-bookworm
+    image: hummingbird-ci:rust-1.95-bookworm
     environment:
       CARGO_TERM_COLOR: always
       APPIMAGE_EXTRACT_AND_RUN: 1
@@ -18,9 +18,6 @@ steps:
         from_secret: FORGEJO_TOKEN
     commands:
       - set +x
-      - apt-get update
-      - apt-get install -y --no-install-recommends ca-certificates cmake curl jq libasound2-dev pkg-config libclang-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev minisign libpipewire-0.3-dev libspa-0.2-dev
-      - rustup update
       - cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
       - cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-deploy
       - cargo build --verbose --release -F update

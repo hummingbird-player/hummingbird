@@ -6,11 +6,8 @@ when:
 
 steps:
   - name: run cargo tests
-    image: rust:1.95-bookworm
+    image: hummingbird-ci:rust-1.95-bookworm
     environment:
       CARGO_TERM_COLOR: always
     commands:
-      - apt-get update
-      - apt-get install -y --no-install-recommends cmake libasound2-dev pkg-config libclang-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev desktop-file-utils libfontconfig1-dev libpipewire-0.3-dev libspa-0.2-dev
-      - rustup update
       - cargo test --all-features --locked
