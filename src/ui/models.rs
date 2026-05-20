@@ -540,7 +540,12 @@ pub fn build_models(
 
     let position: Entity<u64> = cx.new(|_| 0);
     let duration: Entity<u64> = cx.new(|_| 0);
-    let playback_state: Entity<PlaybackState> = cx.new(|_| PlaybackState::Stopped);
+    let default_playback_state = if initial_track.is_some() {
+        PlaybackState::Paused
+    } else {
+        PlaybackState::Stopped
+    };
+    let playback_state: Entity<PlaybackState> = cx.new(|_| default_playback_state);
     let current_track: Entity<Option<CurrentTrack>> = cx.new(|_| initial_track);
     let shuffling: Entity<bool> = cx.new(|_| initial_shuffle);
     let repeating: Entity<RepeatState> = cx.new(|_| initial_repeat);
