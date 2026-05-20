@@ -8,6 +8,7 @@ steps:
     pull: false
     environment:
       CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /opt/hummingbird/target
       APPIMAGE_EXTRACT_AND_RUN: 1
       LASTFM_API_KEY:
         from_secret: LASTFM_API_KEY

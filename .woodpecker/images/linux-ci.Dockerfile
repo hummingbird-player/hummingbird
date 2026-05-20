@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 ENV CARGO_TERM_COLOR=always
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+ENV CARGO_TARGET_DIR=/opt/hummingbird/target
 
 RUN dpkg --add-architecture arm64 \
     && apt-get update \
@@ -40,7 +41,10 @@ RUN dpkg --add-architecture arm64 \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN rustup component add --toolchain stable rustfmt clippy \
+RUN rustup toolchain install stable \
+    && rustup component add rustfmt clippy \
+    && rustup component add --toolchain stable rustfmt clippy \
+    && rustup target add aarch64-unknown-linux-gnu \
     && rustup target add --toolchain stable aarch64-unknown-linux-gnu
 
 RUN cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle \
@@ -52,5 +56,31 @@ RUN mkdir -p src \
     && echo '// placeholder for cargo fetch' > src/lib.rs \
     && cargo fetch --locked \
     && rm -rf /opt/hummingbird
+
+# Pre-build all release dependencies for host (amd64)
+WORKDIR /opt/hummingbird
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src \
+    && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked -F update \
+    && cargo clean -p hummingbird \
+    && rm -rf src
+
+# Pre-build all release dependencies for cross-target (arm64)
+RUN export PKG_CONFIG_ALLOW_CROSS=1 \
+    && export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
+    && export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
+    && mkdir -p src \
+    && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked -F update --target aarch64-unknown-linux-gnu \
+    && cargo clean -p hummingbird --target aarch64-unknown-linux-gnu \
+    && rm -rf src
+
+# Pre-build debug dependencies for cargo test
+RUN mkdir -p src \
+    && echo 'fn main() {}' > src/main.rs \
+    && cargo build --locked -F update \
+    && cargo clean -p hummingbird \
+    && rm -rf src
 
 WORKDIR /woodpecker/src

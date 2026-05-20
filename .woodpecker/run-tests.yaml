@@ -10,5 +10,6 @@ steps:
     pull: false
     environment:
       CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: /opt/hummingbird/target
     commands:
       - cargo test --all-features --locked
