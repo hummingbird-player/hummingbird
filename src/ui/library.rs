@@ -544,7 +544,7 @@ impl Library {
                 show_update_playlist,
                 focus_handle,
                 scroll_state,
-                reclaim_focus: false,
+                reclaim_focus: true,
                 _focus_lost_sub: None,
             };
             library.sync_visible_views(&switcher_model, cx);
