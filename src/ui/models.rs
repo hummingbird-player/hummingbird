@@ -219,6 +219,7 @@ fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitc
         StartupLibraryView::Albums => ViewSwitchMessage::Albums,
         StartupLibraryView::Artists => ViewSwitchMessage::Artists,
         StartupLibraryView::Tracks => ViewSwitchMessage::Tracks,
+        StartupLibraryView::Files => ViewSwitchMessage::Files,
         StartupLibraryView::LikedSongs => match cx.get_all_playlists() {
             Ok(playlists) => playlists
                 .iter()

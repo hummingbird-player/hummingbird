@@ -39,6 +39,11 @@
   "ACTION_SHUFFLE_ALL": "Shuffle All Tracks",
   "ACTION_STOP_AFTER_CURRENT": "Stop After Current",
   "ACTION_UNDO_QUEUE": "Undo",
+  "ADD_FOLDER_TO_QUEUE": "Add folder to queue",
+  "ADD_N_TO_QUEUE": {
+    "one": "Add {{count}} track to queue",
+    "other": "Add {{count}} tracks to queue"
+  },
   "ADD_TO_PLAYLIST": "Add to playlist",
   "ADD_TO_QUEUE": "Add to queue",
   "ADD_TO_SELECTED_PLAYLIST": "Add to {{name}}",
@@ -80,6 +85,9 @@
   "EXPORT_PLAYLIST": "Export to M3U",
   "EXPORT_PLAYLIST_TO_M3U": "Export Playlist to M3U",
   "FILE": "File",
+  "FILES": "Files",
+  "FILES_COLLAPSE_ALL": "Collapse all",
+  "FILES_REFRESH": "Refresh",
   "GO_TO_ALBUM": "Go to album",
   "GO_TO_ARTIST": "Go to artist",
   "GRID_VIEW": "Grid View",
@@ -145,11 +153,17 @@
     "one": "{{count}} track",
     "other": "{{count}} tracks"
   },
+  "PLAY_FOLDER": "Play folder",
   "PLAY_FROM_HERE": "Play from here",
   "PLAY_NEXT": "Play next",
+  "PLAY_N_NOW": {
+    "one": "Play {{count}} track now",
+    "other": "Play {{count}} tracks now"
+  },
   "PREVIOUS_TRACK": "Previous Track",
   "QUEUE_TITLE": "Queue",
   "QUIT": "Quit Hummingbird",
+  "REFRESH_FOLDER": "Refresh",
   "RELEASED_DATE": "Released {{date}}",
   "RELEASED_YEAR": "Released {{year}}",
   "RELEASE_CHANNEL": "Release channel",

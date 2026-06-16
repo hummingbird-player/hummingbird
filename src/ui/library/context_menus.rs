@@ -108,16 +108,11 @@ pub fn album_menu_for_table(album: &Album, context: &AlbumContextMenuContext) ->
     AlbumContextMenu::new(Rc::new(album.clone()), *context).into_any_element()
 }
 
-pub fn play_from_track(
-    cx: &mut App,
-    track: &Track,
-    queue_items: impl IntoIterator<Item = QueueItemData>,
-) {
+pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {
     if !is_track_available(track) {
         return;
     }
 
-    let queue_items = queue_items.into_iter().collect::<Vec<_>>();
     if queue_items.is_empty() {
         return;
     }
@@ -226,8 +221,7 @@ pub fn remove_from_playlist(
     .detach();
 }
 
-fn play_track_now(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+pub(crate) fn play_now(cx: &mut App, data: QueueItemData) {
     let playback_interface = cx.global::<PlaybackInterface>();
     let queue_length = cx
         .global::<Models>()
@@ -241,16 +235,66 @@ fn play_track_now(cx: &mut App, track: &Track) {
     playback_interface.jump(queue_length);
 }
 
+pub(crate) fn play_next(cx: &mut App, data: QueueItemData) {
+    let queue_position = cx.global::<Models>().queue.read(cx).position + 1;
+    cx.global::<PlaybackInterface>()
+        .insert_at(data, queue_position);
+}
+
+pub(crate) fn queue_item(cx: &mut App, data: QueueItemData) {
+    cx.global::<PlaybackInterface>().queue(data);
+}
+
+/// Append `items` to the queue and jump to the first of them.
+pub(crate) fn play_items_now(cx: &mut App, items: impl IntoIterator<Item = QueueItemData>) {
+    let mut items = items.into_iter().peekable();
+    if items.peek().is_none() {
+        return;
+    }
+    let playback_interface = cx.global::<PlaybackInterface>();
+    let queue_length = cx
+        .global::<Models>()
+        .queue
+        .read(cx)
+        .data
+        .read()
+        .expect("couldn't get queue")
+        .len();
+    for item in items {
+        playback_interface.queue(item);
+    }
+    playback_interface.jump(queue_length);
+}
+
+/// Insert `items` directly after the current queue position, in order.
+pub(crate) fn play_items_next(cx: &mut App, items: impl IntoIterator<Item = QueueItemData>) {
+    let queue_position = cx.global::<Models>().queue.read(cx).position + 1;
+    for (offset, item) in items.into_iter().enumerate() {
+        cx.global::<PlaybackInterface>()
+            .insert_at(item, queue_position + offset);
+    }
+}
+
+pub(crate) fn queue_items(cx: &mut App, items: impl IntoIterator<Item = QueueItemData>) {
+    let playback_interface = cx.global::<PlaybackInterface>();
+    for item in items {
+        playback_interface.queue(item);
+    }
+}
+
+fn play_track_now(cx: &mut App, track: &Track) {
+    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    play_now(cx, data);
+}
+
 pub fn play_track_next(cx: &mut App, track: &Track) {
     let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
-    let queue_position = cx.global::<Models>().queue.read(cx).position;
-    cx.global::<PlaybackInterface>()
-        .insert_at(data, queue_position + 1);
+    play_next(cx, data);
 }
 
 fn queue_track(cx: &mut App, track: &Track) {
     let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
-    cx.global::<PlaybackInterface>().queue(data);
+    queue_item(cx, data);
 }
 
 pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track) {

@@ -89,8 +89,8 @@ fn default_split_fractions() -> HashMap<String, f32> {
     HashMap::new()
 }
 
-/// The four view keys that have independent split fractions.
-pub const SPLIT_FRACTION_KEYS: [&str; 4] = ["albums", "tracks", "artists", "playlist"];
+/// The five view keys that have independent split fractions.
+pub const SPLIT_FRACTION_KEYS: [&str; 5] = ["albums", "tracks", "artists", "playlist", "files"];
 
 /// Data to store while quitting the app
 #[derive(Debug, Clone, Serialize, Deserialize)]

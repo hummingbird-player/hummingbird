@@ -103,7 +103,7 @@
   },
   "ACTION_CLOSE_DETAIL_VIEW": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:511",
+    "definedIn": "src/ui/library.rs:532",
     "plural": false,
     "description": null
   },
@@ -121,13 +121,13 @@
   },
   "ACTION_GO_BACK": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:491",
+    "definedIn": "src/ui/library.rs:512",
     "plural": false,
     "description": null
   },
   "ACTION_GO_FORWARD": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:501",
+    "definedIn": "src/ui/library.rs:522",
     "plural": false,
     "description": null
   },
@@ -169,7 +169,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:481",
+    "definedIn": "src/ui/library.rs:502",
     "plural": false,
     "description": null
   },
@@ -237,6 +237,18 @@
     "context": "command_palette.rs",
     "definedIn": "src/ui/command_palette.rs:35",
     "plural": false,
+    "description": null
+  },
+  "ADD_FOLDER_TO_QUEUE": {
+    "context": "file_context_menu.rs",
+    "definedIn": "src/ui/library/files_view/file_context_menu.rs:111",
+    "plural": false,
+    "description": null
+  },
+  "ADD_N_TO_QUEUE": {
+    "context": "file_row.rs",
+    "definedIn": "src/ui/library/files_view/file_row.rs:154",
+    "plural": true,
     "description": null
   },
   "ADD_TO_PLAYLIST": {
@@ -445,7 +457,7 @@
   },
   "EXPAND_SIDEBAR": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:212",
+    "definedIn": "src/ui/library/sidebar.rs:228",
     "plural": false,
     "description": null
   },
@@ -464,6 +476,24 @@
   "FILE": {
     "context": "global_actions.rs",
     "definedIn": "src/ui/global_actions.rs:159",
+    "plural": false,
+    "description": null
+  },
+  "FILES": {
+    "context": "sidebar.rs",
+    "definedIn": "src/ui/library/sidebar.rs:209",
+    "plural": false,
+    "description": null
+  },
+  "FILES_COLLAPSE_ALL": {
+    "context": "files_view.rs",
+    "definedIn": "src/ui/library/files_view.rs:537",
+    "plural": false,
+    "description": null
+  },
+  "FILES_REFRESH": {
+    "context": "files_view.rs",
+    "definedIn": "src/ui/library/files_view.rs:547",
     "plural": false,
     "description": null
   },
@@ -511,121 +541,121 @@
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:342",
+    "definedIn": "src/ui/settings/interface.rs:343",
     "plural": false,
     "description": null
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:345",
+    "definedIn": "src/ui/settings/interface.rs:346",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:245",
+    "definedIn": "src/ui/settings/interface.rs:246",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:248",
+    "definedIn": "src/ui/settings/interface.rs:249",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:292",
+    "definedIn": "src/ui/settings/interface.rs:293",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:295",
+    "definedIn": "src/ui/settings/interface.rs:296",
     "plural": false,
     "description": null
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:363",
+    "definedIn": "src/ui/settings/interface.rs:364",
     "plural": false,
     "description": null
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:366",
+    "definedIn": "src/ui/settings/interface.rs:367",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:321",
+    "definedIn": "src/ui/settings/interface.rs:322",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:324",
+    "definedIn": "src/ui/settings/interface.rs:325",
     "plural": false,
     "description": null
   },
   "INTERFACE_STARTUP_LIBRARY_VIEW": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:233",
+    "definedIn": "src/ui/settings/interface.rs:234",
     "plural": false,
     "description": null
   },
   "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:236",
+    "definedIn": "src/ui/settings/interface.rs:237",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:387",
+    "definedIn": "src/ui/settings/interface.rs:388",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:392",
+    "definedIn": "src/ui/settings/interface.rs:393",
     "plural": false,
     "description": null
   },
   "INTERFACE_THEME": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:208",
+    "definedIn": "src/ui/settings/interface.rs:209",
     "plural": false,
     "description": null
   },
   "INTERFACE_THEME_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:210",
+    "definedIn": "src/ui/settings/interface.rs:211",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:271",
+    "definedIn": "src/ui/settings/interface.rs:272",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:274",
+    "definedIn": "src/ui/settings/interface.rs:275",
     "plural": false,
     "description": null
   },
   "LANGUAGE": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:198",
+    "definedIn": "src/ui/settings/interface.rs:199",
     "plural": false,
     "description": null
   },
   "LANGUAGE_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:200",
+    "definedIn": "src/ui/settings/interface.rs:201",
     "plural": false,
     "description": null
   },
@@ -715,7 +745,7 @@
   },
   "OPEN_THEMES_FOLDER": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:220",
+    "definedIn": "src/ui/settings/interface.rs:221",
     "plural": false,
     "description": null
   },
@@ -821,6 +851,12 @@
     "plural": true,
     "description": null
   },
+  "PLAY_FOLDER": {
+    "context": "file_context_menu.rs",
+    "definedIn": "src/ui/library/files_view/file_context_menu.rs:97",
+    "plural": false,
+    "description": null
+  },
   "PLAY_FROM_HERE": {
     "context": "track.rs",
     "definedIn": "src/ui/library/context_menus/track.rs:104",
@@ -831,6 +867,12 @@
     "context": "track.rs",
     "definedIn": "src/ui/library/context_menus/track.rs:91",
     "plural": false,
+    "description": null
+  },
+  "PLAY_N_NOW": {
+    "context": "file_row.rs",
+    "definedIn": "src/ui/library/files_view/file_row.rs:125",
+    "plural": true,
     "description": null
   },
   "PREVIOUS_TRACK": {
@@ -848,6 +890,12 @@
   "QUIT": {
     "context": "global_actions.rs",
     "definedIn": "src/ui/global_actions.rs:106",
+    "plural": false,
+    "description": null
+  },
+  "REFRESH_FOLDER": {
+    "context": "file_context_menu.rs",
+    "definedIn": "src/ui/library/files_view/file_context_menu.rs:126",
     "plural": false,
     "description": null
   },
@@ -1315,19 +1363,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:186",
+    "definedIn": "src/ui/library/context_menus.rs:181",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:188",
+    "definedIn": "src/ui/library/context_menus.rs:183",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:184",
+    "definedIn": "src/ui/library/context_menus.rs:179",
     "plural": false,
     "description": null
   },
@@ -1411,13 +1459,13 @@
   },
   "STATS_TOTAL_LENGTH": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:240",
+    "definedIn": "src/ui/library/sidebar.rs:256",
     "plural": true,
     "description": null
   },
   "STATS_TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:234",
+    "definedIn": "src/ui/library/sidebar.rs:250",
     "plural": true,
     "description": null
   },

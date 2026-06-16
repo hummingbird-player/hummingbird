@@ -12,7 +12,7 @@ use crate::settings::storage::DEFAULT_SIDEBAR_WIDTH;
 
 const COLLAPSED_SIDEBAR_WIDTH: Pixels = px(52.0);
 
-use crate::ui::components::icons::{MUSIC, SIDEBAR, SIDEBAR_INACTIVE};
+use crate::ui::components::icons::{FOLDER, MUSIC, SIDEBAR, SIDEBAR_INACTIVE};
 use crate::ui::components::tooltip::build_tooltip;
 use crate::{
     library::{db::LibraryAccess, types::TrackStats},
@@ -200,6 +200,22 @@ impl Render for Sidebar {
                         });
                     }))
                     .when(matches!(sidebar_view, ViewSwitchMessage::Tracks), |this| {
+                        this.active()
+                    }),
+            )
+            .child(
+                sidebar_item("files")
+                    .icon(FOLDER)
+                    .when(!collapsed, |this| this.child(tr!("FILES", "Files")))
+                    .when(collapsed, |this| {
+                        this.collapsed().collapsed_label(tr!("FILES"))
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nav_model.update(cx, |_, cx| {
+                            cx.emit(ViewSwitchMessage::Files);
+                        });
+                    }))
+                    .when(matches!(sidebar_view, ViewSwitchMessage::Files), |this| {
                         this.active()
                     }),
             )

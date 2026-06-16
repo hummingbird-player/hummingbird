@@ -12,6 +12,7 @@ pub enum StartupLibraryView {
     Artists,
     Tracks,
     LikedSongs,
+    Files,
 }
 
 fn default_grid_min_item_width() -> f32 {

@@ -180,6 +180,7 @@ impl Render for InterfaceSettings {
                 .option(StartupLibraryView::Artists, tr!("ARTISTS"))
                 .option(StartupLibraryView::Tracks, tr!("TRACKS"))
                 .option(StartupLibraryView::LikedSongs, tr!("LIKED_SONGS"))
+                .option(StartupLibraryView::Files, tr!("FILES"))
                 .on_change(move |view, _, cx| {
                     settings_c.update(cx, |s, cx| {
                         s.interface.startup_library_view = *view;

@@ -1,7 +1,10 @@
+use std::path::PathBuf;
+
 use album_view::AlbumView;
 use artist_detail_view::ArtistDetailView;
 use artist_view::ArtistView;
 use cntp_i18n::tr;
+use files_view::FilesView;
 use gpui::{prelude::FluentBuilder, *};
 use release_view::ReleaseView;
 use tracing::debug;
@@ -12,6 +15,8 @@ struct ScrollStateStorage {
     album_view_scroll: Option<f32>,
     track_view_scroll: Option<f32>,
     artist_view_scroll: Option<f32>,
+    files_view_scroll: Option<f32>,
+    files_expanded: Vec<PathBuf>,
 }
 
 use crate::{
@@ -39,6 +44,7 @@ mod artist_detail_view;
 mod artist_view;
 mod collection_summary;
 pub mod context_menus;
+pub mod files_view;
 pub mod missing_folder_dialog;
 pub mod nav_buttons;
 pub mod playlist_view;
@@ -197,6 +203,7 @@ enum LibrarySection {
     Albums,
     Artists,
     Tracks,
+    Files,
     Playlists,
 }
 
@@ -208,6 +215,7 @@ impl LibrarySection {
             ViewSwitchMessage::Albums => Some(Self::Albums),
             ViewSwitchMessage::Tracks => Some(Self::Tracks),
             ViewSwitchMessage::Artists | ViewSwitchMessage::Artist(_) => Some(Self::Artists),
+            ViewSwitchMessage::Files => Some(Self::Files),
             ViewSwitchMessage::Playlist(_) => Some(Self::Playlists),
             // Release can appear under Albums or Artists – keep current section.
             ViewSwitchMessage::Release(_, _) => None,
@@ -226,6 +234,7 @@ enum LibraryView {
     Playlist(Entity<PlaylistView>),
     Artists(Entity<ArtistView>),
     ArtistDetail(Entity<ArtistDetailView>),
+    Files(Entity<FilesView>),
 }
 
 impl LibraryView {
@@ -237,6 +246,7 @@ impl LibraryView {
             LibraryView::Playlist(_) => "playlist",
             LibraryView::Release(_) => "albums",
             LibraryView::ArtistDetail(_) => "artists",
+            LibraryView::Files(_) => "files",
         }
     }
 }
@@ -260,6 +270,7 @@ pub enum ViewSwitchMessage {
     Albums,
     Tracks,
     Artists,
+    Files,
     /// album id, track id
     Release(i64, Option<i64>),
     Artist(i64),
@@ -292,6 +303,7 @@ impl ViewSwitchMessage {
                 | (LibraryView::Tracks(_), ViewSwitchMessage::Tracks)
                 // ArtistDetail: don't cache – we can't verify the id matches without extra storage
                 | (LibraryView::Artists(_), ViewSwitchMessage::Artists)
+                | (LibraryView::Files(_), ViewSwitchMessage::Files)
         )
     }
 }
@@ -315,6 +327,11 @@ fn make_view(
             cx,
             model.clone(),
             scroll_state.artist_view_scroll,
+        )),
+        ViewSwitchMessage::Files => LibraryView::Files(FilesView::new(
+            cx,
+            scroll_state.files_expanded.clone(),
+            scroll_state.files_view_scroll,
         )),
         ViewSwitchMessage::Release(id, target_track_id) => {
             LibraryView::Release(ReleaseView::new(cx, *id, *target_track_id))
@@ -399,6 +416,10 @@ impl Library {
                     } else if let LibraryView::Artists(artist_view) = &this.view {
                         let scroll_pos = artist_view.read(cx).get_scroll_offset(cx);
                         this.scroll_state.artist_view_scroll = Some(scroll_pos);
+                    } else if let LibraryView::Files(files_view) = &this.view {
+                        let fv = files_view.read(cx);
+                        this.scroll_state.files_view_scroll = Some(fv.get_scroll_offset());
+                        this.scroll_state.files_expanded = fv.expanded_paths();
                     }
 
                     // if we're navigating away from a view that stole focus (e.g. PlaylistView),
@@ -580,6 +601,7 @@ impl Render for Library {
                 LibraryView::Playlist(v) => v.clone().into_any_element(),
                 LibraryView::Artists(v) => v.clone().into_any_element(),
                 LibraryView::ArtistDetail(v) => v.clone().into_any_element(),
+                LibraryView::Files(v) => v.clone().into_any_element(),
             }
         }
 
