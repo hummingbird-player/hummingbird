@@ -2,7 +2,6 @@ use std::{ffi::OsStr, path::PathBuf};
 
 use anyhow::Context as _;
 use cntp_i18n::tr;
-use compact_str::CompactString;
 use futures::{StreamExt as _, TryFutureExt as _, TryStreamExt as _};
 use gpui::{App, PathPromptOptions};
 use sqlx::{Sqlite, SqlitePool};
@@ -23,10 +22,10 @@ const LINE_ENDING: &str = "\n";
 struct PlaylistEntry {
     location: String,
     duration: u32,
-    track_artist_names: CompactString,
-    artist_name: CompactString,
-    track_title: CompactString,
-    album_title: CompactString,
+    track_artist_names: String,
+    artist_name: String,
+    track_title: String,
+    album_title: String,
 }
 
 async fn write_m3u(mut w: BufWriter<File>, pool: &SqlitePool, pl_id: i64) -> anyhow::Result<()> {
@@ -100,10 +99,10 @@ pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Res
 #[derive(Debug, Default)]
 struct M3UEntry {
     duration: Option<u32>,
-    track_artist_names: Option<CompactString>,
-    track_title: Option<CompactString>,
-    album_title: Option<CompactString>,
-    artist_name: Option<CompactString>,
+    track_artist_names: Option<String>,
+    track_title: Option<String>,
+    album_title: Option<String>,
+    artist_name: Option<String>,
     location: PathBuf,
 }
 

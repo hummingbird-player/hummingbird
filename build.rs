@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, Result};
-use vergen::{BuildBuilder, Emitter};
+use vergen::{Build, Emitter};
 
 fn read_or_create_file(path: &str) -> Result<String> {
     std::fs::File::options()
@@ -47,10 +47,10 @@ fn version_id_from_git() -> Result<String> {
 
 fn main() -> Result<()> {
     // set build time information
-    let build = BuildBuilder::default()
+    let build = Build::builder()
         .build_timestamp(true)
         .use_local(false)
-        .build()?;
+        .build();
 
     Emitter::default().add_instructions(&build)?.emit()?;
 

@@ -720,7 +720,7 @@ pub async fn playlist_contains_all_tracks(
          WHERE playlist_id = ? AND track_id IN ({placeholders})"
     );
 
-    let mut query = sqlx::query_scalar::<_, i64>(&sql).bind(playlist_id);
+    let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql)).bind(playlist_id);
     for &id in track_ids {
         query = query.bind(id);
     }

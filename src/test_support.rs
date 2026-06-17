@@ -126,6 +126,9 @@ pub(crate) async fn add_track_to_playlist(
 
 pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
     let sql = format!("SELECT COUNT(*) FROM {table}");
-    let row: (i64,) = sqlx::query_as(&sql).fetch_one(pool).await.unwrap();
+    let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     row.0
 }

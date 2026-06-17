@@ -120,8 +120,9 @@ async fn lookup_tracks(locs: &[String], pool: &sqlx::SqlitePool) -> FxHashMap<St
             include_str!("../../../../queries/library/find_tracks_by_locations.sql"),
             placeholders
         );
-        let mut query = sqlx::query_as::<_, (String, i64, Option<i64>, Option<i64>)>(&sql)
-            .bind(LIKED_SONGS_PLAYLIST_ID);
+        let mut query =
+            sqlx::query_as::<_, (String, i64, Option<i64>, Option<i64>)>(sqlx::AssertSqlSafe(sql))
+                .bind(LIKED_SONGS_PLAYLIST_ID);
         for loc in chunk {
             query = query.bind(loc.as_str());
         }

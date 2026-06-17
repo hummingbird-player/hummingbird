@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
-use cntp_i18n::{I18nString, tr, tr_noop};
+use cntp_i18n::{I18N_MANAGER, I18nString, tr, tr_noop};
 use gpui::{
     Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Global, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, actions, div, px,
@@ -285,7 +285,10 @@ fn load_builtin_commands(cx: &mut App) -> Vec<CommandSpec> {
                 .unwrap_or_else(|err| panic!("unknown action {}: {err}", e.action));
 
             let name =
-                cntp_i18n::i18n_manager!().lookup(&e.name_key, &[], env!("CARGO_PKG_NAME"), None);
+                I18N_MANAGER
+                    .read()
+                    .unwrap()
+                    .lookup(&e.name_key, &[], env!("CARGO_PKG_NAME"), None);
 
             let id: &'static str = Box::leak(e.id.into_boxed_str());
             let action: &'static str = Box::leak(e.action.into_boxed_str());
