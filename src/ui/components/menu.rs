@@ -102,6 +102,7 @@ impl BaseMenuItem {
             .child(icon_slot)
             .child(
                 div()
+                    .ml(px(2.0))
                     .child(self.name)
                     .flex_1()
                     .when_some(text_color, |this, color| this.text_color(color)),
@@ -304,6 +305,7 @@ impl RenderOnce for StatusMenuItem {
         let theme = cx.global::<Theme>();
 
         let dot = div()
+            .ml(px(4.0))
             .mr(px(8.0))
             .w(px(8.0))
             .h(px(8.0))
