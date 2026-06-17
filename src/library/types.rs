@@ -72,7 +72,7 @@ where
 {
     fn encode_by_ref(
         &self,
-        _: &mut <DB as Database>::ArgumentBuffer<'q>,
+        _: &mut <DB as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
         panic!("Thumbnail is write-only")
     }
@@ -80,7 +80,7 @@ where
 
 impl sqlx::Type<sqlx::Sqlite> for Thumbnail {
     fn type_info() -> <Sqlite as Database>::TypeInfo {
-        <Box<[u8]>>::type_info()
+        <Box<[u8]> as Type<Sqlite>>::type_info()
     }
 }
 
@@ -161,7 +161,7 @@ where
 {
     fn encode_by_ref(
         &self,
-        out: &mut <DB as Database>::ArgumentBuffer<'q>,
+        out: &mut <DB as Database>::ArgumentBuffer,
     ) -> Result<IsNull, BoxDynError> {
         let string = self.0.to_string();
         <String>::encode_by_ref(&string, out)
