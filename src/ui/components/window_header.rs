@@ -111,6 +111,7 @@ impl RenderOnce for WindowHeader {
                 this.child(
                     div()
                         .flex()
+                        .ml(px(6.0))
                         .items_center()
                         .child(WindowButton::Minimize)
                         .child(WindowButton::Maximize)
@@ -169,7 +170,7 @@ impl RenderOnce for WindowButton {
                 WindowButton::Minimize => WindowControlArea::Min,
                 WindowButton::Maximize => WindowControlArea::Max,
             })
-            .text_size(px(11.0))
+            .text_size(px(12.0))
             .occlude()
             .child(
                 icon(match self {
