@@ -115,10 +115,16 @@ impl AudioEngine {
         self.state
     }
 
-    pub fn open(&mut self, path: &Path) -> Result<OpenInfo, PlaybackStartError> {
+    pub fn open(
+        &mut self,
+        path: &Path,
+        preserve_resampler: bool,
+    ) -> Result<OpenInfo, PlaybackStartError> {
         info!("AudioEngine: Opening track '{}'", path.display());
 
-        self.reset_resampler();
+        if !preserve_resampler {
+            self.reset_resampler();
+        }
 
         // Handle paused state - reset device if needed
         let mut recreation_required = false;
