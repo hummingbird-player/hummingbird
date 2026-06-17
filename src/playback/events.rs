@@ -106,8 +106,8 @@ pub enum PlaybackEvent {
     StateChanged(PlaybackState),
     /// Indicates that the current file has changed providing the path to the new file.
     SongChanged(PathBuf),
-    /// Indicates that the duration of the current file has changed. The f64 is the new duration,
-    /// in seconds.
+    /// Indicates that the duration of the current file has changed. The u64 is the new duration,
+    /// in milliseconds.
     DurationChanged(u64),
     /// Indicates that the queue has been updated.
     QueueUpdated,

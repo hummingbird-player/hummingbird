@@ -273,7 +273,7 @@ impl PlaybackInterface {
                                 cx.notify()
                             });
                             mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::DurationChanged(v));
+                                cx.emit(MMBSEvent::DurationChanged(v / 1_000));
                             });
                         }
                         PlaybackEvent::SongChanged(path) => {

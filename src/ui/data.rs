@@ -28,7 +28,7 @@ fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
         artist_name: artist.as_ref().or(album_artist.as_ref()).map(Into::into),
         source: DataSource::Metadata,
         album_id: None,
-        duration: stream.duration_secs().ok().map(|s| s as i64),
+        duration: stream.duration_ms().ok().map(|ms| ms as i64 / 1_000),
     };
 
     Ok(ui_data)

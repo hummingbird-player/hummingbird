@@ -288,7 +288,7 @@ impl PlaybackThread {
         self.send_event(PlaybackEvent::SongChanged(path.to_owned()));
 
         self.send_event(PlaybackEvent::DurationChanged(
-            info.duration_secs.unwrap_or(0),
+            info.duration_ms.unwrap_or(0),
         ));
 
         self.process_metadata_update();

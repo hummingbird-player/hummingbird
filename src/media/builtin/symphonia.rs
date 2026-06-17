@@ -331,16 +331,18 @@ impl MediaStream for SymphoniaStream {
             .first_track_known_codec(TrackType::Audio)
             .ok_or(PlaybackStartError::NothingToPlay)?;
 
-        let audio_params = track
+        let codec_params = track
             .codec_params
             .as_ref()
-            .and_then(|cp| cp.audio())
+            .ok_or(PlaybackStartError::NothingToPlay)?;
+        let audio_params = codec_params
+            .audio()
             .ok_or(PlaybackStartError::NothingToPlay)?;
 
-        if let (Some(frame_count), Some(tb)) = (track.num_frames, track.time_base) {
-            if let Some(t) = tb.calc_time(Timestamp::new(frame_count as i64)) {
-                self.current_length = Some(t.as_secs_f64() as u64);
-            }
+        if let (Some(frame_count), Some(tb)) = (track.num_frames, track.time_base)
+            && let Some(t) = tb.calc_time(Timestamp::new(frame_count as i64))
+        {
+            self.current_length = Some(time_to_millis(t));
             self.current_timebase = Some(tb);
         }
 
@@ -429,7 +431,7 @@ impl MediaStream for SymphoniaStream {
         }
     }
 
-    fn duration_secs(&self) -> Result<u64, TrackDurationError> {
+    fn duration_ms(&self) -> Result<u64, TrackDurationError> {
         if self.decoder.is_none() || self.current_length.is_none() {
             Err(TrackDurationError::NeverStarted)
         } else {

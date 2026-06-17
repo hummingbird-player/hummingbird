@@ -34,7 +34,7 @@ fn scan_path(path: &Utf8Path) -> Result<FileInformation, ()> {
         .map_err(|_| ())?
         .ok_or(())?;
     decoder.start_playback().map_err(|_| ())?;
-    let len = decoder.duration_secs().map_err(|_| ())?;
+    let len = decoder.duration_ms().map_err(|_| ())? / 1_000;
     decoder.close().map_err(|_| ())?;
 
     Ok((metadata, len, image))

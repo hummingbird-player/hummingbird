@@ -808,9 +808,9 @@ impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let position_ms = *self.position.read(cx);
-        let duration_secs = *self.duration.read(cx);
+        let duration_ms = *self.duration.read(cx);
         let position_secs = position_ms / 1_000;
-        let duration_ms = duration_secs.saturating_mul(1_000);
+        let duration_secs = duration_ms / 1_000;
         let remaining_secs = duration_secs.saturating_sub(position_secs);
 
         let window_width = window.viewport_size().width;
@@ -874,11 +874,11 @@ impl Render for Scrubber {
                     .on_change(move |v, _, cx| {
                         let info = cx.global::<PlaybackInfo>().clone();
 
-                        if duration_secs > 0
+                        if duration_ms > 0
                             && *info.playback_state.read(cx) != PlaybackState::Stopped
                         {
                             cx.global::<PlaybackInterface>()
-                                .seek(v as f64 * duration_secs as f64);
+                                .seek(v as f64 * duration_ms as f64 / 1_000.0);
                         }
                     }),
             )

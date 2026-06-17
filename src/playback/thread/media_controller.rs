@@ -18,7 +18,7 @@ use crate::{
 
 pub struct MediaInfo {
     pub channels: ChannelSpec,
-    pub duration_secs: Option<u64>,
+    pub duration_ms: Option<u64>,
 }
 
 pub struct CompleteMetadata {
@@ -81,14 +81,14 @@ impl MediaController {
             PlaybackStartError::MediaError(format!("Unable to get channels: {}", e))
         })?;
 
-        let duration_secs = media_stream.duration_secs().ok();
+        let duration_ms = media_stream.duration_ms().ok();
 
         self.media_stream = Some(media_stream);
         self.current_path = Some(path.to_path_buf());
 
         Ok(MediaInfo {
             channels,
-            duration_secs,
+            duration_ms,
         })
     }
 

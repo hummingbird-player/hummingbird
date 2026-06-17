@@ -135,16 +135,16 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
     }
 
     let duration = tagged_file.properties().duration();
-    let duration_secs = if duration.is_zero() {
+    let duration_ms = if duration.is_zero() {
         None
     } else {
-        Some(duration.as_secs())
+        Some(duration.as_millis() as u64)
     };
 
     Ok(TagsFromFile {
         metadata,
         image,
-        duration: duration_secs,
+        duration: duration_ms,
     })
 }
 
@@ -154,7 +154,7 @@ pub struct LoftyProvider;
 pub struct LoftyStream {
     metadata: Metadata,
     image: Option<Box<[u8]>>,
-    duration_secs: Option<u64>,
+    duration_ms: Option<u64>,
     started: bool,
 }
 
@@ -165,7 +165,7 @@ impl MediaProvider for LoftyProvider {
         Ok(Box::new(LoftyStream {
             metadata: tags.metadata,
             image: tags.image,
-            duration_secs: tags.duration,
+            duration_ms: tags.duration,
             started: false,
         }))
     }
@@ -221,11 +221,11 @@ impl MediaStream for LoftyStream {
         Ok(self.image.take())
     }
 
-    fn duration_secs(&self) -> Result<u64, TrackDurationError> {
+    fn duration_ms(&self) -> Result<u64, TrackDurationError> {
         if !self.started {
             return Err(TrackDurationError::NeverStarted);
         }
-        self.duration_secs.ok_or(TrackDurationError::NeverStarted)
+        self.duration_ms.ok_or(TrackDurationError::NeverStarted)
     }
 
     fn position_ms(&self) -> Result<u64, TrackDurationError> {

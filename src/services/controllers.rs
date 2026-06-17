@@ -253,7 +253,7 @@ pub fn register_pbc_event_handlers(cx: &mut App) {
     cx.observe(&duration, |e, cx| {
         let &dur = e.read(cx);
         let PbcHandle(tx, _) = cx.global();
-        if let Err(err) = tx.send(PbcEvent::DurationChanged(dur)) {
+        if let Err(err) = tx.send(PbcEvent::DurationChanged(dur / 1_000)) {
             error!(msg = ?err.0, "failed to send pbc event: {err}");
         }
     })

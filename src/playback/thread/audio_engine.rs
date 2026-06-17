@@ -43,7 +43,7 @@ pub enum EngineCycleResult {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct OpenInfo {
-    pub duration_secs: Option<u64>,
+    pub duration_ms: Option<u64>,
     pub channels: ChannelSpec,
     pub device_recreated: bool,
 }
@@ -179,7 +179,7 @@ impl AudioEngine {
         self.state = EngineState::Playing;
 
         Ok(OpenInfo {
-            duration_secs: media_info.duration_secs,
+            duration_ms: media_info.duration_ms,
             channels: media_info.channels,
             device_recreated,
         })

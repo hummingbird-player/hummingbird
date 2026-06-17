@@ -98,11 +98,11 @@ pub trait MediaStream {
     /// error.
     fn read_image(&mut self) -> Result<Option<Box<[u8]>>, MetadataError>;
 
-    /// Returns the duration of the currently opened file in seconds. If no file is opened, or
-    /// playback has not started, this function should return an error. This function should be
+    /// Returns the duration of the currently opened file in milliseconds. If no file is opened,
+    /// or playback has not started, this function should return an error. This function should be
     /// available immediately after playback has started, and should not require reading any
     /// samples.
-    fn duration_secs(&self) -> Result<u64, TrackDurationError>;
+    fn duration_ms(&self) -> Result<u64, TrackDurationError>;
 
     /// Returns the current playback position in milliseconds. If no file is opened, or playback
     /// has not started, this function should return an error. This function should be available
