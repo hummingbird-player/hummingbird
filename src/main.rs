@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     // disable the GPUI mini profiler immediately to avoid unnecessary allocations
     set_enabled(false);
 
-    I18N_MANAGER.write().unwrap().load_source(tr_load!());
+    I18N_MANAGER.load_source(tr_load!());
     crate::logging::init()?;
 
     // do this even when updating is disabled since it doesn't really hurt anything
