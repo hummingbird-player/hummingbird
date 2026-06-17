@@ -103,12 +103,13 @@ impl Render for Sidebar {
             })
             .mt(px(2.0))
             .mb(px(4.0))
-            .pb(px(10.0))
+            .pb(px(8.0))
             .border_b_1()
             .border_color(theme.border_color)
             .child(
                 nav_button("search", SEARCH)
-                    .w(px(38.0))
+                    .w(px(36.0))
+                    .h(px(34.0))
                     .tooltip(build_tooltip(tr!("SEARCH")))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(Search), cx);
@@ -119,7 +120,8 @@ impl Render for Sidebar {
                     nav_button("sidebar-toggle", toggle_icon)
                         .ml_auto()
                         .tooltip(build_tooltip(tr!("COLLAPSE_SIDEBAR", "Collapse Sidebar")))
-                        .w(px(38.0))
+                        .w(px(36.0))
+                        .h(px(34.0))
                         .on_click(move |_, _, cx| {
                             sidebar_collapsed_entity.update(cx, |v, cx| {
                                 *v = !*v;
@@ -226,8 +228,8 @@ impl Render for Sidebar {
                     div().mt_auto().child(
                         nav_button("sidebar-toggle", SIDEBAR_INACTIVE)
                             .tooltip(build_tooltip(tr!("EXPAND_SIDEBAR", "Expand Sidebar")))
-                            .w(px(38.0))
-                            .h(px(38.0))
+                            .w(px(36.0))
+                            .h(px(34.0))
                             .on_click(move |_, _, cx| {
                                 sidebar_collapsed_entity_bottom.update(cx, |v, cx| {
                                     *v = !*v;
