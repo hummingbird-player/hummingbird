@@ -23,6 +23,7 @@ pub struct ToastAction {
 pub struct Toast {
     pub severity: Severity,
     pub message: I18nString,
+    // we don't actually change this ever but if we need to it's just better to leave it like this
     pub duration: Option<Duration>,
     pub actions: Vec<ToastAction>,
 }
@@ -51,16 +52,6 @@ impl Toast {
 
     pub fn error(message: I18nString) -> Self {
         Self::new(Severity::Error, message)
-    }
-
-    pub fn duration(mut self, duration: Duration) -> Self {
-        self.duration = Some(duration);
-        self
-    }
-
-    pub fn sticky(mut self) -> Self {
-        self.duration = None;
-        self
     }
 
     pub fn with_action(

@@ -96,11 +96,6 @@ impl Render for ToastLayer {
             return div().into_any_element();
         }
 
-        let theme = cx.global::<Theme>();
-        let bg = theme.elevated_background;
-        let border = theme.elevated_border_color;
-        let text = theme.text;
-        let track = theme.text_secondary;
         let viewport = window.viewport_size();
         let reduced_motion = cx
             .global::<SettingsGlobal>()
@@ -111,6 +106,35 @@ impl Render for ToastLayer {
 
         let mut column = div().flex().flex_col().gap(px(8.0)).w(px(360.0));
         for toast in &self.toasts {
+            let theme = cx.global::<Theme>();
+
+            let (bg, border, text, track) = match toast.toast.severity {
+                Severity::Info => (
+                    theme.toast_info_background,
+                    theme.toast_info_border,
+                    theme.toast_info_text,
+                    theme.toast_info_track,
+                ),
+                Severity::Success => (
+                    theme.toast_success_background,
+                    theme.toast_success_border,
+                    theme.toast_success_text,
+                    theme.toast_success_track,
+                ),
+                Severity::Warning => (
+                    theme.toast_warning_background,
+                    theme.toast_warning_border,
+                    theme.toast_warning_text,
+                    theme.toast_warning_track,
+                ),
+                Severity::Error => (
+                    theme.toast_error_background,
+                    theme.toast_error_border,
+                    theme.toast_error_text,
+                    theme.toast_error_track,
+                ),
+            };
+
             column = column.child(render_toast(
                 toast,
                 bg,
@@ -123,7 +147,8 @@ impl Render for ToastLayer {
         }
 
         anchored()
-            .position(point(viewport.width - px(16.0), px(16.0)))
+            // 38 (height of window_header w/ border) + 16 = 54
+            .position(point(viewport.width - px(16.0), px(54.0)))
             .anchor(Anchor::TopRight)
             .child(deferred(column))
             .into_any_element()
@@ -153,7 +178,13 @@ fn render_toast(
                 .id(ElementId::from(("toast-action", (id << 16) | idx as u64)))
                 .style(ButtonStyle::Regular)
                 .size(ButtonSize::Regular)
-                .intent(ButtonIntent::Secondary)
+                .intent(match toast.severity {
+                    Severity::Info => ButtonIntent::Secondary,
+                    // TODO: if we actually use this we need to make a green button
+                    Severity::Success => ButtonIntent::Primary,
+                    Severity::Warning => ButtonIntent::Warning,
+                    Severity::Error => ButtonIntent::Danger,
+                })
                 .child(action.label.clone())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
@@ -167,9 +198,9 @@ fn render_toast(
         .child(
             div()
                 .flex()
-                .items_start()
+                .items_center()
                 .border_r_1()
-                .p(px(8.0))
+                .p(px(10.0))
                 .border_color(border)
                 .child(icon(icon_path).size(px(20.0))),
         )

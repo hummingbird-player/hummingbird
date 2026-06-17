@@ -141,6 +141,26 @@ pub struct Theme {
     pub status_success: Rgba,
     pub status_error: Rgba,
     pub status_disabled: Rgba,
+
+    pub toast_info_background: Rgba,
+    pub toast_info_border: Rgba,
+    pub toast_info_text: Rgba,
+    pub toast_info_track: Rgba,
+
+    pub toast_warning_background: Rgba,
+    pub toast_warning_border: Rgba,
+    pub toast_warning_text: Rgba,
+    pub toast_warning_track: Rgba,
+
+    pub toast_success_background: Rgba,
+    pub toast_success_border: Rgba,
+    pub toast_success_text: Rgba,
+    pub toast_success_track: Rgba,
+
+    pub toast_error_background: Rgba,
+    pub toast_error_border: Rgba,
+    pub toast_error_text: Rgba,
+    pub toast_error_track: Rgba,
 }
 
 impl Default for Theme {
@@ -272,6 +292,26 @@ impl Default for Theme {
             status_success: rgb(0x63C58D),
             status_error: rgb(0xE54D4D),
             status_disabled: rgb(0x5F5F71),
+
+            toast_info_background: rgb(0x161820),
+            toast_info_border: rgb(0x23253B),
+            toast_info_text: rgb(0xE8E9F2),
+            toast_info_track: rgb(0xA0A1AD),
+
+            toast_warning_background: rgb(0x18160C),
+            toast_warning_border: rgb(0x3D3005),
+            toast_warning_text: rgb(0xF0EBDE),
+            toast_warning_track: rgb(0xB5B570),
+
+            toast_success_background: rgb(0x121F11),
+            toast_success_border: rgb(0x0C3D05),
+            toast_success_text: rgb(0xEAF2E8),
+            toast_success_track: rgb(0x74A677),
+
+            toast_error_background: rgb(0x291817),
+            toast_error_border: rgb(0x4d2422),
+            toast_error_text: rgb(0xF2E8E8),
+            toast_error_track: rgb(0xC27F7A),
         }
     }
 }
