@@ -184,7 +184,7 @@ impl PlaybackThread {
                 PlaybackCommand::InsertListAt { items, position } => {
                     self.insert_list_at(items, position)
                 }
-                PlaybackCommand::Next => self.next(true),
+                PlaybackCommand::Next => self.next(true, false),
                 PlaybackCommand::Previous => self.previous(),
                 PlaybackCommand::ClearQueue => self.clear_queue(),
                 PlaybackCommand::Jump(v) => self.jump(v),
@@ -266,12 +266,20 @@ impl PlaybackThread {
 
     /// Open a media file and prepare it for playback.
     fn open(&mut self, path: &Path) -> Result<(), PlaybackStartError> {
+        self.open_with_resampler(path, false)
+    }
+
+    fn open_with_resampler(
+        &mut self,
+        path: &Path,
+        preserve_resampler: bool,
+    ) -> Result<(), PlaybackStartError> {
         info!("Opening track '{}'", path.display());
 
         self.last_track_gain = None;
         self.last_album_gain = None;
 
-        let info = self.engine.open(path)?;
+        let info = self.engine.open(path, preserve_resampler)?;
 
         // Enable loop-point-aware decoding if repeat-one is active
         self.engine
@@ -338,7 +346,7 @@ impl PlaybackThread {
     }
 
     /// Skip to the next track in the queue.
-    fn next(&mut self, user_initiated: bool) {
+    fn next(&mut self, user_initiated: bool, preserve_resampler: bool) {
         if user_initiated {
             self.set_stop_after_current(false);
         }
@@ -347,7 +355,7 @@ impl PlaybackThread {
             && !user_initiated
             && let Some(current_idx) = self.queue.current_position()
         {
-            self.remove(current_idx);
+            self.remove_with_resampler(current_idx, preserve_resampler);
             return;
         }
 
@@ -363,7 +371,9 @@ impl PlaybackThread {
                     self.send_event(PlaybackEvent::QueueUpdated);
                 }
 
-                if let Err(err) = self.open(&path) {
+                let preserve_resampler =
+                    preserve_resampler && reshuffled == Reshuffled::NotReshuffled;
+                if let Err(err) = self.open_with_resampler(&path, preserve_resampler) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
                 }
 
@@ -371,7 +381,7 @@ impl PlaybackThread {
             }
             QueueNavigationResult::Unchanged { path } => {
                 info!("Repeating current track");
-                if let Err(err) = self.open(&path) {
+                if let Err(err) = self.open_with_resampler(&path, preserve_resampler) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
                 }
             }
@@ -584,6 +594,10 @@ impl PlaybackThread {
 
     /// Remove an item from the queue.
     fn remove(&mut self, idx: usize) {
+        self.remove_with_resampler(idx, false);
+    }
+
+    fn remove_with_resampler(&mut self, idx: usize, preserve_resampler: bool) {
         match self.queue.dequeue(idx) {
             DequeueResult::Removed { new_position } => {
                 self.refresh_rg_auto_hint();
@@ -597,7 +611,7 @@ impl PlaybackThread {
 
                 // Play the next track if there is one
                 if let Some(path) = new_path {
-                    if let Err(err) = self.open(&path) {
+                    if let Err(err) = self.open_with_resampler(&path, preserve_resampler) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");
                     }
                     if let Some(pos) = self.queue.current_position() {
@@ -996,7 +1010,7 @@ impl PlaybackThread {
                     self.stop();
                 } else {
                     info!("EOF, moving to next song");
-                    self.next(false);
+                    self.next(false, true);
                 }
             }
             EngineCycleResult::FatalError(msg) => {
@@ -1006,7 +1020,7 @@ impl PlaybackThread {
                     self.stop();
                 } else {
                     error!("Fatal error in audio engine: {}, moving to next song", msg);
-                    self.next(false);
+                    self.next(false, false);
                 }
             }
             EngineCycleResult::NothingToDo => {
