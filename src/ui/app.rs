@@ -1,5 +1,7 @@
 use std::{
+    cell::OnceCell,
     fs,
+    rc::Rc,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
@@ -32,6 +34,7 @@ use crate::{
         SettingsGlobal, setup_settings,
         storage::{Storage, StorageData},
     },
+    toasts,
     ui::{
         assets::HummingbirdAssetSource,
         caching::HummingbirdImageCache,
@@ -39,6 +42,7 @@ use crate::{
         library::missing_folder_dialog::MissingFolderDialog,
         models::WindowInformation,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
+        toasts::ToastLayer,
     },
 };
 
@@ -75,6 +79,7 @@ struct MainWindow {
     pub corrupt_settings_dialog: Entity<CorruptSettingsDialog>,
     pub palette: Entity<CommandPalette>,
     pub image_cache: Entity<HummingbirdImageCache>,
+    pub toast_layer: Entity<ToastLayer>,
 }
 
 impl Render for MainWindow {
@@ -146,7 +151,8 @@ impl Render for MainWindow {
                     })
                     .when(show_corrupt_settings_dialog, |this| {
                         this.child(self.corrupt_settings_dialog.clone())
-                    }),
+                    })
+                    .child(self.toast_layer.clone()),
             ))
     }
 }
@@ -228,7 +234,11 @@ fn main_window_options(window_bounds: WindowBounds) -> WindowOptions {
     }
 }
 
-fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
+fn build_main_window(
+    window: &mut Window,
+    cx: &mut App,
+    toast_layer: Entity<ToastLayer>,
+) -> Entity<MainWindow> {
     let window_title = tr!("APP_NAME").to_string();
     window.set_window_title(&window_title);
 
@@ -293,11 +303,15 @@ fn build_main_window(window: &mut Window, cx: &mut App) -> Entity<MainWindow> {
             // if your view uses a lot of images you need to have your own image
             // cache
             image_cache: HummingbirdImageCache::new(20, cx),
+            toast_layer,
         }
     })
 }
 
-fn ensure_main_window(cx: &mut App) -> gpui::Result<WindowHandle<MainWindow>> {
+fn ensure_main_window(
+    cx: &mut App,
+    toast_layer: Entity<ToastLayer>,
+) -> gpui::Result<WindowHandle<MainWindow>> {
     if let Some(window) = find_main_window(cx) {
         focus_main_window(window, cx);
         return Ok(window);
@@ -305,12 +319,15 @@ fn ensure_main_window(cx: &mut App) -> gpui::Result<WindowHandle<MainWindow>> {
 
     let bounds = main_window_bounds(cx);
     let options = main_window_options(bounds);
-    let window = cx.open_window(options, build_main_window)?;
+    let window = cx.open_window(options, |window, cx| {
+        build_main_window(window, cx, toast_layer)
+    })?;
     focus_main_window(window, cx);
     Ok(window)
 }
 
 pub fn run() -> anyhow::Result<()> {
+    let toast_receiver = toasts::init();
     let data_dir = paths::data_dir();
     fs::create_dir_all(&data_dir).inspect_err(|error| {
         tracing::error!(
@@ -336,8 +353,12 @@ pub fn run() -> anyhow::Result<()> {
 
     let application = Application::with_platform(current_platform(false))
         .with_assets(HummingbirdAssetSource::new(pool.clone()));
-    application.on_reopen(|cx| {
-        let _ = ensure_main_window(cx);
+    let toast_layer: Rc<OnceCell<Entity<ToastLayer>>> = Rc::new(OnceCell::new());
+    let toast_layer_for_reopen = toast_layer.clone();
+    application.on_reopen(move |cx| {
+        if let Some(toast_layer) = toast_layer_for_reopen.get() {
+            let _ = ensure_main_window(cx, toast_layer.clone());
+        }
     });
     application.run(move |cx: &mut App| {
         // Fontconfig isn't read currently so fall back to the most "okay" font rendering
@@ -468,6 +489,11 @@ pub fn run() -> anyhow::Result<()> {
         }
         cx.set_global(playback_interface);
 
+        let toast_layer_entity = ToastLayer::new(cx, toast_receiver);
+        toast_layer
+            .set(toast_layer_entity.clone())
+            .expect("toast layer initialized once");
+
         // Update `StorageData` and save it to file system while quitting the app.
         cx.on_app_quit({
             let storage = storage.clone();
@@ -500,7 +526,7 @@ pub fn run() -> anyhow::Result<()> {
                 .write(cx, Some(window_information.clone()));
         }
 
-        let main_window = ensure_main_window(cx).unwrap();
+        let main_window = ensure_main_window(cx, toast_layer_entity).unwrap();
         main_window
             .update(cx, |_, window, cx| {
                 init_pbc_task(cx, window);

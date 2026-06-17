@@ -16,6 +16,7 @@ use crate::media::{
 };
 
 mod devices;
+mod errors;
 mod library;
 mod logging;
 mod media;
@@ -26,6 +27,7 @@ mod services;
 mod settings;
 #[cfg(test)]
 mod test_support;
+mod toasts;
 mod ui;
 #[cfg(feature = "update")]
 mod update;

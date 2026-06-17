@@ -59,9 +59,7 @@ transparent colors. If a color is not specified, the color from the default them
 is used.
 
 ## Example
-A `theme.json` for the default theme is provided here. Note the colors may be
-out of date, but an effort is made to ensure all possible fields are represented
-in this example.
+A `theme.json` for the default theme is provided here.
 
 ```json
 {
@@ -89,6 +87,7 @@ in this example.
   "playback_button_border": "#00000000",
   "playback_button_toggled": "#688CF0",
   "playback_button_repeat_one": "#63C58D",
+  "stop_after_current_indicator": "#F0A868",
 
   "window_button": "#00000000",
   "window_button_hover": "#262D42",
@@ -152,6 +151,7 @@ in this example.
 
   "text_input_selection": "#01020388",
   "caret_color": "#E8E8F2",
+  "text_highlight_background": "#3311FF30",
 
   "palette_item_hover": "#1F2334",
   "palette_item_border_hover": "#2B2F44",
@@ -186,6 +186,26 @@ in this example.
 
   "status_success": "#63C58D",
   "status_error": "#E54D4D",
-  "status_disabled": "#5F5F71"
+  "status_disabled": "#5F5F71",
+
+  "toast_info_background": "#161820",
+  "toast_info_border": "#23253B",
+  "toast_info_text": "#E8E9F2",
+  "toast_info_track": "#A0A1AD",
+
+  "toast_warning_background": "#18160C",
+  "toast_warning_border": "#3D3005",
+  "toast_warning_text": "#F0EBDE",
+  "toast_warning_track": "#B5B570",
+
+  "toast_success_background": "#121F11",
+  "toast_success_border": "#0C3D05",
+  "toast_success_text": "#EAF2E8",
+  "toast_success_track": "#74A677",
+
+  "toast_error_background": "#291817",
+  "toast_error_border": "#4D2422",
+  "toast_error_text": "#F2E8E8",
+  "toast_error_track": "#C27F7A"
 }
 ```
