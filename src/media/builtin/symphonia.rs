@@ -4,14 +4,14 @@ use intx::{I24, U24};
 use smallvec::SmallVec;
 use symphonia::{
     core::{
-        audio::{Audio, Channels, GenericAudioBufferRef},
         audio::sample::SampleFormat as SymphSampleFormat,
+        audio::{Audio, Channels, GenericAudioBufferRef},
         codecs::{
             audio::{AudioDecoder, AudioDecoderOptions},
             registry::CodecRegistry,
         },
         errors::Error,
-        formats::{probe::Hint, FormatOptions, FormatReader, SeekMode, SeekTo, TrackType},
+        formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType, probe::Hint},
         io::MediaSourceStream,
         meta::{MetadataOptions, StandardTag, Tag, Visual},
         units::{Time, TimeBase, Timestamp},
@@ -84,23 +84,15 @@ impl SymphoniaStream {
                     StandardTag::Bpm(n) => Some(MetadataTag::Bpm(*n)),
                     StandardTag::CompilationFlag(b) => Some(MetadataTag::Compilation(*b)),
                     StandardTag::ReleaseDate(s) => Some(MetadataTag::Date((**s).clone())),
-                    StandardTag::TrackNumber(n) => {
-                        Some(MetadataTag::TrackNumber(n.to_string()))
-                    }
+                    StandardTag::TrackNumber(n) => Some(MetadataTag::TrackNumber(n.to_string())),
                     StandardTag::TrackTotal(n) => Some(MetadataTag::TrackTotal(*n)),
-                    StandardTag::DiscNumber(n) => {
-                        Some(MetadataTag::DiscNumber(n.to_string()))
-                    }
+                    StandardTag::DiscNumber(n) => Some(MetadataTag::DiscNumber(n.to_string())),
                     StandardTag::DiscTotal(n) => Some(MetadataTag::DiscTotal(*n)),
                     StandardTag::Label(s) => Some(MetadataTag::Label((**s).clone())),
-                    StandardTag::IdentCatalogNumber(s) => {
-                        Some(MetadataTag::Catalog((**s).clone()))
-                    }
+                    StandardTag::IdentCatalogNumber(s) => Some(MetadataTag::Catalog((**s).clone())),
                     StandardTag::IdentIsrc(s) => Some(MetadataTag::Isrc((**s).clone())),
                     StandardTag::SortAlbum(s) => Some(MetadataTag::SortAlbum((**s).clone())),
-                    StandardTag::SortAlbumArtist(s) => {
-                        Some(MetadataTag::ArtistSort((**s).clone()))
-                    }
+                    StandardTag::SortAlbumArtist(s) => Some(MetadataTag::ArtistSort((**s).clone())),
                     StandardTag::MusicBrainzAlbumId(s) => {
                         Some(MetadataTag::MbidAlbum((**s).clone()))
                     }
@@ -117,9 +109,7 @@ impl SymphoniaStream {
                     StandardTag::ReplayGainAlbumPeak(s) => {
                         Some(MetadataTag::ReplayGainAlbumPeak((**s).clone()))
                     }
-                    StandardTag::DiscSubtitle(s) => {
-                        Some(MetadataTag::DiscSubtitle((**s).clone()))
-                    }
+                    StandardTag::DiscSubtitle(s) => Some(MetadataTag::DiscSubtitle((**s).clone())),
                     _ => None,
                 }
             } else {
@@ -354,7 +344,11 @@ impl MediaStream for SymphoniaStream {
             self.current_timebase = Some(tb);
         }
 
-        let channel_count = audio_params.channels.as_ref().map(|c| c.count()).unwrap_or(2);
+        let channel_count = audio_params
+            .channels
+            .as_ref()
+            .map(|c| c.count())
+            .unwrap_or(2);
         let frame_capacity = audio_params.max_frames_per_packet.unwrap_or(8192) as usize;
 
         self.conversion_buffer = (0..channel_count)
@@ -471,9 +465,10 @@ impl MediaStream for SymphoniaStream {
             .map_err(|e| SeekError::Unknown(e.to_string()))?;
 
         if let Some(timebase) = timebase
-            && let Some(t) = timebase.calc_time(seek.actual_ts) {
-                self.current_position_ms = time_to_millis(t);
-            }
+            && let Some(t) = timebase.calc_time(seek.actual_ts)
+        {
+            self.current_position_ms = time_to_millis(t);
+        }
 
         Ok(())
     }
@@ -490,7 +485,9 @@ impl MediaStream for SymphoniaStream {
             .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
         let codec_params = track.codec_params.as_ref().unwrap();
-        let audio_params = codec_params.audio().ok_or(ChannelRetrievalError::NothingToPlay)?;
+        let audio_params = codec_params
+            .audio()
+            .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
         Ok(ChannelSpec::Count(
             audio_params
@@ -545,7 +542,9 @@ impl MediaStream for SymphoniaStream {
             .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
         let codec_params = track.codec_params.as_ref().unwrap();
-        let audio_params = codec_params.audio().ok_or(ChannelRetrievalError::NothingToPlay)?;
+        let audio_params = codec_params
+            .audio()
+            .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
         audio_params
             .sample_rate
@@ -594,9 +593,10 @@ impl MediaStream for SymphoniaStream {
                     self.current_duration = decoded.capacity() as u64;
 
                     if let Some(tb) = &self.current_timebase
-                        && let Some(t) = tb.calc_time(packet.pts) {
-                            self.current_position_ms = time_to_millis(t);
-                        }
+                        && let Some(t) = tb.calc_time(packet.pts)
+                    {
+                        self.current_position_ms = time_to_millis(t);
+                    }
 
                     let start_offset = if self.needs_loop_start_trim {
                         self.needs_loop_start_trim = false;
@@ -672,10 +672,9 @@ impl MediaStream for SymphoniaStream {
                         GenericAudioBufferRef::F64(v) => {
                             let counts: SmallVec<[&[f64]; 8]> = (0..channel_count)
                                 .filter_map(|ch| {
-                                    v.plane(ch)
-                                        .map(|plane| {
-                                            &plane[start_offset..start_offset + max_samples]
-                                        })
+                                    v.plane(ch).map(|plane| {
+                                        &plane[start_offset..start_offset + max_samples]
+                                    })
                                 })
                                 .collect();
                             output.write_slices(&counts);
@@ -750,9 +749,10 @@ impl MediaStream for SymphoniaStream {
                     self.current_duration = decoded.capacity() as u64;
 
                     if let Some(tb) = &self.current_timebase
-                        && let Some(t) = tb.calc_time(packet.pts) {
-                            self.current_position_ms = time_to_millis(t);
-                        }
+                        && let Some(t) = tb.calc_time(packet.pts)
+                    {
+                        self.current_position_ms = time_to_millis(t);
+                    }
 
                     let start_offset = if self.needs_loop_start_trim {
                         self.needs_loop_start_trim = false;
