@@ -64,12 +64,17 @@ impl ButtonSize {
         T: Styled,
     {
         match self {
-            ButtonSize::Regular => dest.px(px(10.0)).py(px(3.0)).text_sm().gap(px(8.0)),
+            ButtonSize::Regular => dest
+                .px(px(10.0))
+                .py(px(8.0))
+                .text_sm()
+                .gap(px(8.0))
+                .line_height(px(14.0)),
             ButtonSize::Large => dest
                 .px(px(12.0))
-                .pt(px(4.0))
-                .pb(px(3.0))
+                .py(px(7.0))
                 .text_sm()
+                .line_height(px(14.0))
                 .gap(px(8.0)),
         }
     }
@@ -299,7 +304,7 @@ impl RenderOnce for InteractiveButton {
 
 pub fn button() -> Button {
     Button {
-        div: div(),
+        div: div().flex().items_center(),
         style: ButtonStyle::Regular,
         size: ButtonSize::Regular,
         intent: ButtonIntent::Secondary,

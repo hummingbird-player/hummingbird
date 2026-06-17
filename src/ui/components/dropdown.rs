@@ -93,6 +93,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                     .flex_grow()
                     .flex_shrink()
                     .text_sm()
+                    .line_height(px(14.0))
                     .text_color(theme.text)
                     .overflow_hidden()
                     .text_ellipsis()
@@ -315,9 +316,8 @@ pub fn dropdown<T: Clone + PartialEq + 'static>(id: impl Into<ElementId>) -> Dro
         selected: None,
         on_change: None,
         div: div()
-            .px(px(12.0))
-            .pt(px(4.0))
-            .pb(px(3.0))
+            .px(px(10.0))
+            .py(px(8.0))
             .text_sm()
             .border_1()
             .rounded(px(4.0))

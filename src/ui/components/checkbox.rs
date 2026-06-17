@@ -70,8 +70,7 @@ impl RenderOnce for Checkbox {
                     icon(CHECK)
                         .size(px(16.0))
                         .text_color(theme.checkbox_checked)
-                        .m_auto()
-                        .pr(px(2.0)),
+                        .mr(px(1.0)),
                 )
             })
     }
