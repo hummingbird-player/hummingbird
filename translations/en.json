@@ -105,6 +105,8 @@
   "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": "Clicking on a queue item selects it, double clicking plays it.",
   "INTERFACE_REDUCED_MOTION": "Reduced motion",
   "INTERFACE_REDUCED_MOTION_SUBTEXT": "Disables smooth scrolling, fades, and other motion-heavy UI animations.",
+  "INTERFACE_SLIM_SCROLLBARS": "Slim scrollbars",
+  "INTERFACE_SLIM_SCROLLBARS_SUBTEXT": "Use slimmer scrollbars for a cleaner visual style.",
   "INTERFACE_STARTUP_LIBRARY_VIEW": "Default startup view",
   "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": "Choose which library page opens when Hummingbird launches.",
   "INTERFACE_SWAP_MENU_AND_NAV": "Swap menu and navigation buttons",

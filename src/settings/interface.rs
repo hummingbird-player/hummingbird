@@ -49,6 +49,8 @@ pub struct InterfaceSettings {
     pub reduced_motion: bool,
     #[serde(default)]
     pub always_show_scrollbars: bool,
+    #[serde(default)]
+    pub slim_scrollbars: bool,
     #[serde(default = "default_queue_select_on_click")]
     pub queue_select_on_click: bool,
     #[cfg(not(target_os = "macos"))]
@@ -88,6 +90,7 @@ impl Default for InterfaceSettings {
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,
             always_show_scrollbars: false,
+            slim_scrollbars: true,
             queue_select_on_click: true,
             #[cfg(not(target_os = "macos"))]
             swap_menu_and_nav: false,

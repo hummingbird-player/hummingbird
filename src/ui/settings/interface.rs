@@ -360,6 +360,27 @@ impl Render for InterfaceSettings {
             )
             .child(
                 label(
+                    "interface-slim-scrollbars",
+                    tr!("INTERFACE_SLIM_SCROLLBARS", "Slim scrollbars"),
+                )
+                .subtext(tr!(
+                    "INTERFACE_SLIM_SCROLLBARS_SUBTEXT",
+                    "Use slimmer scrollbars for a cleaner visual style."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_interface(cx, |interface| {
+                        interface.slim_scrollbars = !interface.slim_scrollbars;
+                    });
+                }))
+                .child(checkbox(
+                    "interface-slim-scrollbars-check",
+                    interface.slim_scrollbars,
+                )),
+            )
+            .child(
+                label(
                     "interface-queue-select-on-click",
                     tr!("INTERFACE_QUEUE_SELECT_ON_CLICK", "Clicking on queue selects tracks"),
                 )

@@ -284,18 +284,32 @@ impl Render for Lyrics {
                 .into_any_element()
         } else {
             let text = self.content.clone().unwrap();
+            let scroll_handle = self.scroll_handle.clone();
+
             div()
-                .id("lyrics-plain-text")
                 .h_full()
                 .w_full()
-                .overflow_y_scroll()
-                .px(px(16.0))
-                .py(px(14.0))
-                .text_size(px(20.0))
-                .line_height(rems(1.6))
-                .font_weight(FontWeight::BOLD)
-                .text_color(normal)
-                .child(SharedString::from(text))
+                .relative()
+                .child(
+                    div()
+                        .id("lyrics-plain-text")
+                        .h_full()
+                        .w_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
+                        .px(px(16.0))
+                        .py(px(14.0))
+                        .text_size(px(20.0))
+                        .line_height(rems(1.6))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(normal)
+                        .child(SharedString::from(text)),
+                )
+                .child(floating_scrollbar(
+                    "lyrics-plain-scrollbar",
+                    ScrollableHandle::Regular(scroll_handle),
+                    RightPad::Pad,
+                ))
                 .into_any_element()
         };
 

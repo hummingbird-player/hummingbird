@@ -108,6 +108,7 @@ pub struct Scrollbar {
     style: StyleRefinement,
     scroll_handle: Option<ScrollableHandle>,
     on_interaction: Option<InteractionHandler>,
+    slim: bool,
     // assigned as variable in case we want this to be different later
     hide_delay: Duration,
     fade_duration: Duration,
@@ -126,6 +127,11 @@ impl Scrollbar {
 
     pub fn on_interaction(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_interaction = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn slim(mut self, slim: bool) -> Self {
+        self.slim = slim;
         self
     }
 }
@@ -271,11 +277,12 @@ impl Element for Scrollbar {
         let hitbox_for_events = hitbox;
         let hide_delay = self.hide_delay;
         let fade_duration = self.fade_duration;
-        let always_visible = {
-            let settings = cx.global::<SettingsGlobal>();
-            let settings = settings.model.read(cx);
-            settings.interface.always_show_scrollbars || settings.interface.reduced_motion
-        };
+        let settings = cx.global::<SettingsGlobal>();
+        let settings = settings.model.read(cx);
+        let always_visible =
+            settings.interface.always_show_scrollbars || settings.interface.reduced_motion;
+        let slim_scrollbars = settings.interface.slim_scrollbars;
+        let slim = self.slim && slim_scrollbars;
 
         window.with_optional_element_state(
             id,
@@ -296,6 +303,7 @@ impl Element for Scrollbar {
 
                 let scroll_handle_down = handle.clone();
                 let scroll_handle_move = handle.clone();
+                let scroll_handle_scroll = handle.clone();
 
                 let inner_bounds_down = inner_bounds;
                 let inner_bounds_move = inner_bounds;
@@ -304,6 +312,7 @@ impl Element for Scrollbar {
                 let thumb_height_move = thumb_height;
                 let max_offset_down = max_offset;
                 let max_offset_move = max_offset;
+                let max_offset_scroll = max_offset;
 
                 let hitbox_down = hitbox_for_events.clone();
                 let hitbox_hover = hitbox_for_events.clone();
@@ -364,13 +373,56 @@ impl Element for Scrollbar {
                 if opacity > 0.01 {
                     let bg_color = background.opacity(opacity);
                     let thumb_color = foreground.opacity(opacity);
+                    let expanded = is_dragging || currently_hovered;
+                    let thin_width = px(4.0);
+                    let visual_width = if !slim || expanded || inner_bounds.size.width < thin_width
+                    {
+                        inner_bounds.size.width
+                    } else {
+                        thin_width
+                    };
+                    let visual_x = inner_bounds.origin.x + inner_bounds.size.width - visual_width;
+                    let visual_track_bounds = Bounds {
+                        origin: gpui::Point {
+                            x: visual_x,
+                            y: inner_bounds.origin.y,
+                        },
+                        size: gpui::Size {
+                            width: visual_width,
+                            height: inner_bounds.size.height,
+                        },
+                    };
+                    let visual_thumb_bounds = Bounds {
+                        origin: gpui::Point {
+                            x: visual_x,
+                            y: thumb_bounds.origin.y,
+                        },
+                        size: gpui::Size {
+                            width: visual_width,
+                            height: thumb_bounds.size.height,
+                        },
+                    };
+                    let corners = if !slim {
+                        corners.to_pixels(window.rem_size())
+                    } else {
+                        let corners = corners.to_pixels(window.rem_size());
+                        let full_width = inner_bounds.size.width.max(px(1.0));
+                        let radius_ratio = visual_width / full_width;
+
+                        Corners {
+                            top_left: corners.top_left * radius_ratio,
+                            top_right: corners.top_right * radius_ratio,
+                            bottom_right: corners.bottom_right * radius_ratio,
+                            bottom_left: corners.bottom_left * radius_ratio,
+                        }
+                    };
 
                     window.set_cursor_style(CursorStyle::Arrow, hitbox_for_events);
 
                     // background
                     window.paint_quad(quad(
-                        bounds,
-                        corners.to_pixels(window.rem_size()),
+                        visual_track_bounds,
+                        corners,
                         bg_color,
                         Edges::all(px(0.0)),
                         rgb(0x000000),
@@ -379,8 +431,8 @@ impl Element for Scrollbar {
 
                     // foreground
                     window.paint_quad(quad(
-                        thumb_bounds,
-                        corners.to_pixels(window.rem_size()),
+                        visual_thumb_bounds,
+                        corners,
                         thumb_color,
                         Edges::all(px(0.0)),
                         rgb(0x000000),
@@ -409,16 +461,31 @@ impl Element for Scrollbar {
                 });
 
                 // show if scrolled
-                window.on_mouse_event(move |_ev: &ScrollWheelEvent, phase, window, _cx| {
+                window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
 
                     if hitbox_scroll.is_hovered(window) {
+                        let delta = ev.delta.pixel_delta(window.line_height());
+                        let current_offset = scroll_handle_scroll.offset();
+                        let new_offset_y =
+                            (current_offset.y + delta.y).clamp(-max_offset_scroll, px(0.0));
+
                         let mut state = state_for_scroll.borrow_mut();
                         state.last_interaction_time = Some(Instant::now());
+
+                        if (new_offset_y - current_offset.y).abs() > px(0.1) {
+                            scroll_handle_scroll.set_offset(gpui::Point {
+                                x: current_offset.x,
+                                y: new_offset_y,
+                            });
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        }
+
                         if let Some(handler) = on_interaction_scroll.as_ref() {
-                            handler(window, _cx);
+                            handler(window, cx);
                         }
                         window.refresh();
                     }
@@ -539,6 +606,7 @@ pub fn scrollbar() -> Scrollbar {
         style: StyleRefinement::default(),
         scroll_handle: None,
         on_interaction: None,
+        slim: false,
         hide_delay: Duration::from_millis(800),
         fade_duration: Duration::from_millis(200),
     }
@@ -585,11 +653,12 @@ impl RenderOnce for FloatingScrollbar {
             .my(px(4.0))
             .occlude()
             .child(
-                sb.w(px(10.0))
+                sb.slim(true)
+                    .w(px(10.0))
                     .h_full()
                     .bg(theme.scrollbar_background)
                     .text_color(theme.scrollbar_foreground)
-                    .rounded(px(6.0)),
+                    .rounded(px(5.0)),
             )
     }
 }
