@@ -5,6 +5,7 @@ use tracing::{error, info, trace_span, warn};
 use crate::{
     devices::{
         format::{ChannelSpec, FormatInfo, SampleFormat},
+        mix::{ChannelMixer, MixOptions},
         resample::Resampler,
     },
     media::{
@@ -77,6 +78,8 @@ pub struct AudioEngine {
     device: DeviceController,
     pipeline: Option<AudioPipeline>,
     resampler: Option<Resampler>,
+    /// Mixer between source-channel resampler output and device-channel input.
+    mixer: Option<ChannelMixer>,
     state: EngineState,
     /// Whether a stream reset is pending (e.g., after seek).
     pending_reset: bool,
@@ -89,6 +92,7 @@ impl AudioEngine {
             device: DeviceController::new(),
             pipeline: None,
             resampler: None,
+            mixer: None,
             state: EngineState::Idle,
             pending_reset: false,
         }
@@ -126,7 +130,6 @@ impl AudioEngine {
             self.reset_resampler();
         }
 
-        // Handle paused state - reset device if needed
         let mut recreation_required = false;
 
         if self.state != EngineState::Playing
@@ -144,22 +147,14 @@ impl AudioEngine {
             recreation_required = true;
         }
 
-        // Clear the pipeline for the new track, but preserve the resampler for gapless playback
-        // The resampler will be reused if params match, or recreated in process_decode_resample if needed
+        // Preserve the resampler for gapless reuse; rebuild the mixer per track layout.
         self.pipeline = None;
+        self.mixer = None;
 
         let media_info = self.media.open(path)?;
 
-        // Check if we need to recreate the stream for different channel count
-        if self.device.needs_format_change(media_info.channels) {
-            info!(
-                "Channel count mismatch, re-opening with the correct channel count (if supported)"
-            );
-            recreation_required = true;
-        }
-
         let device_recreated = if recreation_required {
-            if let Err(e) = self.device.recreate_stream(true, Some(media_info.channels)) {
+            if let Err(e) = self.device.recreate_stream(true, None) {
                 error!("Failed to recreate stream: {:?}", e);
                 return Err(PlaybackStartError::StreamError(format!(
                     "Failed to recreate stream: {:?}",
@@ -200,7 +195,7 @@ impl AudioEngine {
                                 "Failed to reset stream, recreating device instead... {:?}",
                                 err
                             );
-                            let channels = self.device.current_format().map(|f| f.channels);
+                            let channels = self.device.current_format().map(|f| f.channels.clone());
                             if let Err(e) = self.device.recreate_stream(true, channels) {
                                 return Err(EngineError::DeviceError(format!(
                                     "Failed to recreate stream: {:?}",
@@ -216,7 +211,7 @@ impl AudioEngine {
                             "Failed to restart playback, recreating device and retrying... {:?}",
                             err
                         );
-                        let channels = self.device.current_format().map(|f| f.channels);
+                        let channels = self.device.current_format().map(|f| f.channels.clone());
                         if let Err(e) = self.device.recreate_stream(true, channels) {
                             return Err(EngineError::DeviceError(format!(
                                 "Failed to recreate stream: {:?}",
@@ -345,10 +340,9 @@ impl AudioEngine {
             return EngineCycleResult::NothingToDo;
         }
 
-        // Set up pipeline if not already done
         if self.pipeline.is_none() {
             let device_format = match self.device.current_format() {
-                Some(fmt) => *fmt,
+                Some(fmt) => fmt.clone(),
                 None => {
                     error!("No device format available");
                     return EngineCycleResult::NothingToDo;
@@ -361,7 +355,6 @@ impl AudioEngine {
             }
         }
 
-        // Process decode -> resample (or passthrough)
         let result = match self.process_decode_resample() {
             Ok(result) => result,
             Err(e) => {
@@ -382,7 +375,6 @@ impl AudioEngine {
             DecodeStepResult::Continue => {}
         }
 
-        // Send samples to device
         self.consume_to_device()
     }
 
@@ -396,27 +388,23 @@ impl AudioEngine {
 
         let consume_result = match pipeline {
             AudioPipeline::Convert(p) => self.device.consume_from(&mut p.device_input),
-            AudioPipeline::F32Passthrough(p) => {
-                // Try f32 passthrough first
-                match self.device.consume_from_f32(&mut p.device_input) {
-                    Some(result) => result,
-                    None => {
-                        // Device doesn't support f32 passthrough, this shouldn't happen
-                        // if pipeline was set up correctly
-                        error!(
-                            "Device doesn't support f32 passthrough but pipeline is F32Passthrough"
-                        );
-                        return EngineCycleResult::NothingToDo;
-                    }
+            AudioPipeline::F32Passthrough(p) => match self
+                .device
+                .consume_from_f32(&mut p.device_input)
+            {
+                Some(result) => result,
+                None => {
+                    error!("Device doesn't support f32 passthrough but pipeline is F32Passthrough");
+                    return EngineCycleResult::NothingToDo;
                 }
-            }
+            },
         };
 
         if let Err(err) = consume_result {
             warn!(parent: &s, ?err, "Failed to consume from pipeline: {err}");
             warn!(parent: &s, "Recreating device and retrying...");
 
-            let channels = self.device.current_format().map(|f| f.channels);
+            let channels = self.device.current_format().map(|f| f.channels.clone());
             if let Err(e) = self.device.recreate_stream(true, channels) {
                 error!(parent: &s, "Failed to recreate stream: {:?}", e);
                 return EngineCycleResult::NothingToDo;
@@ -448,49 +436,56 @@ impl AudioEngine {
         EngineCycleResult::Continue
     }
 
-    //
-    // Private helper methods
-    //
-
     /// Set up the audio pipeline for a new track.
-    ///
-    /// This method determines whether to use f32 passthrough or f64 conversion pipeline
-    /// based on the source and device formats.
-    ///
-    /// Note: This preserves the existing resampler if one exists. The resampler will be
-    /// reused if its parameters match the new track, or recreated in process_decode_resample
-    /// when the actual source rate becomes known after the first decode.
     fn setup_pipeline(&mut self, device_format: &FormatInfo) -> Result<(), EngineError> {
-        let channels = self
+        let source_spec = self
             .media
             .channels()
             .map_err(|e| EngineError::MediaError(format!("Failed to get channels: {:?}", e)))?;
 
-        let channel_count = channels.count() as usize;
+        let source_layout = source_spec.to_layout();
+        let device_layout = device_format.channels.to_layout();
 
-        // Get source format to determine if passthrough is possible
-        // force into f64 conversion pipeline if format is unknown, should work anyways
+        let source_channel_count = source_layout.count().max(1);
+        let device_channel_count = device_layout.count().max(1);
+        let channels_match = source_layout == device_layout;
+
         let source_format = self.media.sample_format().unwrap_or(SampleFormat::Float64);
 
-        // Get actual source sample rate from the media file
         let source_rate = self
             .media
             .sample_rate()
-            .unwrap_or(device_format.sample_rate); // Fallback to device rate if unavailable
+            .unwrap_or(device_format.sample_rate);
 
         let pipeline = AudioPipeline::new(
-            channel_count,
+            source_channel_count,
             source_format,
             source_rate,
             device_format.sample_type,
             device_format.sample_rate,
+            device_channel_count,
+            channels_match,
             DEFAULT_BUFFER_FRAMES,
         );
 
         if pipeline.is_passthrough() {
             info!("Using f32 passthrough pipeline (no conversion needed)");
+            self.mixer = None;
         } else {
             info!("Using f64 conversion pipeline");
+            if channels_match {
+                self.mixer = None;
+            } else {
+                let mixer = ChannelMixer::new(source_layout, device_layout, MixOptions::default());
+                // Keep the mixer whenever it remaps samples, or whenever the channel
+                // counts differ, so the passthrough fallback is never asked to bridge
+                // mismatched counts. Equal-count identity mixes fall through to passthrough.
+                if mixer.needs_mixing() || source_channel_count != device_channel_count {
+                    self.mixer = Some(mixer);
+                } else {
+                    self.mixer = None;
+                }
+            }
         }
 
         self.pipeline = Some(pipeline);
@@ -498,17 +493,21 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Clear the pipeline and resampler completely (e.g., on stop).
-    /// For track transitions, prefer clearing only the pipeline to preserve the resampler for gapless playback.
     fn clear_pipeline(&mut self) {
         self.pipeline = None;
         self.resampler = None;
+        self.mixer = None;
     }
 
-    /// Reset the resampler's internal buffers (e.g., on track change).
     fn reset_resampler(&mut self) {
         if let Some(resampler) = &mut self.resampler {
             resampler.reset();
+        }
+        if let Some(mixer) = &mut self.mixer {
+            mixer.reset();
+        }
+        if let Some(AudioPipeline::Convert(p)) = &mut self.pipeline {
+            p.clear_resampler_output();
         }
     }
 
@@ -557,14 +556,13 @@ impl AudioEngine {
                         return Ok(DecodeStepResult::Eof);
                     }
                     DecodeResult::Decoded { rate, .. } => {
-                        // Only recreate resampler if parameters actually changed
                         let duration = self.media.frame_duration().unwrap_or(1024);
                         let needs_new_resampler = match &self.resampler {
                             Some(resampler) => !resampler.matches_params(
                                 rate,
                                 p.target_rate,
                                 duration,
-                                p.channel_count,
+                                p.source_channel_count,
                             ),
                             None => true,
                         };
@@ -574,7 +572,7 @@ impl AudioEngine {
                                 rate,
                                 p.target_rate,
                                 duration,
-                                p.channel_count as u16,
+                                p.source_channel_count as u16,
                             ));
                         }
 
@@ -583,16 +581,43 @@ impl AudioEngine {
                 }
 
                 if let Some(resampler) = &mut self.resampler {
-                    let _processed = resampler.process_ring_buffers(
+                    resampler.process_into(
                         &mut p.resampler_input,
-                        &p.device_input_producers,
+                        &mut p.resampler_output,
                         DEFAULT_BUFFER_FRAMES,
                     );
                 }
 
+                if let Some(mixer) = &mut self.mixer {
+                    mixer.process(&p.resampler_output, &p.device_input_producers);
+                } else if p.source_channel_count == p.device_channel_count {
+                    Self::passthrough_to_device(&p.resampler_output, &p.device_input_producers);
+                } else {
+                    // setup_pipeline guarantees a mixer whenever counts differ; reaching
+                    // here would drop audio and (via write_slices) risk a panic downstream.
+                    warn!(
+                        "No mixer for {} -> {} channel mismatch; dropping frames",
+                        p.source_channel_count, p.device_channel_count
+                    );
+                }
+
+                p.clear_resampler_output();
+
                 Ok(DecodeStepResult::Continue)
             }
         }
+    }
+
+    fn passthrough_to_device(
+        input: &[Vec<f64>],
+        output: &crate::media::pipeline::ChannelProducers<f64>,
+    ) {
+        let frames = input.first().map(|v| v.len()).unwrap_or(0);
+        if frames == 0 {
+            return;
+        }
+        let slices: smallvec::SmallVec<[&[f64]; 8]> = input.iter().map(|v| v.as_slice()).collect();
+        output.write_slices(&slices);
     }
 
     /// Handle decode errors uniformly

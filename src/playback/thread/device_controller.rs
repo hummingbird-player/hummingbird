@@ -179,37 +179,36 @@ impl DeviceController {
 
         let mut device = device_provider.get_default_device()?;
 
-        let mut format = device
+        let default_format = device
             .get_default_format()
             .map_err(|_| DeviceError::NoDevice)?;
 
         let requested = channels.map(|ch| FormatInfo {
+            originating_provider: default_format.originating_provider,
+            sample_type: default_format.sample_type,
+            sample_rate: default_format.sample_rate,
+            buffer_size: default_format.buffer_size,
             channels: ch,
-            sample_rate: format.sample_rate,
-            ..format
         });
 
-        let stream = if let Some(req) = requested {
-            match device.open_device(req) {
-                Ok(stream) => {
-                    format = req;
-                    stream
-                }
+        let (stream, opened_format) = if let Some(req) = requested {
+            match device.open_device(req.clone()) {
+                Ok(stream) => (stream, req),
                 Err(e) => {
                     warn!(
-                        ?format,
+                        ?default_format,
                         "Failed to open device with requested format: {:?}", e
                     );
                     warn!("Falling back to default format");
-                    device.open_device(format)?
+                    (device.open_device(default_format.clone())?, default_format)
                 }
             }
         } else {
-            device.open_device(format)?
+            (device.open_device(default_format.clone())?, default_format)
         };
 
         self.stream = Some(stream);
-        self.current_format = Some(format);
+        self.current_format = Some(opened_format.clone());
         self.device = Some(device);
 
         if let Some(stream) = &mut self.stream {
@@ -220,12 +219,12 @@ impl DeviceController {
         info!(
             "Opened device: {:?}, format: {:?}, rate: {}, channel_count: {}",
             self.device.as_ref().and_then(|d| d.get_name().ok()),
-            format.sample_type,
-            format.sample_rate,
-            format.channels.count()
+            opened_format.sample_type,
+            opened_format.sample_rate,
+            opened_format.channels.count()
         );
 
-        Ok(format)
+        Ok(opened_format)
     }
 
     /// Recreate the stream, optionally forcing recreation even if the device hasn't changed.
@@ -248,9 +247,9 @@ impl DeviceController {
         // Only skip recreation if not forced and device hasn't changed
         if !force
             && new_uid == current_uid
-            && let Some(format) = self.current_format
+            && let Some(format) = &self.current_format
         {
-            return Ok(format);
+            return Ok(format.clone());
         }
 
         // Need to drop the new_device before calling create_stream since it will
@@ -346,14 +345,6 @@ impl DeviceController {
     /// Get the current stream format, if a stream is open.
     pub fn current_format(&self) -> Option<&FormatInfo> {
         self.current_format.as_ref()
-    }
-
-    /// Check if the device needs to be recreated for a different channel count.
-    pub fn needs_format_change(&self, requested_channels: ChannelSpec) -> bool {
-        match &self.current_format {
-            Some(format) => format.channels.count() != requested_channels.count(),
-            None => true,
-        }
     }
 }
 
