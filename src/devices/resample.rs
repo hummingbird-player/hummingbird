@@ -5,7 +5,7 @@ use intx::{I24, U24};
 use rubato::{Fft, FixedSync, Resampler as RubatoResampler};
 use tracing::info;
 
-use crate::media::pipeline::{ChannelConsumers, ChannelProducers};
+use crate::media::pipeline::ChannelConsumers;
 
 pub trait SampleInto<T> {
     fn sample_into(self) -> T;
@@ -257,10 +257,10 @@ impl Resampler {
         self.eof = false;
     }
 
-    pub fn process_ring_buffers(
+    pub fn process_into(
         &mut self,
         input: &mut ChannelConsumers<f64>,
-        output: &ChannelProducers<f64>,
+        output: &mut [Vec<f64>],
         max_input_samples: usize,
     ) -> usize {
         if !self.needs_resampling() {
@@ -304,13 +304,13 @@ impl Resampler {
                 .process_into_buffer(&input_adapter, &mut output_adapter, None)
                 .expect("resampler error");
 
-            let slices: smallvec::SmallVec<[&[f64]; 8]> = self
-                .temp_output
-                .iter()
-                .map(|ch| &ch[..frames_written])
-                .collect();
-
-            output.write_slices(&slices);
+            for (out_buf, temp_ch) in output
+                .iter_mut()
+                .zip(self.temp_output.iter())
+                .take(self.channels)
+            {
+                out_buf.extend_from_slice(&temp_ch[..frames_written]);
+            }
             total_output += frames_written;
         }
 
@@ -347,13 +347,13 @@ impl Resampler {
                     &mut output_adapter,
                     Some(&indexing),
                 ) {
-                    let slices: smallvec::SmallVec<[&[f64]; 8]> = self
-                        .temp_output
-                        .iter()
-                        .map(|ch| &ch[..frames_written])
-                        .collect();
-
-                    output.write_slices(&slices);
+                    for (out_buf, temp_ch) in output
+                        .iter_mut()
+                        .zip(self.temp_output.iter())
+                        .take(self.channels)
+                    {
+                        out_buf.extend_from_slice(&temp_ch[..frames_written]);
+                    }
                     total_output += frames_written;
                 }
             }
@@ -364,7 +364,7 @@ impl Resampler {
 
     fn passthrough_direct(
         input: &mut ChannelConsumers<f64>,
-        output: &ChannelProducers<f64>,
+        output: &mut [Vec<f64>],
         max_samples: usize,
     ) -> usize {
         let read = input.try_read_to_staging(max_samples);
@@ -373,9 +373,11 @@ impl Resampler {
         }
 
         let staging = input.staging();
-        let slices: smallvec::SmallVec<[&[f64]; 8]> =
-            staging.iter().map(|v| v.as_slice()).collect();
-        output.write_slices(&slices);
+        for (ch, channel) in staging.iter().enumerate() {
+            if let Some(buf) = output.get_mut(ch) {
+                buf.extend_from_slice(&channel[..read]);
+            }
+        }
         read
     }
 

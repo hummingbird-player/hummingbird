@@ -173,7 +173,7 @@ impl CpalDevice {
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
-        let ChannelSpec::Count(channels) = format.channels;
+        let channels = format.channels.count();
         let ring_buffer_frames = frames_for_duration(config.sample_rate, RING_BUFFER_TARGET);
         let buffer_size = ring_buffer_frames as usize * channels as usize;
         debug!(

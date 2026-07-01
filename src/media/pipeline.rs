@@ -138,49 +138,61 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
     }
 }
 
-/// Pipeline that converts all audio to f64 for processing (resampling, format conversion)
-///
-/// The idea behind this is that all supported non-f32 formats fit within an f64's mantissa, so
-/// we can convert to f64 without losing any precision, unless the input format is f32 AND
-/// the output device is *also* f32, in which case precision is unnecessarily lost. Thus we use
-/// the f64 pipeline for everything except for pure f32 -> f32 output.
+/// Pipeline used when direct f32 passthrough is not possible, includes format conversion,
+/// resampling, and channel mixing.
 pub struct ConvertPipeline {
     pub decoder_output: ChannelProducers<f64>,
     pub resampler_input: ChannelConsumers<f64>,
+    /// Per-channel output buffer handed from the resampler to the mixer.
+    /// Cleared each cycle by [`Self::clear_resampler_output`]; capacity is
+    /// retained across cycles to avoid per-cycle allocation.
+    pub resampler_output: Vec<Vec<f64>>,
     pub device_input_producers: ChannelProducers<f64>,
     pub device_input: ChannelConsumers<f64>,
     pub source_rate: u32,
     pub target_rate: u32,
-    pub channel_count: usize,
+    /// Channel count of the source (decoder) side.
+    pub source_channel_count: usize,
+    /// Channel count of the device side.
+    pub device_channel_count: usize,
 }
 
 impl ConvertPipeline {
     pub fn new(
-        channel_count: usize,
+        source_channel_count: usize,
+        device_channel_count: usize,
         source_rate: u32,
         target_rate: u32,
         buffer_frames: usize,
     ) -> Self {
         let (decoder_output, resampler_input) =
-            ChannelBuffers::<f64>::new(channel_count, buffer_frames).split();
+            ChannelBuffers::<f64>::new(source_channel_count, buffer_frames).split();
 
         let (device_input_producers, device_input) =
-            ChannelBuffers::<f64>::new(channel_count, buffer_frames).split();
+            ChannelBuffers::<f64>::new(device_channel_count, buffer_frames).split();
 
         Self {
             decoder_output,
             resampler_input,
+            resampler_output: (0..source_channel_count).map(|_| Vec::new()).collect(),
             device_input_producers,
             device_input,
             source_rate,
             target_rate,
-            channel_count,
+            source_channel_count,
+            device_channel_count,
+        }
+    }
+
+    /// Clear the resampler→mixer handoff buffer without freeing its capacity.
+    pub fn clear_resampler_output(&mut self) {
+        for ch in &mut self.resampler_output {
+            ch.clear();
         }
     }
 }
 
-/// Pipeline for f32 passthrough - no format conversion, no resampling
-/// Used when source is f32, device is f32, and sample rates match
+/// Pipeline for direct f32 passthrough.
 pub struct F32PassthroughPipeline {
     pub decoder_output: ChannelProducers<f32>,
     pub device_input: ChannelConsumers<f32>,
@@ -198,30 +210,39 @@ impl F32PassthroughPipeline {
     }
 }
 
-/// Audio pipeline that handles both conversion and passthrough modes
+/// Audio pipeline for conversion and passthrough modes.
 pub enum AudioPipeline {
     Convert(ConvertPipeline),
     F32Passthrough(F32PassthroughPipeline),
 }
 
 impl AudioPipeline {
-    /// Create a new pipeline, automatically choosing passthrough if possible
+    /// Create a new pipeline, choosing f32 passthrough only when format, rate, and
+    /// channel layout all match.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        channel_count: usize,
+        source_channel_count: usize,
         source_format: SampleFormat,
         source_rate: u32,
         device_format: SampleFormat,
         device_rate: u32,
+        device_channel_count: usize,
+        channels_match: bool,
         buffer_frames: usize,
     ) -> Self {
         if source_format == SampleFormat::Float32
             && device_format == SampleFormat::Float32
             && source_rate == device_rate
+            && channels_match
         {
-            AudioPipeline::F32Passthrough(F32PassthroughPipeline::new(channel_count, buffer_frames))
+            AudioPipeline::F32Passthrough(F32PassthroughPipeline::new(
+                source_channel_count,
+                buffer_frames,
+            ))
         } else {
             AudioPipeline::Convert(ConvertPipeline::new(
-                channel_count,
+                source_channel_count,
+                device_channel_count,
                 source_rate,
                 device_rate,
                 buffer_frames,

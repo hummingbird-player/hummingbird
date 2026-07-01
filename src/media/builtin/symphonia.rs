@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use symphonia::{
     core::{
         audio::sample::SampleFormat as SymphSampleFormat,
-        audio::{Audio, Channels, GenericAudioBufferRef},
+        audio::{Audio, GenericAudioBufferRef},
         codecs::{
             audio::{AudioDecoder, AudioDecoderOptions},
             registry::CodecRegistry,
@@ -25,6 +25,7 @@ use symphonia_adapter_libopus::OpusDecoder;
 
 use crate::{
     devices::{
+        channels::{ChannelLabel, ChannelLayout, ChannelPosition},
         format::{ChannelSpec, SampleFormat},
         resample::SampleInto,
     },
@@ -476,6 +477,8 @@ impl MediaStream for SymphoniaStream {
     }
 
     fn channels(&self) -> Result<ChannelSpec, ChannelRetrievalError> {
+        use symphonia::core::audio::{ChannelLabel as SymLabel, Channels as SymChannels};
+
         let Some(format) = &self.format else {
             return Err(ChannelRetrievalError::InvalidState);
         };
@@ -491,13 +494,44 @@ impl MediaStream for SymphoniaStream {
             .audio()
             .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
-        Ok(ChannelSpec::Count(
-            audio_params
-                .channels
-                .as_ref()
-                .map(Channels::count)
-                .unwrap_or(2) as u16,
-        ))
+        let sym_channels = audio_params.channels.clone().unwrap_or(SymChannels::None);
+
+        let fallback_discrete =
+            |index: usize| ChannelLabel::Discrete(index.min(usize::from(u16::MAX)) as u16);
+
+        let spec = match sym_channels {
+            SymChannels::Positioned(pos) => match ChannelPosition::from_bits(pos.bits()) {
+                Some(position) => ChannelSpec::Layout(ChannelLayout::Positioned(position)),
+                None => ChannelSpec::Count(pos.bits().count_ones() as u16),
+            },
+            SymChannels::Discrete(n) => ChannelSpec::Layout(ChannelLayout::Discrete(n)),
+            SymChannels::Custom(labels) => {
+                let our_labels: Vec<ChannelLabel> = labels
+                    .iter()
+                    .enumerate()
+                    .map(|(index, label)| match label {
+                        SymLabel::Positioned(p) => ChannelPosition::from_bits(p.bits())
+                            .filter(|position| position.bits().count_ones() == 1)
+                            .map(ChannelLabel::Positioned)
+                            .unwrap_or_else(|| fallback_discrete(index)),
+                        SymLabel::Discrete(n) => ChannelLabel::Discrete(*n),
+                        SymLabel::Ambisonic(n) => ChannelLabel::Discrete(*n),
+                        SymLabel::AmbisonicBFormat(_) => fallback_discrete(index),
+                        _ => fallback_discrete(index),
+                    })
+                    .collect();
+                let layout = crate::devices::mix::layout_from_labels(our_labels);
+                ChannelSpec::Layout(layout)
+            }
+            SymChannels::Ambisonic(order) => {
+                let count = (1 + usize::from(order)) * (1 + usize::from(order));
+                ChannelSpec::Count(count as u16)
+            }
+            SymChannels::None => ChannelSpec::Count(2),
+            _ => ChannelSpec::Count(2),
+        };
+
+        Ok(spec)
     }
 
     fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError> {
