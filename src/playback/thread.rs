@@ -1,4 +1,4 @@
-mod audio_engine;
+pub(crate) mod audio_engine;
 mod device_controller;
 mod media_controller;
 mod queue_manager;

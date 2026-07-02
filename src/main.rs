@@ -37,6 +37,13 @@ mod windows;
 
 const VERSION_STRING: &str = env!("HUMMINGBIRD_VERSION_STRING");
 
+// count allocations during testing, needed for testing the allocation behavior of the playback
+// pipeline
+#[cfg(test)]
+#[global_allocator]
+static ALLOC_GUARD: test_support::alloc_guard::CountingAllocator =
+    test_support::alloc_guard::CountingAllocator;
+
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

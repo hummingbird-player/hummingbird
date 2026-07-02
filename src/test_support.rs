@@ -22,6 +22,54 @@ use crate::{
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
+pub(crate) mod alloc_guard {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    thread_local! {
+        static COUNTING: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    pub(crate) struct CountingAllocator;
+
+    fn record() {
+        if COUNTING.with(Cell::get) {
+            ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        }
+    }
+
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record();
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record();
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record();
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // don't care about these right now
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    pub(crate) fn count_allocations<T>(f: impl FnOnce() -> T) -> (T, u64) {
+        ALLOCATIONS.with(|count| count.set(0));
+        COUNTING.with(|counting| counting.set(true));
+        let result = f();
+        COUNTING.with(|counting| counting.set(false));
+        (result, ALLOCATIONS.with(Cell::get))
+    }
+}
+
 pub(crate) struct TestDir {
     path: PathBuf,
 }
