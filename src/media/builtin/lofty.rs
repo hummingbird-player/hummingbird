@@ -246,14 +246,14 @@ impl MediaStream for LoftyStream {
 
     fn decode_into(
         &mut self,
-        _output: &ChannelProducers<f64>,
+        _output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError> {
         Err(PlaybackReadError::InvalidState)
     }
 
     fn decode_into_f32(
         &mut self,
-        _output: &ChannelProducers<f32>,
+        _output: &mut ChannelProducers<f32>,
     ) -> Result<F32DecodeResult, PlaybackReadError> {
         Err(PlaybackReadError::InvalidState)
     }

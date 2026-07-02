@@ -10,6 +10,8 @@ pub enum InitializationError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum SubmissionError {
+    #[error("Stream stopped consuming samples (device died?)")]
+    WriteTimeout,
     #[error("Unknown stream error: `{0}`")]
     Unknown(String),
 }

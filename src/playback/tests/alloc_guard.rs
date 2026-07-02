@@ -6,13 +6,11 @@ use super::harness::{
     configure_dummy_device, engine_lock, engine_playing, i16_test_signal, write_wav_i16,
 };
 
-const WARM_UP_CYCLES: usize = 50;
-
 const RATE: u32 = 44_100;
 const FRAMES: usize = RATE as usize * 30;
 
 #[test]
-fn process_cycle_does_not_allocate_after_warm_up() {
+fn process_cycle_does_not_allocate() {
     let _guard = engine_lock();
     configure_dummy_device(RATE, "S16", 2);
     // destroy any capture sink to prevent misc allocations
@@ -22,14 +20,10 @@ fn process_cycle_does_not_allocate_after_warm_up() {
     let path = dir.join("steady.wav");
     write_wav_i16(&path, RATE, 2, &i16_test_signal(FRAMES, 2));
 
+    // All one-time allocation (pipeline buffers, resampler, conversion
+    // buffers) happens at track start, inside open()'s eager first decode —
+    // every process_cycle after open() must be allocation-free.
     let mut engine = engine_playing(&path);
-
-    for cycle in 0..WARM_UP_CYCLES {
-        match engine.process_cycle() {
-            EngineCycleResult::Continue => {}
-            other => panic!("engine stopped during warm-up cycle {cycle}: {other:?}"),
-        }
-    }
 
     let mut guarded_cycles = 0usize;
     let mut violating_cycles = 0usize;
@@ -56,7 +50,7 @@ fn process_cycle_does_not_allocate_after_warm_up() {
     }
 
     assert!(
-        guarded_cycles > WARM_UP_CYCLES,
+        guarded_cycles > 50,
         "only {guarded_cycles} guarded cycles ran; the guarded region is too \
          short to be meaningful"
     );

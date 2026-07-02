@@ -133,7 +133,7 @@ pub trait MediaStream {
     /// The decoder is responsible for converting from the native sample format to f64.
     fn decode_into(
         &mut self,
-        output: &ChannelProducers<f64>,
+        output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError>;
 
     /// Decode one packet/frame directly as f32 without conversion.
@@ -141,7 +141,7 @@ pub trait MediaStream {
     /// This enables passthrough mode when source and device are both f32.
     fn decode_into_f32(
         &mut self,
-        output: &ChannelProducers<f32>,
+        output: &mut ChannelProducers<f32>,
     ) -> Result<F32DecodeResult, PlaybackReadError>;
 
     /// Whether or not the media stream should attempt to use it's internal loop handling. With

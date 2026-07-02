@@ -1,6 +1,6 @@
 use std::slice::from_raw_parts_mut;
 
-use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
+use rtrb::{Producer, RingBuffer};
 use tracing::error;
 use windows::{
     Devices::Enumeration::{DeviceClass, DeviceInformation},
@@ -25,9 +25,9 @@ use crate::{
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         traits::{Device, DeviceProvider, OutputStream},
-        util::Packed,
+        util::{Packed, read_available, write_bounded},
     },
-    media::pipeline::ChannelConsumers,
+    media::pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES},
     util::make_unknown_error,
 };
 
@@ -177,9 +177,8 @@ impl Device for AudioGraphDevice {
         let rb_size =
             buffer_size as usize * size_of::<f32>() * format.channels.count() as usize * 3;
 
-        let rb: SpscRb<u8> = SpscRb::new(rb_size);
-        let cons = rb.consumer();
-        let prod = rb.producer();
+        let (prod, cons) = RingBuffer::<u8>::new(rb_size);
+        let cons = std::cell::RefCell::new(cons);
 
         let handler =
             TypedEventHandler::<AudioFrameInputNode, FrameInputNodeQuantumStartedEventArgs>::new(
@@ -221,7 +220,10 @@ impl Device for AudioGraphDevice {
                             slice = from_raw_parts_mut(value, capacity as usize);
                         }
 
-                        let read = cons.read(slice).unwrap_or(0);
+                        let read = match cons.try_borrow_mut() {
+                            Ok(mut consumer) => read_available(&mut *consumer, slice),
+                            Err(_) => 0,
+                        };
                         // should be fine? IEEE says that 0.0 is 0x00000000...
                         slice[read..].iter_mut().for_each(|v| *v = 0);
 
@@ -246,11 +248,13 @@ impl Device for AudioGraphDevice {
 
         input_node.QuantumStarted(&handler)?;
 
+        // worst case: a full pipeline staging buffer, interleaved (and packed to bytes)
+        let max_samples = DEFAULT_BUFFER_FRAMES * format.channels.count() as usize;
         let stream = AudioGraphStream {
             node: input_node,
             producer: prod,
-            interleaved_buffer: Vec::with_capacity(buffer_size as usize),
-            packed_buffer: Vec::with_capacity(buffer_size as usize),
+            interleaved_buffer: Vec::with_capacity(max_samples),
+            packed_buffer: Vec::with_capacity(max_samples * size_of::<f32>()),
             last_volume: 1.0,
             last_replaygain: 1.0,
         };
@@ -375,7 +379,10 @@ impl OutputStream for AudioGraphStream {
 
         // Interleave and convert f64 to f32, then pack to bytes using persistent buffers
         self.interleaved_buffer.clear();
-        self.interleaved_buffer.reserve(read * channel_count);
+        debug_assert!(
+            read * channel_count <= self.interleaved_buffer.capacity(),
+            "interleave buffer under-sized at stream creation"
+        );
         for i in 0..read {
             for ch in 0..channel_count {
                 self.interleaved_buffer.push((staging[ch][i] * rg) as f32);
@@ -384,13 +391,9 @@ impl OutputStream for AudioGraphStream {
 
         self.packed_buffer.clear();
         self.packed_buffer.extend(self.interleaved_buffer.pack());
-        let mut slice: &[u8] = &self.packed_buffer;
 
-        while !slice.is_empty() {
-            if let Some(written) = self.producer.write_blocking(slice) {
-                slice = &slice[written..];
-            }
-        }
+        write_bounded(&mut self.producer, &self.packed_buffer)
+            .map_err(|_| SubmissionError::WriteTimeout)?;
 
         Ok(read)
     }
@@ -419,7 +422,10 @@ impl OutputStream for AudioGraphStream {
 
         // Interleave f32 samples, then pack to bytes
         self.interleaved_buffer.clear();
-        self.interleaved_buffer.reserve(read * channel_count);
+        debug_assert!(
+            read * channel_count <= self.interleaved_buffer.capacity(),
+            "interleave buffer under-sized at stream creation"
+        );
         for i in 0..read {
             for ch in 0..channel_count {
                 self.interleaved_buffer.push(staging[ch][i] * rg);
@@ -428,12 +434,9 @@ impl OutputStream for AudioGraphStream {
 
         self.packed_buffer.clear();
         self.packed_buffer.extend(self.interleaved_buffer.pack());
-        let mut slice: &[u8] = &self.packed_buffer;
 
-        while !slice.is_empty() {
-            if let Some(written) = self.producer.write_blocking(slice) {
-                slice = &slice[written..];
-            }
+        if write_bounded(&mut self.producer, &self.packed_buffer).is_err() {
+            return Some(Err(SubmissionError::WriteTimeout));
         }
 
         Some(Ok(read))

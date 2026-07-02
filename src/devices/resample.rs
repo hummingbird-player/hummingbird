@@ -5,7 +5,7 @@ use intx::{I24, U24};
 use rubato::{Fft, FixedSync, Resampler as RubatoResampler};
 use tracing::info;
 
-use crate::media::pipeline::ChannelConsumers;
+use crate::media::pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES};
 
 pub trait SampleInto<T> {
     fn sample_into(self) -> T;
@@ -166,7 +166,6 @@ pub struct Resampler {
     resampler: Fft<f64>,
     duration: u64,
     input_buffer: Vec<VecDeque<f64>>,
-    output_buffer: Vec<Vec<f64>>,
     temp_input: Vec<Vec<f64>>,
     temp_output: Vec<Vec<f64>>,
     channels: usize,
@@ -177,12 +176,10 @@ pub struct Resampler {
 
 impl Resampler {
     pub fn new(orig_rate: u32, target_rate: u32, duration: u64, channels: u16) -> Self {
-        if orig_rate != target_rate {
-            info!(
-                "Resampling required, resampling from {:?} to {:?} (duration {:?})",
-                orig_rate, target_rate, duration
-            );
-        }
+        info!(
+            "Resampling required, resampling from {:?} to {:?} (duration {:?})",
+            orig_rate, target_rate, duration
+        );
 
         let resampler = Fft::<f64>::new(
             orig_rate as usize,
@@ -200,11 +197,10 @@ impl Resampler {
         Resampler {
             resampler,
             duration,
+            // sized for the largest read a cycle can feed us plus one undrained chunk, so
+            // steady-state processing never grows them
             input_buffer: (0..channels)
-                .map(|_| VecDeque::with_capacity(duration as usize * 2))
-                .collect(),
-            output_buffer: (0..channels_usize)
-                .map(|_| Vec::with_capacity(duration as usize * 2))
+                .map(|_| VecDeque::with_capacity(DEFAULT_BUFFER_FRAMES + duration as usize))
                 .collect(),
             temp_input: (0..channels_usize)
                 .map(|_| Vec::with_capacity(duration as usize))
@@ -242,9 +238,6 @@ impl Resampler {
 
     pub fn reset(&mut self) {
         for buf in &mut self.input_buffer {
-            buf.clear();
-        }
-        for buf in &mut self.output_buffer {
             buf.clear();
         }
         for buf in &mut self.temp_input {
@@ -362,7 +355,7 @@ impl Resampler {
         total_output
     }
 
-    fn passthrough_direct(
+    pub fn passthrough_direct(
         input: &mut ChannelConsumers<f64>,
         output: &mut [Vec<f64>],
         max_samples: usize,

@@ -39,6 +39,18 @@ pub(crate) mod alloc_guard {
         }
     }
 
+    /// Run `f` with allocation counting suspended.
+    ///
+    /// This is needed to prevent allocations from other libraries from being
+    /// counted as part of Hummingbird's own decode/convert path.
+    pub(crate) fn exempt<T>(f: impl FnOnce() -> T) -> T {
+        let was_counting = COUNTING.with(Cell::get);
+        COUNTING.with(|counting| counting.set(false));
+        let result = f();
+        COUNTING.with(|counting| counting.set(was_counting));
+        result
+    }
+
     unsafe impl GlobalAlloc for CountingAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             record();

@@ -118,7 +118,7 @@ impl MediaController {
     /// Decode audio samples into the provided ring buffer producers.
     pub fn decode_into(
         &mut self,
-        output: &ChannelProducers<f64>,
+        output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError> {
         let stream = self
             .media_stream
@@ -132,7 +132,7 @@ impl MediaController {
     /// Returns F32DecodeResult::NotF32 if the source format is not f32.
     pub fn decode_into_f32(
         &mut self,
-        output: &ChannelProducers<f32>,
+        output: &mut ChannelProducers<f32>,
     ) -> Result<F32DecodeResult, PlaybackReadError> {
         let stream = self
             .media_stream

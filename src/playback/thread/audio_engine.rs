@@ -10,7 +10,7 @@ use crate::{
     },
     media::{
         errors::{PlaybackStartError, SeekError},
-        pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult},
+        pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
         traits::F32DecodeResult,
     },
     playback::thread::media_controller::CompleteMetadata,
@@ -172,6 +172,27 @@ impl AudioEngine {
         };
 
         self.state = EngineState::Playing;
+
+        if let Some(device_format) = self.device.current_format().cloned() {
+            if let Err(e) = self.setup_pipeline(&device_format) {
+                self.stop();
+                return Err(PlaybackStartError::MediaError(format!(
+                    "Failed to set up audio pipeline: {e}"
+                )));
+            }
+
+            match self.process_decode_resample() {
+                Ok(DecodeStepResult::Continue) | Ok(DecodeStepResult::Eof) => {}
+                Ok(DecodeStepResult::FatalError(msg)) => {
+                    self.stop();
+                    return Err(PlaybackStartError::MediaError(msg));
+                }
+                Err(e) => {
+                    self.stop();
+                    return Err(PlaybackStartError::MediaError(e.to_string()));
+                }
+            }
+        }
 
         Ok(OpenInfo {
             duration_ms: media_info.duration_ms,
@@ -476,11 +497,17 @@ impl AudioEngine {
             if channels_match {
                 self.mixer = None;
             } else {
-                let mixer = ChannelMixer::new(source_layout, device_layout, MixOptions::default());
+                let mut mixer =
+                    ChannelMixer::new(source_layout, device_layout, MixOptions::default());
                 // Keep the mixer whenever it remaps samples, or whenever the channel
                 // counts differ, so the passthrough fallback is never asked to bridge
                 // mismatched counts. Equal-count identity mixes fall through to passthrough.
                 if mixer.needs_mixing() || source_channel_count != device_channel_count {
+                    mixer.ensure_output_capacity(output_frame_bound(
+                        source_rate,
+                        device_format.sample_rate,
+                        DEFAULT_BUFFER_FRAMES,
+                    ));
                     self.mixer = Some(mixer);
                 } else {
                     self.mixer = None;
@@ -517,7 +544,7 @@ impl AudioEngine {
 
         match pipeline {
             AudioPipeline::F32Passthrough(p) => {
-                let decode_result = match self.media.decode_into_f32(&p.decoder_output) {
+                let decode_result = match self.media.decode_into_f32(&mut p.decoder_output) {
                     Ok(F32DecodeResult::Decoded(result)) => result,
                     Ok(F32DecodeResult::NotF32) => {
                         // Source is not f32, need to switch to conversion pipeline
@@ -543,7 +570,7 @@ impl AudioEngine {
                 }
             }
             AudioPipeline::Convert(p) => {
-                let decode_result = match self.media.decode_into(&p.decoder_output) {
+                let decode_result = match self.media.decode_into(&mut p.decoder_output) {
                     Ok(result) => result,
                     Err(e) => {
                         return Self::handle_decode_error(e);
@@ -556,42 +583,64 @@ impl AudioEngine {
                         return Ok(DecodeStepResult::Eof);
                     }
                     DecodeResult::Decoded { rate, .. } => {
-                        let duration = self.media.frame_duration().unwrap_or(1024);
-                        let needs_new_resampler = match &self.resampler {
-                            Some(resampler) => !resampler.matches_params(
-                                rate,
-                                p.target_rate,
-                                duration,
-                                p.source_channel_count,
-                            ),
-                            None => true,
-                        };
+                        if rate == p.target_rate {
+                            if self.resampler.take().is_some() {
+                                info!("Source rate now matches device; dropping resampler");
+                            }
+                        } else {
+                            let duration = self.media.frame_duration().unwrap_or(1024);
+                            let needs_new_resampler = match &self.resampler {
+                                Some(resampler) => !resampler.matches_params(
+                                    rate,
+                                    p.target_rate,
+                                    duration,
+                                    p.source_channel_count,
+                                ),
+                                None => true,
+                            };
 
-                        if needs_new_resampler {
-                            self.resampler = Some(Resampler::new(
-                                rate,
-                                p.target_rate,
-                                duration,
-                                p.source_channel_count as u16,
-                            ));
+                            if needs_new_resampler {
+                                if self.resampler.is_some() {
+                                    info!(
+                                        "Stream parameters changed mid-track (rate {} -> {}, \
+                                         duration {}); rebuilding resampler",
+                                        p.source_rate, rate, duration
+                                    );
+                                }
+                                self.resampler = Some(Resampler::new(
+                                    rate,
+                                    p.target_rate,
+                                    duration,
+                                    p.source_channel_count as u16,
+                                ));
+                            }
                         }
 
                         p.source_rate = rate;
                     }
                 }
 
-                if let Some(resampler) = &mut self.resampler {
-                    resampler.process_into(
-                        &mut p.resampler_input,
-                        &mut p.resampler_output,
-                        DEFAULT_BUFFER_FRAMES,
-                    );
+                match &mut self.resampler {
+                    Some(resampler) => {
+                        resampler.process_into(
+                            &mut p.resampler_input,
+                            &mut p.resampler_output,
+                            DEFAULT_BUFFER_FRAMES,
+                        );
+                    }
+                    None => {
+                        Resampler::passthrough_direct(
+                            &mut p.resampler_input,
+                            &mut p.resampler_output,
+                            DEFAULT_BUFFER_FRAMES,
+                        );
+                    }
                 }
 
                 if let Some(mixer) = &mut self.mixer {
-                    mixer.process(&p.resampler_output, &p.device_input_producers);
+                    mixer.process(&p.resampler_output, &mut p.device_input_producers);
                 } else if p.source_channel_count == p.device_channel_count {
-                    Self::passthrough_to_device(&p.resampler_output, &p.device_input_producers);
+                    Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers);
                 } else {
                     // setup_pipeline guarantees a mixer whenever counts differ; reaching
                     // here would drop audio and (via write_slices) risk a panic downstream.
@@ -610,7 +659,7 @@ impl AudioEngine {
 
     fn passthrough_to_device(
         input: &[Vec<f64>],
-        output: &crate::media::pipeline::ChannelProducers<f64>,
+        output: &mut crate::media::pipeline::ChannelProducers<f64>,
     ) {
         let frames = input.first().map(|v| v.len()).unwrap_or(0);
         if frames == 0 {

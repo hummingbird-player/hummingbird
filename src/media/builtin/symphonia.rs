@@ -45,6 +45,27 @@ fn time_to_millis(time: Time) -> u64 {
     (time.as_secs_f64() * 1000.0) as u64
 }
 
+/// Exempt an upstream symphonia call from the test allocation guard, because symphonia
+/// allocates in ways we cannot control.
+#[inline]
+fn symphonia_alloc_exempt<T>(f: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    {
+        crate::test_support::alloc_guard::exempt(f)
+    }
+    #[cfg(not(test))]
+    {
+        f()
+    }
+}
+
+#[inline]
+fn next_packet(
+    format: &mut dyn FormatReader,
+) -> symphonia::core::errors::Result<Option<symphonia::core::packet::Packet>> {
+    symphonia_alloc_exempt(|| format.next_packet())
+}
+
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
@@ -589,7 +610,7 @@ impl MediaStream for SymphoniaStream {
 
     fn decode_into(
         &mut self,
-        output: &ChannelProducers<f64>,
+        output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError> {
         if self.format.is_none() {
             return Err(PlaybackReadError::InvalidState);
@@ -600,7 +621,7 @@ impl MediaStream for SymphoniaStream {
 
             let format = self.format.as_mut().expect("format presence checked above");
 
-            let packet = match format.next_packet() {
+            let packet = match next_packet(format.as_mut()) {
                 Ok(Some(packet)) => packet,
                 Ok(None) => {
                     if self.try_loop_on_eof() {
@@ -621,7 +642,7 @@ impl MediaStream for SymphoniaStream {
                 return Err(PlaybackReadError::NeverStarted);
             };
 
-            match decoder.decode(&packet) {
+            match symphonia_alloc_exempt(|| decoder.decode(&packet)) {
                 Ok(decoded) => {
                     let spec = decoded.spec();
                     let rate = spec.rate();
@@ -666,13 +687,18 @@ impl MediaStream for SymphoniaStream {
                         continue;
                     }
 
+                    // sometimes the hint is wrong, check against actual capacity
+                    let frame_capacity = decoded.capacity();
                     while self.conversion_buffer.len() < channel_count {
                         self.conversion_buffer
-                            .push(Vec::with_capacity(decoded.frames()));
+                            .push(Vec::with_capacity(frame_capacity));
                     }
 
                     for buf in &mut self.conversion_buffer[..channel_count] {
                         buf.clear();
+                        if buf.capacity() < frame_capacity {
+                            buf.reserve(frame_capacity);
+                        }
                     }
 
                     macro_rules! convert_chan {
@@ -747,7 +773,7 @@ impl MediaStream for SymphoniaStream {
 
     fn decode_into_f32(
         &mut self,
-        output: &ChannelProducers<f32>,
+        output: &mut ChannelProducers<f32>,
     ) -> Result<F32DecodeResult, PlaybackReadError> {
         if self.format.is_none() {
             return Err(PlaybackReadError::InvalidState);
@@ -756,7 +782,7 @@ impl MediaStream for SymphoniaStream {
         loop {
             self.loop_seek_if_pending()?;
             let format = self.format.as_mut().expect("format presence checked above");
-            let packet = match format.next_packet() {
+            let packet = match next_packet(format.as_mut()) {
                 Ok(Some(packet)) => packet,
                 Ok(None) => {
                     if self.try_loop_on_eof() {
@@ -777,7 +803,7 @@ impl MediaStream for SymphoniaStream {
                 return Err(PlaybackReadError::NeverStarted);
             };
 
-            match decoder.decode(&packet) {
+            match symphonia_alloc_exempt(|| decoder.decode(&packet)) {
                 Ok(decoded) => {
                     let spec = decoded.spec();
                     let rate = spec.rate();

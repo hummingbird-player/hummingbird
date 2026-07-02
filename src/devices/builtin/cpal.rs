@@ -7,16 +7,19 @@ use crate::{
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, GainRamp, Scale},
+        util::{AtomicF64, GainRamp, Scale, read_available, write_bounded},
     },
-    media::{pipeline::ChannelConsumers, playback::Mute},
+    media::{
+        pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES},
+        playback::Mute,
+    },
     util::make_unknown_error,
 };
 use cpal::{
     Host, SizedSample,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
+use rtrb::{Producer, RingBuffer};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -145,9 +148,7 @@ fn create_stream_internal<T: CpalSample>(
     target_gain: Arc<AtomicF64>,
     underruns: Arc<AtomicU64>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
-    let rb: SpscRb<T> = SpscRb::new(buffer_size);
-    let cons = rb.consumer();
-    let prod = rb.producer();
+    let (prod, mut cons) = RingBuffer::<T>::new(buffer_size);
     let channels = config.channels as usize;
     let mut ramp = GainRamp::new(config.sample_rate);
 
@@ -155,7 +156,7 @@ fn create_stream_internal<T: CpalSample>(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             data.iter_mut().for_each(|v| *v = T::muted());
-            let read = cons.read(data).unwrap_or(0);
+            let read = read_available(&mut cons, data);
             if read < data.len() {
                 underruns.fetch_add(1, Ordering::Relaxed);
             }
@@ -204,7 +205,8 @@ impl CpalDevice {
             target_gain,
             last_user_volume: 1.0,
             replaygain: 1.0,
-            interleave_buffer: Vec::with_capacity(buffer_size),
+            // worst case: a full pipeline staging buffer, interleaved
+            interleave_buffer: Vec::with_capacity(DEFAULT_BUFFER_FRAMES * channels as usize),
             underruns,
             underruns_reported: 0,
             last_underrun_log: Instant::now(),
@@ -403,7 +405,10 @@ where
         let rg = self.replaygain;
 
         self.interleave_buffer.clear();
-        self.interleave_buffer.reserve(read * channel_count);
+        debug_assert!(
+            read * channel_count <= self.interleave_buffer.capacity(),
+            "interleave buffer under-sized at stream creation"
+        );
 
         for i in 0..read {
             for ch in 0..channel_count {
@@ -412,13 +417,8 @@ where
             }
         }
 
-        // Write to device ring buffer
-        let mut slice: &[T] = &self.interleave_buffer;
-        while !slice.is_empty() {
-            if let Some(written) = self.ring_buf.write_blocking(slice) {
-                slice = &slice[written..];
-            }
-        }
+        write_bounded(&mut self.ring_buf, &self.interleave_buffer)
+            .map_err(|_| SubmissionError::WriteTimeout)?;
 
         Ok(read)
     }
@@ -450,7 +450,10 @@ where
         let rg = self.replaygain as f32;
 
         self.interleave_buffer.clear();
-        self.interleave_buffer.reserve(read * channel_count);
+        debug_assert!(
+            read * channel_count <= self.interleave_buffer.capacity(),
+            "interleave buffer under-sized at stream creation"
+        );
 
         for i in 0..read {
             for ch in 0..channel_count {
@@ -459,11 +462,8 @@ where
             }
         }
 
-        let mut slice: &[T] = &self.interleave_buffer;
-        while !slice.is_empty() {
-            if let Some(written) = self.ring_buf.write_blocking(slice) {
-                slice = &slice[written..];
-            }
+        if write_bounded(&mut self.ring_buf, &self.interleave_buffer).is_err() {
+            return Some(Err(SubmissionError::WriteTimeout));
         }
 
         Some(Ok(read))

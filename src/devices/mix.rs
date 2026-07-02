@@ -353,12 +353,22 @@ impl ChannelMixer {
         }
     }
 
+    /// Pre-size the output planes so steady-state `process` calls never allocate. Call once at
+    /// pipeline setup with the largest frame count a cycle can produce.
+    pub fn ensure_output_capacity(&mut self, frames: usize) {
+        for plane in &mut self.output_planes {
+            if plane.capacity() < frames {
+                plane.reserve(frames - plane.len());
+            }
+        }
+    }
+
     /// Mix planar per-channel input planes and write the mixed planes to `output`.
     ///
     /// `input` is expected to carry `in_channels` planes of equal length (the number of
     /// frames). Missing planes or samples are treated as silence. Returns the number of
     /// frames written.
-    pub fn process(&mut self, input: &[Vec<f64>], output: &ChannelProducers<f64>) -> usize {
+    pub fn process(&mut self, input: &[Vec<f64>], output: &mut ChannelProducers<f64>) -> usize {
         let frames = (0..self.in_channels)
             .filter_map(|ch| input.get(ch).map(Vec::len))
             .min()
@@ -737,10 +747,10 @@ mod tests {
         use crate::media::pipeline::ChannelBuffers;
 
         let frames = input.first().map(|v| v.len()).unwrap_or(0);
-        let (producers, mut consumers) =
+        let (mut producers, mut consumers) =
             ChannelBuffers::<f64>::new(mixer.out_channels(), frames.max(1) * 2).split();
 
-        let written = mixer.process(&input, &producers);
+        let written = mixer.process(&input, &mut producers);
         assert_eq!(written, frames);
 
         let read = consumers.try_read_to_staging(frames);
@@ -783,7 +793,7 @@ mod tests {
         let mut mixer = ChannelMixer::new(stereo, mono, MixOptions::default());
 
         use crate::media::pipeline::ChannelBuffers;
-        let (producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
-        assert_eq!(mixer.process(&[vec![], vec![]], &producers), 0);
+        let (mut producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
+        assert_eq!(mixer.process(&[vec![], vec![]], &mut producers), 0);
     }
 }

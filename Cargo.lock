@@ -2931,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#c36de2d5a1dd75a8c88dcc05f8c83dab10434665"
+source = "git+https://github.com/gpui-ce/gpui-ce#ce08af96db6c3474ab3b388325cdd1a7c3de06d9"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3114,7 +3114,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#c36de2d5a1dd75a8c88dcc05f8c83dab10434665"
+source = "git+https://github.com/gpui-ce/gpui-ce#ce08af96db6c3474ab3b388325cdd1a7c3de06d9"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3138,7 +3138,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#c36de2d5a1dd75a8c88dcc05f8c83dab10434665"
+source = "git+https://github.com/gpui-ce/gpui-ce#ce08af96db6c3474ab3b388325cdd1a7c3de06d9"
 dependencies = [
  "schemars",
  "serde",
@@ -3557,8 +3557,8 @@ dependencies = [
  "postcard",
  "rand 0.10.1",
  "raw-window-handle",
- "rb",
  "regex",
+ "rtrb",
  "rubato",
  "rust-embed",
  "rustc-hash 2.1.2",
@@ -6609,12 +6609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rb"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56cf8381505b60ae18a4097f1d0be093287ca3bf4fbb23d36ac5ad3bba335daa"
-
-[[package]]
 name = "read-fonts"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6778,6 +6772,12 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rtrb"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rubato"

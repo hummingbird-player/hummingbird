@@ -1,7 +1,55 @@
 use intx::{I24, U24};
+use rtrb::{Consumer, Producer};
 use std::sync::atomic::AtomicU64;
+use std::time::{Duration, Instant};
 
 use super::resample::{SampleFrom, SampleInto};
+
+/// How long a ring-buffer producer sleeps between retries when the buffer is full.
+pub const RING_WRITE_PARK: Duration = Duration::from_millis(1);
+pub const RING_WRITE_DEADLINE: Duration = Duration::from_millis(250);
+
+/// The consumer of a ring buffer stopped draining before the write deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingWriteTimeout;
+
+pub fn write_bounded<T: Copy>(
+    producer: &mut Producer<T>,
+    mut slice: &[T],
+) -> Result<(), RingWriteTimeout> {
+    let deadline = Instant::now() + RING_WRITE_DEADLINE;
+    while !slice.is_empty() {
+        let writable = producer.slots().min(slice.len());
+        if writable == 0 {
+            if Instant::now() >= deadline {
+                return Err(RingWriteTimeout);
+            }
+            std::thread::sleep(RING_WRITE_PARK);
+            continue;
+        }
+        if let Ok(chunk) = producer.write_chunk_uninit(writable) {
+            let written = chunk.fill_from_iter(slice[..writable].iter().copied());
+            slice = &slice[written..];
+        }
+    }
+    Ok(())
+}
+
+pub fn read_available<T: Copy>(consumer: &mut Consumer<T>, data: &mut [T]) -> usize {
+    let readable = consumer.slots().min(data.len());
+    if readable == 0 {
+        return 0;
+    }
+    let Ok(chunk) = consumer.read_chunk(readable) else {
+        return 0;
+    };
+    let (first, second) = chunk.as_slices();
+    data[..first.len()].copy_from_slice(first);
+    data[first.len()..first.len() + second.len()].copy_from_slice(second);
+    let read = first.len() + second.len();
+    chunk.commit_all();
+    read
+}
 
 // Code is dead on non-Linux platforms only
 #[allow(dead_code)]

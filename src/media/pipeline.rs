@@ -1,6 +1,12 @@
-use rb::{Consumer, Producer, RB, RbConsumer, RbProducer, SpscRb};
+use std::time::Instant;
 
-use crate::devices::format::SampleFormat;
+use rtrb::{Consumer, Producer, RingBuffer};
+use tracing::error;
+
+use crate::devices::{
+    format::SampleFormat,
+    util::{RING_WRITE_DEADLINE, RING_WRITE_PARK},
+};
 
 pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
 
@@ -11,7 +17,7 @@ pub enum DecodeResult {
 }
 
 pub struct ChannelBuffers<T: Copy + Default + Send + 'static> {
-    buffers: Vec<SpscRb<T>>,
+    buffers: Vec<(Producer<T>, Consumer<T>)>,
     channel_count: usize,
     buffer_size: usize,
 }
@@ -19,7 +25,7 @@ pub struct ChannelBuffers<T: Copy + Default + Send + 'static> {
 impl<T: Copy + Default + Send + 'static> ChannelBuffers<T> {
     pub fn new(channel_count: usize, buffer_size: usize) -> Self {
         let buffers = (0..channel_count)
-            .map(|_| SpscRb::new(buffer_size))
+            .map(|_| RingBuffer::new(buffer_size))
             .collect();
         Self {
             buffers,
@@ -32,9 +38,9 @@ impl<T: Copy + Default + Send + 'static> ChannelBuffers<T> {
         let mut producers = Vec::with_capacity(self.channel_count);
         let mut consumers = Vec::with_capacity(self.channel_count);
 
-        for rb in self.buffers {
-            producers.push(rb.producer());
-            consumers.push(rb.consumer());
+        for (producer, consumer) in self.buffers {
+            producers.push(producer);
+            consumers.push(consumer);
         }
 
         (
@@ -59,30 +65,52 @@ pub struct ChannelProducers<T: Copy + Send + 'static> {
 }
 
 impl<T: Copy + Send + 'static> ChannelProducers<T> {
-    pub fn write_slices(&self, samples: &[&[T]]) {
+    pub fn write_slices(&mut self, samples: &[&[T]]) {
         assert_eq!(samples.len(), self.channel_count);
 
-        for (ch, producer) in self.producers.iter().enumerate() {
-            let mut slice = samples[ch];
-            while !slice.is_empty() {
-                if let Some(written) = producer.write_blocking(slice) {
-                    slice = &slice[written..];
+        let total = samples.iter().map(|s| s.len()).min().unwrap_or(0);
+        let mut written = 0;
+        let deadline = Instant::now() + RING_WRITE_DEADLINE;
+
+        while written < total {
+            let writable = self
+                .producers
+                .iter()
+                .map(Producer::slots)
+                .min()
+                .unwrap_or(0)
+                .min(total - written);
+
+            if writable == 0 {
+                if Instant::now() >= deadline {
+                    error!(
+                        "pipeline ring buffer write timed out; dropping {} frames",
+                        total - written
+                    );
+                    return;
+                }
+                std::thread::sleep(RING_WRITE_PARK);
+                continue;
+            }
+
+            for (channel, producer) in self.producers.iter_mut().enumerate() {
+                if let Ok(chunk) = producer.write_chunk_uninit(writable) {
+                    chunk.fill_from_iter(
+                        samples[channel][written..written + writable]
+                            .iter()
+                            .copied(),
+                    );
                 }
             }
+            written += writable;
         }
     }
 
-    pub fn write_vecs(&self, samples: &[Vec<T>]) {
+    pub fn write_vecs(&mut self, samples: &[Vec<T>]) {
         assert_eq!(samples.len(), self.channel_count);
 
-        for (ch, producer) in self.producers.iter().enumerate() {
-            let mut slice = samples[ch].as_slice();
-            while !slice.is_empty() {
-                if let Some(written) = producer.write_blocking(slice) {
-                    slice = &slice[written..];
-                }
-            }
-        }
+        let slices: smallvec::SmallVec<[&[T]; 8]> = samples.iter().map(Vec::as_slice).collect();
+        self.write_slices(&slices);
     }
 }
 
@@ -93,44 +121,47 @@ pub struct ChannelConsumers<T: Copy + Default + Send + 'static> {
 }
 
 impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
-    /// Check if there is any data available to read. If there is, returns the capacity of the
-    /// staging buffers, otherwise returns 0.
     pub fn potentially_available(&self) -> usize {
-        let mut temp = [T::default(); 1];
+        let available = self
+            .consumers
+            .iter()
+            .map(Consumer::slots)
+            .min()
+            .unwrap_or(0);
 
-        for consumer in &self.consumers {
-            if consumer.get(&mut temp).is_err() {
-                // At least one channel is empty
-                return 0;
-            }
-        }
-
-        self.staging.first().map(|s| s.capacity()).unwrap_or(0)
+        available.min(self.staging.first().map(|s| s.capacity()).unwrap_or(0))
     }
 
     /// Try to read up to `max_count` samples, returning actual count read.
     /// This is the preferred method when you don't need to know the exact count beforehand.
     pub fn try_read_to_staging(&mut self, max_count: usize) -> usize {
-        if max_count == 0 {
+        let count = self
+            .consumers
+            .iter()
+            .map(Consumer::slots)
+            .min()
+            .unwrap_or(0)
+            .min(max_count);
+
+        if count == 0 {
+            for staging in &mut self.staging {
+                staging.clear();
+            }
             return 0;
         }
 
-        // resize buffers, shouldn't allocate if buffers have been used before
-        for staging in &mut self.staging {
-            staging.resize(max_count, T::default());
+        for channel in 0..self.channel_count {
+            let staging = &mut self.staging[channel];
+            staging.clear();
+            if let Ok(chunk) = self.consumers[channel].read_chunk(count) {
+                let (first, second) = chunk.as_slices();
+                staging.extend_from_slice(first);
+                staging.extend_from_slice(second);
+                chunk.commit_all();
+            }
         }
 
-        let mut min_read = max_count;
-        for ch in 0..self.channel_count {
-            let read = self.consumers[ch].read(&mut self.staging[ch]).unwrap_or(0);
-            min_read = min_read.min(read);
-        }
-
-        for staging in &mut self.staging {
-            staging.truncate(min_read);
-        }
-
-        min_read
+        count
     }
 
     pub fn staging(&self) -> &[Vec<T>] {
@@ -145,7 +176,8 @@ pub struct ConvertPipeline {
     pub resampler_input: ChannelConsumers<f64>,
     /// Per-channel output buffer handed from the resampler to the mixer.
     /// Cleared each cycle by [`Self::clear_resampler_output`]; capacity is
-    /// retained across cycles to avoid per-cycle allocation.
+    /// pre-sized to [`output_frame_bound`] so steady-state cycles never
+    /// allocate.
     pub resampler_output: Vec<Vec<f64>>,
     pub device_input_producers: ChannelProducers<f64>,
     pub device_input: ChannelConsumers<f64>,
@@ -155,6 +187,14 @@ pub struct ConvertPipeline {
     pub source_channel_count: usize,
     /// Channel count of the device side.
     pub device_channel_count: usize,
+}
+
+/// Upper bound on the frames one processing cycle can hand from the resampler
+/// to the mixer/device stage.
+pub fn output_frame_bound(source_rate: u32, target_rate: u32, buffer_frames: usize) -> usize {
+    let scaled = (buffer_frames as u64 * u64::from(target_rate))
+        .div_ceil(u64::from(source_rate.max(1))) as usize;
+    scaled.max(buffer_frames) + 1024
 }
 
 impl ConvertPipeline {
@@ -171,10 +211,14 @@ impl ConvertPipeline {
         let (device_input_producers, device_input) =
             ChannelBuffers::<f64>::new(device_channel_count, buffer_frames).split();
 
+        let plane_capacity = output_frame_bound(source_rate, target_rate, buffer_frames);
+
         Self {
             decoder_output,
             resampler_input,
-            resampler_output: (0..source_channel_count).map(|_| Vec::new()).collect(),
+            resampler_output: (0..source_channel_count)
+                .map(|_| Vec::with_capacity(plane_capacity))
+                .collect(),
             device_input_producers,
             device_input,
             source_rate,
