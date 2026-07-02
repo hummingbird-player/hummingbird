@@ -11,5 +11,6 @@
 
 mod alloc_guard;
 mod bit_transparency;
+mod eof_drain;
 mod harness;
 mod round_trip;

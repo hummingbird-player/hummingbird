@@ -112,6 +112,16 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
         let slices: smallvec::SmallVec<[&[T]; 8]> = samples.iter().map(Vec::as_slice).collect();
         self.write_slices(&slices);
     }
+
+    /// Frames that can be written to every channel right now without blocking (the minimum free
+    /// space across channels).
+    pub fn available(&self) -> usize {
+        self.producers
+            .iter()
+            .map(Producer::slots)
+            .min()
+            .unwrap_or(0)
+    }
 }
 
 pub struct ChannelConsumers<T: Copy + Default + Send + 'static> {
@@ -174,10 +184,8 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
 pub struct ConvertPipeline {
     pub decoder_output: ChannelProducers<f64>,
     pub resampler_input: ChannelConsumers<f64>,
-    /// Per-channel output buffer handed from the resampler to the mixer.
-    /// Cleared each cycle by [`Self::clear_resampler_output`]; capacity is
-    /// pre-sized to [`output_frame_bound`] so steady-state cycles never
-    /// allocate.
+    /// Per-channel output buffer handed from the resampler to the mixer. Pre-allocated once,
+    /// (hopefully) meaning it never needs to be resized (which avoids extra allocations).
     pub resampler_output: Vec<Vec<f64>>,
     pub device_input_producers: ChannelProducers<f64>,
     pub device_input: ChannelConsumers<f64>,
@@ -187,6 +195,9 @@ pub struct ConvertPipeline {
     pub source_channel_count: usize,
     /// Channel count of the device side.
     pub device_channel_count: usize,
+    /// Capacity, in frames, of the `device_input` ring. Sized to hold a worst-case cycle's
+    /// resampler output so a single write never overruns it.
+    pub device_input_capacity: usize,
 }
 
 /// Upper bound on the frames one processing cycle can hand from the resampler
@@ -208,16 +219,18 @@ impl ConvertPipeline {
         let (decoder_output, resampler_input) =
             ChannelBuffers::<f64>::new(source_channel_count, buffer_frames).split();
 
+        // The device-input ring must be able to absorb one full cycle's resampler output (the
+        // resampler reads up to `buffer_frames` and can upsample), so a single write never blocks
+        // on a same-thread consumer.
+        let device_input_capacity = output_frame_bound(source_rate, target_rate, buffer_frames);
         let (device_input_producers, device_input) =
-            ChannelBuffers::<f64>::new(device_channel_count, buffer_frames).split();
-
-        let plane_capacity = output_frame_bound(source_rate, target_rate, buffer_frames);
+            ChannelBuffers::<f64>::new(device_channel_count, device_input_capacity).split();
 
         Self {
             decoder_output,
             resampler_input,
             resampler_output: (0..source_channel_count)
-                .map(|_| Vec::with_capacity(plane_capacity))
+                .map(|_| Vec::with_capacity(device_input_capacity))
                 .collect(),
             device_input_producers,
             device_input,
@@ -225,6 +238,7 @@ impl ConvertPipeline {
             target_rate,
             source_channel_count,
             device_channel_count,
+            device_input_capacity,
         }
     }
 
@@ -291,6 +305,22 @@ impl AudioPipeline {
                 device_rate,
                 buffer_frames,
             ))
+        }
+    }
+
+    /// Whether the device-input ring has room to absorb another decode cycle's worth of output,
+    /// given the current packet size (`frame_duration`).
+    ///
+    /// If we can't, it might cause the decode thread to stall and drop audio.
+    pub fn can_accept_decode(&self, frame_duration: usize) -> bool {
+        match self {
+            AudioPipeline::Convert(p) => {
+                let needed = output_frame_bound(p.source_rate, p.target_rate, frame_duration)
+                    .min(p.device_input_capacity);
+                p.device_input_producers.available() >= needed
+            }
+            // The decoder writes one packet straight into the device-input ring.
+            AudioPipeline::F32Passthrough(p) => p.decoder_output.available() >= frame_duration,
         }
     }
 

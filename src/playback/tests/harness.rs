@@ -19,6 +19,15 @@ pub fn configure_dummy_device(rate: u32, bit_format: &str, channels: u16) {
         std::env::set_var("HB_DUMMY_SAMPLE_RATE", rate.to_string());
         std::env::set_var("HB_DUMMY_BIT_FORMAT", bit_format);
         std::env::set_var("HB_DUMMY_CHANNELS", channels.to_string());
+        std::env::remove_var("HB_DUMMY_BOUNDED_FRAMES");
+        std::env::remove_var("HB_DUMMY_DRAIN_FRAMES");
+    }
+}
+
+pub fn configure_bounded_device(capacity: usize, drain: usize) {
+    unsafe {
+        std::env::set_var("HB_DUMMY_BOUNDED_FRAMES", capacity.to_string());
+        std::env::set_var("HB_DUMMY_DRAIN_FRAMES", drain.to_string());
     }
 }
 

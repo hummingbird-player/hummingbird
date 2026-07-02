@@ -10,7 +10,9 @@ use crate::{
     },
     media::{
         errors::{PlaybackStartError, SeekError},
-        pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
+        pipeline::{
+            AudioPipeline, ConvertPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound,
+        },
         traits::F32DecodeResult,
     },
     playback::thread::media_controller::CompleteMetadata,
@@ -30,6 +32,15 @@ pub enum EngineState {
     Playing,
     Paused,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrainState {
+    Inactive,
+    Draining { cycles: u32 },
+    Drained,
+}
+
+const MAX_DRAIN_CYCLES: u32 = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineCycleResult {
@@ -83,6 +94,7 @@ pub struct AudioEngine {
     state: EngineState,
     /// Whether a stream reset is pending (e.g., after seek).
     pending_reset: bool,
+    drain: DrainState,
 }
 
 impl AudioEngine {
@@ -95,6 +107,7 @@ impl AudioEngine {
             mixer: None,
             state: EngineState::Idle,
             pending_reset: false,
+            drain: DrainState::Inactive,
         }
     }
 
@@ -125,6 +138,8 @@ impl AudioEngine {
         preserve_resampler: bool,
     ) -> Result<OpenInfo, PlaybackStartError> {
         info!("AudioEngine: Opening track '{}'", path.display());
+
+        self.drain = DrainState::Inactive;
 
         if !preserve_resampler {
             self.reset_resampler();
@@ -286,6 +301,11 @@ impl AudioEngine {
 
     /// Stop playback and clear all state.
     pub fn stop(&mut self) {
+        // flush the resampler's tail to the device so the last track isn't truncated
+        if self.drain == DrainState::Drained && self.state == EngineState::Playing {
+            self.flush_tail_to_device();
+        }
+
         self.media.close();
         self.clear_pipeline();
         self.state = EngineState::Idle;
@@ -296,6 +316,8 @@ impl AudioEngine {
         let result = self.media.seek(time);
         if result.is_ok() {
             self.pending_reset = true;
+            // a seek out of the EOF region resumes normal decoding
+            self.drain = DrainState::Inactive;
         }
         result
     }
@@ -361,6 +383,10 @@ impl AudioEngine {
             return EngineCycleResult::NothingToDo;
         }
 
+        if matches!(self.drain, DrainState::Draining { .. }) {
+            return self.drain_cycle();
+        }
+
         if self.pipeline.is_none() {
             let device_format = match self.device.current_format() {
                 Some(fmt) => fmt.clone(),
@@ -376,6 +402,20 @@ impl AudioEngine {
             }
         }
 
+        // don't decode unless the device can accept it, otherwise we drop audio
+        let frame_duration = self
+            .media
+            .frame_duration()
+            .map(|d| d as usize)
+            .unwrap_or(DEFAULT_BUFFER_FRAMES);
+        let throttle = self
+            .pipeline
+            .as_ref()
+            .is_some_and(|p| !p.can_accept_decode(frame_duration));
+        if throttle {
+            return self.consume_to_device();
+        }
+
         let result = match self.process_decode_resample() {
             Ok(result) => result,
             Err(e) => {
@@ -386,8 +426,9 @@ impl AudioEngine {
 
         match result {
             DecodeStepResult::Eof => {
-                info!("EOF, track finished");
-                return EngineCycleResult::Eof;
+                info!("EOF, draining pipeline to the device");
+                self.drain = DrainState::Draining { cycles: 0 };
+                return self.drain_cycle();
             }
             DecodeStepResult::FatalError(msg) => {
                 error!("Fatal error in audio engine");
@@ -397,6 +438,62 @@ impl AudioEngine {
         }
 
         self.consume_to_device()
+    }
+
+    /// Send as much as much as the device can accept, then wait for it to drain. If this happens
+    /// too many times in a row (more than MAX_DRAIN_CYCLES) we just give up
+    fn drain_cycle(&mut self) -> EngineCycleResult {
+        if let DrainState::Draining { cycles } = &mut self.drain {
+            *cycles += 1;
+            if *cycles > MAX_DRAIN_CYCLES {
+                warn!("pipeline drain did not finish within {MAX_DRAIN_CYCLES} cycles");
+                warn!("reporting EOF with audio still buffered");
+                self.drain = DrainState::Drained;
+                return EngineCycleResult::Eof;
+            }
+        }
+
+        if let Some(AudioPipeline::Convert(p)) = &mut self.pipeline {
+            match &mut self.resampler {
+                Some(resampler) => {
+                    resampler.process_into(
+                        &mut p.resampler_input,
+                        &mut p.resampler_output,
+                        DEFAULT_BUFFER_FRAMES,
+                    );
+                }
+                None => {
+                    Resampler::passthrough_direct(
+                        &mut p.resampler_input,
+                        &mut p.resampler_output,
+                        DEFAULT_BUFFER_FRAMES,
+                    );
+                }
+            }
+            Self::route_resampler_output(p, &mut self.mixer);
+        }
+
+        match self.consume_to_device() {
+            EngineCycleResult::Continue => {}
+            other => return other,
+        }
+
+        let empty = match &self.pipeline {
+            Some(AudioPipeline::Convert(p)) => {
+                p.resampler_input.potentially_available() == 0
+                    && p.device_input.potentially_available() == 0
+            }
+            Some(AudioPipeline::F32Passthrough(p)) => p.device_input.potentially_available() == 0,
+            None => true,
+        };
+
+        if empty {
+            self.drain = DrainState::Drained;
+            info!("EOF, track finished");
+            return EngineCycleResult::Eof;
+        }
+
+        EngineCycleResult::Continue
     }
 
     /// Consume samples from pipeline to device
@@ -524,6 +621,7 @@ impl AudioEngine {
         self.pipeline = None;
         self.resampler = None;
         self.mixer = None;
+        self.drain = DrainState::Inactive;
     }
 
     fn reset_resampler(&mut self) {
@@ -584,8 +682,9 @@ impl AudioEngine {
                     }
                     DecodeResult::Decoded { rate, .. } => {
                         if rate == p.target_rate {
-                            if self.resampler.take().is_some() {
+                            if let Some(mut old) = self.resampler.take() {
                                 info!("Source rate now matches device; dropping resampler");
+                                Self::flush_old_resampler(&mut old, p, &mut self.mixer);
                             }
                         } else {
                             let duration = self.media.frame_duration().unwrap_or(1024);
@@ -600,12 +699,13 @@ impl AudioEngine {
                             };
 
                             if needs_new_resampler {
-                                if self.resampler.is_some() {
+                                if let Some(mut old) = self.resampler.take() {
                                     info!(
-                                        "Stream parameters changed mid-track (rate {} -> {}, \
-                                         duration {}); rebuilding resampler",
+                                        "Stream parameters changed (rate {} -> {}, \
+                                         duration {}); flushing and rebuilding resampler",
                                         p.source_rate, rate, duration
                                     );
+                                    Self::flush_old_resampler(&mut old, p, &mut self.mixer);
                                 }
                                 self.resampler = Some(Resampler::new(
                                     rate,
@@ -637,22 +737,69 @@ impl AudioEngine {
                     }
                 }
 
-                if let Some(mixer) = &mut self.mixer {
-                    mixer.process(&p.resampler_output, &mut p.device_input_producers);
-                } else if p.source_channel_count == p.device_channel_count {
-                    Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers);
-                } else {
-                    // setup_pipeline guarantees a mixer whenever counts differ; reaching
-                    // here would drop audio and (via write_slices) risk a panic downstream.
-                    warn!(
-                        "No mixer for {} -> {} channel mismatch; dropping frames",
-                        p.source_channel_count, p.device_channel_count
-                    );
-                }
-
-                p.clear_resampler_output();
+                Self::route_resampler_output(p, &mut self.mixer);
 
                 Ok(DecodeStepResult::Continue)
+            }
+        }
+    }
+
+    fn route_resampler_output(p: &mut ConvertPipeline, mixer: &mut Option<ChannelMixer>) {
+        if let Some(mixer) = mixer {
+            mixer.process(&p.resampler_output, &mut p.device_input_producers);
+        } else if p.source_channel_count == p.device_channel_count {
+            Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers);
+        } else {
+            warn!(
+                "No mixer for {} -> {} channel mismatch; dropping frames",
+                p.source_channel_count, p.device_channel_count
+            );
+        }
+
+        p.clear_resampler_output();
+    }
+
+    /// Flush the resampler and clear its output.
+    fn flush_old_resampler(
+        old: &mut Resampler,
+        p: &mut ConvertPipeline,
+        mixer: &mut Option<ChannelMixer>,
+    ) {
+        if old.channels() != p.source_channel_count {
+            warn!(
+                "dropping resampler tail: channel count changed ({} -> {})",
+                old.channels(),
+                p.source_channel_count
+            );
+            return;
+        }
+
+        let flushed = old.flush_into(&mut p.resampler_output);
+        if flushed > 0 {
+            info!("flushed {flushed} tail frames from the previous resampler");
+            Self::route_resampler_output(p, mixer);
+        }
+    }
+
+    fn flush_tail_to_device(&mut self) {
+        let Some(resampler) = &mut self.resampler else {
+            return;
+        };
+        let Some(AudioPipeline::Convert(p)) = &mut self.pipeline else {
+            return;
+        };
+
+        Self::flush_old_resampler(resampler, p, &mut self.mixer);
+
+        // do it a few times to ensure all buffered frames are flushed (in case the entire buffer is
+        // not consumed in a single pass)
+        for _ in 0..8 {
+            if p.device_input.potentially_available() == 0 {
+                break;
+            }
+            if let Err(err) = self.device.consume_from(&mut p.device_input) {
+                warn!("failed to hand the flushed tail to the device: {err}");
+                break;
             }
         }
     }

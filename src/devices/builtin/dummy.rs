@@ -136,10 +136,29 @@ impl DummyDevice {
             .and_then(|s| s.parse().ok())
             .unwrap_or(4096)
     }
+
+    pub fn get_bounded_frames() -> Option<usize> {
+        env::var("HB_DUMMY_BOUNDED_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
+    pub fn get_drain_frames() -> usize {
+        env::var("HB_DUMMY_DRAIN_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024)
+    }
 }
 
 impl Device for DummyDevice {
     fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+        if let Some(capacity) = DummyDevice::get_bounded_frames() {
+            let drain = DummyDevice::get_drain_frames();
+            return Ok(
+                Box::new(BoundedDummyStream::new(format, capacity, drain)) as Box<dyn OutputStream>
+            );
+        }
         let device = DummyStream { format };
         Ok(Box::new(device) as Box<dyn OutputStream>)
     }
@@ -249,6 +268,96 @@ impl OutputStream for DummyStream {
             "Consumed {} f32 samples from ring buffer (dummy device)",
             read
         );
+        Some(Ok(read))
+    }
+}
+
+/// A dummy stream that models a real device's bounded hardware ring: it holds at most `capacity`
+/// frames and "plays" `drain` of them per `consume_from` call (advancing playback), so it only
+/// accepts as much new input as it has free space. Used to test for specific bugs that only occur
+/// under back-pressure.
+pub struct BoundedDummyStream {
+    format: FormatInfo,
+    capacity: usize,
+    drain: usize,
+    /// Frames currently buffered in the modelled hardware ring.
+    fill: usize,
+}
+
+impl BoundedDummyStream {
+    fn new(format: FormatInfo, capacity: usize, drain: usize) -> Self {
+        Self {
+            format,
+            capacity,
+            drain: drain.max(1),
+            fill: 0,
+        }
+    }
+}
+
+impl OutputStream for BoundedDummyStream {
+    fn close_stream(&mut self) -> Result<(), CloseError> {
+        Ok(())
+    }
+
+    fn needs_input(&self) -> bool {
+        self.fill < self.capacity
+    }
+
+    fn play(&mut self) -> Result<(), StateError> {
+        Ok(())
+    }
+
+    fn pause(&mut self) -> Result<(), StateError> {
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), crate::devices::errors::ResetError> {
+        self.fill = 0;
+        Ok(())
+    }
+
+    fn set_volume(&mut self, _volume: f64) -> Result<(), StateError> {
+        Ok(())
+    }
+
+    fn consume_from(
+        &mut self,
+        input: &mut ChannelConsumers<f64>,
+    ) -> Result<usize, SubmissionError> {
+        // advance playback: drain up to `drain` frames from the ring
+        self.fill = self.fill.saturating_sub(self.drain);
+
+        let free = self.capacity - self.fill;
+        let available = input.potentially_available().min(free);
+        if available == 0 {
+            return Ok(0);
+        }
+
+        let read = input.try_read_to_staging(available);
+        capture_samples(input.staging(), read);
+        self.fill += read;
+        Ok(read)
+    }
+
+    fn consume_from_f32(
+        &mut self,
+        input: &mut ChannelConsumers<f32>,
+    ) -> Option<Result<usize, SubmissionError>> {
+        if self.format.sample_type != SampleFormat::Float32 {
+            return None;
+        }
+
+        self.fill = self.fill.saturating_sub(self.drain);
+        let free = self.capacity - self.fill;
+        let available = input.potentially_available().min(free);
+        if available == 0 {
+            return Some(Ok(0));
+        }
+
+        let read = input.try_read_to_staging(available);
+        capture_samples(input.staging(), read);
+        self.fill += read;
         Some(Ok(read))
     }
 }

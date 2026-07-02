@@ -20,9 +20,6 @@ fn process_cycle_does_not_allocate() {
     let path = dir.join("steady.wav");
     write_wav_i16(&path, RATE, 2, &i16_test_signal(FRAMES, 2));
 
-    // All one-time allocation (pipeline buffers, resampler, conversion
-    // buffers) happens at track start, inside open()'s eager first decode —
-    // every process_cycle after open() must be allocation-free.
     let mut engine = engine_playing(&path);
 
     let mut guarded_cycles = 0usize;
