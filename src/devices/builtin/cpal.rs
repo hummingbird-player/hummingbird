@@ -18,9 +18,9 @@ use cpal::{
 };
 use rb::{Producer, RB, RbConsumer, RbProducer, SpscRb};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
-use tracing::{debug, info};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 
 /// Delay between requesting a fade-out and pausing the stream. Must exceed
 /// the gain ramp length (15 ms) plus a few callback periods to ensure the
@@ -143,6 +143,7 @@ fn create_stream_internal<T: CpalSample>(
     config: cpal::StreamConfig,
     buffer_size: usize,
     target_gain: Arc<AtomicF64>,
+    underruns: Arc<AtomicU64>,
 ) -> Result<(cpal::Stream, Producer<T>), OpenError> {
     let rb: SpscRb<T> = SpscRb::new(buffer_size);
     let cons = rb.consumer();
@@ -154,7 +155,10 @@ fn create_stream_internal<T: CpalSample>(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             data.iter_mut().for_each(|v| *v = T::muted());
-            let _ = cons.read(data).unwrap_or(0);
+            let read = cons.read(data).unwrap_or(0);
+            if read < data.len() {
+                underruns.fetch_add(1, Ordering::Relaxed);
+            }
 
             let target = target_gain.load(Ordering::Relaxed);
             ramp.apply(data, channels, target);
@@ -181,8 +185,14 @@ impl CpalDevice {
         );
         info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));
-        let (stream, prod) =
-            create_stream_internal::<T>(&self.device, config, buffer_size, target_gain.clone())?;
+        let underruns = Arc::new(AtomicU64::new(0));
+        let (stream, prod) = create_stream_internal::<T>(
+            &self.device,
+            config,
+            buffer_size,
+            target_gain.clone(),
+            underruns.clone(),
+        )?;
 
         Ok(Box::new(CpalStream {
             ring_buf: prod,
@@ -195,6 +205,9 @@ impl CpalDevice {
             last_user_volume: 1.0,
             replaygain: 1.0,
             interleave_buffer: Vec::with_capacity(buffer_size),
+            underruns,
+            underruns_reported: 0,
+            last_underrun_log: Instant::now(),
         }))
     }
 }
@@ -290,6 +303,30 @@ where
     pub last_user_volume: f64,
     pub replaygain: f64,
     pub interleave_buffer: Vec<T>,
+    pub underruns: Arc<AtomicU64>,
+    /// keep track of the last log, so we don't log the same underrun multiple times
+    underruns_reported: u64,
+    last_underrun_log: Instant,
+}
+
+impl<T> CpalStream<T>
+where
+    T: SizedSample + Default,
+{
+    fn report_underruns(&mut self) {
+        let total = self.underruns.load(Ordering::Relaxed);
+        if total > self.underruns_reported
+            && self.last_underrun_log.elapsed() >= Duration::from_secs(1)
+        {
+            warn!(
+                "audio callback underran {} time(s) ({} total)",
+                total - self.underruns_reported,
+                total
+            );
+            self.underruns_reported = total;
+            self.last_underrun_log = Instant::now();
+        }
+    }
 }
 
 impl<T> OutputStream for CpalStream<T>
@@ -322,6 +359,7 @@ where
             self.config,
             self.buffer_size,
             self.target_gain.clone(),
+            self.underruns.clone(),
         )?;
 
         self.stream = stream;
@@ -347,6 +385,8 @@ where
         &mut self,
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
+        self.report_underruns();
+
         let available = input.potentially_available();
         if available == 0 {
             return Ok(0);
@@ -392,6 +432,8 @@ where
         if self.format.sample_type != SampleFormat::Float32 {
             return None;
         }
+
+        self.report_underruns();
 
         let available = input.potentially_available();
         if available == 0 {
