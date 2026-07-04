@@ -42,6 +42,18 @@ enum DrainState {
 
 const MAX_DRAIN_CYCLES: u32 = 1024;
 
+/// Number of allowable rebuild attempts before giving up and skipping to the next track.
+const MAX_REBUILD_ATTEMPTS: u32 = 8;
+
+/// Overrides the default behavior of the audio pipeline if the advertised format was wrong.
+#[derive(Debug, Clone, Default)]
+struct PipelineOverrides {
+    /// Force the Convert pipeline even when f32 passthrough looks possible.
+    force_convert: bool,
+    source_rate: Option<u32>,
+    source_spec: Option<ChannelSpec>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineCycleResult {
     Continue,
@@ -95,6 +107,8 @@ pub struct AudioEngine {
     /// Whether a stream reset is pending (e.g., after seek).
     pending_reset: bool,
     drain: DrainState,
+    /// Consecutive rebuilds without a decode producing audio; see [`MAX_REBUILD_ATTEMPTS`].
+    rebuild_attempts: u32,
 }
 
 impl AudioEngine {
@@ -108,6 +122,7 @@ impl AudioEngine {
             state: EngineState::Idle,
             pending_reset: false,
             drain: DrainState::Inactive,
+            rebuild_attempts: 0,
         }
     }
 
@@ -140,6 +155,7 @@ impl AudioEngine {
         info!("AudioEngine: Opening track '{}'", path.display());
 
         self.drain = DrainState::Inactive;
+        self.rebuild_attempts = 0;
 
         if !preserve_resampler {
             self.reset_resampler();
@@ -189,22 +205,42 @@ impl AudioEngine {
         self.state = EngineState::Playing;
 
         if let Some(device_format) = self.device.current_format().cloned() {
-            if let Err(e) = self.setup_pipeline(&device_format) {
+            if let Err(e) = self.setup_pipeline(&device_format, PipelineOverrides::default()) {
                 self.stop();
                 return Err(PlaybackStartError::MediaError(format!(
                     "Failed to set up audio pipeline: {e}"
                 )));
             }
 
-            match self.process_decode_resample() {
-                Ok(DecodeStepResult::Continue) | Ok(DecodeStepResult::Eof) => {}
-                Ok(DecodeStepResult::FatalError(msg)) => {
-                    self.stop();
-                    return Err(PlaybackStartError::MediaError(msg));
-                }
-                Err(e) => {
-                    self.stop();
-                    return Err(PlaybackStartError::MediaError(e.to_string()));
+            // Decode the first packet, and if the actual format does not match the advertised
+            // format attempt to rebuild the pipeline.
+            let mut attempts = 0;
+            loop {
+                match self.process_decode_resample() {
+                    Ok(DecodeStepResult::Continue) | Ok(DecodeStepResult::Eof) => break,
+                    Ok(DecodeStepResult::Rebuild(overrides)) => {
+                        attempts += 1;
+                        if attempts > MAX_REBUILD_ATTEMPTS {
+                            self.stop();
+                            return Err(PlaybackStartError::MediaError(
+                                "audio format kept changing while priming the pipeline".to_string(),
+                            ));
+                        }
+                        if let Err(e) = self.rebuild_pipeline(overrides) {
+                            self.stop();
+                            return Err(PlaybackStartError::MediaError(format!(
+                                "Failed to rebuild audio pipeline: {e}"
+                            )));
+                        }
+                    }
+                    Ok(DecodeStepResult::FatalError(msg)) => {
+                        self.stop();
+                        return Err(PlaybackStartError::MediaError(msg));
+                    }
+                    Err(e) => {
+                        self.stop();
+                        return Err(PlaybackStartError::MediaError(e.to_string()));
+                    }
                 }
             }
         }
@@ -396,7 +432,7 @@ impl AudioEngine {
                 }
             };
 
-            if let Err(e) = self.setup_pipeline(&device_format) {
+            if let Err(e) = self.setup_pipeline(&device_format, PipelineOverrides::default()) {
                 error!("Failed to setup audio pipeline: {:?}", e);
                 return EngineCycleResult::NothingToDo;
             }
@@ -434,7 +470,27 @@ impl AudioEngine {
                 error!("Fatal error in audio engine");
                 return EngineCycleResult::FatalError(msg);
             }
-            DecodeStepResult::Continue => {}
+            DecodeStepResult::Rebuild(overrides) => {
+                self.rebuild_attempts += 1;
+                if self.rebuild_attempts > MAX_REBUILD_ATTEMPTS {
+                    error!(
+                        "pipeline rebuilt {} times without progress; skipping track",
+                        self.rebuild_attempts
+                    );
+                    return EngineCycleResult::FatalError(
+                        "pipeline rebuild loop (format kept changing)".to_string(),
+                    );
+                }
+                if let Err(e) = self.rebuild_pipeline(overrides) {
+                    error!("Failed to rebuild audio pipeline: {:?}", e);
+                    return EngineCycleResult::NothingToDo;
+                }
+
+                return EngineCycleResult::Continue;
+            }
+            DecodeStepResult::Continue => {
+                self.rebuild_attempts = 0;
+            }
         }
 
         self.consume_to_device()
@@ -554,12 +610,21 @@ impl AudioEngine {
         EngineCycleResult::Continue
     }
 
-    /// Set up the audio pipeline for a new track.
-    fn setup_pipeline(&mut self, device_format: &FormatInfo) -> Result<(), EngineError> {
-        let source_spec = self
-            .media
-            .channels()
-            .map_err(|e| EngineError::MediaError(format!("Failed to get channels: {:?}", e)))?;
+    /// Set up the audio pipeline for a new track. `overrides` substitutes parameters the media
+    /// stream advertised incorrectly (rebuild path). Otherwise, the pipeline is set up according
+    /// to the media stream's advertised format.
+    fn setup_pipeline(
+        &mut self,
+        device_format: &FormatInfo,
+        overrides: PipelineOverrides,
+    ) -> Result<(), EngineError> {
+        let source_spec = match overrides.source_spec {
+            Some(spec) => spec,
+            None => self
+                .media
+                .channels()
+                .map_err(|e| EngineError::MediaError(format!("Failed to get channels: {:?}", e)))?,
+        };
 
         let source_layout = source_spec.to_layout();
         let device_layout = device_format.channels.to_layout();
@@ -570,9 +635,9 @@ impl AudioEngine {
 
         let source_format = self.media.sample_format().unwrap_or(SampleFormat::Float64);
 
-        let source_rate = self
-            .media
-            .sample_rate()
+        let source_rate = overrides
+            .source_rate
+            .or_else(|| self.media.sample_rate().ok())
             .unwrap_or(device_format.sample_rate);
 
         let pipeline = AudioPipeline::new(
@@ -584,6 +649,7 @@ impl AudioEngine {
             device_channel_count,
             channels_match,
             DEFAULT_BUFFER_FRAMES,
+            overrides.force_convert,
         );
 
         if pipeline.is_passthrough() {
@@ -622,6 +688,29 @@ impl AudioEngine {
         self.resampler = None;
         self.mixer = None;
         self.drain = DrainState::Inactive;
+        self.rebuild_attempts = 0;
+    }
+
+    /// Rebuild the pipeline mid-track after a format/rate/channel mismatch. Drops all buffered
+    /// audio, including the resampler.
+    fn rebuild_pipeline(&mut self, overrides: PipelineOverrides) -> Result<(), EngineError> {
+        let device_format =
+            self.device.current_format().cloned().ok_or_else(|| {
+                EngineError::DeviceError("no device format for rebuild".to_string())
+            })?;
+
+        info!(
+            "Rebuilding audio pipeline (force_convert={}, rate={:?}, channels={:?})",
+            overrides.force_convert, overrides.source_rate, overrides.source_spec
+        );
+
+        self.pipeline = None;
+        self.mixer = None;
+        if let Some(resampler) = &mut self.resampler {
+            resampler.reset();
+        }
+
+        self.setup_pipeline(&device_format, overrides)
     }
 
     fn reset_resampler(&mut self) {
@@ -642,14 +731,15 @@ impl AudioEngine {
 
         match pipeline {
             AudioPipeline::F32Passthrough(p) => {
+                let passthrough_rate = p.rate;
                 let decode_result = match self.media.decode_into_f32(&mut p.decoder_output) {
                     Ok(F32DecodeResult::Decoded(result)) => result,
                     Ok(F32DecodeResult::NotF32) => {
-                        // Source is not f32, need to switch to conversion pipeline
-                        warn!("Source format changed from f32, switching to conversion pipeline");
-                        return Err(EngineError::DecodeError(
-                            "Format changed, need pipeline recreation".to_string(),
-                        ));
+                        warn!("Source is not f32; rebuilding as conversion pipeline");
+                        return Ok(DecodeStepResult::Rebuild(PipelineOverrides {
+                            force_convert: true,
+                            ..PipelineOverrides::default()
+                        }));
                     }
                     Err(e) => {
                         return Self::handle_decode_error(e);
@@ -661,7 +751,19 @@ impl AudioEngine {
                         info!("EOF from decode_into_f32");
                         Ok(DecodeStepResult::Eof)
                     }
-                    DecodeResult::Decoded { .. } => {
+                    DecodeResult::Decoded { rate, .. } => {
+                        if rate != passthrough_rate {
+                            warn!(
+                                "Passthrough rate {} != decoded rate {}; rebuilding as \
+                                 conversion pipeline",
+                                passthrough_rate, rate
+                            );
+                            return Ok(DecodeStepResult::Rebuild(PipelineOverrides {
+                                force_convert: true,
+                                source_rate: Some(rate),
+                                ..PipelineOverrides::default()
+                            }));
+                        }
                         // No resampling needed in passthrough mode
                         Ok(DecodeStepResult::Continue)
                     }
@@ -839,6 +941,13 @@ impl AudioEngine {
                 info!("EOF during decode");
                 Ok(DecodeStepResult::Eof)
             }
+            PlaybackReadError::ChannelCountChanged(count) => {
+                warn!("decoded channel count changed to {count}; rebuilding pipeline");
+                Ok(DecodeStepResult::Rebuild(PipelineOverrides {
+                    source_spec: Some(ChannelSpec::Count(count.min(usize::from(u16::MAX)) as u16)),
+                    ..PipelineOverrides::default()
+                }))
+            }
             PlaybackReadError::Unknown(s) => {
                 error!("Unknown decode error: {}", s);
                 warn!("Samples may be skipped");
@@ -863,4 +972,5 @@ enum DecodeStepResult {
     Continue,
     Eof,
     FatalError(String),
+    Rebuild(PipelineOverrides),
 }

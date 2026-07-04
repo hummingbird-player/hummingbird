@@ -42,6 +42,17 @@ use queue_manager::{
 const ACTIVE_POSITION_BROADCAST_INTERVAL_MS: u64 = 33;
 const BACKGROUND_POSITION_BROADCAST_INTERVAL_MS: u64 = 250;
 
+/// Consecutive no-progress cycles while playing before the current track is skipped.
+const MAX_NO_PROGRESS_CYCLES: u32 = 50;
+
+/// Sleep after a no-progress cycle, growing exponentially from 2 ms to 50 ms so a persistent error
+/// doesn't pin a core.
+fn no_progress_backoff(cycles: u32) -> std::time::Duration {
+    let shift = cycles.saturating_sub(1).min(5);
+    let ms = (2_u64 << shift).min(50);
+    std::time::Duration::from_millis(ms)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
     Stopped,
@@ -85,6 +96,8 @@ pub struct PlaybackThread {
     /// Cached album gain from last metadata update.
     last_album_gain: Option<f64>,
     stop_after_current: bool,
+    /// Consecutive no-progress cycles while playing; drives the backoff and skip (B3).
+    no_progress_cycles: u32,
 }
 
 impl PlaybackThread {
@@ -119,6 +132,7 @@ impl PlaybackThread {
                     last_track_gain: None,
                     last_album_gain: None,
                     stop_after_current: false,
+                    no_progress_cycles: 0,
                 };
 
                 thread.run();
@@ -152,8 +166,24 @@ impl PlaybackThread {
         self.command_intake();
 
         if self.engine.state() == EngineState::Playing {
-            self.play_audio();
+            if self.play_audio() {
+                self.no_progress_cycles = 0;
+            } else {
+                self.no_progress_cycles = self.no_progress_cycles.saturating_add(1);
+                if self.no_progress_cycles >= MAX_NO_PROGRESS_CYCLES {
+                    warn!(
+                        "engine made no progress for {} cycles; skipping track",
+                        self.no_progress_cycles
+                    );
+                    self.no_progress_cycles = 0;
+                    self.next(false, false);
+                } else {
+                    // we didn't block waiting for the device so we have to sleep here
+                    sleep(no_progress_backoff(self.no_progress_cycles));
+                }
+            }
         } else {
+            self.no_progress_cycles = 0;
             sleep(std::time::Duration::from_millis(10));
         }
 
@@ -995,13 +1025,13 @@ impl PlaybackThread {
         self.update_ts(true);
     }
 
-    /// Process audio samples through the engine and send to device.
-    ///
-    /// This is called in the main loop when the engine is playing.
-    fn play_audio(&mut self) {
+    /// Process audio samples through the engine and send to device. Returns whether the engine
+    /// made forward progress this cycle.
+    fn play_audio(&mut self) -> bool {
         match self.engine.process_cycle() {
             EngineCycleResult::Continue => {
                 self.update_ts(false);
+                true
             }
             EngineCycleResult::Eof => {
                 if self.stop_after_current {
@@ -1012,6 +1042,7 @@ impl PlaybackThread {
                     info!("EOF, moving to next song");
                     self.next(false, true);
                 }
+                true
             }
             EngineCycleResult::FatalError(msg) => {
                 if self.stop_after_current {
@@ -1022,10 +1053,9 @@ impl PlaybackThread {
                     error!("Fatal error in audio engine: {}, moving to next song", msg);
                     self.next(false, false);
                 }
+                true
             }
-            EngineCycleResult::NothingToDo => {
-                // Nothing to process
-            }
+            EngineCycleResult::NothingToDo => false,
         }
     }
 

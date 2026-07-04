@@ -62,6 +62,8 @@ pub enum PlaybackReadError {
     NeverStarted,
     #[error("End of file reached")]
     Eof,
+    #[error("Channel count changed to {0}")]
+    ChannelCountChanged(usize),
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
     #[error("Decode error: `{0}`")]

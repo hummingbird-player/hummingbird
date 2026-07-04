@@ -122,6 +122,11 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
             .min()
             .unwrap_or(0)
     }
+
+    /// Number of channels this producer set was built for.
+    pub fn channel_count(&self) -> usize {
+        self.channel_count
+    }
 }
 
 pub struct ChannelConsumers<T: Copy + Default + Send + 'static> {
@@ -254,16 +259,18 @@ impl ConvertPipeline {
 pub struct F32PassthroughPipeline {
     pub decoder_output: ChannelProducers<f32>,
     pub device_input: ChannelConsumers<f32>,
+    pub rate: u32,
 }
 
 impl F32PassthroughPipeline {
-    pub fn new(channel_count: usize, buffer_frames: usize) -> Self {
+    pub fn new(channel_count: usize, buffer_frames: usize, rate: u32) -> Self {
         let (decoder_output, device_input) =
             ChannelBuffers::<f32>::new(channel_count, buffer_frames).split();
 
         Self {
             decoder_output,
             device_input,
+            rate,
         }
     }
 }
@@ -275,8 +282,8 @@ pub enum AudioPipeline {
 }
 
 impl AudioPipeline {
-    /// Create a new pipeline, choosing f32 passthrough only when format, rate, and
-    /// channel layout all match.
+    /// Create a new pipeline, choosing f32 passthrough only when format, rate, and channel layout
+    /// all match.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         source_channel_count: usize,
@@ -287,8 +294,10 @@ impl AudioPipeline {
         device_channel_count: usize,
         channels_match: bool,
         buffer_frames: usize,
+        force_convert: bool,
     ) -> Self {
-        if source_format == SampleFormat::Float32
+        if !force_convert
+            && source_format == SampleFormat::Float32
             && device_format == SampleFormat::Float32
             && source_rate == device_rate
             && channels_match
@@ -296,6 +305,7 @@ impl AudioPipeline {
             AudioPipeline::F32Passthrough(F32PassthroughPipeline::new(
                 source_channel_count,
                 buffer_frames,
+                source_rate,
             ))
         } else {
             AudioPipeline::Convert(ConvertPipeline::new(

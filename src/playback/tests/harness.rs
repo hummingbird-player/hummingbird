@@ -21,6 +21,7 @@ pub fn configure_dummy_device(rate: u32, bit_format: &str, channels: u16) {
         std::env::set_var("HB_DUMMY_CHANNELS", channels.to_string());
         std::env::remove_var("HB_DUMMY_BOUNDED_FRAMES");
         std::env::remove_var("HB_DUMMY_DRAIN_FRAMES");
+        std::env::remove_var("HB_DUMMY_DIE_AFTER_FRAMES");
     }
 }
 
@@ -29,6 +30,13 @@ pub fn configure_bounded_device(capacity: usize, drain: usize) {
         std::env::set_var("HB_DUMMY_BOUNDED_FRAMES", capacity.to_string());
         std::env::set_var("HB_DUMMY_DRAIN_FRAMES", drain.to_string());
     }
+}
+
+pub fn configure_device_death(frames: usize) {
+    unsafe {
+        std::env::set_var("HB_DUMMY_DIE_AFTER_FRAMES", frames.to_string());
+    }
+    crate::devices::builtin::dummy::arm_device_death();
 }
 
 /// Initialize a new audio engine that is playing `path` on the dummy device.

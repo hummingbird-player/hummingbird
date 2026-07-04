@@ -581,7 +581,7 @@ impl MediaStream for SymphoniaStream {
             Some(8) => Ok(SampleFormat::Unsigned8),
             Some(16) => Ok(SampleFormat::Signed16),
             Some(24) => Ok(SampleFormat::Signed24),
-            Some(32) => Ok(SampleFormat::Float32),
+            Some(32) => Ok(SampleFormat::Signed32),
             Some(64) => Ok(SampleFormat::Float64),
             _ => Err(ChannelRetrievalError::InvalidState),
         }
@@ -685,6 +685,10 @@ impl MediaStream for SymphoniaStream {
                     if needs_loop_seek && max_samples == 0 {
                         self.pending_loop_seek = true;
                         continue;
+                    }
+
+                    if channel_count != output.channel_count() {
+                        return Err(PlaybackReadError::ChannelCountChanged(channel_count));
                     }
 
                     // sometimes the hint is wrong, check against actual capacity
@@ -846,6 +850,10 @@ impl MediaStream for SymphoniaStream {
                     if needs_loop_seek && max_samples == 0 {
                         self.pending_loop_seek = true;
                         continue;
+                    }
+
+                    if channel_count != output.channel_count() {
+                        return Err(PlaybackReadError::ChannelCountChanged(channel_count));
                     }
 
                     match decoded {

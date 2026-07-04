@@ -1,6 +1,9 @@
 use std::{
     env,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use tracing::{debug, info, warn};
@@ -21,9 +24,8 @@ pub type CapturedPlanes = Arc<Mutex<Vec<Vec<f64>>>>;
 
 static CAPTURE: Mutex<Option<CapturedPlanes>> = Mutex::new(None);
 
-/// Install a sink that records every sample reaching the dummy device layer.
-/// The bit-transparency tests use this to compare the engine's output against
-/// the source samples. Replaces any previously installed sink.
+/// Install a sink that records every sample reaching the dummy device layer. Used by tests to
+/// capture the end result of the pipeline.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn install_capture() -> CapturedPlanes {
     let sink: CapturedPlanes = Arc::new(Mutex::new(Vec::new()));
@@ -35,6 +37,15 @@ pub fn install_capture() -> CapturedPlanes {
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn uninstall_capture() {
     *CAPTURE.lock().unwrap() = None;
+}
+
+/// Set once a modelled device death has fired, so the recreated stream doesn't die again.
+static DEVICE_ALREADY_DIED: AtomicBool = AtomicBool::new(false);
+
+/// Reset the one-shot latch so the next stream to reach `HB_DUMMY_DIE_AFTER_FRAMES` faults once.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn arm_device_death() {
+    DEVICE_ALREADY_DIED.store(false, Ordering::SeqCst);
 }
 
 fn capture_samples<T: Copy + Into<f64>>(staging: &[Vec<T>], read: usize) {
@@ -149,6 +160,12 @@ impl DummyDevice {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024)
     }
+
+    pub fn get_die_after_frames() -> Option<usize> {
+        env::var("HB_DUMMY_DIE_AFTER_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
 }
 
 impl Device for DummyDevice {
@@ -159,7 +176,11 @@ impl Device for DummyDevice {
                 Box::new(BoundedDummyStream::new(format, capacity, drain)) as Box<dyn OutputStream>
             );
         }
-        let device = DummyStream { format };
+        let device = DummyStream {
+            format,
+            die_after: DummyDevice::get_die_after_frames(),
+            consumed: 0,
+        };
         Ok(Box::new(device) as Box<dyn OutputStream>)
     }
 
@@ -201,6 +222,21 @@ impl Device for DummyDevice {
 
 pub struct DummyStream {
     format: FormatInfo,
+    /// If set, fault once after this many consumed frames (see [`arm_device_death`]).
+    die_after: Option<usize>,
+    consumed: usize,
+}
+
+impl DummyStream {
+    /// True (consuming the one-shot latch) if this stream should fault now.
+    fn should_die(&self) -> bool {
+        match self.die_after {
+            Some(threshold) if self.consumed >= threshold => DEVICE_ALREADY_DIED
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok(),
+            _ => false,
+        }
+    }
 }
 
 impl OutputStream for DummyStream {
@@ -237,6 +273,11 @@ impl OutputStream for DummyStream {
         &mut self,
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
+        // fault before reading so no frames are lost
+        if self.should_die() {
+            return Err(SubmissionError::DeviceError);
+        }
+
         let available = input.potentially_available();
         if available == 0 {
             return Ok(0);
@@ -245,6 +286,7 @@ impl OutputStream for DummyStream {
         // Just drain the samples without doing anything with them
         let read = input.try_read_to_staging(available);
         capture_samples(input.staging(), read);
+        self.consumed += read;
         debug!("Consumed {} samples from ring buffer (dummy device)", read);
         Ok(read)
     }
@@ -257,6 +299,10 @@ impl OutputStream for DummyStream {
             return None;
         }
 
+        if self.should_die() {
+            return Some(Err(SubmissionError::DeviceError));
+        }
+
         let available = input.potentially_available();
         if available == 0 {
             return Some(Ok(0));
@@ -264,6 +310,7 @@ impl OutputStream for DummyStream {
 
         let read = input.try_read_to_staging(available);
         capture_samples(input.staging(), read);
+        self.consumed += read;
         debug!(
             "Consumed {} f32 samples from ring buffer (dummy device)",
             read

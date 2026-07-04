@@ -21,7 +21,7 @@ use cpal::{
 };
 use rtrb::{Producer, RingBuffer};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -147,10 +147,13 @@ fn create_stream_internal<T: CpalSample>(
     buffer_size: usize,
     target_gain: Arc<AtomicF64>,
     underruns: Arc<AtomicU64>,
-) -> Result<(cpal::Stream, Producer<T>), OpenError> {
+) -> Result<(cpal::Stream, Producer<T>, Arc<AtomicBool>), OpenError> {
     let (prod, mut cons) = RingBuffer::<T>::new(buffer_size);
     let channels = config.channels as usize;
     let mut ramp = GainRamp::new(config.sample_rate);
+
+    let device_errored = Arc::new(AtomicBool::new(false));
+    let error_flag = device_errored.clone();
 
     let stream = device.build_output_stream(
         config,
@@ -164,11 +167,14 @@ fn create_stream_internal<T: CpalSample>(
             let target = target_gain.load(Ordering::Relaxed);
             ramp.apply(data, channels, target);
         },
-        move |_| {},
+        move |err| {
+            warn!("cpal stream error: {err}");
+            error_flag.store(true, Ordering::Relaxed);
+        },
         None,
     )?;
 
-    Ok((stream, prod))
+    Ok((stream, prod, device_errored))
 }
 
 impl CpalDevice {
@@ -187,7 +193,7 @@ impl CpalDevice {
         info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let underruns = Arc::new(AtomicU64::new(0));
-        let (stream, prod) = create_stream_internal::<T>(
+        let (stream, prod, device_errored) = create_stream_internal::<T>(
             &self.device,
             config,
             buffer_size,
@@ -210,6 +216,7 @@ impl CpalDevice {
             underruns,
             underruns_reported: 0,
             last_underrun_log: Instant::now(),
+            device_errored,
         }))
     }
 }
@@ -309,6 +316,7 @@ where
     /// keep track of the last log, so we don't log the same underrun multiple times
     underruns_reported: u64,
     last_underrun_log: Instant,
+    device_errored: Arc<AtomicBool>,
 }
 
 impl<T> CpalStream<T>
@@ -356,7 +364,7 @@ where
     }
 
     fn reset(&mut self) -> Result<(), ResetError> {
-        let (stream, prod) = create_stream_internal::<T>(
+        let (stream, prod, device_errored) = create_stream_internal::<T>(
             &self.device,
             self.config,
             self.buffer_size,
@@ -366,6 +374,7 @@ where
 
         self.stream = stream;
         self.ring_buf = prod;
+        self.device_errored = device_errored;
         self.interleave_buffer.clear();
 
         Ok(())
@@ -387,6 +396,10 @@ where
         &mut self,
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
+        if self.device_errored.load(Ordering::Relaxed) {
+            return Err(SubmissionError::DeviceError);
+        }
+
         self.report_underruns();
 
         let available = input.potentially_available();
@@ -431,6 +444,10 @@ where
         // Only support f32 passthrough if this stream is f32
         if self.format.sample_type != SampleFormat::Float32 {
             return None;
+        }
+
+        if self.device_errored.load(Ordering::Relaxed) {
+            return Some(Err(SubmissionError::DeviceError));
         }
 
         self.report_underruns();
