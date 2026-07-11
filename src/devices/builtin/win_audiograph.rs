@@ -360,7 +360,8 @@ impl OutputStream for AudioGraphStream {
         &mut self,
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
-        let available = input.potentially_available();
+        let capacity_frames = self.interleaved_buffer.capacity() / input.channel_count().max(1);
+        let available = input.potentially_available().min(capacity_frames);
         if available == 0 {
             return Ok(0);
         }

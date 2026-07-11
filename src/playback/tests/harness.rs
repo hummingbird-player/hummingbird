@@ -77,6 +77,10 @@ pub fn xorshift64(state: &mut u64) -> u64 {
     x
 }
 
+pub fn constant_signal(frames: usize, channels: usize, value: i16) -> Vec<i16> {
+    vec![value; frames * channels]
+}
+
 pub fn i16_test_signal(frames: usize, channels: usize) -> Vec<i16> {
     const EDGES: [i16; 6] = [0, i16::MAX, i16::MIN, 1, -1, i16::MIN + 1];
     let mut state = 0x243F_6A88_85A3_08D3;

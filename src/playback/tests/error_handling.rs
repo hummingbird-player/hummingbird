@@ -10,7 +10,7 @@ const CHANNELS: u16 = 2;
 const MAX_CYCLES: usize = 100_000;
 
 fn constant_signal(frames: usize, value: i16) -> Vec<i16> {
-    vec![value; frames * CHANNELS as usize]
+    super::harness::constant_signal(frames, CHANNELS as usize, value)
 }
 
 #[test]

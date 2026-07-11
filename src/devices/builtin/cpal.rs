@@ -377,7 +377,7 @@ where
     }
 
     fn reset(&mut self) -> Result<(), ResetError> {
-        self.pause_at = None;
+        let pause_pending = self.pause_at.take().is_some();
         let (stream, prod, device_errored) = create_stream_internal::<T>(
             &self.device,
             self.config,
@@ -390,6 +390,10 @@ where
         self.ring_buf = prod;
         self.device_errored = device_errored;
         self.interleave_buffer.clear();
+
+        if pause_pending && let Err(e) = self.stream.pause() {
+            return Err(ResetError::Unknown(e.to_string()));
+        }
 
         Ok(())
     }
@@ -418,7 +422,8 @@ where
 
         self.report_underruns();
 
-        let available = input.potentially_available();
+        let capacity_frames = self.interleave_buffer.capacity() / input.channel_count().max(1);
+        let available = input.potentially_available().min(capacity_frames);
         if available == 0 {
             return Ok(0);
         }
@@ -451,7 +456,6 @@ where
 
         Ok(read)
     }
-
 }
 
 make_unknown_error!(OpenError, ResetError);

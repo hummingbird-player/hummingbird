@@ -11,27 +11,52 @@ pub const RING_WRITE_DEADLINE: Duration = Duration::from_millis(250);
 
 /// The consumer of a ring buffer stopped draining before the write deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingWriteTimeout;
+pub struct RingWriteTimeout {
+    /// Samples written to each ring before the deadline expired.
+    pub written: usize,
+}
 
 pub fn write_bounded<T: Copy>(
     producer: &mut Producer<T>,
-    mut slice: &[T],
+    slice: &[T],
 ) -> Result<(), RingWriteTimeout> {
+    write_bounded_planar(std::slice::from_mut(producer), &[slice], slice.len())
+}
+
+/// Write the first `total` samples of equal-length planes to their producers in lockstep, so the
+/// channels never desync
+pub fn write_bounded_planar<T: Copy>(
+    producers: &mut [Producer<T>],
+    planes: &[&[T]],
+    total: usize,
+) -> Result<(), RingWriteTimeout> {
+    let mut written = 0;
     let deadline = Instant::now() + RING_WRITE_DEADLINE;
-    while !slice.is_empty() {
-        let writable = producer.slots().min(slice.len());
+
+    while written < total {
+        let writable = producers
+            .iter()
+            .map(Producer::slots)
+            .min()
+            .unwrap_or(0)
+            .min(total - written);
+
         if writable == 0 {
             if Instant::now() >= deadline {
-                return Err(RingWriteTimeout);
+                return Err(RingWriteTimeout { written });
             }
             std::thread::sleep(RING_WRITE_PARK);
             continue;
         }
-        if let Ok(chunk) = producer.write_chunk_uninit(writable) {
-            let written = chunk.fill_from_iter(slice[..writable].iter().copied());
-            slice = &slice[written..];
+
+        for (producer, plane) in producers.iter_mut().zip(planes) {
+            if let Ok(chunk) = producer.write_chunk_uninit(writable) {
+                chunk.fill_from_iter(plane[written..written + writable].iter().copied());
+            }
         }
+        written += writable;
     }
+
     Ok(())
 }
 

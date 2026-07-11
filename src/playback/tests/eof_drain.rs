@@ -29,7 +29,7 @@ fn expected_min_frames(source_frames: usize, source_rate: u32) -> usize {
 }
 
 fn constant_signal(frames: usize, value: i16) -> Vec<i16> {
-    vec![value; frames * CHANNELS as usize]
+    super::harness::constant_signal(frames, CHANNELS as usize, value)
 }
 
 #[test]

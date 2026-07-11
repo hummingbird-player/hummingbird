@@ -1,7 +1,7 @@
 use tracing::{info, warn};
 
 use crate::devices::channels::{ChannelLabel, ChannelLayout, ChannelPosition};
-use crate::media::pipeline::ChannelProducers;
+use crate::media::pipeline::{ChannelProducers, WriteError};
 
 pub const SURROUND_ATTENUATION: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
@@ -388,13 +388,17 @@ impl ChannelMixer {
     /// `input` is expected to carry `in_channels` planes of equal length (the number of
     /// frames). Missing planes or samples are treated as silence. Returns the number of
     /// frames written.
-    pub fn process(&mut self, input: &[Vec<f64>], output: &mut ChannelProducers<f64>) -> usize {
+    pub fn process(
+        &mut self,
+        input: &[Vec<f64>],
+        output: &mut ChannelProducers<f64>,
+    ) -> Result<usize, WriteError> {
         let frames = (0..self.in_channels)
             .filter_map(|ch| input.get(ch).map(Vec::len))
             .min()
             .unwrap_or(0);
         if frames == 0 {
-            return 0;
+            return Ok(0);
         }
 
         for plane in &mut self.output_planes {
@@ -414,13 +418,9 @@ impl ChannelMixer {
 
         let slices: smallvec::SmallVec<[&[f64]; 8]> =
             self.output_planes.iter().map(|p| p.as_slice()).collect();
-        // the mixer always emits `out_channels` planes to match the producers, so a mismatch is a
-        // bug rather than a stream change — just log it.
-        if let Err(mismatch) = output.write_slices(&slices) {
-            tracing::warn!("mixer output channel mismatch: {mismatch:?}; dropping frames");
-        }
+        output.write_slices(&slices)?;
 
-        frames
+        Ok(frames)
     }
 }
 
@@ -804,7 +804,7 @@ mod tests {
         let (mut producers, mut consumers) =
             ChannelBuffers::<f64>::new(mixer.out_channels(), frames.max(1) * 2).split();
 
-        let written = mixer.process(&input, &mut producers);
+        let written = mixer.process(&input, &mut producers).unwrap();
         assert_eq!(written, frames);
 
         let read = consumers.try_read_to_staging(frames);
@@ -848,6 +848,6 @@ mod tests {
 
         use crate::media::pipeline::ChannelBuffers;
         let (mut producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
-        assert_eq!(mixer.process(&[vec![], vec![]], &mut producers), 0);
+        assert_eq!(mixer.process(&[vec![], vec![]], &mut producers), Ok(0));
     }
 }

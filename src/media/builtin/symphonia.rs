@@ -36,7 +36,7 @@ use crate::{
             TrackDurationError,
         },
         metadata::{Metadata, MetadataTag, apply_tag},
-        pipeline::{ChannelProducers, DecodeResult},
+        pipeline::{ChannelProducers, DecodeResult, WriteError},
         traits::{MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
@@ -64,6 +64,13 @@ fn next_packet(
     format: &mut dyn FormatReader,
 ) -> symphonia::core::errors::Result<Option<symphonia::core::packet::Packet>> {
     symphonia_alloc_exempt(|| format.next_packet())
+}
+
+fn map_write_error(e: WriteError) -> PlaybackReadError {
+    match e {
+        WriteError::ChannelMismatch(m) => PlaybackReadError::ChannelCountChanged(m.got.max(1)),
+        other => PlaybackReadError::Unknown(format!("pipeline write failed: {other:?}")),
+    }
 }
 
 fn classify_next_packet_error(err: Error) -> Result<DecodeResult, PlaybackReadError> {
@@ -612,22 +619,38 @@ impl MediaStream for SymphoniaStream {
             use symphonia::core::codecs::audio::well_known::*;
             match codec_params.codec {
                 CODEC_ID_PCM_U8 | CODEC_ID_PCM_U8_PLANAR => return Ok(SampleFormat::Unsigned8),
-                CODEC_ID_PCM_U16LE | CODEC_ID_PCM_U16BE | CODEC_ID_PCM_U16LE_PLANAR
+                CODEC_ID_PCM_U16LE
+                | CODEC_ID_PCM_U16BE
+                | CODEC_ID_PCM_U16LE_PLANAR
                 | CODEC_ID_PCM_U16BE_PLANAR => return Ok(SampleFormat::Unsigned16),
-                CODEC_ID_PCM_U24LE | CODEC_ID_PCM_U24BE | CODEC_ID_PCM_U24LE_PLANAR
+                CODEC_ID_PCM_U24LE
+                | CODEC_ID_PCM_U24BE
+                | CODEC_ID_PCM_U24LE_PLANAR
                 | CODEC_ID_PCM_U24BE_PLANAR => return Ok(SampleFormat::Unsigned24),
-                CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE | CODEC_ID_PCM_U32LE_PLANAR
+                CODEC_ID_PCM_U32LE
+                | CODEC_ID_PCM_U32BE
+                | CODEC_ID_PCM_U32LE_PLANAR
                 | CODEC_ID_PCM_U32BE_PLANAR => return Ok(SampleFormat::Unsigned32),
                 CODEC_ID_PCM_S8 | CODEC_ID_PCM_S8_PLANAR => return Ok(SampleFormat::Signed8),
-                CODEC_ID_PCM_S16LE | CODEC_ID_PCM_S16BE | CODEC_ID_PCM_S16LE_PLANAR
+                CODEC_ID_PCM_S16LE
+                | CODEC_ID_PCM_S16BE
+                | CODEC_ID_PCM_S16LE_PLANAR
                 | CODEC_ID_PCM_S16BE_PLANAR => return Ok(SampleFormat::Signed16),
-                CODEC_ID_PCM_S24LE | CODEC_ID_PCM_S24BE | CODEC_ID_PCM_S24LE_PLANAR
+                CODEC_ID_PCM_S24LE
+                | CODEC_ID_PCM_S24BE
+                | CODEC_ID_PCM_S24LE_PLANAR
                 | CODEC_ID_PCM_S24BE_PLANAR => return Ok(SampleFormat::Signed24),
-                CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE | CODEC_ID_PCM_S32LE_PLANAR
+                CODEC_ID_PCM_S32LE
+                | CODEC_ID_PCM_S32BE
+                | CODEC_ID_PCM_S32LE_PLANAR
                 | CODEC_ID_PCM_S32BE_PLANAR => return Ok(SampleFormat::Signed32),
-                CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE | CODEC_ID_PCM_F32LE_PLANAR
+                CODEC_ID_PCM_F32LE
+                | CODEC_ID_PCM_F32BE
+                | CODEC_ID_PCM_F32LE_PLANAR
                 | CODEC_ID_PCM_F32BE_PLANAR => return Ok(SampleFormat::Float32),
-                CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE | CODEC_ID_PCM_F64LE_PLANAR
+                CODEC_ID_PCM_F64LE
+                | CODEC_ID_PCM_F64BE
+                | CODEC_ID_PCM_F64LE_PLANAR
                 | CODEC_ID_PCM_F64BE_PLANAR => return Ok(SampleFormat::Float64),
                 _ => {}
             }
@@ -799,8 +822,8 @@ impl MediaStream for SymphoniaStream {
                                     })
                                 })
                                 .collect();
-                            if let Err(m) = output.write_slices(&counts) {
-                                return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
+                            if let Err(e) = output.write_slices(&counts) {
+                                return Err(map_write_error(e));
                             }
                             if needs_loop_seek {
                                 self.pending_loop_seek = true;
@@ -812,8 +835,8 @@ impl MediaStream for SymphoniaStream {
                         }
                     }
 
-                    if let Err(m) = output.write_vecs(&self.conversion_buffer[..channel_count]) {
-                        return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
+                    if let Err(e) = output.write_vecs(&self.conversion_buffer[..channel_count]) {
+                        return Err(map_write_error(e));
                     }
 
                     if needs_loop_seek {

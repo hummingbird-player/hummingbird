@@ -286,7 +286,6 @@ impl OutputStream for DummyStream {
         debug!("Consumed {} samples from ring buffer (dummy device)", read);
         Ok(read)
     }
-
 }
 
 /// A dummy stream that models a real device's bounded hardware ring: it holds at most `capacity`
@@ -354,5 +353,4 @@ impl OutputStream for BoundedDummyStream {
         self.fill += read;
         Ok(read)
     }
-
 }

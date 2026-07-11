@@ -1,9 +1,6 @@
-use std::time::Instant;
-
 use rtrb::{Consumer, Producer, RingBuffer};
-use tracing::error;
 
-use crate::devices::util::{RING_WRITE_DEADLINE, RING_WRITE_PARK};
+use crate::devices::util::write_bounded_planar;
 
 pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
 
@@ -17,6 +14,16 @@ pub enum DecodeResult {
 pub struct ChannelMismatch {
     pub expected: usize,
     pub got: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteError {
+    /// The number of planes didn't match the producer set.
+    ChannelMismatch(ChannelMismatch),
+    /// The planes weren't all the same length, writing would desync the channels.
+    UnequalPlanes { min: usize, max: usize },
+    /// The consumer stopped draining before the write deadline. `dropped` frames were lost.
+    Timeout { dropped: usize },
 }
 
 pub struct ChannelBuffers<T: Copy + Default + Send + 'static> {
@@ -68,60 +75,31 @@ pub struct ChannelProducers<T: Copy + Send + 'static> {
 }
 
 impl<T: Copy + Send + 'static> ChannelProducers<T> {
-    pub fn write_slices(&mut self, samples: &[&[T]]) -> Result<(), ChannelMismatch> {
+    pub fn write_slices(&mut self, samples: &[&[T]]) -> Result<(), WriteError> {
         if samples.len() != self.channel_count {
-            return Err(ChannelMismatch {
+            return Err(WriteError::ChannelMismatch(ChannelMismatch {
                 expected: self.channel_count,
                 got: samples.len(),
-            });
+            }));
         }
 
-        let total = samples.iter().map(|s| s.len()).min().unwrap_or(0);
-        let mut written = 0;
-        let deadline = Instant::now() + RING_WRITE_DEADLINE;
-
-        while written < total {
-            let writable = self
-                .producers
-                .iter()
-                .map(Producer::slots)
-                .min()
-                .unwrap_or(0)
-                .min(total - written);
-
-            if writable == 0 {
-                if Instant::now() >= deadline {
-                    error!(
-                        "pipeline ring buffer write timed out; dropping {} frames",
-                        total - written
-                    );
-                    return Ok(());
-                }
-                std::thread::sleep(RING_WRITE_PARK);
-                continue;
-            }
-
-            for (channel, producer) in self.producers.iter_mut().enumerate() {
-                if let Ok(chunk) = producer.write_chunk_uninit(writable) {
-                    chunk.fill_from_iter(
-                        samples[channel][written..written + writable]
-                            .iter()
-                            .copied(),
-                    );
-                }
-            }
-            written += writable;
+        let min = samples.iter().map(|s| s.len()).min().unwrap_or(0);
+        let max = samples.iter().map(|s| s.len()).max().unwrap_or(0);
+        if min != max {
+            return Err(WriteError::UnequalPlanes { min, max });
         }
 
-        Ok(())
+        write_bounded_planar(&mut self.producers, samples, min).map_err(|t| WriteError::Timeout {
+            dropped: min - t.written,
+        })
     }
 
-    pub fn write_vecs(&mut self, samples: &[Vec<T>]) -> Result<(), ChannelMismatch> {
+    pub fn write_vecs(&mut self, samples: &[Vec<T>]) -> Result<(), WriteError> {
         if samples.len() != self.channel_count {
-            return Err(ChannelMismatch {
+            return Err(WriteError::ChannelMismatch(ChannelMismatch {
                 expected: self.channel_count,
                 got: samples.len(),
-            });
+            }));
         }
 
         let slices: smallvec::SmallVec<[&[T]; 8]> = samples.iter().map(Vec::as_slice).collect();
@@ -183,15 +161,25 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
         for channel in 0..self.channel_count {
             let staging = &mut self.staging[channel];
             staging.clear();
-            if let Ok(chunk) = self.consumers[channel].read_chunk(count) {
-                let (first, second) = chunk.as_slices();
-                staging.extend_from_slice(first);
-                staging.extend_from_slice(second);
-                chunk.commit_all();
+            match self.consumers[channel].read_chunk(count) {
+                Ok(chunk) => {
+                    let (first, second) = chunk.as_slices();
+                    staging.extend_from_slice(first);
+                    staging.extend_from_slice(second);
+                    chunk.commit_all();
+                }
+                // can't happen (count is the min of every channel's slots), but keep the planes
+                // equal-length with silence rather than desyncing the channels downstream
+                Err(_) => staging.resize(count, T::default()),
             }
         }
 
         count
+    }
+
+    /// Number of channels this consumer set was built for.
+    pub fn channel_count(&self) -> usize {
+        self.channel_count
     }
 
     pub fn staging(&self) -> &[Vec<T>] {
@@ -285,6 +273,17 @@ impl AudioPipeline {
         }
     }
 
+    /// Grow the resampler→mixer handoff buffer to hold `frames` per channel, so a resampler whose
+    /// worst-case cycle output exceeds the initial estimate never reallocates it mid-playback.
+    /// Called at resampler creation (track start), where allocating is fine.
+    pub fn ensure_resampler_output_capacity(&mut self, frames: usize) {
+        for ch in &mut self.resampler_output {
+            if ch.capacity() < frames {
+                ch.reserve(frames - ch.len());
+            }
+        }
+    }
+
     /// Whether the device-input ring has room to absorb another decode cycle's worth of output,
     /// given the current packet size (`frame_duration`).
     ///
@@ -316,15 +315,39 @@ mod tests {
         let one: [&[f64]; 1] = [&[0.0; 4]];
         assert_eq!(
             producers.write_slices(&one),
-            Err(ChannelMismatch {
+            Err(WriteError::ChannelMismatch(ChannelMismatch {
                 expected: 2,
                 got: 1
-            })
+            }))
         );
 
         // the matching count still writes fine.
         let two: [&[f64]; 2] = [&[0.0; 4], &[0.0; 4]];
         assert!(producers.write_slices(&two).is_ok());
+    }
+
+    #[test]
+    fn write_slices_rejects_unequal_planes() {
+        let (mut producers, _consumers) = ChannelBuffers::<f64>::new(2, 64).split();
+
+        let planes: [&[f64]; 2] = [&[0.0; 4], &[0.0; 3]];
+        assert_eq!(
+            producers.write_slices(&planes),
+            Err(WriteError::UnequalPlanes { min: 3, max: 4 })
+        );
+    }
+
+    #[test]
+    fn write_slices_reports_timeout_instead_of_dropping_silently() {
+        let (mut producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
+
+        // more samples than the ring holds with nobody draining: the deadline must surface as an
+        // error naming the dropped frames, not a silent Ok
+        let planes: [&[f64]; 1] = [&[0.0; 16]];
+        assert_eq!(
+            producers.write_slices(&planes),
+            Err(WriteError::Timeout { dropped: 8 })
+        );
     }
 
     #[test]

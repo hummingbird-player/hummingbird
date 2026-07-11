@@ -201,6 +201,11 @@ impl Resampler {
         self.resampler.output_delay()
     }
 
+    /// Largest number of frames a single process call can emit.
+    pub fn output_frames_max(&self) -> usize {
+        self.resampler.output_frames_max()
+    }
+
     pub fn needs_resampling(&self) -> bool {
         self.source_rate != self.target_rate
     }
@@ -316,7 +321,20 @@ impl Resampler {
         let mut written = 0;
         // first call carries the buffered partial chunk, later ones pump zeros
         let mut partial = self.input_available();
+
+        // each pump normally emits ~duration*ratio frames, so this many cycles always
+        // suffices and only a resampler that stops making progress can exceed it
+        let per_cycle = (self.duration as f64 * ratio).max(1.0) as u64;
+        let max_cycles = expected_total.div_ceil(per_cycle) + 8;
+        let mut cycles = 0;
+
         while self.frames_out < expected_total {
+            cycles += 1;
+            if cycles > max_cycles {
+                error!("resampler stopped producing frames while flushing; tail truncated");
+                break;
+            }
+
             for ch in 0..self.channels {
                 let drain_count = partial.min(self.input_buffer[ch].len());
                 self.temp_input[ch].clear();
@@ -348,9 +366,6 @@ impl Resampler {
                 error!("resampler error while flushing; tail truncated");
                 break;
             };
-            if frames_written == 0 && partial == 0 {
-                break;
-            }
 
             // truncate the final chunk so the flush ends exactly where the
             // input did instead of appending extra silence

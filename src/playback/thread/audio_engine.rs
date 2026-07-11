@@ -772,12 +772,17 @@ impl AudioEngine {
                             );
                             Self::flush_old_resampler(&mut old, p, &mut self.mixer);
                         }
-                        self.resampler = Some(Resampler::new(
+                        let resampler = Resampler::new(
                             rate,
                             p.target_rate,
                             duration,
                             p.source_channel_count as u16,
-                        ));
+                        );
+                        // a cycle can push several blocks through the resampler, so make sure the
+                        // handoff buffer can absorb the worst case without reallocating later
+                        let blocks = DEFAULT_BUFFER_FRAMES.div_ceil(duration.max(1) as usize);
+                        p.ensure_resampler_output_capacity(blocks * resampler.output_frames_max());
+                        self.resampler = Some(resampler);
                     }
                 }
 
@@ -808,15 +813,24 @@ impl AudioEngine {
     }
 
     fn route_resampler_output(p: &mut AudioPipeline, mixer: &mut Option<ChannelMixer>) {
-        if let Some(mixer) = mixer {
-            mixer.process(&p.resampler_output, &mut p.device_input_producers);
+        let result = if let Some(mixer) = mixer {
+            mixer
+                .process(&p.resampler_output, &mut p.device_input_producers)
+                .map(|_| ())
         } else if p.source_channel_count == p.device_channel_count {
-            Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers);
+            Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers)
         } else {
             warn!(
                 "No mixer for {} -> {} channel mismatch; dropping frames",
                 p.source_channel_count, p.device_channel_count
             );
+            Ok(())
+        };
+
+        // the device ring is sized for a worst-case cycle and drained on this same thread, so a
+        // failed write means an engine bug - make it loud instead of losing audio silently
+        if let Err(e) = result {
+            error!("failed to hand resampler output to the device stage: {e:?}");
         }
 
         p.clear_resampler_output();
@@ -870,16 +884,14 @@ impl AudioEngine {
     fn passthrough_to_device(
         input: &[Vec<f64>],
         output: &mut crate::media::pipeline::ChannelProducers<f64>,
-    ) {
+    ) -> Result<(), crate::media::pipeline::WriteError> {
         let frames = input.first().map(|v| v.len()).unwrap_or(0);
         if frames == 0 {
-            return;
+            return Ok(());
         }
         let slices: smallvec::SmallVec<[&[f64]; 8]> = input.iter().map(|v| v.as_slice()).collect();
 
-        if let Err(mismatch) = output.write_slices(&slices) {
-            warn!("passthrough channel mismatch: {mismatch:?}; dropping frames");
-        }
+        output.write_slices(&slices)
     }
 
     /// Handle decode errors uniformly
