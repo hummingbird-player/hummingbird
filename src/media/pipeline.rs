@@ -16,6 +16,12 @@ pub enum DecodeResult {
     Eof,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelMismatch {
+    pub expected: usize,
+    pub got: usize,
+}
+
 pub struct ChannelBuffers<T: Copy + Default + Send + 'static> {
     buffers: Vec<(Producer<T>, Consumer<T>)>,
     channel_count: usize,
@@ -65,8 +71,13 @@ pub struct ChannelProducers<T: Copy + Send + 'static> {
 }
 
 impl<T: Copy + Send + 'static> ChannelProducers<T> {
-    pub fn write_slices(&mut self, samples: &[&[T]]) {
-        assert_eq!(samples.len(), self.channel_count);
+    pub fn write_slices(&mut self, samples: &[&[T]]) -> Result<(), ChannelMismatch> {
+        if samples.len() != self.channel_count {
+            return Err(ChannelMismatch {
+                expected: self.channel_count,
+                got: samples.len(),
+            });
+        }
 
         let total = samples.iter().map(|s| s.len()).min().unwrap_or(0);
         let mut written = 0;
@@ -87,7 +98,7 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
                         "pipeline ring buffer write timed out; dropping {} frames",
                         total - written
                     );
-                    return;
+                    return Ok(());
                 }
                 std::thread::sleep(RING_WRITE_PARK);
                 continue;
@@ -104,13 +115,20 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
             }
             written += writable;
         }
+
+        Ok(())
     }
 
-    pub fn write_vecs(&mut self, samples: &[Vec<T>]) {
-        assert_eq!(samples.len(), self.channel_count);
+    pub fn write_vecs(&mut self, samples: &[Vec<T>]) -> Result<(), ChannelMismatch> {
+        if samples.len() != self.channel_count {
+            return Err(ChannelMismatch {
+                expected: self.channel_count,
+                got: samples.len(),
+            });
+        }
 
         let slices: smallvec::SmallVec<[&[T]; 8]> = samples.iter().map(Vec::as_slice).collect();
-        self.write_slices(&slices);
+        self.write_slices(&slices)
     }
 
     /// Frames that can be written to every channel right now without blocking (the minimum free
@@ -181,6 +199,22 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
 
     pub fn staging(&self) -> &[Vec<T>] {
         &self.staging
+    }
+
+    /// Discard all buffered samples in the ring. Only safe when the producer side isn't writing
+    /// concurrently, which holds on the single playback thread.
+    pub fn drain(&mut self) {
+        for consumer in &mut self.consumers {
+            let slots = consumer.slots();
+            if slots > 0
+                && let Ok(chunk) = consumer.read_chunk(slots)
+            {
+                chunk.commit_all();
+            }
+        }
+        for staging in &mut self.staging {
+            staging.clear();
+        }
     }
 }
 
@@ -336,5 +370,74 @@ impl AudioPipeline {
 
     pub fn is_passthrough(&self) -> bool {
         matches!(self, AudioPipeline::F32Passthrough(_))
+    }
+
+    /// Drop all buffered audio in the pipeline ring buffers, so a seek while playing is heard
+    /// immediately instead of after the stale buffers drain.
+    pub fn flush_buffers(&mut self) {
+        match self {
+            AudioPipeline::Convert(p) => {
+                p.resampler_input.drain();
+                p.device_input.drain();
+                p.clear_resampler_output();
+            }
+            AudioPipeline::F32Passthrough(p) => {
+                p.device_input.drain();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_slices_rejects_wrong_channel_count() {
+        let (mut producers, _consumers) = ChannelBuffers::<f64>::new(2, 64).split();
+
+        // a plane count that doesn't match the producer errors instead of panicking.
+        let one: [&[f64]; 1] = [&[0.0; 4]];
+        assert_eq!(
+            producers.write_slices(&one),
+            Err(ChannelMismatch {
+                expected: 2,
+                got: 1
+            })
+        );
+
+        // the matching count still writes fine.
+        let two: [&[f64]; 2] = [&[0.0; 4], &[0.0; 4]];
+        assert!(producers.write_slices(&two).is_ok());
+    }
+
+    #[test]
+    fn drain_empties_the_ring() {
+        let (mut producers, mut consumers) = ChannelBuffers::<f64>::new(2, 64).split();
+        producers
+            .write_vecs(&[vec![1.0; 16], vec![1.0; 16]])
+            .unwrap();
+        assert!(consumers.potentially_available() > 0);
+
+        consumers.drain();
+        assert_eq!(consumers.potentially_available(), 0);
+    }
+
+    #[test]
+    fn flush_buffers_clears_convert_pipeline() {
+        let mut pipeline = AudioPipeline::Convert(ConvertPipeline::new(2, 2, 44_100, 44_100, 64));
+
+        if let AudioPipeline::Convert(p) = &mut pipeline {
+            p.device_input_producers
+                .write_vecs(&[vec![1.0; 16], vec![1.0; 16]])
+                .unwrap();
+            assert!(p.device_input.potentially_available() > 0);
+        }
+
+        pipeline.flush_buffers();
+
+        if let AudioPipeline::Convert(p) = &mut pipeline {
+            assert_eq!(p.device_input.potentially_available(), 0);
+        }
     }
 }

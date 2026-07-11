@@ -195,7 +195,10 @@ impl AudioEngine {
 
             if let Err(e) = self.device.play() {
                 error!("Device was recreated and we still can't play: {:?}", e);
-                panic!("couldn't play device")
+                self.stop();
+                return Err(PlaybackStartError::StreamError(format!(
+                    "Device was recreated but playback could not start: {e:?}"
+                )));
             }
             true
         } else {
@@ -335,6 +338,14 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Advance deferred device work (currently: completing an async pause fade), once per main-loop
+    /// iteration.
+    pub fn poll(&mut self) {
+        if let Err(e) = self.device.poll() {
+            warn!("device poll failed: {:?}", e);
+        }
+    }
+
     /// Stop playback and clear all state.
     pub fn stop(&mut self) {
         // flush the resampler's tail to the device so the last track isn't truncated
@@ -351,11 +362,41 @@ impl AudioEngine {
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         let result = self.media.seek(time);
         if result.is_ok() {
-            self.pending_reset = true;
             // a seek out of the EOF region resumes normal decoding
             self.drain = DrainState::Inactive;
+            self.rebuild_attempts = 0;
+
+            if self.state == EngineState::Playing {
+                self.flush_for_seek();
+            } else {
+                self.pending_reset = true;
+            }
         }
         result
+    }
+
+    /// Drop everything buffered from before a seek: the device's own queue, both pipeline ring
+    /// buffers, and the resampler/mixer state, so post-seek audio plays cleanly and immediately.
+    fn flush_for_seek(&mut self) {
+        if self.device.has_stream() {
+            if let Err(err) = self.device.reset() {
+                warn!("Failed to reset device on seek: {:?}", err);
+            } else if let Err(err) = self.device.play() {
+                warn!("Failed to resume device after seek reset: {:?}", err);
+            }
+        }
+
+        if let Some(resampler) = &mut self.resampler {
+            resampler.reset();
+        }
+        if let Some(mixer) = &mut self.mixer {
+            mixer.reset();
+        }
+        if let Some(pipeline) = &mut self.pipeline {
+            pipeline.flush_buffers();
+        }
+
+        self.pending_reset = false;
     }
 
     /// Set the playback volume (0.0 to 1.0).
@@ -603,7 +644,10 @@ impl AudioEngine {
                     (or an underlying issue in the used DeviceProvider)\n\
                     Please check your audio setup and try again."
                 );
-                panic!("Failed to consume from pipeline after recreation");
+
+                return EngineCycleResult::FatalError(format!(
+                    "audio device unusable after recreation: {err}"
+                ));
             }
         }
 
@@ -915,7 +959,10 @@ impl AudioEngine {
             return;
         }
         let slices: smallvec::SmallVec<[&[f64]; 8]> = input.iter().map(|v| v.as_slice()).collect();
-        output.write_slices(&slices);
+
+        if let Err(mismatch) = output.write_slices(&slices) {
+            warn!("passthrough channel mismatch: {mismatch:?}; dropping frames");
+        }
     }
 
     /// Handle decode errors uniformly

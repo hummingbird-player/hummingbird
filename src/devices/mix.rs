@@ -394,7 +394,11 @@ impl ChannelMixer {
 
         let slices: smallvec::SmallVec<[&[f64]; 8]> =
             self.output_planes.iter().map(|p| p.as_slice()).collect();
-        output.write_slices(&slices);
+        // the mixer always emits `out_channels` planes to match the producers, so a mismatch is a
+        // bug rather than a stream change — just log it.
+        if let Err(mismatch) = output.write_slices(&slices) {
+            tracing::warn!("mixer output channel mismatch: {mismatch:?}; dropping frames");
+        }
 
         frames
     }

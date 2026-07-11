@@ -62,6 +62,11 @@ pub trait OutputStream {
     /// options are between dropping audio data and this function being a no-op, the function
     /// should be a no-op.
     fn pause(&mut self) -> Result<(), StateError>;
+    /// Advances deferred stream work; called every iteration of the playback thread's main loop.
+    /// Lets `pause()` return immediately and finish its fade-out here later. Default: no-op.
+    fn poll(&mut self) -> Result<(), StateError> {
+        Ok(())
+    }
     /// Tells the device to reset the buffer. This is useful for restarting playback after a pause,
     /// in order to avoid playing stale data (e.g. if a user pauses before seeking or changing
     /// tracks).

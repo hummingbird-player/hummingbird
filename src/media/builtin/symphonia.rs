@@ -1,6 +1,5 @@
 use std::{ffi::OsStr, fs::File};
 
-use intx::{I24, U24};
 use smallvec::SmallVec;
 use symphonia::{
     core::{
@@ -20,6 +19,7 @@ use symphonia::{
         AdpcmDecoder, AlacDecoder, FlacDecoder, MpaDecoder, PcmDecoder, VorbisDecoder,
     },
 };
+use tracing::error;
 
 use symphonia_adapter_libopus::OpusDecoder;
 
@@ -27,7 +27,7 @@ use crate::{
     devices::{
         channels::{ChannelLabel, ChannelLayout, ChannelPosition},
         format::{ChannelSpec, SampleFormat},
-        resample::SampleInto,
+        resample::{SampleInto, i24_saturating, u24_saturating},
     },
     media::{
         errors::{
@@ -64,6 +64,22 @@ fn next_packet(
     format: &mut dyn FormatReader,
 ) -> symphonia::core::errors::Result<Option<symphonia::core::packet::Packet>> {
     symphonia_alloc_exempt(|| format.next_packet())
+}
+
+fn classify_next_packet_error(err: Error) -> Result<DecodeResult, PlaybackReadError> {
+    match err {
+        Error::IoError(io) if io.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Ok(DecodeResult::Eof)
+        }
+        Error::IoError(io) => {
+            error!("I/O error while reading audio packets: {io}");
+            Err(PlaybackReadError::DecodeFatal(format!("I/O error: {io}")))
+        }
+        other => {
+            error!("error while reading audio packets: {other}");
+            Err(PlaybackReadError::DecodeFatal(other.to_string()))
+        }
+    }
 }
 
 #[derive(Default)]
@@ -629,7 +645,7 @@ impl MediaStream for SymphoniaStream {
                     }
                     return Ok(DecodeResult::Eof);
                 }
-                Err(_) => return Err(PlaybackReadError::Eof),
+                Err(err) => return classify_next_packet_error(err),
             };
 
             format.metadata().skip_to_latest();
@@ -724,15 +740,15 @@ impl MediaStream for SymphoniaStream {
                     match decoded {
                         GenericAudioBufferRef::U8(v) => convert_chan!(v, |&s| s.sample_into()),
                         GenericAudioBufferRef::U16(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::U24(v) => convert_chan!(v, |s| {
-                            U24::try_from(s.0).expect("u24 overflow").sample_into()
-                        }),
+                        GenericAudioBufferRef::U24(v) => {
+                            convert_chan!(v, |s| u24_saturating(s.0).sample_into())
+                        }
                         GenericAudioBufferRef::U32(v) => convert_chan!(v, |&s| s.sample_into()),
                         GenericAudioBufferRef::S8(v) => convert_chan!(v, |&s| s.sample_into()),
                         GenericAudioBufferRef::S16(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::S24(v) => convert_chan!(v, |s| {
-                            I24::try_from(s.0).expect("i24 overflow").sample_into()
-                        }),
+                        GenericAudioBufferRef::S24(v) => {
+                            convert_chan!(v, |s| i24_saturating(s.0).sample_into())
+                        }
                         GenericAudioBufferRef::S32(v) => convert_chan!(v, |&s| s.sample_into()),
                         GenericAudioBufferRef::F32(v) => convert_chan!(v, |&s| s.sample_into()),
                         GenericAudioBufferRef::F64(v) => {
@@ -743,7 +759,9 @@ impl MediaStream for SymphoniaStream {
                                     })
                                 })
                                 .collect();
-                            output.write_slices(&counts);
+                            if let Err(m) = output.write_slices(&counts) {
+                                return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
+                            }
                             if needs_loop_seek {
                                 self.pending_loop_seek = true;
                             }
@@ -754,7 +772,9 @@ impl MediaStream for SymphoniaStream {
                         }
                     }
 
-                    output.write_vecs(&self.conversion_buffer[..channel_count]);
+                    if let Err(m) = output.write_vecs(&self.conversion_buffer[..channel_count]) {
+                        return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
+                    }
 
                     if needs_loop_seek {
                         self.pending_loop_seek = true;
@@ -794,7 +814,7 @@ impl MediaStream for SymphoniaStream {
                     }
                     return Ok(F32DecodeResult::Decoded(DecodeResult::Eof));
                 }
-                Err(_) => return Ok(F32DecodeResult::Decoded(DecodeResult::Eof)),
+                Err(err) => return classify_next_packet_error(err).map(F32DecodeResult::Decoded),
             };
 
             format.metadata().skip_to_latest();
@@ -865,7 +885,9 @@ impl MediaStream for SymphoniaStream {
                                     })
                                 })
                                 .collect();
-                            output.write_slices(&counts);
+                            if let Err(m) = output.write_slices(&counts) {
+                                return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
+                            }
                         }
                         _ => return Ok(F32DecodeResult::NotF32),
                     }

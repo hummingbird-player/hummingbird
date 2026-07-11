@@ -45,6 +45,31 @@ fn device_death_mid_playback_recovers_without_dropping_frames() {
 }
 
 #[test]
+fn seek_while_playing_flushes_and_continues() {
+    let _guard = engine_lock();
+    let rate = 44_100;
+    configure_dummy_device(rate, "S16", CHANNELS);
+
+    let dir = TestDir::new("hb-robustness-seek");
+    let frames = 40_000;
+    let path = dir.join("a.wav");
+    write_wav_i16(&path, rate, CHANNELS, &constant_signal(frames, 8_000));
+
+    let mut engine = engine_playing(&path);
+
+    // play part way into the track so there is buffered audio to flush.
+    for _ in 0..50 {
+        engine.process_cycle();
+    }
+
+    // seeking while playing must flush device + pipeline buffers and keep playing to EOF,
+    // rather than deferring the reset or hanging.
+    engine.seek(0.0).expect("seek while playing failed");
+    run_to_eof(&mut engine, MAX_CYCLES);
+    engine.stop();
+}
+
+#[test]
 fn playback_continues_after_earlier_device_fault() {
     let _guard = engine_lock();
     let rate = 44_100;

@@ -283,6 +283,15 @@ impl DeviceController {
         Ok(())
     }
 
+    /// Advance any deferred stream work (e.g. completing an async pause fade). No-op with no
+    /// stream.
+    pub fn poll(&mut self) -> Result<(), DeviceError> {
+        if let Some(stream) = &mut self.stream {
+            stream.poll()?;
+        }
+        Ok(())
+    }
+
     /// Reset the stream buffer.
     pub fn reset(&mut self) -> Result<(), DeviceError> {
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;

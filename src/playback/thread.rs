@@ -96,7 +96,7 @@ pub struct PlaybackThread {
     /// Cached album gain from last metadata update.
     last_album_gain: Option<f64>,
     stop_after_current: bool,
-    /// Consecutive no-progress cycles while playing; drives the backoff and skip (B3).
+    /// Consecutive no-progress cycles while playing; drives the backoff and skip.
     no_progress_cycles: u32,
 }
 
@@ -164,6 +164,9 @@ impl PlaybackThread {
     /// Start command intake and audio playback loop.
     pub fn main_loop(&mut self) {
         self.command_intake();
+
+        // Finish any deferred device work (e.g. an async pause fade) without blocking intake.
+        self.engine.poll();
 
         if self.engine.state() == EngineState::Playing {
             if self.play_audio() {

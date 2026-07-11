@@ -217,6 +217,7 @@ impl CpalDevice {
             underruns_reported: 0,
             last_underrun_log: Instant::now(),
             device_errored,
+            pause_at: None,
         }))
     }
 }
@@ -317,6 +318,9 @@ where
     underruns_reported: u64,
     last_underrun_log: Instant,
     device_errored: Arc<AtomicBool>,
+    /// Indicates that the stream is currently fading out and needs to be paused by the specified
+    /// time.
+    pause_at: Option<Instant>,
 }
 
 impl<T> CpalStream<T>
@@ -352,6 +356,7 @@ where
     }
 
     fn play(&mut self) -> Result<(), StateError> {
+        self.pause_at = None;
         self.target_gain
             .store(self.last_user_volume, Ordering::Relaxed);
         self.stream.play().map_err(|v| v.into())
@@ -359,11 +364,22 @@ where
 
     fn pause(&mut self) -> Result<(), StateError> {
         self.target_gain.store(0.0, Ordering::Relaxed);
-        std::thread::sleep(PAUSE_FADE_WAIT); // TODO: make this less hacky?
-        self.stream.pause().map_err(|v| v.into())
+        self.pause_at = Some(Instant::now() + PAUSE_FADE_WAIT);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Result<(), StateError> {
+        if let Some(deadline) = self.pause_at
+            && Instant::now() >= deadline
+        {
+            self.pause_at = None;
+            return self.stream.pause().map_err(|v| v.into());
+        }
+        Ok(())
     }
 
     fn reset(&mut self) -> Result<(), ResetError> {
+        self.pause_at = None;
         let (stream, prod, device_errored) = create_stream_internal::<T>(
             &self.device,
             self.config,
@@ -382,7 +398,9 @@ where
 
     fn set_volume(&mut self, volume: f64) -> Result<(), StateError> {
         self.last_user_volume = volume;
-        self.target_gain.store(volume, Ordering::Relaxed);
+        if self.pause_at.is_none() {
+            self.target_gain.store(volume, Ordering::Relaxed);
+        }
         Ok(())
     }
 

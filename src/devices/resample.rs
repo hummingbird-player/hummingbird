@@ -52,6 +52,20 @@ impl_sample_into_f64!(i32, i32, 0.0);
 impl_sample_into_f64!(i16, i16, 0.0);
 impl_sample_into_f64!(i8, i8, 0.0);
 
+/// Convert a scaled `i32` to [`I24`], saturating instead of panicking when a sample lands outside
+/// the 24-bit range (e.g. gain > 1.0 or intersample overs).
+#[inline]
+pub(crate) fn i24_saturating(scaled: i32) -> I24 {
+    let clamped = scaled.clamp(i32::from(I24::MIN), i32::from(I24::MAX));
+    I24::try_from(clamped).unwrap_or(I24::MAX)
+}
+
+/// Convert a scaled `u32` to [`U24`], saturating into the 24-bit range.
+#[inline]
+pub(crate) fn u24_saturating(scaled: u32) -> U24 {
+    U24::try_from(scaled.min(u32::from(U24::MAX))).unwrap_or(U24::MAX)
+}
+
 /// Trait for converting from another sample type.
 pub trait SampleFrom<T> {
     fn sample_from(value: T) -> Self;
@@ -59,14 +73,13 @@ pub trait SampleFrom<T> {
 
 impl SampleFrom<f64> for U24 {
     fn sample_from(value: f64) -> Self {
-        U24::try_from(((value + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
-            .expect("out of U24 bounds")
+        u24_saturating(((value + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
     }
 }
 
 impl SampleFrom<f64> for I24 {
     fn sample_from(value: f64) -> Self {
-        I24::try_from((value * f64::from(i32::from(I24::MAX))) as i32).expect("out of I24 bounds")
+        i24_saturating((value * f64::from(i32::from(I24::MAX))) as i32)
     }
 }
 
@@ -150,15 +163,13 @@ impl SampleFrom<f32> for u32 {
 
 impl SampleFrom<f32> for I24 {
     fn sample_from(value: f32) -> Self {
-        I24::try_from((value as f64 * f64::from(i32::from(I24::MAX))) as i32)
-            .expect("out of I24 bounds")
+        i24_saturating((value as f64 * f64::from(i32::from(I24::MAX))) as i32)
     }
 }
 
 impl SampleFrom<f32> for U24 {
     fn sample_from(value: f32) -> Self {
-        U24::try_from(((value as f64 + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
-            .expect("out of U24 bounds")
+        u24_saturating(((value as f64 + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
     }
 }
 
@@ -453,7 +464,7 @@ mod tests {
         while remaining > 0 {
             let piece = remaining.min(4096);
             let planes = vec![vec![value; piece], vec![value; piece]];
-            producers.write_vecs(&planes);
+            producers.write_vecs(&planes).unwrap();
             resampler.process_into(&mut consumers, out, 8192);
             remaining -= piece;
         }
@@ -466,8 +477,8 @@ mod tests {
         let mut resampler = Resampler::new(44_100, 48_000, 1024, 2);
         let mut out = vec![Vec::new(), Vec::new()];
 
-        // deliberately not a multiple of the chunk size, so a partial tail
-        // is buffered inside the resampler at "EOF"
+        // deliberately not a multiple of the chunk size, so a partial tail is buffered inside the
+        // resampler at "EOF"
         let frames = 10_000;
         feed_constant(&mut resampler, frames, 1.0, &mut out);
         let before_flush = out[0].len();
@@ -486,8 +497,8 @@ mod tests {
             );
         }
 
-        // steady-state content survives up to the tail (the last
-        // output_delay frames decay toward the zero padding)
+        // steady-state content survives up to the tail (the last output_delay frames decay toward
+        // the zero padding)
         let steady_end = expected - resampler.output_delay() - 16;
         assert!(
             (out[0][steady_end] - 1.0).abs() < 1e-3,
