@@ -37,7 +37,7 @@ use crate::{
         },
         metadata::{Metadata, MetadataTag, apply_tag},
         pipeline::{ChannelProducers, DecodeResult},
-        traits::{F32DecodeResult, MediaProvider, MediaProviderFeatures, MediaStream},
+        traits::{MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
 
@@ -572,11 +572,24 @@ impl MediaStream for SymphoniaStream {
     }
 
     fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError> {
-        let Some(decoder) = &self.decoder else {
+        // the decoder's own codec_params don't carry format info through, so read the
+        // container track's params like sample_rate() and channels() do
+        let Some(format) = &self.format else {
             return Err(ChannelRetrievalError::NeverStarted);
         };
 
-        let codec_params = decoder.codec_params();
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.is_some())
+            .ok_or(ChannelRetrievalError::NothingToPlay)?;
+
+        let codec_params = track
+            .codec_params
+            .as_ref()
+            .unwrap()
+            .audio()
+            .ok_or(ChannelRetrievalError::NothingToPlay)?;
 
         if let Some(sf) = codec_params.sample_format {
             return match sf {
@@ -591,6 +604,33 @@ impl MediaStream for SymphoniaStream {
                 SymphSampleFormat::F32 => Ok(SampleFormat::Float32),
                 SymphSampleFormat::F64 => Ok(SampleFormat::Float64),
             };
+        }
+
+        // symphonia's PCM demuxers (WAV et al) leave sample_format/bits_per_sample unset and
+        // encode the format in the codec id instead
+        {
+            use symphonia::core::codecs::audio::well_known::*;
+            match codec_params.codec {
+                CODEC_ID_PCM_U8 | CODEC_ID_PCM_U8_PLANAR => return Ok(SampleFormat::Unsigned8),
+                CODEC_ID_PCM_U16LE | CODEC_ID_PCM_U16BE | CODEC_ID_PCM_U16LE_PLANAR
+                | CODEC_ID_PCM_U16BE_PLANAR => return Ok(SampleFormat::Unsigned16),
+                CODEC_ID_PCM_U24LE | CODEC_ID_PCM_U24BE | CODEC_ID_PCM_U24LE_PLANAR
+                | CODEC_ID_PCM_U24BE_PLANAR => return Ok(SampleFormat::Unsigned24),
+                CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE | CODEC_ID_PCM_U32LE_PLANAR
+                | CODEC_ID_PCM_U32BE_PLANAR => return Ok(SampleFormat::Unsigned32),
+                CODEC_ID_PCM_S8 | CODEC_ID_PCM_S8_PLANAR => return Ok(SampleFormat::Signed8),
+                CODEC_ID_PCM_S16LE | CODEC_ID_PCM_S16BE | CODEC_ID_PCM_S16LE_PLANAR
+                | CODEC_ID_PCM_S16BE_PLANAR => return Ok(SampleFormat::Signed16),
+                CODEC_ID_PCM_S24LE | CODEC_ID_PCM_S24BE | CODEC_ID_PCM_S24LE_PLANAR
+                | CODEC_ID_PCM_S24BE_PLANAR => return Ok(SampleFormat::Signed24),
+                CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE | CODEC_ID_PCM_S32LE_PLANAR
+                | CODEC_ID_PCM_S32BE_PLANAR => return Ok(SampleFormat::Signed32),
+                CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE | CODEC_ID_PCM_F32LE_PLANAR
+                | CODEC_ID_PCM_F32BE_PLANAR => return Ok(SampleFormat::Float32),
+                CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE | CODEC_ID_PCM_F64LE_PLANAR
+                | CODEC_ID_PCM_F64BE_PLANAR => return Ok(SampleFormat::Float64),
+                _ => {}
+            }
         }
 
         match codec_params.bits_per_sample {
@@ -784,122 +824,6 @@ impl MediaStream for SymphoniaStream {
                         frames: max_samples,
                         rate,
                     });
-                }
-                Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(PlaybackReadError::DecodeFatal(e.to_string()));
-                }
-            }
-        }
-    }
-
-    fn decode_into_f32(
-        &mut self,
-        output: &mut ChannelProducers<f32>,
-    ) -> Result<F32DecodeResult, PlaybackReadError> {
-        if self.format.is_none() {
-            return Err(PlaybackReadError::InvalidState);
-        }
-
-        loop {
-            self.loop_seek_if_pending()?;
-            let format = self.format.as_mut().expect("format presence checked above");
-            let packet = match next_packet(format.as_mut()) {
-                Ok(Some(packet)) => packet,
-                Ok(None) => {
-                    if self.try_loop_on_eof() {
-                        continue;
-                    }
-                    return Ok(F32DecodeResult::Decoded(DecodeResult::Eof));
-                }
-                Err(err) => return classify_next_packet_error(err).map(F32DecodeResult::Decoded),
-            };
-
-            format.metadata().skip_to_latest();
-
-            if packet.track_id != self.current_track {
-                continue;
-            }
-
-            let Some(decoder) = &mut self.decoder else {
-                return Err(PlaybackReadError::NeverStarted);
-            };
-
-            match symphonia_alloc_exempt(|| decoder.decode(&packet)) {
-                Ok(decoded) => {
-                    let spec = decoded.spec();
-                    let rate = spec.rate();
-                    let channel_count = spec.channels().count();
-                    self.current_duration = decoded.capacity() as u64;
-
-                    if let Some(tb) = &self.current_timebase
-                        && let Some(t) = tb.calc_time(packet.pts)
-                    {
-                        self.current_position_ms = time_to_millis(t);
-                    }
-
-                    let start_offset = if self.needs_loop_start_trim {
-                        self.needs_loop_start_trim = false;
-                        Self::compute_loop_start_offset(
-                            self.loop_start_seconds,
-                            self.current_timebase,
-                            packet.pts,
-                            rate,
-                        )
-                    } else {
-                        0
-                    };
-
-                    let after_start = decoded.frames().saturating_sub(start_offset);
-                    if after_start == 0 {
-                        continue;
-                    }
-
-                    let (max_samples, needs_loop_seek) = Self::compute_loop_window(
-                        self.looping,
-                        self.loop_end_seconds,
-                        self.current_timebase,
-                        packet.pts,
-                        start_offset,
-                        after_start,
-                        rate,
-                    );
-
-                    if needs_loop_seek && max_samples == 0 {
-                        self.pending_loop_seek = true;
-                        continue;
-                    }
-
-                    if channel_count != output.channel_count() {
-                        return Err(PlaybackReadError::ChannelCountChanged(channel_count));
-                    }
-
-                    match decoded {
-                        GenericAudioBufferRef::F32(v) => {
-                            let counts: SmallVec<[&[f32]; 8]> = (0..channel_count)
-                                .filter_map(|ch| {
-                                    v.plane(ch).map(|plane| {
-                                        &plane[start_offset..start_offset + max_samples]
-                                    })
-                                })
-                                .collect();
-                            if let Err(m) = output.write_slices(&counts) {
-                                return Err(PlaybackReadError::ChannelCountChanged(m.got.max(1)));
-                            }
-                        }
-                        _ => return Ok(F32DecodeResult::NotF32),
-                    }
-
-                    if needs_loop_seek {
-                        self.pending_loop_seek = true;
-                    }
-
-                    return Ok(F32DecodeResult::Decoded(DecodeResult::Decoded {
-                        frames: max_samples,
-                        rate,
-                    }));
                 }
                 Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => {
                     continue;

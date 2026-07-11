@@ -85,14 +85,4 @@ pub trait OutputStream {
     /// Consume samples from ring buffer consumers and submit them to the device.
     fn consume_from(&mut self, input: &mut ChannelConsumers<f64>)
     -> Result<usize, SubmissionError>;
-
-    /// Consume f32 samples directly for passthrough mode.
-    /// Returns None if the device doesn't support f32 passthrough.
-    /// Default implementation returns None.
-    fn consume_from_f32(
-        &mut self,
-        _input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, SubmissionError>> {
-        None
-    }
 }

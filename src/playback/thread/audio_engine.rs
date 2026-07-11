@@ -4,16 +4,13 @@ use tracing::{error, info, trace_span, warn};
 
 use crate::{
     devices::{
-        format::{ChannelSpec, FormatInfo, SampleFormat},
+        format::{ChannelSpec, FormatInfo},
         mix::{ChannelMixer, MixOptions},
         resample::Resampler,
     },
     media::{
         errors::{PlaybackStartError, SeekError},
-        pipeline::{
-            AudioPipeline, ConvertPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound,
-        },
-        traits::F32DecodeResult,
+        pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
     },
     playback::thread::media_controller::CompleteMetadata,
     settings::playback::PlaybackSettings,
@@ -48,9 +45,6 @@ const MAX_REBUILD_ATTEMPTS: u32 = 8;
 /// Overrides the default behavior of the audio pipeline if the advertised format was wrong.
 #[derive(Debug, Clone, Default)]
 struct PipelineOverrides {
-    /// Force the Convert pipeline even when f32 passthrough looks possible.
-    force_convert: bool,
-    source_rate: Option<u32>,
     source_spec: Option<ChannelSpec>,
 }
 
@@ -550,7 +544,7 @@ impl AudioEngine {
             }
         }
 
-        if let Some(AudioPipeline::Convert(p)) = &mut self.pipeline {
+        if let Some(p) = &mut self.pipeline {
             match &mut self.resampler {
                 Some(resampler) => {
                     resampler.process_into(
@@ -576,11 +570,10 @@ impl AudioEngine {
         }
 
         let empty = match &self.pipeline {
-            Some(AudioPipeline::Convert(p)) => {
+            Some(p) => {
                 p.resampler_input.potentially_available() == 0
                     && p.device_input.potentially_available() == 0
             }
-            Some(AudioPipeline::F32Passthrough(p)) => p.device_input.potentially_available() == 0,
             None => true,
         };
 
@@ -601,19 +594,7 @@ impl AudioEngine {
             return EngineCycleResult::NothingToDo;
         };
 
-        let consume_result = match pipeline {
-            AudioPipeline::Convert(p) => self.device.consume_from(&mut p.device_input),
-            AudioPipeline::F32Passthrough(p) => match self
-                .device
-                .consume_from_f32(&mut p.device_input)
-            {
-                Some(result) => result,
-                None => {
-                    error!("Device doesn't support f32 passthrough but pipeline is F32Passthrough");
-                    return EngineCycleResult::NothingToDo;
-                }
-            },
-        };
+        let consume_result = self.device.consume_from(&mut pipeline.device_input);
 
         if let Err(err) = consume_result {
             warn!(parent: &s, ?err, "Failed to consume from pipeline: {err}");
@@ -629,13 +610,7 @@ impl AudioEngine {
                 return EngineCycleResult::NothingToDo;
             };
 
-            let retry_result = match pipeline {
-                AudioPipeline::Convert(p) => self.device.consume_from(&mut p.device_input),
-                AudioPipeline::F32Passthrough(p) => self
-                    .device
-                    .consume_from_f32(&mut p.device_input)
-                    .unwrap_or(Err(super::device_controller::DeviceError::NoStream)),
-            };
+            let retry_result = self.device.consume_from(&mut pipeline.device_input);
 
             if let Err(err) = retry_result {
                 error!(parent: &s, ?err, "Failed to consume after recreation: {err}");
@@ -677,48 +652,33 @@ impl AudioEngine {
         let device_channel_count = device_layout.count().max(1);
         let channels_match = source_layout == device_layout;
 
-        let source_format = self.media.sample_format().unwrap_or(SampleFormat::Float64);
-
-        let source_rate = overrides
-            .source_rate
-            .or_else(|| self.media.sample_rate().ok())
+        let source_rate = self
+            .media
+            .sample_rate()
             .unwrap_or(device_format.sample_rate);
 
         let pipeline = AudioPipeline::new(
             source_channel_count,
-            source_format,
-            source_rate,
-            device_format.sample_type,
-            device_format.sample_rate,
             device_channel_count,
-            channels_match,
+            source_rate,
+            device_format.sample_rate,
             DEFAULT_BUFFER_FRAMES,
-            overrides.force_convert,
         );
 
-        if pipeline.is_passthrough() {
-            info!("Using f32 passthrough pipeline (no conversion needed)");
+        if channels_match {
             self.mixer = None;
         } else {
-            info!("Using f64 conversion pipeline");
-            if channels_match {
-                self.mixer = None;
+            let mut mixer = ChannelMixer::new(source_layout, device_layout, MixOptions::default());
+
+            if mixer.needs_mixing() || source_channel_count != device_channel_count {
+                mixer.ensure_output_capacity(output_frame_bound(
+                    source_rate,
+                    device_format.sample_rate,
+                    DEFAULT_BUFFER_FRAMES,
+                ));
+                self.mixer = Some(mixer);
             } else {
-                let mut mixer =
-                    ChannelMixer::new(source_layout, device_layout, MixOptions::default());
-                // Keep the mixer whenever it remaps samples, or whenever the channel
-                // counts differ, so the passthrough fallback is never asked to bridge
-                // mismatched counts. Equal-count identity mixes fall through to passthrough.
-                if mixer.needs_mixing() || source_channel_count != device_channel_count {
-                    mixer.ensure_output_capacity(output_frame_bound(
-                        source_rate,
-                        device_format.sample_rate,
-                        DEFAULT_BUFFER_FRAMES,
-                    ));
-                    self.mixer = Some(mixer);
-                } else {
-                    self.mixer = None;
-                }
+                self.mixer = None;
             }
         }
 
@@ -744,8 +704,8 @@ impl AudioEngine {
             })?;
 
         info!(
-            "Rebuilding audio pipeline (force_convert={}, rate={:?}, channels={:?})",
-            overrides.force_convert, overrides.source_rate, overrides.source_spec
+            "Rebuilding audio pipeline (channels={:?})",
+            overrides.source_spec
         );
 
         self.pipeline = None;
@@ -764,133 +724,90 @@ impl AudioEngine {
         if let Some(mixer) = &mut self.mixer {
             mixer.reset();
         }
-        if let Some(AudioPipeline::Convert(p)) = &mut self.pipeline {
+        if let Some(p) = &mut self.pipeline {
             p.clear_resampler_output();
         }
     }
 
     /// Process the decode and resample steps.
     fn process_decode_resample(&mut self) -> Result<DecodeStepResult, EngineError> {
-        let pipeline = self.pipeline.as_mut().ok_or(EngineError::NoPipeline)?;
+        let p = self.pipeline.as_mut().ok_or(EngineError::NoPipeline)?;
 
-        match pipeline {
-            AudioPipeline::F32Passthrough(p) => {
-                let passthrough_rate = p.rate;
-                let decode_result = match self.media.decode_into_f32(&mut p.decoder_output) {
-                    Ok(F32DecodeResult::Decoded(result)) => result,
-                    Ok(F32DecodeResult::NotF32) => {
-                        warn!("Source is not f32; rebuilding as conversion pipeline");
-                        return Ok(DecodeStepResult::Rebuild(PipelineOverrides {
-                            force_convert: true,
-                            ..PipelineOverrides::default()
-                        }));
-                    }
-                    Err(e) => {
-                        return Self::handle_decode_error(e);
-                    }
-                };
-
-                match decode_result {
-                    DecodeResult::Eof => {
-                        info!("EOF from decode_into_f32");
-                        Ok(DecodeStepResult::Eof)
-                    }
-                    DecodeResult::Decoded { rate, .. } => {
-                        if rate != passthrough_rate {
-                            warn!(
-                                "Passthrough rate {} != decoded rate {}; rebuilding as \
-                                 conversion pipeline",
-                                passthrough_rate, rate
-                            );
-                            return Ok(DecodeStepResult::Rebuild(PipelineOverrides {
-                                force_convert: true,
-                                source_rate: Some(rate),
-                                ..PipelineOverrides::default()
-                            }));
-                        }
-                        // No resampling needed in passthrough mode
-                        Ok(DecodeStepResult::Continue)
-                    }
-                }
+        let decode_result = match self.media.decode_into(&mut p.decoder_output) {
+            Ok(result) => result,
+            Err(e) => {
+                return Self::handle_decode_error(e);
             }
-            AudioPipeline::Convert(p) => {
-                let decode_result = match self.media.decode_into(&mut p.decoder_output) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        return Self::handle_decode_error(e);
-                    }
-                };
+        };
 
-                match decode_result {
-                    DecodeResult::Eof => {
-                        info!("EOF from decode_into");
-                        return Ok(DecodeStepResult::Eof);
+        match decode_result {
+            DecodeResult::Eof => {
+                info!("EOF from decode_into");
+                return Ok(DecodeStepResult::Eof);
+            }
+            DecodeResult::Decoded { rate, .. } => {
+                if rate == p.target_rate {
+                    if let Some(mut old) = self.resampler.take() {
+                        info!("Source rate now matches device; dropping resampler");
+                        Self::flush_old_resampler(&mut old, p, &mut self.mixer);
                     }
-                    DecodeResult::Decoded { rate, .. } => {
-                        if rate == p.target_rate {
-                            if let Some(mut old) = self.resampler.take() {
-                                info!("Source rate now matches device; dropping resampler");
-                                Self::flush_old_resampler(&mut old, p, &mut self.mixer);
-                            }
-                        } else {
-                            let duration = self.media.frame_duration().unwrap_or(1024);
-                            let needs_new_resampler = match &self.resampler {
-                                Some(resampler) => !resampler.matches_params(
-                                    rate,
-                                    p.target_rate,
-                                    duration,
-                                    p.source_channel_count,
-                                ),
-                                None => true,
-                            };
+                } else {
+                    let duration = self.media.frame_duration().unwrap_or(1024);
+                    let needs_new_resampler = match &self.resampler {
+                        Some(resampler) => !resampler.matches_params(
+                            rate,
+                            p.target_rate,
+                            duration,
+                            p.source_channel_count,
+                        ),
+                        None => true,
+                    };
 
-                            if needs_new_resampler {
-                                if let Some(mut old) = self.resampler.take() {
-                                    info!(
-                                        "Stream parameters changed (rate {} -> {}, \
-                                         duration {}); flushing and rebuilding resampler",
-                                        p.source_rate, rate, duration
-                                    );
-                                    Self::flush_old_resampler(&mut old, p, &mut self.mixer);
-                                }
-                                self.resampler = Some(Resampler::new(
-                                    rate,
-                                    p.target_rate,
-                                    duration,
-                                    p.source_channel_count as u16,
-                                ));
-                            }
+                    if needs_new_resampler {
+                        if let Some(mut old) = self.resampler.take() {
+                            info!(
+                                "Stream parameters changed (rate {} -> {}, \
+                                 duration {}); flushing and rebuilding resampler",
+                                p.source_rate, rate, duration
+                            );
+                            Self::flush_old_resampler(&mut old, p, &mut self.mixer);
                         }
-
-                        p.source_rate = rate;
+                        self.resampler = Some(Resampler::new(
+                            rate,
+                            p.target_rate,
+                            duration,
+                            p.source_channel_count as u16,
+                        ));
                     }
                 }
 
-                match &mut self.resampler {
-                    Some(resampler) => {
-                        resampler.process_into(
-                            &mut p.resampler_input,
-                            &mut p.resampler_output,
-                            DEFAULT_BUFFER_FRAMES,
-                        );
-                    }
-                    None => {
-                        Resampler::passthrough_direct(
-                            &mut p.resampler_input,
-                            &mut p.resampler_output,
-                            DEFAULT_BUFFER_FRAMES,
-                        );
-                    }
-                }
-
-                Self::route_resampler_output(p, &mut self.mixer);
-
-                Ok(DecodeStepResult::Continue)
+                p.source_rate = rate;
             }
         }
+
+        match &mut self.resampler {
+            Some(resampler) => {
+                resampler.process_into(
+                    &mut p.resampler_input,
+                    &mut p.resampler_output,
+                    DEFAULT_BUFFER_FRAMES,
+                );
+            }
+            None => {
+                Resampler::passthrough_direct(
+                    &mut p.resampler_input,
+                    &mut p.resampler_output,
+                    DEFAULT_BUFFER_FRAMES,
+                );
+            }
+        }
+
+        Self::route_resampler_output(p, &mut self.mixer);
+
+        Ok(DecodeStepResult::Continue)
     }
 
-    fn route_resampler_output(p: &mut ConvertPipeline, mixer: &mut Option<ChannelMixer>) {
+    fn route_resampler_output(p: &mut AudioPipeline, mixer: &mut Option<ChannelMixer>) {
         if let Some(mixer) = mixer {
             mixer.process(&p.resampler_output, &mut p.device_input_producers);
         } else if p.source_channel_count == p.device_channel_count {
@@ -908,7 +825,7 @@ impl AudioEngine {
     /// Flush the resampler and clear its output.
     fn flush_old_resampler(
         old: &mut Resampler,
-        p: &mut ConvertPipeline,
+        p: &mut AudioPipeline,
         mixer: &mut Option<ChannelMixer>,
     ) {
         if old.channels() != p.source_channel_count {
@@ -931,7 +848,7 @@ impl AudioEngine {
         let Some(resampler) = &mut self.resampler else {
             return;
         };
-        let Some(AudioPipeline::Convert(p)) = &mut self.pipeline else {
+        let Some(p) = &mut self.pipeline else {
             return;
         };
 
@@ -992,7 +909,6 @@ impl AudioEngine {
                 warn!("decoded channel count changed to {count}; rebuilding pipeline");
                 Ok(DecodeStepResult::Rebuild(PipelineOverrides {
                     source_spec: Some(ChannelSpec::Count(count.min(usize::from(u16::MAX)) as u16)),
-                    ..PipelineOverrides::default()
                 }))
             }
             PlaybackReadError::Unknown(s) => {

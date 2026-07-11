@@ -12,7 +12,7 @@ use crate::{
         lookup_table::try_open_media,
         metadata::Metadata,
         pipeline::{ChannelProducers, DecodeResult},
-        traits::{F32DecodeResult, MediaProviderFeatures, MediaStream},
+        traits::{MediaProviderFeatures, MediaStream},
     },
 };
 
@@ -128,20 +128,6 @@ impl MediaController {
         stream.decode_into(output)
     }
 
-    /// Decode audio samples directly as f32 for passthrough mode.
-    /// Returns F32DecodeResult::NotF32 if the source format is not f32.
-    pub fn decode_into_f32(
-        &mut self,
-        output: &mut ChannelProducers<f32>,
-    ) -> Result<F32DecodeResult, PlaybackReadError> {
-        let stream = self
-            .media_stream
-            .as_mut()
-            .ok_or(PlaybackReadError::NeverStarted)?;
-
-        stream.decode_into_f32(output)
-    }
-
     /// Check for metadata updates and return them if available.
     ///
     /// Returns a tuple of (metadata, optional album art) if there's an update,
@@ -169,6 +155,8 @@ impl MediaController {
             .position_ms()
     }
 
+    /// Kept for bit-perfect mode, currently unused.
+    #[allow(dead_code)]
     pub fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError> {
         self.media_stream
             .as_ref()

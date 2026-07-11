@@ -180,7 +180,7 @@ fn create_stream_internal<T: CpalSample>(
 impl CpalDevice {
     fn create_stream<T>(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError>
     where
-        T: CpalSample + SampleFrom<f64> + SampleFrom<f32>,
+        T: CpalSample + SampleFrom<f64>,
     {
         let config =
             cpal_config_from_info(&format).map_err(|_| OpenError::InvalidConfigProvider)?;
@@ -204,7 +204,6 @@ impl CpalDevice {
         Ok(Box::new(CpalStream {
             ring_buf: prod,
             stream,
-            format,
             config,
             buffer_size,
             device: self.device.clone(),
@@ -304,7 +303,6 @@ where
     pub stream: cpal::Stream,
     pub config: cpal::StreamConfig,
     pub device: cpal::Device,
-    pub format: FormatInfo,
     pub buffer_size: usize,
     pub target_gain: Arc<AtomicF64>,
     /// most recent volume the user asked for. This is tracked separately
@@ -345,7 +343,7 @@ where
 
 impl<T> OutputStream for CpalStream<T>
 where
-    T: CpalSample + SampleFrom<f64> + SampleFrom<f32>,
+    T: CpalSample + SampleFrom<f64>,
 {
     fn close_stream(&mut self) -> Result<(), CloseError> {
         Ok(())
@@ -454,55 +452,6 @@ where
         Ok(read)
     }
 
-    #[allow(clippy::needless_range_loop)]
-    fn consume_from_f32(
-        &mut self,
-        input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, SubmissionError>> {
-        // Only support f32 passthrough if this stream is f32
-        if self.format.sample_type != SampleFormat::Float32 {
-            return None;
-        }
-
-        if self.device_errored.load(Ordering::Relaxed) {
-            return Some(Err(SubmissionError::DeviceError));
-        }
-
-        self.report_underruns();
-
-        let available = input.potentially_available();
-        if available == 0 {
-            return Some(Ok(0));
-        }
-
-        let read = input.try_read_to_staging(available);
-        if read == 0 {
-            return Some(Ok(0));
-        }
-
-        let staging = input.staging();
-        let channel_count = staging.len();
-        let rg = self.replaygain as f32;
-
-        self.interleave_buffer.clear();
-        debug_assert!(
-            read * channel_count <= self.interleave_buffer.capacity(),
-            "interleave buffer under-sized at stream creation"
-        );
-
-        for i in 0..read {
-            for ch in 0..channel_count {
-                self.interleave_buffer
-                    .push(<T as SampleFrom<f32>>::sample_from(staging[ch][i] * rg));
-            }
-        }
-
-        if write_bounded(&mut self.ring_buf, &self.interleave_buffer).is_err() {
-            return Some(Err(SubmissionError::WriteTimeout));
-        }
-
-        Some(Ok(read))
-    }
 }
 
 make_unknown_error!(OpenError, ResetError);

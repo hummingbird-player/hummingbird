@@ -169,15 +169,12 @@ impl DummyDevice {
 }
 
 impl Device for DummyDevice {
-    fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+    fn open_device(&mut self, _format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
         if let Some(capacity) = DummyDevice::get_bounded_frames() {
             let drain = DummyDevice::get_drain_frames();
-            return Ok(
-                Box::new(BoundedDummyStream::new(format, capacity, drain)) as Box<dyn OutputStream>
-            );
+            return Ok(Box::new(BoundedDummyStream::new(capacity, drain)) as Box<dyn OutputStream>);
         }
         let device = DummyStream {
-            format,
             die_after: DummyDevice::get_die_after_frames(),
             consumed: 0,
         };
@@ -221,7 +218,6 @@ impl Device for DummyDevice {
 }
 
 pub struct DummyStream {
-    format: FormatInfo,
     /// If set, fault once after this many consumed frames (see [`arm_device_death`]).
     die_after: Option<usize>,
     consumed: usize,
@@ -291,32 +287,6 @@ impl OutputStream for DummyStream {
         Ok(read)
     }
 
-    fn consume_from_f32(
-        &mut self,
-        input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, SubmissionError>> {
-        if self.format.sample_type != SampleFormat::Float32 {
-            return None;
-        }
-
-        if self.should_die() {
-            return Some(Err(SubmissionError::DeviceError));
-        }
-
-        let available = input.potentially_available();
-        if available == 0 {
-            return Some(Ok(0));
-        }
-
-        let read = input.try_read_to_staging(available);
-        capture_samples(input.staging(), read);
-        self.consumed += read;
-        debug!(
-            "Consumed {} f32 samples from ring buffer (dummy device)",
-            read
-        );
-        Some(Ok(read))
-    }
 }
 
 /// A dummy stream that models a real device's bounded hardware ring: it holds at most `capacity`
@@ -324,7 +294,6 @@ impl OutputStream for DummyStream {
 /// accepts as much new input as it has free space. Used to test for specific bugs that only occur
 /// under back-pressure.
 pub struct BoundedDummyStream {
-    format: FormatInfo,
     capacity: usize,
     drain: usize,
     /// Frames currently buffered in the modelled hardware ring.
@@ -332,9 +301,8 @@ pub struct BoundedDummyStream {
 }
 
 impl BoundedDummyStream {
-    fn new(format: FormatInfo, capacity: usize, drain: usize) -> Self {
+    fn new(capacity: usize, drain: usize) -> Self {
         Self {
-            format,
             capacity,
             drain: drain.max(1),
             fill: 0,
@@ -387,24 +355,4 @@ impl OutputStream for BoundedDummyStream {
         Ok(read)
     }
 
-    fn consume_from_f32(
-        &mut self,
-        input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, SubmissionError>> {
-        if self.format.sample_type != SampleFormat::Float32 {
-            return None;
-        }
-
-        self.fill = self.fill.saturating_sub(self.drain);
-        let free = self.capacity - self.fill;
-        let available = input.potentially_available().min(free);
-        if available == 0 {
-            return Some(Ok(0));
-        }
-
-        let read = input.try_read_to_staging(available);
-        capture_samples(input.staging(), read);
-        self.fill += read;
-        Some(Ok(read))
-    }
 }

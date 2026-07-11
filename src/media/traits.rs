@@ -13,12 +13,6 @@ use super::{
     pipeline::{ChannelProducers, DecodeResult},
 };
 
-pub enum F32DecodeResult {
-    Decoded(DecodeResult),
-    /// Format is not f32, caller should use f64 decode path
-    NotF32,
-}
-
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
     /// Media provider feature bitflags.
@@ -119,6 +113,9 @@ pub trait MediaStream {
 
     /// Returns the sample format used by the track being decoded. This function should be
     /// available immediately after playback has started.
+    ///
+    /// Currently unused, but this is kept so we can use it for bit-perfect playback later.
+    #[allow(dead_code)]
     fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError>;
 
     /// Returns the sample rate (in Hz) of the track being decoded. This function should be
@@ -135,14 +132,6 @@ pub trait MediaStream {
         &mut self,
         output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError>;
-
-    /// Decode one packet/frame directly as f32 without conversion.
-    /// Returns F32DecodeResult::NotF32 if the source format is not f32.
-    /// This enables passthrough mode when source and device are both f32.
-    fn decode_into_f32(
-        &mut self,
-        output: &mut ChannelProducers<f32>,
-    ) -> Result<F32DecodeResult, PlaybackReadError>;
 
     /// Whether or not the media stream should attempt to use it's internal loop handling. With
     /// Symphonia, the media stream will seek to the loop start point from the EOF or loop end

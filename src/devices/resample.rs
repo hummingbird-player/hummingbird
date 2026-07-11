@@ -130,39 +130,6 @@ impl_unsigned_sample_f64!(u8, i8);
 impl_unsigned_sample_f64!(u16, i16);
 impl_unsigned_sample_f64!(u32, i32);
 
-// SampleFrom<f32> implementations needed by cpal device
-impl SampleFrom<f32> for f32 {
-    fn sample_from(value: f32) -> Self {
-        value
-    }
-}
-
-impl SampleFrom<f32> for f64 {
-    fn sample_from(value: f32) -> Self {
-        value as f64
-    }
-}
-
-// f32 -> f64 is exact, so the f32 conversions share the f64 math.
-macro_rules! impl_sample_from_f32_via_f64 {
-    ($t:ty) => {
-        impl SampleFrom<f32> for $t {
-            fn sample_from(value: f32) -> $t {
-                <$t as SampleFrom<f64>>::sample_from(f64::from(value))
-            }
-        }
-    };
-}
-
-impl_sample_from_f32_via_f64!(i8);
-impl_sample_from_f32_via_f64!(u8);
-impl_sample_from_f32_via_f64!(i16);
-impl_sample_from_f32_via_f64!(u16);
-impl_sample_from_f32_via_f64!(i32);
-impl_sample_from_f32_via_f64!(u32);
-impl_sample_from_f32_via_f64!(I24);
-impl_sample_from_f32_via_f64!(U24);
-
 pub struct Resampler {
     resampler: Fft<f64>,
     duration: u64,

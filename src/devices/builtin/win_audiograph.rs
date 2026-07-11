@@ -397,50 +397,6 @@ impl OutputStream for AudioGraphStream {
 
         Ok(read)
     }
-
-    #[allow(clippy::needless_range_loop)]
-    fn consume_from_f32(
-        &mut self,
-        input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, SubmissionError>> {
-        let available = input.potentially_available();
-        if available == 0 {
-            return Some(Ok(0));
-        }
-
-        self.node.Start().expect("couldn't start");
-
-        let read = input.try_read_to_staging(available);
-        if read == 0 {
-            return Some(Ok(0));
-        }
-
-        let staging = input.staging();
-
-        let channel_count = staging.len();
-        let rg = self.last_replaygain as f32;
-
-        // Interleave f32 samples, then pack to bytes
-        self.interleaved_buffer.clear();
-        debug_assert!(
-            read * channel_count <= self.interleaved_buffer.capacity(),
-            "interleave buffer under-sized at stream creation"
-        );
-        for i in 0..read {
-            for ch in 0..channel_count {
-                self.interleaved_buffer.push(staging[ch][i] * rg);
-            }
-        }
-
-        self.packed_buffer.clear();
-        self.packed_buffer.extend(self.interleaved_buffer.pack());
-
-        if write_bounded(&mut self.producer, &self.packed_buffer).is_err() {
-            return Some(Err(SubmissionError::WriteTimeout));
-        }
-
-        Some(Ok(read))
-    }
 }
 
 make_unknown_error!(windows_result::Error, StateError);

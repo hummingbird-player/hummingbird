@@ -200,17 +200,6 @@ fn scaled_conversion_is_total() {
             let _ = I24::sample_from(v);
             let _ = U24::sample_from(v);
             let _ = f32::sample_from(v);
-
-            let vf = v as f32;
-            let _ = i8::sample_from(vf);
-            let _ = u8::sample_from(vf);
-            let _ = i16::sample_from(vf);
-            let _ = u16::sample_from(vf);
-            let _ = i32::sample_from(vf);
-            let _ = u32::sample_from(vf);
-            let _ = I24::sample_from(vf);
-            let _ = U24::sample_from(vf);
-            let _ = f64::sample_from(vf);
         }
     }
 }
@@ -270,9 +259,4 @@ fn full_scale_floats_reach_integer_extremes() {
     assert_eq!(I24::sample_from(1.0f64), I24::MAX);
     assert_eq!(u16::sample_from(1.0f64), u16::MAX);
     assert_eq!(u8::sample_from(1.0f64), u8::MAX);
-
-    assert_eq!(i16::sample_from(1.0f32), i16::MAX);
-    assert_eq!(i16::sample_from(0.0f32), 0);
-    assert_eq!(I24::sample_from(1.0f32), I24::MAX);
-    assert_eq!(u16::sample_from(1.0f32), u16::MAX);
 }

@@ -12,7 +12,7 @@ use crate::media::{
     },
     metadata::{Metadata, MetadataTag, apply_tag},
     pipeline::{ChannelProducers, DecodeResult},
-    traits::{F32DecodeResult, MediaProvider, MediaProviderFeatures, MediaStream},
+    traits::{MediaProvider, MediaProviderFeatures, MediaStream},
 };
 
 fn item_value_to_string(value: &ItemValue) -> Option<String> {
@@ -248,13 +248,6 @@ impl MediaStream for LoftyStream {
         &mut self,
         _output: &mut ChannelProducers<f64>,
     ) -> Result<DecodeResult, PlaybackReadError> {
-        Err(PlaybackReadError::InvalidState)
-    }
-
-    fn decode_into_f32(
-        &mut self,
-        _output: &mut ChannelProducers<f32>,
-    ) -> Result<F32DecodeResult, PlaybackReadError> {
         Err(PlaybackReadError::InvalidState)
     }
 

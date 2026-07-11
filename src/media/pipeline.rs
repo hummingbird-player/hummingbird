@@ -3,10 +3,7 @@ use std::time::Instant;
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::error;
 
-use crate::devices::{
-    format::SampleFormat,
-    util::{RING_WRITE_DEADLINE, RING_WRITE_PARK},
-};
+use crate::devices::util::{RING_WRITE_DEADLINE, RING_WRITE_PARK};
 
 pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
 
@@ -218,9 +215,9 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
     }
 }
 
-/// Pipeline used when direct f32 passthrough is not possible, includes format conversion,
-/// resampling, and channel mixing.
-pub struct ConvertPipeline {
+/// The audio pipeline: decoder output -> (resampler) -> (mixer) -> device input. All samples
+/// travel as f64, which is lossless for every source format.
+pub struct AudioPipeline {
     pub decoder_output: ChannelProducers<f64>,
     pub resampler_input: ChannelConsumers<f64>,
     /// Per-channel output buffer handed from the resampler to the mixer. Pre-allocated once,
@@ -247,7 +244,7 @@ pub fn output_frame_bound(source_rate: u32, target_rate: u32, buffer_frames: usi
     scaled.max(buffer_frames) + 1024
 }
 
-impl ConvertPipeline {
+impl AudioPipeline {
     pub fn new(
         source_channel_count: usize,
         device_channel_count: usize,
@@ -287,104 +284,23 @@ impl ConvertPipeline {
             ch.clear();
         }
     }
-}
-
-/// Pipeline for direct f32 passthrough.
-pub struct F32PassthroughPipeline {
-    pub decoder_output: ChannelProducers<f32>,
-    pub device_input: ChannelConsumers<f32>,
-    pub rate: u32,
-}
-
-impl F32PassthroughPipeline {
-    pub fn new(channel_count: usize, buffer_frames: usize, rate: u32) -> Self {
-        let (decoder_output, device_input) =
-            ChannelBuffers::<f32>::new(channel_count, buffer_frames).split();
-
-        Self {
-            decoder_output,
-            device_input,
-            rate,
-        }
-    }
-}
-
-/// Audio pipeline for conversion and passthrough modes.
-pub enum AudioPipeline {
-    Convert(ConvertPipeline),
-    F32Passthrough(F32PassthroughPipeline),
-}
-
-impl AudioPipeline {
-    /// Create a new pipeline, choosing f32 passthrough only when format, rate, and channel layout
-    /// all match.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        source_channel_count: usize,
-        source_format: SampleFormat,
-        source_rate: u32,
-        device_format: SampleFormat,
-        device_rate: u32,
-        device_channel_count: usize,
-        channels_match: bool,
-        buffer_frames: usize,
-        force_convert: bool,
-    ) -> Self {
-        if !force_convert
-            && source_format == SampleFormat::Float32
-            && device_format == SampleFormat::Float32
-            && source_rate == device_rate
-            && channels_match
-        {
-            AudioPipeline::F32Passthrough(F32PassthroughPipeline::new(
-                source_channel_count,
-                buffer_frames,
-                source_rate,
-            ))
-        } else {
-            AudioPipeline::Convert(ConvertPipeline::new(
-                source_channel_count,
-                device_channel_count,
-                source_rate,
-                device_rate,
-                buffer_frames,
-            ))
-        }
-    }
 
     /// Whether the device-input ring has room to absorb another decode cycle's worth of output,
     /// given the current packet size (`frame_duration`).
     ///
     /// If we can't, it might cause the decode thread to stall and drop audio.
     pub fn can_accept_decode(&self, frame_duration: usize) -> bool {
-        match self {
-            AudioPipeline::Convert(p) => {
-                let needed = output_frame_bound(p.source_rate, p.target_rate, frame_duration)
-                    .min(p.device_input_capacity);
-                p.device_input_producers.available() >= needed
-            }
-            // The decoder writes one packet straight into the device-input ring.
-            AudioPipeline::F32Passthrough(p) => p.decoder_output.available() >= frame_duration,
-        }
-    }
-
-    pub fn is_passthrough(&self) -> bool {
-        matches!(self, AudioPipeline::F32Passthrough(_))
+        let needed = output_frame_bound(self.source_rate, self.target_rate, frame_duration)
+            .min(self.device_input_capacity);
+        self.device_input_producers.available() >= needed
     }
 
     /// Drop all buffered audio in the pipeline ring buffers, so a seek while playing is heard
     /// immediately instead of after the stale buffers drain.
     pub fn flush_buffers(&mut self) {
-        match self {
-            AudioPipeline::Convert(p) => {
-                p.resampler_input.drain();
-                p.device_input.drain();
-                p.clear_resampler_output();
-            }
-            AudioPipeline::F32Passthrough(p) => {
-                p.device_input.drain();
-            }
-        }
+        self.resampler_input.drain();
+        self.device_input.drain();
+        self.clear_resampler_output();
     }
 }
 
@@ -424,20 +340,17 @@ mod tests {
     }
 
     #[test]
-    fn flush_buffers_clears_convert_pipeline() {
-        let mut pipeline = AudioPipeline::Convert(ConvertPipeline::new(2, 2, 44_100, 44_100, 64));
+    fn flush_buffers_clears_pipeline() {
+        let mut pipeline = AudioPipeline::new(2, 2, 44_100, 44_100, 64);
 
-        if let AudioPipeline::Convert(p) = &mut pipeline {
-            p.device_input_producers
-                .write_vecs(&[vec![1.0; 16], vec![1.0; 16]])
-                .unwrap();
-            assert!(p.device_input.potentially_available() > 0);
-        }
+        pipeline
+            .device_input_producers
+            .write_vecs(&[vec![1.0; 16], vec![1.0; 16]])
+            .unwrap();
+        assert!(pipeline.device_input.potentially_available() > 0);
 
         pipeline.flush_buffers();
 
-        if let AudioPipeline::Convert(p) = &mut pipeline {
-            assert_eq!(p.device_input.potentially_available(), 0);
-        }
+        assert_eq!(pipeline.device_input.potentially_available(), 0);
     }
 }

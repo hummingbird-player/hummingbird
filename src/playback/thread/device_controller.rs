@@ -309,18 +309,6 @@ impl DeviceController {
         Ok(count)
     }
 
-    /// Consume f32 samples directly for passthrough mode.
-    /// Returns None if the device doesn't support f32 passthrough.
-    pub fn consume_from_f32(
-        &mut self,
-        input: &mut ChannelConsumers<f32>,
-    ) -> Option<Result<usize, DeviceError>> {
-        let stream = self.stream.as_mut()?;
-        stream
-            .consume_from_f32(input)
-            .map(|r| r.map_err(DeviceError::from))
-    }
-
     /// Set the playback volume (0.0 to 1.0, already scaled).
     pub fn set_volume(&mut self, volume: f64) -> Result<(), DeviceError> {
         let volume_scaled = if volume >= 0.99_f64 {
