@@ -185,8 +185,8 @@ fn unsigned_midpoint_is_digital_silence() {
 
 #[test]
 fn scaled_conversion_is_total() {
-    // -1.0000305 is what i16::MIN converts to under the current /32767 scaling.
-    // NB: this is a bug, i know it is, we fix it later
+    // the values just outside [-1.0, 1.0] stress the saturating conversion (they were also what
+    // i16::MIN produced under the old /32767 scaling)
     let bases = [-1.0000305, -1.0, -0.5, 0.0, 0.5, 1.0, 1.0000305];
     for gain in [0.5, 1.0, 2.0] {
         for base in bases {
@@ -213,6 +213,53 @@ fn scaled_conversion_is_total() {
             let _ = f64::sample_from(vf);
         }
     }
+}
+
+#[test]
+fn float_to_int_rounds_to_nearest() {
+    // 100.4 / 32768 should land on 100, 100.6 on 101 — truncation would give 100 for both
+    assert_eq!(i16::sample_from(100.4 / 32_768.0f64), 100);
+    assert_eq!(i16::sample_from(100.6 / 32_768.0f64), 101);
+    assert_eq!(i16::sample_from(-100.4 / 32_768.0f64), -100);
+    assert_eq!(i16::sample_from(-100.6 / 32_768.0f64), -101);
+    assert_eq!(i8::sample_from(63.7 / 128.0f64), 64);
+    assert_eq!(
+        I24::sample_from(1000.6 / 8_388_608.0f64),
+        I24::try_from(1001).unwrap()
+    );
+}
+
+#[test]
+fn out_of_range_floats_saturate() {
+    assert_eq!(i16::sample_from(2.0f64), i16::MAX);
+    assert_eq!(i16::sample_from(-2.0f64), i16::MIN);
+    assert_eq!(u16::sample_from(2.0f64), u16::MAX);
+    assert_eq!(u16::sample_from(-2.0f64), u16::MIN);
+    assert_eq!(i32::sample_from(2.0f64), i32::MAX);
+    assert_eq!(I24::sample_from(2.0f64), I24::MAX);
+    assert_eq!(I24::sample_from(-2.0f64), I24::MIN);
+    assert_eq!(
+        U24::sample_from(2.0f64),
+        U24::try_from(0xFF_FFFFu32).unwrap()
+    );
+    assert_eq!(U24::sample_from(-2.0f64), U24::try_from(0u32).unwrap());
+    // NaN must not panic; it maps to whatever the saturating cast gives (0 -> midpoint)
+    assert_eq!(i16::sample_from(f64::NAN), 0);
+    assert_eq!(u16::sample_from(f64::NAN), 1u16 << 15);
+}
+
+#[test]
+fn signed_extremes_map_symmetrically() {
+    // ÷2^(N-1) scaling: MIN lands exactly on -1.0, silence exactly on 0.0
+    assert_eq!(SampleInto::<f64>::sample_into(i16::MIN), -1.0);
+    assert_eq!(SampleInto::<f64>::sample_into(0i16), 0.0);
+    assert_eq!(SampleInto::<f64>::sample_into(i32::MIN), -1.0);
+    assert_eq!(SampleInto::<f64>::sample_into(I24::MIN), -1.0);
+    assert_eq!(SampleInto::<f64>::sample_into(u16::MIN), -1.0);
+    assert_eq!(
+        SampleInto::<f64>::sample_into(u16::MAX),
+        32_767.0 / 32_768.0
+    );
 }
 
 #[test]

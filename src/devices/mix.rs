@@ -62,11 +62,30 @@ impl MixMatrix {
     /// Falls back to a generic count-based matrix when either side lacks positional
     /// information.
     pub fn build(src: &ChannelLayout, dst: &ChannelLayout, opts: MixOptions) -> MixMatrix {
-        match (src, dst) {
+        let mut matrix = match (src, dst) {
             (ChannelLayout::Positioned(src_pos), ChannelLayout::Positioned(dst_pos)) => {
                 build_positioned(*src_pos, *dst_pos, opts)
             }
             _ => build_count_based(src.count(), dst.count(), opts),
+        };
+        matrix.normalize();
+        matrix
+    }
+
+    /// Scale the matrix down when any output row's weights sum past 1.0, so a full-scale input
+    /// can never clip. The scale is uniform across all rows to preserve channel balance.
+    fn normalize(&mut self) {
+        let max_row_sum = self
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|w| w.abs()).sum::<f64>())
+            .fold(0.0, f64::max);
+        if max_row_sum > 1.0 {
+            for row in &mut self.rows {
+                for w in row {
+                    *w /= max_row_sum;
+                }
+            }
         }
     }
 
@@ -85,6 +104,7 @@ impl MixMatrix {
                     acc += w * input[j];
                 }
             }
+            // normalization keeps row sums <= 1.0, so this is a pure safety net
             output[i] = acc.clamp(-1.0, 1.0);
         }
     }
@@ -529,20 +549,22 @@ mod tests {
         // Input order (ascending bit): FL, FR, FC, LFE, RL, RR
         // L = FL + a*FC + a*RL            (LFE dropped by default)
         // R = FR + a*FC + a*RR
+        // then the whole matrix is scaled by n = 1/(1 + 2a) so the rows sum to 1.0
         let a = SURROUND_ATTENUATION;
-        assert!((rows[0][0] - 1.0).abs() < 1e-9); // FL
+        let n = 1.0 / (1.0 + 2.0 * a);
+        assert!((rows[0][0] - n).abs() < 1e-9); // FL
         assert!((rows[0][1] - 0.0).abs() < 1e-9); // FR
-        assert!((rows[0][2] - a).abs() < 1e-9); // FC
+        assert!((rows[0][2] - a * n).abs() < 1e-9); // FC
         assert!((rows[0][3] - 0.0).abs() < 1e-9); // LFE
-        assert!((rows[0][4] - a).abs() < 1e-9); // RL
+        assert!((rows[0][4] - a * n).abs() < 1e-9); // RL
         assert!((rows[0][5] - 0.0).abs() < 1e-9); // RR
 
         assert!((rows[1][0] - 0.0).abs() < 1e-9);
-        assert!((rows[1][1] - 1.0).abs() < 1e-9);
-        assert!((rows[1][2] - a).abs() < 1e-9);
+        assert!((rows[1][1] - n).abs() < 1e-9);
+        assert!((rows[1][2] - a * n).abs() < 1e-9);
         assert!((rows[1][3] - 0.0).abs() < 1e-9);
         assert!((rows[1][4] - 0.0).abs() < 1e-9);
-        assert!((rows[1][5] - a).abs() < 1e-9);
+        assert!((rows[1][5] - a * n).abs() < 1e-9);
     }
 
     #[test]
@@ -564,9 +586,10 @@ mod tests {
         let m = MixMatrix::build(&src, &dst, opts);
         let rows = m.rows();
         let a = SURROUND_ATTENUATION;
-        // LFE is index 3 in input order.
-        assert!((rows[0][3] - a).abs() < 1e-9);
-        assert!((rows[1][3] - a).abs() < 1e-9);
+        // LFE is index 3 in input order; it keeps the attenuation ratio relative to FL after
+        // normalization.
+        assert!((rows[0][3] / rows[0][0] - a).abs() < 1e-9);
+        assert!((rows[1][3] / rows[1][1] - a).abs() < 1e-9);
     }
 
     #[test]
@@ -596,12 +619,14 @@ mod tests {
         let a = SURROUND_ATTENUATION;
         // Output order: FL FR FC LFE RL RR
         // Input order: FL FR FC LFE RL RR SL SR
+        // The RL/RR rows sum to 1 + a, so the matrix is normalized by n = 1/(1 + a).
+        let n = 1.0 / (1.0 + a);
         // SL (index 6) folds into RL (output index 4) at a.
-        assert!((rows[4][4] - 1.0).abs() < 1e-9); // RL identity
-        assert!((rows[4][6] - a).abs() < 1e-9); // SL -> RL
+        assert!((rows[4][4] - n).abs() < 1e-9); // RL identity
+        assert!((rows[4][6] - a * n).abs() < 1e-9); // SL -> RL
         // SR (index 7) folds into RR (output index 5) at a.
-        assert!((rows[5][5] - 1.0).abs() < 1e-9);
-        assert!((rows[5][7] - a).abs() < 1e-9);
+        assert!((rows[5][5] - n).abs() < 1e-9);
+        assert!((rows[5][7] - a * n).abs() < 1e-9);
     }
 
     #[test]
@@ -684,11 +709,9 @@ mod tests {
     }
 
     #[test]
-    fn clamp_prevents_clipping() {
-        // 5.1 -> Stereo: L = FL + a*FC + a*RL. With all at 1.0, L = 1 + 0.707 + 0.707 ≈ 2.414,
-        // which must be clamped to 1.0.
-        // TODO: we should handle this better, but every way of handling it will be controversial,
-        // so we need to see how people feel
+    fn normalization_prevents_clipping() {
+        // 5.1 -> Stereo: L = FL + a*FC + a*RL sums to 1 + 2a ≈ 2.414, so the matrix is scaled
+        // down to keep a full-scale input at exactly 1.0 instead of hard-clipping.
         let src = ChannelLayout::Positioned(
             ChannelPosition::FRONT_LEFT
                 | ChannelPosition::FRONT_RIGHT
@@ -702,8 +725,35 @@ mod tests {
         let m = MixMatrix::build(&src, &dst, MixOptions::default());
         // Input order: FL, FR, FC, LFE, RL, RR
         let out = mix_frame(&m, &[1.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
-        assert!((out[0] - 1.0).abs() < 1e-9, "L was {}", out[0]);
-        assert!((out[1] - 1.0).abs() < 1e-9, "R was {}", out[1]);
+        assert!(
+            out[0] <= 1.0 && (out[0] - 1.0).abs() < 1e-9,
+            "L was {}",
+            out[0]
+        );
+        assert!(
+            out[1] <= 1.0 && (out[1] - 1.0).abs() < 1e-9,
+            "R was {}",
+            out[1]
+        );
+
+        // quieter content is attenuated by the same factor, not distorted: the front pair keeps
+        // its balance against the folded channels
+        let a = SURROUND_ATTENUATION;
+        let n = 1.0 / (1.0 + 2.0 * a);
+        let quiet = mix_frame(&m, &[0.5, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!((quiet[0] - 0.5 * n).abs() < 1e-9, "L was {}", quiet[0]);
+    }
+
+    #[test]
+    fn normalization_skips_matrices_that_cannot_clip() {
+        // mono -> stereo duplicates at full gain; every row already sums to 1.0 so the matrix
+        // must be left untouched
+        let mono = ChannelLayout::Positioned(ChannelPosition::FRONT_CENTER);
+        let stereo =
+            ChannelLayout::Positioned(ChannelPosition::FRONT_LEFT | ChannelPosition::FRONT_RIGHT);
+        let m = MixMatrix::build(&mono, &stereo, MixOptions::default());
+        assert!((m.rows()[0][0] - 1.0).abs() < 1e-9);
+        assert!((m.rows()[1][0] - 1.0).abs() < 1e-9);
     }
 
     #[test]

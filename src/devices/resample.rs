@@ -7,19 +7,22 @@ use tracing::{error, info};
 
 use crate::media::pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES};
 
+/// One LSB step of a 24-bit sample under symmetric scaling: 2^23.
+const I24_SCALE: f64 = 8_388_608.0;
+
 pub trait SampleInto<T> {
     fn sample_into(self) -> T;
 }
 
 impl SampleInto<f64> for U24 {
     fn sample_into(self) -> f64 {
-        f64::from(u32::from(self)) / f64::from(i32::from(I24::MAX)) - 1.0
+        f64::from(u32::from(self) as i32 - 0x80_0000) / I24_SCALE
     }
 }
 
 impl SampleInto<f64> for I24 {
     fn sample_into(self) -> f64 {
-        f64::from(i32::from(self)) / f64::from(i32::from(I24::MAX))
+        f64::from(i32::from(self)) / I24_SCALE
     }
 }
 
@@ -34,23 +37,6 @@ impl SampleInto<f64> for f64 {
         self
     }
 }
-
-macro_rules! impl_sample_into_f64 {
-    ($t:ty, $max_type:ty, $offset:expr) => {
-        impl SampleInto<f64> for $t {
-            fn sample_into(self) -> f64 {
-                f64::from(self) / (f64::from(<$max_type>::MAX)) + $offset
-            }
-        }
-    };
-}
-
-impl_sample_into_f64!(u32, i32, -1.0);
-impl_sample_into_f64!(u16, i16, -1.0);
-impl_sample_into_f64!(u8, i8, -1.0);
-impl_sample_into_f64!(i32, i32, 0.0);
-impl_sample_into_f64!(i16, i16, 0.0);
-impl_sample_into_f64!(i8, i8, 0.0);
 
 /// Convert a scaled `i32` to [`I24`], saturating instead of panicking when a sample lands outside
 /// the 24-bit range (e.g. gain > 1.0 or intersample overs).
@@ -73,13 +59,16 @@ pub trait SampleFrom<T> {
 
 impl SampleFrom<f64> for U24 {
     fn sample_from(value: f64) -> Self {
-        u24_saturating(((value + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
+        // clamp in the signed domain, then recenter into [0, 2^24)
+        let signed = i32::from(I24::sample_from(value));
+        u24_saturating((signed + 0x80_0000) as u32)
     }
 }
 
 impl SampleFrom<f64> for I24 {
     fn sample_from(value: f64) -> Self {
-        i24_saturating((value * f64::from(i32::from(I24::MAX))) as i32)
+        // the `as` cast saturates at the i32 bounds and maps NaN to 0
+        i24_saturating((value * I24_SCALE).round() as i32)
     }
 }
 
@@ -95,22 +84,51 @@ impl SampleFrom<f64> for f64 {
     }
 }
 
-macro_rules! impl_sample_from_f64 {
-    ($t:ty, $max_type:ty, $offset:expr) => {
+// Signed integers scale symmetrically by 2^(N-1): exact in both directions (a power of two
+// divide/multiply), digital silence lands on 0.0, and i::MIN maps to exactly -1.0. Float -> int
+// rounds to nearest; the `as` cast saturates out-of-range values and maps NaN to 0, so
+// conversion is total.
+macro_rules! impl_signed_sample_f64 {
+    ($t:ty, $scale:expr) => {
+        impl SampleInto<f64> for $t {
+            fn sample_into(self) -> f64 {
+                f64::from(self) / $scale
+            }
+        }
+
         impl SampleFrom<f64> for $t {
             fn sample_from(value: f64) -> $t {
-                ((value - $offset) * f64::from(<$max_type>::MAX)) as $t
+                (value * $scale).round() as $t
             }
         }
     };
 }
 
-impl_sample_from_f64!(u32, i32, -1.0);
-impl_sample_from_f64!(u16, i16, -1.0);
-impl_sample_from_f64!(u8, i8, -1.0);
-impl_sample_from_f64!(i32, i32, 0.0);
-impl_sample_from_f64!(i16, i16, 0.0);
-impl_sample_from_f64!(i8, i8, 0.0);
+impl_signed_sample_f64!(i8, 128.0);
+impl_signed_sample_f64!(i16, 32_768.0);
+impl_signed_sample_f64!(i32, 2_147_483_648.0);
+
+// Unsigned integers recenter in the integer domain (a sign-bit flip, exact and free) and share
+// the signed scaling, so the midpoint (digital silence) maps to exactly 0.0.
+macro_rules! impl_unsigned_sample_f64 {
+    ($t:ty, $signed:ty) => {
+        impl SampleInto<f64> for $t {
+            fn sample_into(self) -> f64 {
+                ((self ^ (<$signed>::MIN as $t)) as $signed).sample_into()
+            }
+        }
+
+        impl SampleFrom<f64> for $t {
+            fn sample_from(value: f64) -> $t {
+                (<$signed>::sample_from(value) as $t) ^ (<$signed>::MIN as $t)
+            }
+        }
+    };
+}
+
+impl_unsigned_sample_f64!(u8, i8);
+impl_unsigned_sample_f64!(u16, i16);
+impl_unsigned_sample_f64!(u32, i32);
 
 // SampleFrom<f32> implementations needed by cpal device
 impl SampleFrom<f32> for f32 {
@@ -125,53 +143,25 @@ impl SampleFrom<f32> for f64 {
     }
 }
 
-impl SampleFrom<f32> for i8 {
-    fn sample_from(value: f32) -> Self {
-        (value * i8::MAX as f32) as i8
-    }
+// f32 -> f64 is exact, so the f32 conversions share the f64 math.
+macro_rules! impl_sample_from_f32_via_f64 {
+    ($t:ty) => {
+        impl SampleFrom<f32> for $t {
+            fn sample_from(value: f32) -> $t {
+                <$t as SampleFrom<f64>>::sample_from(f64::from(value))
+            }
+        }
+    };
 }
 
-impl SampleFrom<f32> for u8 {
-    fn sample_from(value: f32) -> Self {
-        ((value + 1.0) * i8::MAX as f32) as u8
-    }
-}
-
-impl SampleFrom<f32> for i16 {
-    fn sample_from(value: f32) -> Self {
-        (value * i16::MAX as f32) as i16
-    }
-}
-
-impl SampleFrom<f32> for u16 {
-    fn sample_from(value: f32) -> Self {
-        ((value + 1.0) * i16::MAX as f32) as u16
-    }
-}
-
-impl SampleFrom<f32> for i32 {
-    fn sample_from(value: f32) -> Self {
-        (value as f64 * i32::MAX as f64) as i32
-    }
-}
-
-impl SampleFrom<f32> for u32 {
-    fn sample_from(value: f32) -> Self {
-        ((value as f64 + 1.0) * i32::MAX as f64) as u32
-    }
-}
-
-impl SampleFrom<f32> for I24 {
-    fn sample_from(value: f32) -> Self {
-        i24_saturating((value as f64 * f64::from(i32::from(I24::MAX))) as i32)
-    }
-}
-
-impl SampleFrom<f32> for U24 {
-    fn sample_from(value: f32) -> Self {
-        u24_saturating(((value as f64 + 1.0) * f64::from(i32::from(I24::MAX))) as u32)
-    }
-}
+impl_sample_from_f32_via_f64!(i8);
+impl_sample_from_f32_via_f64!(u8);
+impl_sample_from_f32_via_f64!(i16);
+impl_sample_from_f32_via_f64!(u16);
+impl_sample_from_f32_via_f64!(i32);
+impl_sample_from_f32_via_f64!(u32);
+impl_sample_from_f32_via_f64!(I24);
+impl_sample_from_f32_via_f64!(U24);
 
 pub struct Resampler {
     resampler: Fft<f64>,

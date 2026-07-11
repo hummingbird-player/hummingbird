@@ -164,7 +164,7 @@ impl GainRamp {
     /// `data` is interleaved `[ch0_f0, ch1_f0, ..., ch0_f1, ch1_f1, ...]`
     /// `target` is the gain to slew toward
     ///
-    /// - Unity steady state (current ≈ target ≈ 1.0): samples passed through
+    /// - Unity steady state (current == target == 1.0): samples passed through
     /// - Steady state non-unity: single flat gain applied to all samples
     /// - Ramping: gain stepped per frame, applied to each channel in the frame
     pub fn apply<T: Scale + Copy>(&mut self, data: &mut [T], channels: usize, target: f64) {
@@ -172,7 +172,9 @@ impl GainRamp {
             return;
         }
 
-        if self.current >= 0.98 && target >= 0.98 && (self.current - target).abs() < f64::EPSILON {
+        // exact 1.0 only: anything below unity must actually be scaled, and the ramp lands
+        // exactly on the target so steady unity always takes this path
+        if self.current == 1.0 && target == 1.0 {
             self.advance_frame_pos(data.len(), channels);
             return;
         }
