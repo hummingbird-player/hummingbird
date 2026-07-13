@@ -75,71 +75,155 @@ fn file_is_scannable(
     Some(timestamp)
 }
 
-/// Remove tracks from directories that are no longer in the scan configuration.
-pub async fn cleanup_removed_directories(
+/// Number of track rows read from the database per page during the cleanup sweep.
+const CLEANUP_PAGE_SIZE: i64 = 1000;
+
+/// Number of track deletions committed per transaction, to bound WAL/transaction size on
+/// large removals (e.g. an unmounted volume or a big removed folder).
+const CLEANUP_TX_CHUNK: usize = 500;
+
+/// Canonicalize a path, falling back to the original when it can't be resolved (e.g. the
+/// directory was removed from disk). Stored paths in the scan record are already canonical, so if
+/// we have a file in the record (and it doesn't exist any more) it should still work.
+fn canonicalize_or_keep(path: &Utf8Path) -> Utf8PathBuf {
+    path.canonicalize_utf8().unwrap_or_else(|_| path.to_owned())
+}
+
+/// Remove tracks that no longer belong in the library (deleted, moved, etc). Uses both the scan
+/// record and the DB so no file gets missed.
+pub async fn cleanup_stale_tracks(
     pool: &SqlitePool,
     scan_record: &mut ScanRecord,
     current_directories: &[Utf8PathBuf],
+    excluded_roots: &[Utf8PathBuf],
+) -> FxHashSet<i64> {
+    cleanup_stale_tracks_paged(
+        pool,
+        scan_record,
+        current_directories,
+        excluded_roots,
+        CLEANUP_PAGE_SIZE,
+    )
+    .await
+}
+
+// seperate function for testing
+async fn cleanup_stale_tracks_paged(
+    pool: &SqlitePool,
+    scan_record: &mut ScanRecord,
+    current_directories: &[Utf8PathBuf],
+    excluded_roots: &[Utf8PathBuf],
+    page_size: i64,
 ) -> FxHashSet<i64> {
     let mut updated_playlists: FxHashSet<i64> = FxHashSet::default();
-    let current_set: FxHashSet<Utf8PathBuf> = current_directories.iter().cloned().collect();
-    let old_set: FxHashSet<Utf8PathBuf> = scan_record.directories.iter().cloned().collect();
 
-    let removed_dirs: Vec<Utf8PathBuf> = old_set
-        .difference(&current_set)
-        .cloned()
-        .map(|path| path.canonicalize_utf8().unwrap_or(path))
+    let current_set: FxHashSet<Utf8PathBuf> = current_directories
+        .iter()
+        .map(|p| canonicalize_or_keep(p))
+        .collect();
+    let removed_dirs: Vec<Utf8PathBuf> = scan_record
+        .directories
+        .iter()
+        .map(|p| canonicalize_or_keep(p))
+        .filter(|p| !current_set.contains(p))
         .collect();
 
-    if removed_dirs.is_empty() {
+    let excluded: Vec<Utf8PathBuf> = excluded_roots
+        .iter()
+        .map(|r| canonicalize_or_keep(r))
+        .collect();
+
+    let should_delete = |path: &Utf8Path| -> bool {
+        if excluded.iter().any(|root| path.starts_with(root)) {
+            return false;
+        }
+        if removed_dirs.iter().any(|dir| path.starts_with(dir)) {
+            return true;
+        }
+
+        matches!(path.as_std_path().try_exists(), Ok(false))
+    };
+
+    // we delete all the pages of the track table first, then the records themselves
+    let mut pending: FxHashSet<Utf8PathBuf> = scan_record.records.keys().cloned().collect();
+    let mut to_delete: Vec<Utf8PathBuf> = Vec::new();
+
+    let mut last_id: i64 = 0;
+    loop {
+        let page = sqlx::query_as::<_, (i64, String)>(include_str!(
+            "../../../queries/scan/list_track_locations_paged.sql"
+        ))
+        .bind(last_id)
+        .bind(page_size)
+        .fetch_all(pool)
+        .await;
+
+        let page = match page {
+            Ok(page) => page,
+            Err(e) => {
+                error!("Track cleanup paging failed, aborting sweep: {:?}", e);
+                return FxHashSet::default();
+            }
+        };
+
+        if page.is_empty() {
+            break;
+        }
+
+        for (id, location) in &page {
+            let path = Utf8PathBuf::from(location);
+            pending.remove(&path);
+            if should_delete(&path) {
+                to_delete.push(path);
+            }
+            last_id = *id;
+        }
+
+        if page.len() < page_size as usize {
+            break;
+        }
+    }
+
+    // remove record keys from the pending set that are no longer present
+    for path in pending.drain() {
+        if should_delete(&path) {
+            to_delete.push(path);
+        }
+    }
+
+    if to_delete.is_empty() {
         return updated_playlists;
     }
 
-    info!(
-        "Detected {} removed directories, cleaning up tracks",
-        removed_dirs.len()
-    );
+    info!("Cleaning up {} stale track(s)", to_delete.len());
 
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("Could not begin directory cleanup transaction: {:?}", e);
-            return updated_playlists;
+    for chunk in to_delete.chunks(CLEANUP_TX_CHUNK) {
+        let mut tx = match pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Could not begin cleanup transaction: {:?}", e);
+                break;
+            }
+        };
+
+        let mut deleted: Vec<&Utf8PathBuf> = Vec::with_capacity(chunk.len());
+        for path in chunk {
+            debug!("removing stale track: {:?}", path);
+            if cleanup_track(&mut tx, path, &mut updated_playlists).await {
+                deleted.push(path);
+            }
         }
-    };
 
-    let to_remove: Vec<Utf8PathBuf> = scan_record
-        .records
-        .keys()
-        .filter(|path| {
-            removed_dirs
-                .iter()
-                .any(|removed_dir| path.starts_with(removed_dir))
-        })
-        .cloned()
-        .collect();
+        if let Err(e) = tx.commit().await {
+            // Keep the record entries so the next scan re-converges.
+            error!("Failed to commit cleanup transaction: {:?}", e);
+            continue;
+        }
 
-    let mut deleted: Vec<Utf8PathBuf> = Vec::with_capacity(to_remove.len());
-    for path in &to_remove {
-        debug!("removing track from removed directory: {:?}", path);
-        if cleanup_track(&mut tx, path, &mut updated_playlists).await {
-            deleted.push(path.clone());
+        for path in deleted {
+            scan_record.records.remove(path);
         }
     }
-
-    if let Err(e) = tx.commit().await {
-        error!("Failed to commit directory cleanup transaction: {:?}", e);
-        return FxHashSet::default();
-    }
-
-    for path in &deleted {
-        scan_record.records.remove(path);
-    }
-
-    info!(
-        "Cleaned up {} track(s) from removed directories",
-        deleted.len()
-    );
 
     updated_playlists
 }
@@ -167,34 +251,6 @@ async fn cleanup_track(
         }
     };
 
-    let playlist_result = sqlx::query(include_str!(
-        "../../../queries/scan/delete_playlist_items_for_track.sql"
-    ))
-    .bind(path.as_str())
-    .execute(&mut **tx)
-    .await;
-
-    if let Err(e) = playlist_result {
-        error!(
-            "Database error while deleting playlist items for track: {:?}",
-            e
-        );
-        return false;
-    }
-    updated_playlists.extend(affected_playlists);
-
-    let lyrics_result = sqlx::query(include_str!(
-        "../../../queries/scan/delete_lyrics_for_track.sql"
-    ))
-    .bind(path.as_str())
-    .execute(&mut **tx)
-    .await;
-
-    if let Err(e) = lyrics_result {
-        error!("Database error while deleting lyrics for track: {:?}", e);
-        return false;
-    }
-
     let track_result = sqlx::query(include_str!("../../../queries/scan/delete_track.sql"))
         .bind(path.as_str())
         .execute(&mut **tx)
@@ -202,64 +258,11 @@ async fn cleanup_track(
 
     if let Err(e) = track_result {
         error!("Database error while deleting track: {:?}", e);
-        false
-    } else {
-        true
-    }
-}
-
-/// Remove scan_record entries whose files no longer exist on disk, and delete the corresponding
-/// tracks from the database, excluding entries under `excluded_roots`.
-pub async fn cleanup_with_exclusions(
-    pool: &SqlitePool,
-    scan_record: &mut ScanRecord,
-    excluded_roots: &[Utf8PathBuf],
-) -> FxHashSet<i64> {
-    let mut updated_playlists: FxHashSet<i64> = FxHashSet::default();
-
-    let canonicalized_roots: Vec<Utf8PathBuf> = excluded_roots
-        .iter()
-        .map(|root| root.canonicalize_utf8().unwrap_or(root.clone()))
-        .collect();
-
-    let to_delete: Vec<Utf8PathBuf> = scan_record
-        .records
-        .keys()
-        .filter(|path| {
-            !(path.exists())
-                && !canonicalized_roots
-                    .iter()
-                    .any(|excluded_root| path.starts_with(excluded_root))
-        })
-        .cloned()
-        .collect();
-
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("Could not begin cleanup transaction: {:?}", e);
-            return updated_playlists;
-        }
-    };
-
-    let mut deleted: Vec<Utf8PathBuf> = Vec::with_capacity(to_delete.len());
-    for path in &to_delete {
-        debug!("track deleted or moved: {:?}", path);
-        if cleanup_track(&mut tx, path, &mut updated_playlists).await {
-            deleted.push(path.clone());
-        }
+        return false;
     }
 
-    if let Err(e) = tx.commit().await {
-        error!("Failed to commit cleanup transaction: {:?}", e);
-        return FxHashSet::default();
-    }
-
-    for path in &deleted {
-        scan_record.records.remove(path);
-    }
-
-    updated_playlists
+    updated_playlists.extend(affected_playlists);
+    true
 }
 
 /// Performs a targeted rescan of specific files and directories without recursing into subfolders.
@@ -647,7 +650,7 @@ mod tests {
         let mut scan_record = ScanRecord::new_current();
         scan_record.records.insert(path.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.is_empty());
         assert!(!scan_record.records.contains_key(&path));
 
@@ -676,7 +679,7 @@ mod tests {
         scan_record.records.insert(path.clone(), UNIX_EPOCH);
 
         let root = dir.utf8_path().canonicalize_utf8().unwrap();
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[root]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[root]).await;
         assert!(updated.is_empty());
         assert!(scan_record.records.contains_key(&path));
 
@@ -710,7 +713,7 @@ mod tests {
         scan_record.records.insert(path1.clone(), UNIX_EPOCH);
         scan_record.records.insert(path2.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.is_empty());
         assert!(!scan_record.records.contains_key(&path1));
         assert!(!scan_record.records.contains_key(&path2));
@@ -749,7 +752,7 @@ mod tests {
         scan_record.records.insert(path_a.clone(), UNIX_EPOCH);
         scan_record.records.insert(path_b.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[dir_path]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[dir_path], &[]).await;
         assert!(updated.is_empty());
         // track_a (under dir_path) should remain
         assert!(scan_record.records.contains_key(&path_a));
@@ -786,8 +789,7 @@ mod tests {
         scan_record.directories = vec![dir.utf8_path()];
         scan_record.records.insert(path, UNIX_EPOCH);
 
-        let updated =
-            cleanup_removed_directories(&pool, &mut scan_record, &[dir.utf8_path()]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[dir.utf8_path()], &[]).await;
         assert!(updated.is_empty());
     }
 
@@ -810,7 +812,7 @@ mod tests {
         scan_record.directories = vec![dir_path];
         scan_record.records.insert(path, UNIX_EPOCH);
 
-        let updated = cleanup_removed_directories(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.contains(&playlist_id));
 
         let pi_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlist_item")
@@ -846,7 +848,7 @@ mod tests {
         scan_record.records.insert(path2.clone(), UNIX_EPOCH);
         scan_record.records.insert(path3.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.is_empty());
         assert!(!scan_record.records.contains_key(&path1));
         assert!(!scan_record.records.contains_key(&path2));
@@ -878,7 +880,7 @@ mod tests {
         scan_record.records.insert(path1.clone(), UNIX_EPOCH);
         scan_record.records.insert(path2.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.is_empty());
         assert!(scan_record.records.contains_key(&path1));
         assert!(scan_record.records.contains_key(&path2));
@@ -910,7 +912,7 @@ mod tests {
         let mut scan_record = ScanRecord::new_current();
         scan_record.records.insert(path, UNIX_EPOCH);
 
-        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert_eq!(count_rows(&pool, "lyrics").await, 0);
     }
 
@@ -933,7 +935,7 @@ mod tests {
         let mut scan_record = ScanRecord::new_current();
         scan_record.records.insert(path, UNIX_EPOCH);
 
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
         assert!(updated.contains(&playlist_id));
     }
 
@@ -957,7 +959,7 @@ mod tests {
         let mut scan_record = ScanRecord::new_current();
         scan_record.records.insert(path, UNIX_EPOCH);
 
-        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
 
         assert_eq!(count_rows(&pool, "album").await, 0);
         assert_eq!(count_rows(&pool, "artist").await, 0);
@@ -988,7 +990,7 @@ mod tests {
         scan_record.records.insert(path1, UNIX_EPOCH);
         scan_record.records.insert(path2, UNIX_EPOCH);
 
-        cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
 
         assert_eq!(count_rows(&pool, "album").await, 1);
         assert_eq!(count_rows(&pool, "artist").await, 1);
@@ -1027,7 +1029,7 @@ mod tests {
         scan_record.records.insert(old_path.clone(), UNIX_EPOCH);
         scan_record.records.insert(new_path.clone(), UNIX_EPOCH);
 
-        let updated = cleanup_with_exclusions(&pool, &mut scan_record, &[]).await;
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
 
         // Old track should be gone from records and DB
         assert!(!scan_record.records.contains_key(&old_path));
@@ -1059,5 +1061,106 @@ mod tests {
 
         // Updated should contain the playlist id from the removed track
         assert!(updated.contains(&playlist_id));
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_db_row_with_no_record_entry() {
+        let (dir, pool) = create_test_pool("cleanup-ghost-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let file = dir.join("ghost.flac");
+        std::fs::write(&file, b"").unwrap();
+        let path = dir.utf8_join("ghost.flac");
+        let meta = track_metadata("Album", "Artist", "Ghost", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        std::fs::remove_file(&file).unwrap();
+
+        // nothing in the scan record
+        let mut scan_record = ScanRecord::new_current();
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
+        assert!(updated.is_empty());
+
+        assert_eq!(count_rows(&pool, "track").await, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_db_ghost_under_removed_directory() {
+        let (dir, pool) = create_test_pool("cleanup-ghost-removed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let removed = dir_path.join("removed");
+        std::fs::create_dir_all(&removed).unwrap();
+        let path = removed.join("track.flac");
+        std::fs::write(&path, b"").unwrap(); // file is still present on disk
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        // `removed` was configured last scan but is no longer in the current config
+        let mut scan_record = ScanRecord::new_current();
+        scan_record.directories = vec![removed];
+
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[dir_path], &[]).await;
+        assert!(updated.is_empty());
+        assert_eq!(count_rows(&pool, "track").await, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_prunes_record_only_entry_for_missing_file() {
+        let (_dir, pool) = create_test_pool("cleanup-record-only-test").await;
+
+        let mut scan_record = ScanRecord::new_current();
+        let missing = Utf8PathBuf::from("/nonexistent/decode-fail.flac");
+        scan_record.records.insert(missing.clone(), UNIX_EPOCH);
+
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[]).await;
+        assert!(updated.is_empty());
+        assert!(!scan_record.records.contains_key(&missing));
+    }
+
+    #[tokio::test]
+    async fn cleanup_keeps_db_row_under_excluded_root() {
+        let (dir, pool) = create_test_pool("cleanup-excluded-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let file = dir.join("track.flac");
+        std::fs::write(&file, b"").unwrap();
+        let path = dir.utf8_join("track.flac").canonicalize_utf8().unwrap();
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        drop(conn);
+
+        std::fs::remove_file(&file).unwrap(); // file gone, but the root is excluded
+
+        let mut scan_record = ScanRecord::new_current();
+        let root = dir.utf8_path().canonicalize_utf8().unwrap();
+        let updated = cleanup_stale_tracks(&pool, &mut scan_record, &[], &[root]).await;
+        assert!(updated.is_empty());
+        assert_eq!(count_rows(&pool, "track").await, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_paginates_across_page_boundaries() {
+        let (dir, pool) = create_test_pool("cleanup-paging-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        for i in 0..5 {
+            let name = format!("track{i}.flac");
+            let file = dir.join(&name);
+            std::fs::write(&file, b"").unwrap();
+            let path = dir.utf8_join(&name);
+            let meta = track_metadata("Album", "Artist", &format!("Track {i}"), i + 1);
+            insert_metadata(&mut conn, &meta, &path).await.unwrap();
+            std::fs::remove_file(&file).unwrap();
+        }
+        drop(conn);
+
+        let mut scan_record = ScanRecord::new_current();
+        let updated = cleanup_stale_tracks_paged(&pool, &mut scan_record, &[], &[], 2).await;
+        assert!(updated.is_empty());
+        assert_eq!(count_rows(&pool, "track").await, 0);
     }
 }

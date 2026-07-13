@@ -31,9 +31,7 @@ use crate::{
     library::scan::{
         database::{AlbumCacheKey, AlbumPathCacheKey, update_metadata},
         decode::{FileInformation, read_metadata_for_path},
-        discover::{
-            cleanup_removed_directories, cleanup_with_exclusions, discover, rescan_discover,
-        },
+        discover::{cleanup_stale_tracks, discover, rescan_discover},
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_checkpoint, write_scan_record},
     },
     paths,
@@ -294,7 +292,7 @@ async fn run_scanner(
                         "Migrating legacy scan record with {} entries",
                         records.len()
                     );
-                    Some(ScanRecord {
+                    let record = ScanRecord {
                         // version 0 will trigger version mismatch and force rescan
                         version: 0,
                         records: records
@@ -302,7 +300,15 @@ async fn run_scanner(
                             .map(|(k, v)| (k, UNIX_EPOCH + Duration::from_secs(v)))
                             .collect(),
                         directories: scan_settings.paths.clone(),
-                    })
+                    };
+
+                    if let Err(e) = tokio::fs::remove_file(&legacy_scan_record_path).await {
+                        warn!(
+                            "Failed to delete legacy scan record at {:?}: {:?}",
+                            legacy_scan_record_path, e
+                        );
+                    }
+                    Some(record)
                 }
                 Err(e) => {
                     warn!("Could not parse legacy scan record: {:?}", e);
@@ -314,14 +320,6 @@ async fn run_scanner(
                 None
             }
         };
-
-        // Delete the legacy file after reading
-        if let Err(e) = tokio::fs::remove_file(&legacy_scan_record_path).await {
-            warn!(
-                "Failed to delete legacy scan record at {:?}: {:?}",
-                legacy_scan_record_path, e
-            );
-        }
 
         if let Some(legacy_record) = legacy_record {
             legacy_record
@@ -442,11 +440,13 @@ async fn run_scanner(
             let cleanup_start = std::time::Instant::now();
             let _ = event_tx.send(ScanEvent::Cleaning);
 
-            let mut updated_playlists =
-                cleanup_removed_directories(&pool, &mut scan_record, &scan_settings.paths).await;
-            updated_playlists.extend(
-                cleanup_with_exclusions(&pool, &mut scan_record, excluded_missing_roots).await,
-            );
+            let updated_playlists = cleanup_stale_tracks(
+                &pool,
+                &mut scan_record,
+                &scan_settings.paths,
+                excluded_missing_roots,
+            )
+            .await;
             if !updated_playlists.is_empty() {
                 let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
                     updated_playlists.into_iter().collect(),
