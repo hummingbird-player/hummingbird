@@ -125,7 +125,10 @@ impl Render for MainWindow {
                     .flex_col_reverse()
                     .max_w_full()
                     .max_h_full()
-                    .child(self.controls.clone())
+                    .child(
+                        AnyView::from(self.controls.clone())
+                            .cached(StyleRefinement::default().w_full().flex().h(px(68.0))),
+                    )
                     .child(
                         div()
                             .w_full()
@@ -134,7 +137,16 @@ impl Render for MainWindow {
                             .max_w_full()
                             .max_h_full()
                             .overflow_hidden()
-                            .child(self.library.clone())
+                            .child(
+                                AnyView::from(self.library.clone()).cached(
+                                    StyleRefinement::default()
+                                        .w_full()
+                                        .h_full()
+                                        .flex_shrink()
+                                        .max_w_full()
+                                        .max_h_full(),
+                                ),
+                            )
                             .when(show_sidebar, |this| this.child(right_sidebar)),
                     )
                     .child(self.header.clone())

@@ -49,8 +49,10 @@ impl Render for RightSidebar {
         let queue_width = cx.global::<Models>().queue_width.clone();
         let lyrics_height_entity = cx.global::<Models>().lyrics_height.clone();
 
-        let queue = self.queue.clone();
-        let lyrics = self.lyrics.clone();
+        let queue =
+            AnyView::from(self.queue.clone()).cached(StyleRefinement::default().size_full());
+        let lyrics =
+            AnyView::from(self.lyrics.clone()).cached(StyleRefinement::default().size_full());
 
         resizable("queue-resizable", queue_width, ResizeEdge::Left)
             .min_size(px(225.0))

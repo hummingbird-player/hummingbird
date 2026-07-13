@@ -77,6 +77,8 @@ impl Render for Controls {
         let theme = cx.global::<Theme>();
 
         div()
+            .flex()
+            .h(px(68.0))
             .w_full()
             .bg(theme.background_secondary)
             .border_t_1()
@@ -94,7 +96,6 @@ impl Render for Controls {
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .flex()
             .child(
                 resizable(
                     "controls-left-resizable",
@@ -105,7 +106,7 @@ impl Render for Controls {
                 .max_size(px(500.0))
                 .default_size(DEFAULT_CONTROLS_LEFT_WIDTH)
                 .border_width(px(0.0))
-                .child(self.info_section.clone()),
+                .child(AnyView::from(self.info_section.clone()).cached(StyleRefinement::default())),
             )
             .child(self.scrubber.clone())
             .child(
@@ -118,7 +119,10 @@ impl Render for Controls {
                 .max_size(px(500.0))
                 .default_size(DEFAULT_CONTROLS_RIGHT_WIDTH)
                 .border_width(px(0.0))
-                .child(self.secondary_controls.clone()),
+                .child(
+                    AnyView::from(self.secondary_controls.clone())
+                        .cached(StyleRefinement::default().flex().w_full().h_full()),
+                ),
             )
     }
 }
@@ -982,8 +986,9 @@ impl Render for SecondaryControls {
         let lyrics_active = *self.show_lyrics.read(cx);
         let queue_active = *self.show_queue.read(cx);
 
-        div().px(px(18.0)).flex().w_full().h_full().child(
+        div().flex().w_full().h_full().child(
             div()
+                .px(px(18.0))
                 .flex()
                 .w_full()
                 .my_auto()
