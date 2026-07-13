@@ -892,6 +892,13 @@ async fn run_scanner(
                             error!("Failed to commit scan batch transaction: {:?}", e);
                             pending_commit.clear();
                             pending_relocations.clear();
+                            // when the commit fails, the caches are poisoned with invalid data
+                            artist_cache.clear();
+                            album_cache.clear();
+                            album_path_cache.clear();
+                            // rolled-back force refreshes must be re-attempted, or affected
+                            // albums silently keep their pre-force metadata
+                            force_encountered_albums.clear();
                         } else {
                             let mut ckpt = scan_checkpoint.lock().await;
                             for (p, ts) in &pending_commit {
