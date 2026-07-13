@@ -204,8 +204,6 @@ async fn cleanup_stale_tracks_paged(
     excluded_roots: &[Utf8PathBuf],
     page_size: i64,
 ) -> FxHashSet<i64> {
-    let mut updated_playlists: FxHashSet<i64> = FxHashSet::default();
-
     // folded prefixes tolerate casing/verbatim differences in stored spellings
     let current_set: FxHashSet<Utf8PathBuf> = current_directories
         .iter()
@@ -232,7 +230,7 @@ async fn cleanup_stale_tracks_paged(
             return true;
         }
 
-        matches!(path.as_std_path().try_exists(), Ok(false))
+        is_missing(path)
     };
 
     // we delete all the pages of the track table first, then the records themselves
@@ -281,6 +279,20 @@ async fn cleanup_stale_tracks_paged(
             to_delete.push(path);
         }
     }
+
+    delete_tracks(pool, scan_record, &to_delete).await
+}
+
+fn is_missing(path: &Utf8Path) -> bool {
+    matches!(path.as_std_path().try_exists(), Ok(false))
+}
+
+async fn delete_tracks(
+    pool: &SqlitePool,
+    scan_record: &mut ScanRecord,
+    to_delete: &[Utf8PathBuf],
+) -> FxHashSet<i64> {
+    let mut updated_playlists: FxHashSet<i64> = FxHashSet::default();
 
     if to_delete.is_empty() {
         return updated_playlists;
@@ -354,6 +366,55 @@ async fn cleanup_track(
 
     updated_playlists.extend(affected_playlists);
     true
+}
+
+pub async fn reconcile_rescan_paths(
+    pool: &SqlitePool,
+    scan_record: &mut ScanRecord,
+    paths: &[Utf8PathBuf],
+    excluded_roots: &[Utf8PathBuf],
+) -> FxHashSet<i64> {
+    // folded prefixes tolerate casing/verbatim differences in stored spellings
+    let excluded: Vec<Utf8PathBuf> = excluded_roots
+        .iter()
+        .map(|r| fold_path(&canonicalize_or_keep(r)))
+        .collect();
+
+    let targets: FxHashSet<Utf8PathBuf> = paths.iter().map(|p| canonicalize_or_keep(p)).collect();
+
+    let mut to_delete: FxHashSet<Utf8PathBuf> = FxHashSet::default();
+    for target in &targets {
+        let rows = sqlx::query_scalar::<_, String>(include_str!(
+            "../../../queries/scan/list_tracks_in_folder_or_location.sql"
+        ))
+        .bind(target.as_str())
+        .fetch_all(pool)
+        .await;
+
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(e) => {
+                error!(
+                    "Rescan reconciliation query failed for {:?}: {:?}",
+                    target, e
+                );
+                continue;
+            }
+        };
+
+        to_delete.extend(
+            rows.into_iter()
+                .map(Utf8PathBuf::from)
+                .filter(|location| {
+                    let folded = fold_path(location);
+                    !excluded.iter().any(|root| folded.starts_with(root))
+                })
+                .filter(|location| is_missing(location)),
+        );
+    }
+
+    let to_delete: Vec<Utf8PathBuf> = to_delete.into_iter().collect();
+    delete_tracks(pool, scan_record, &to_delete).await
 }
 
 /// Performs a targeted rescan of specific files and directories without recursing into subfolders.
@@ -615,6 +676,30 @@ mod tests {
         let (path_tx, path_rx) = mpsc::channel(10);
         let (relocate_tx, relocate_rx) = mpsc::channel(10);
         (path_tx, path_rx, relocate_tx, relocate_rx)
+    }
+
+    /// Writes an empty media file at `dir/name` and inserts a track row for it.
+    async fn insert_track_file(
+        pool: &SqlitePool,
+        dir: &Utf8Path,
+        name: &str,
+        track: u64,
+    ) -> Utf8PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, b"").unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let meta = track_metadata("Album", "Artist", name, track);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        path
+    }
+
+    /// A scan record containing the given paths at `UNIX_EPOCH`.
+    fn record_of(paths: &[&Utf8PathBuf]) -> ScanRecord {
+        let mut record = ScanRecord::new_current();
+        for path in paths {
+            record.records.insert((*path).clone(), UNIX_EPOCH);
+        }
+        record
     }
 
     #[test]
@@ -1729,5 +1814,85 @@ mod tests {
         let updated = cleanup_stale_tracks_paged(&pool, &mut scan_record, &[], &[], 2).await;
         assert!(updated.is_empty());
         assert_eq!(count_rows(&pool, "track").await, 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_removes_deleted_file_in_directory() {
+        let (dir, pool) = create_test_pool("reconcile-test").await;
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let path1 = insert_track_file(&pool, &dir_path, "track1.flac", 1).await;
+        let path2 = insert_track_file(&pool, &dir_path, "track2.flac", 2).await;
+
+        // one file removed from the folder, the other still present
+        std::fs::remove_file(&path1).unwrap();
+        let mut scan_record = record_of(&[&path1, &path2]);
+
+        let updated = reconcile_rescan_paths(&pool, &mut scan_record, &[dir_path], &[]).await;
+        assert!(updated.is_empty());
+
+        // deleted track gone from DB and record, surviving track untouched
+        assert!(!scan_record.records.contains_key(&path1));
+        assert!(scan_record.records.contains_key(&path2));
+        let remaining: String = sqlx::query_scalar("SELECT location FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, path2);
+    }
+
+    #[tokio::test]
+    async fn reconcile_removes_deleted_single_file() {
+        let (dir, pool) = create_test_pool("reconcile-test").await;
+        let dir_path = dir.utf8_path().canonicalize_utf8().unwrap();
+        let path = insert_track_file(&pool, &dir_path, "track.flac", 1).await;
+
+        std::fs::remove_file(&path).unwrap();
+        let mut scan_record = record_of(&[&path]);
+
+        // rescan of just the file (matches on `location`)
+        let updated =
+            reconcile_rescan_paths(&pool, &mut scan_record, std::slice::from_ref(&path), &[]).await;
+        assert!(updated.is_empty());
+        assert!(!scan_record.records.contains_key(&path));
+        assert_eq!(count_rows(&pool, "track").await, 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_handles_deleted_directory() {
+        let (dir, pool) = create_test_pool("reconcile-test").await;
+        let album_dir = dir.utf8_path().canonicalize_utf8().unwrap().join("album");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        let path1 = insert_track_file(&pool, &album_dir, "track1.flac", 1).await;
+        let path2 = insert_track_file(&pool, &album_dir, "track2.flac", 2).await;
+
+        std::fs::remove_dir_all(&album_dir).unwrap();
+        let mut scan_record = record_of(&[&path1, &path2]);
+
+        let updated = reconcile_rescan_paths(&pool, &mut scan_record, &[album_dir], &[]).await;
+        assert!(updated.is_empty());
+        assert!(scan_record.records.is_empty());
+        assert_eq!(count_rows(&pool, "track").await, 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_keeps_tracks_under_excluded_roots() {
+        let (dir, pool) = create_test_pool("reconcile-test").await;
+        let root = dir.utf8_path().canonicalize_utf8().unwrap().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = insert_track_file(&pool, &root, "track.flac", 1).await;
+
+        std::fs::remove_dir_all(&root).unwrap();
+        let mut scan_record = record_of(&[&path]);
+
+        let updated = reconcile_rescan_paths(
+            &pool,
+            &mut scan_record,
+            std::slice::from_ref(&root),
+            std::slice::from_ref(&root),
+        )
+        .await;
+        assert!(updated.is_empty());
+        assert!(scan_record.records.contains_key(&path));
+        assert_eq!(count_rows(&pool, "track").await, 1);
     }
 }

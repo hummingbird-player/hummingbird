@@ -34,7 +34,9 @@ use crate::{
             AlbumCacheKey, AlbumPathCacheKey, TrackWriteOutcome, relocate_track, update_metadata,
         },
         decode::{FileInformation, ScanReadError, read_metadata_for_path},
-        discover::{Relocation, cleanup_stale_tracks, discover, rescan_discover},
+        discover::{
+            Relocation, cleanup_stale_tracks, discover, reconcile_rescan_paths, rescan_discover,
+        },
         fs_case::fold_path,
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_checkpoint, write_scan_record},
     },
@@ -529,6 +531,25 @@ async fn run_scanner(
             }
 
             available_paths
+        } else if let ScanMode::Targeted { paths } = &mode {
+            // always ignore missing roots for targeted rescans because we don't ask the user what
+            // they want to do with it
+            let missing_roots: Vec<Utf8PathBuf> = scan_settings
+                .paths
+                .iter()
+                .filter(|path| !path.exists())
+                .cloned()
+                .collect();
+
+            let updated_playlists =
+                reconcile_rescan_paths(&pool, &mut scan_record, paths, &missing_roots).await;
+            if !updated_playlists.is_empty() {
+                let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
+                    updated_playlists.into_iter().collect(),
+                ));
+            }
+
+            Vec::new()
         } else {
             Vec::new()
         };
