@@ -1,5 +1,3 @@
-use std::env::consts::OS;
-
 use tracing::{error, info, warn};
 
 use crate::{
@@ -11,9 +9,6 @@ use crate::{
     },
     media::pipeline::ChannelConsumers,
 };
-
-#[cfg(target_os = "windows")]
-use crate::devices::builtin::win_audiograph::AudioGraphProvider;
 
 // magic numbers for piecewise volume % to float scale function
 pub const LN_50: f64 = 3.91202300543_f64;
@@ -107,13 +102,8 @@ impl DeviceController {
 
     /// Initialize the device provider based on the environment or platform defaults.
     pub fn initialize_provider(&mut self) {
-        let default_device_provider = match OS {
-            "windows" => "win_audiograph",
-            _ => "cpal",
-        };
-
-        let requested_device_provider = std::env::var("DEVICE_PROVIDER")
-            .unwrap_or_else(|_| default_device_provider.to_string());
+        let requested_device_provider =
+            std::env::var("DEVICE_PROVIDER").unwrap_or_else(|_| "cpal".to_string());
 
         self.initialize_provider_by_name(&requested_device_provider);
     }
@@ -127,16 +117,10 @@ impl DeviceController {
                 self.device_provider = Some(Box::new(CpalProvider::default()));
             }
             "win_audiograph" => {
-                #[cfg(target_os = "windows")]
-                {
-                    self.device_provider = Some(Box::new(AudioGraphProvider::default()));
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    warn!("win_audiograph is not supported on this platform");
-                    warn!("Falling back to CPAL");
-                    self.device_provider = Some(Box::new(CpalProvider::default()));
-                }
+                warn!("win_audiograph support was removed in 0.4");
+                warn!("cpal is now feature-complete on windows");
+                warn!("Falling back to CPAL");
+                self.device_provider = Some(Box::new(CpalProvider::default()));
             }
             "cpal" => {
                 self.device_provider = Some(Box::new(CpalProvider::default()));
