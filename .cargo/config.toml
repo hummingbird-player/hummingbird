@@ -1,0 +1,4 @@
+# hack to get fdk-aac to build on Windows aarch64 because it was written before this was a thing
+# this leads to correct code, it just looks silly
+[env]
+CFLAGS_aarch64_pc_windows_msvc = "-D__x86__"

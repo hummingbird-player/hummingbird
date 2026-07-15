@@ -1,6 +1,5 @@
-use std::{ffi::OsStr, fs::File};
-
 use smallvec::SmallVec;
+use std::{ffi::OsStr, fs::File};
 use symphonia::{
     core::{
         audio::sample::SampleFormat as SymphSampleFormat,
@@ -19,6 +18,7 @@ use symphonia::{
         AdpcmDecoder, AlacDecoder, FlacDecoder, MpaDecoder, PcmDecoder, VorbisDecoder,
     },
 };
+use symphonia_adapter_fdk_aac::AacDecoder;
 use tracing::error;
 
 use symphonia_adapter_libopus::OpusDecoder;
@@ -414,16 +414,7 @@ impl MediaStream for SymphoniaStream {
             codecs.register_audio_decoder::<VorbisDecoder>();
             codecs.register_audio_decoder::<AdpcmDecoder>();
             codecs.register_audio_decoder::<OpusDecoder>();
-
-            #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-            {
-                codecs.register_audio_decoder::<symphonia::default::codecs::AacDecoder>();
-            }
-
-            #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-            {
-                codecs.register_audio_decoder::<symphonia_adapter_fdk_aac::AacDecoder>();
-            }
+            codecs.register_audio_decoder::<AacDecoder>();
 
             codecs
                 .make_audio_decoder(audio_params, &dec_opts)
