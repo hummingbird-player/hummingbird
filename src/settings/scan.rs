@@ -4,7 +4,8 @@ use std::fs::exists;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "windows"))]
-use tracing::{error, warn};
+use tracing::error;
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -40,14 +41,32 @@ fn retrieve_default_paths() -> Vec<Utf8PathBuf> {
     {
         use windows::Storage::{KnownLibraryId, StorageLibrary};
 
-        StorageLibrary::GetLibraryAsync(KnownLibraryId::Music)
-            .unwrap()
-            .join()
-            .unwrap()
-            .Folders()
-            .unwrap()
+        let folders = StorageLibrary::GetLibraryAsync(KnownLibraryId::Music)
+            .and_then(|operation| operation.join())
+            .and_then(|library| library.Folders());
+
+        let folders = match folders {
+            Ok(folders) => folders,
+            Err(e) => {
+                warn!("Couldn't retrieve the Music library ({e}): nothing will be scanned by default.");
+                return vec![];
+            }
+        };
+
+        folders
             .into_iter()
-            .flat_map(|v| Utf8PathBuf::from(v.Path().unwrap().to_string()).canonicalize_utf8())
+            .filter_map(|folder| match folder.Path() {
+                Ok(path) if !path.is_empty() => Some(Utf8PathBuf::from(path.to_string())),
+                Ok(_) => {
+                    warn!("A Music library folder has no filesystem path: skipping it.");
+                    None
+                }
+                Err(e) => {
+                    warn!("Couldn't get the path of a Music library folder ({e}): skipping it.");
+                    None
+                }
+            })
+            .flat_map(|path| path.canonicalize_utf8())
             .collect()
     }
 
