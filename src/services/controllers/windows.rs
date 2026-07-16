@@ -5,9 +5,10 @@ use raw_window_handle::RawWindowHandle;
 use windows::{
     Foundation::TypedEventHandler,
     Media::{
-        MediaPlaybackAutoRepeatMode, MediaPlaybackStatus, MediaPlaybackType,
-        SystemMediaTransportControls, SystemMediaTransportControlsButton,
-        SystemMediaTransportControlsButtonPressedEventArgs,
+        AutoRepeatModeChangeRequestedEventArgs, MediaPlaybackAutoRepeatMode, MediaPlaybackStatus,
+        MediaPlaybackType, PlaybackPositionChangeRequestedEventArgs,
+        ShuffleEnabledChangeRequestedEventArgs, SystemMediaTransportControls,
+        SystemMediaTransportControlsButton, SystemMediaTransportControlsButtonPressedEventArgs,
         SystemMediaTransportControlsDisplayUpdater, SystemMediaTransportControlsTimelineProperties,
     },
     Storage::Streams::{DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference},
@@ -37,6 +38,7 @@ impl WindowsController {
         self.controls.SetIsPreviousEnabled(true)?;
         self.controls.SetIsPlayEnabled(true)?;
         self.controls.SetIsPauseEnabled(true)?;
+        self.controls.SetIsStopEnabled(true)?;
 
         let bridge = self.bridge.clone();
         self.controls.ButtonPressed(&TypedEventHandler::<
@@ -50,8 +52,53 @@ impl WindowsController {
                 SystemMediaTransportControlsButton::Pause => bridge.pause(),
                 SystemMediaTransportControlsButton::Next => bridge.next(),
                 SystemMediaTransportControlsButton::Previous => bridge.previous(),
+                SystemMediaTransportControlsButton::Stop => bridge.stop(),
                 _ => (),
             }
+
+            Ok(())
+        }))?;
+
+        let bridge = self.bridge.clone();
+        self.controls.PlaybackPositionChangeRequested(&TypedEventHandler::<
+            SystemMediaTransportControls,
+            PlaybackPositionChangeRequestedEventArgs,
+        >::new(move |_, args| {
+            let position = args
+                .as_ref()
+                .unwrap()
+                .RequestedPlaybackPosition()
+                .unwrap();
+
+            // TimeSpan is measured in 100ns intervals
+            bridge.seek(position.Duration as f64 / 10_000_000.0);
+
+            Ok(())
+        }))?;
+
+        let bridge = self.bridge.clone();
+        self.controls.ShuffleEnabledChangeRequested(&TypedEventHandler::<
+            SystemMediaTransportControls,
+            ShuffleEnabledChangeRequestedEventArgs,
+        >::new(move |_, _| {
+            // TODO: do better than this
+            bridge.toggle_shuffle();
+
+            Ok(())
+        }))?;
+
+        let bridge = self.bridge.clone();
+        self.controls.AutoRepeatModeChangeRequested(&TypedEventHandler::<
+            SystemMediaTransportControls,
+            AutoRepeatModeChangeRequestedEventArgs,
+        >::new(move |_, args| {
+            let mode = args.as_ref().unwrap().RequestedAutoRepeatMode().unwrap();
+
+            bridge.set_repeat(match mode {
+                MediaPlaybackAutoRepeatMode::List => RepeatState::Repeating,
+                MediaPlaybackAutoRepeatMode::Track => RepeatState::RepeatingOne,
+                _ => RepeatState::NotRepeating,
+            });
 
             Ok(())
         }))?;

@@ -117,7 +117,7 @@ impl ControllerBridge {
             .unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn stop(&self) {
         self.playback_thread.send(PlaybackCommand::Stop).unwrap();
     }
@@ -132,7 +132,6 @@ impl ControllerBridge {
             .unwrap();
     }
 
-    #[cfg(not(target_os = "windows"))]
     pub fn seek(&self, position: f64) {
         self.playback_thread
             .send(PlaybackCommand::Seek(position))
@@ -146,14 +145,14 @@ impl ControllerBridge {
             .unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn toggle_shuffle(&self) {
         self.playback_thread
             .send(PlaybackCommand::ToggleShuffle)
             .unwrap();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn set_repeat(&self, repeat: RepeatState) {
         self.playback_thread
             .send(PlaybackCommand::SetRepeat(repeat))
