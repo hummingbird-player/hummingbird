@@ -56,7 +56,7 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
         let canonical = path.canonicalize_utf8().unwrap_or(path.clone());
         let device_id = mount_to_physical
             .iter()
-            .find(|(m, _)| canonical.as_std_path().starts_with(m.as_std_path()))
+            .find(|(m, _)| path_is_under_mount(canonical.as_std_path(), m.as_std_path()))
             .map(|(_, id)| id.clone())
             .unwrap_or_default();
 
@@ -75,11 +75,39 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
     (groups, mount_points, mount_to_channel)
 }
 
+/// Whether `path` lives under `mount`.
+#[cfg(not(windows))]
+fn path_is_under_mount(path: &Path, mount: &Path) -> bool {
+    path.starts_with(mount)
+}
+
+#[cfg(windows)]
+fn path_is_under_mount(path: &Path, mount: &Path) -> bool {
+    if path.starts_with(mount) {
+        return true;
+    }
+    let Some(mount_str) = mount.to_str() else {
+        return false;
+    };
+    if mount_str.starts_with(r"\\?\") {
+        // Already verbatim; already compared above.
+        return false;
+    }
+    let verbatim = if let Some(share) = mount_str.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{share}")
+    } else {
+        format!(r"\\?\{mount_str}")
+    };
+    path.starts_with(Path::new(&verbatim))
+}
+
 /// Get the physical device identifier for a mount point.
 ///
 /// On macOS, returns the BSD disk name (e.g., "disk0") via `statfs`.
 /// On Linux, returns the device path with partition stripped (e.g., "sda").
-/// On Windows, returns the drive letter as a fallback.
+/// On Windows, returns the physical drive number (e.g., "physicaldrive_0"),
+/// falling back to the drive letter (e.g., "drive_C"). UNC shares are grouped
+/// per share (e.g., "unc_server\share").
 /// Returns `None` for virtual filesystems (tmpfs, procfs, etc.) or on error.
 fn physical_device_id(mount_point: &Path) -> Option<String> {
     #[cfg(target_os = "macos")]
@@ -137,11 +165,75 @@ fn physical_device_id(mount_point: &Path) -> Option<String> {
 
     #[cfg(target_os = "windows")]
     {
-        mount_point
-            .to_str()
-            .and_then(|s| s.get(..1))
-            .map(|s| format!("drive_{}", s.to_uppercase()))
+        let mount = mount_point.to_str()?;
+
+        if let Some(share) = mount.strip_prefix(r"\\") {
+            let share = share.trim_end_matches('\\');
+            if share.is_empty() {
+                return None;
+            }
+            return Some(format!("unc_{}", share.to_lowercase()));
+        }
+
+        let mut chars = mount.chars();
+        let letter = chars.next()?.to_ascii_uppercase();
+        if !letter.is_ascii_alphabetic() || chars.next() != Some(':') {
+            return None;
+        }
+
+        Some(windows_physical_drive_id(letter).unwrap_or_else(|| format!("drive_{letter}")))
     }
+}
+
+/// Resolve the physical drive number backing a drive letter via `IOCTL_STORAGE_GET_DEVICE_NUMBER`.
+/// Returns `None` if the volume can't be opened or spans multiple disks (e.g. Storage Spaces).
+#[cfg(target_os = "windows")]
+fn windows_physical_drive_id(letter: char) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{IOCTL_STORAGE_GET_DEVICE_NUMBER, STORAGE_DEVICE_NUMBER};
+    use windows::core::HSTRING;
+
+    let volume = HSTRING::from(format!(r"\\.\{letter}:"));
+    // dwDesiredAccess = 0 allows metadata-only IOCTLs without admin rights.
+    let handle = unsafe {
+        CreateFileW(
+            &volume,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+    }
+    .ok()?;
+
+    let mut number = STORAGE_DEVICE_NUMBER::default();
+    let mut bytes_returned = 0u32;
+
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_STORAGE_GET_DEVICE_NUMBER,
+            None,
+            0,
+            Some((&raw mut number).cast()),
+            std::mem::size_of::<STORAGE_DEVICE_NUMBER>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+
+    // volumes spanning multiple disks report DeviceNumber = 0xFFFFFFFF.
+    result.ok().filter(|_| number.DeviceNumber != u32::MAX)?;
+    Some(format!("physicaldrive_{}", number.DeviceNumber))
 }
 
 #[cfg(test)]
@@ -209,7 +301,8 @@ mod tests {
 
     #[test]
     fn physical_device_id_returns_disk_for_root() {
-        let id = physical_device_id(Path::new("/"));
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let id = physical_device_id(Path::new(root));
         assert!(
             id.is_some(),
             "root filesystem should have a physical device ID"
