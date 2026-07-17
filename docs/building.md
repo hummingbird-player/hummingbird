@@ -1,7 +1,7 @@
 # Building
 
 ## Dependencies
-In order to build Hummingbird, you'll need Rust (to my knowledge, >= 1.88, but later is always better), Cargo, and Git. You'll also need a few dependencies depending on what platform you're building for.
+In order to build Hummingbird, you'll need Rust (to my knowledge, >= 1.95, but later is always better), Cargo, and Git. You'll also need a few dependencies depending on what platform you're building for.
 
 ### Windows
 You'll need everything in the [Zed compilation instructions](https://zed.dev/docs/development/windows).
@@ -14,12 +14,12 @@ On Linux, you'll need the development headers for several packages. The followin
 
 - **Fedora/CentOS/EL**
   ```sh
-  sudo dnf install libxkbcommon-devel libxkbcommon-x11-devel alsa-lib-devel make gcc perl-core pcre-devel zlib-devel libX11-devel wayland-devel pulseaudio-libs-devel openssl-devel libxcb-devel pulseaudio-libs-devel fontconfig-devel pipewire-devel
+  sudo dnf install libxkbcommon-devel libxkbcommon-x11-devel alsa-lib-devel make gcc perl-core pcre-devel zlib-devel libX11-devel wayland-devel pulseaudio-libs-devel openssl-devel libxcb-devel pulseaudio-libs-devel fontconfig-devel pipewire-devel clang cmake
   ```
 - **Ubuntu**
   ```sh
   sudo apt update
-  sudo apt install libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev build-essential libfontconfig1-dev libpipewire-0.3-dev libspa-0.2-dev
+  sudo apt install libasound2-dev pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libpulse-dev build-essential libfontconfig1-dev libpipewire-0.3-dev libspa-0.2-dev build-essential
   ```
   
 ### NixOS / Nix / Nix (darwin)
