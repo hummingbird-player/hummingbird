@@ -157,11 +157,25 @@ const CLEANUP_PAGE_SIZE: i64 = 1000;
 /// large removals (e.g. an unmounted volume or a big removed folder).
 const CLEANUP_TX_CHUNK: usize = 500;
 
-/// Canonicalize a path, falling back to the original when it can't be resolved (e.g. the
-/// directory was removed from disk). Stored paths in the scan record are already canonical, so if
-/// we have a file in the record (and it doesn't exist any more) it should still work.
+/// Canonicalize a path. When it can't be resolved directly (e.g. a removed folder or an unplugged
+/// drive), canonicalize the nearest existing ancestor and re-append the rest, so symlinked
+/// prefixes still resolve and the result stays comparable with stored paths, which are canonical.
+/// Falls back to the original path when no ancestor resolves.
 fn canonicalize_or_keep(path: &Utf8Path) -> Utf8PathBuf {
-    path.canonicalize_utf8().unwrap_or_else(|_| path.to_owned())
+    if let Ok(canonical) = path.canonicalize_utf8() {
+        return canonical;
+    }
+    let mut current = path.parent();
+    while let Some(ancestor) = current {
+        if let Ok(canonical) = ancestor.canonicalize_utf8() {
+            let tail = path
+                .strip_prefix(ancestor)
+                .expect("ancestor is a prefix of path");
+            return canonical.join(tail);
+        }
+        current = ancestor.parent();
+    }
+    path.to_owned()
 }
 
 /// Remove tracks that no longer belong in the library (deleted, moved, etc). Uses both the scan

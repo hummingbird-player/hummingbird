@@ -48,7 +48,9 @@ fn retrieve_default_paths() -> Vec<Utf8PathBuf> {
         let folders = match folders {
             Ok(folders) => folders,
             Err(e) => {
-                warn!("Couldn't retrieve the Music library ({e}): nothing will be scanned by default.");
+                warn!(
+                    "Couldn't retrieve the Music library ({e}): nothing will be scanned by default."
+                );
                 return vec![];
             }
         };

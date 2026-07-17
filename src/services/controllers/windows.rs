@@ -60,48 +60,47 @@ impl WindowsController {
         }))?;
 
         let bridge = self.bridge.clone();
-        self.controls.PlaybackPositionChangeRequested(&TypedEventHandler::<
-            SystemMediaTransportControls,
-            PlaybackPositionChangeRequestedEventArgs,
-        >::new(move |_, args| {
-            let position = args
-                .as_ref()
-                .unwrap()
-                .RequestedPlaybackPosition()
-                .unwrap();
+        self.controls
+            .PlaybackPositionChangeRequested(&TypedEventHandler::<
+                SystemMediaTransportControls,
+                PlaybackPositionChangeRequestedEventArgs,
+            >::new(move |_, args| {
+                let position = args.as_ref().unwrap().RequestedPlaybackPosition().unwrap();
 
-            // TimeSpan is measured in 100ns intervals
-            bridge.seek(position.Duration as f64 / 10_000_000.0);
+                // TimeSpan is measured in 100ns intervals
+                bridge.seek(position.Duration as f64 / 10_000_000.0);
 
-            Ok(())
-        }))?;
+                Ok(())
+            }))?;
 
         let bridge = self.bridge.clone();
-        self.controls.ShuffleEnabledChangeRequested(&TypedEventHandler::<
-            SystemMediaTransportControls,
-            ShuffleEnabledChangeRequestedEventArgs,
-        >::new(move |_, _| {
-            // TODO: do better than this
-            bridge.toggle_shuffle();
+        self.controls
+            .ShuffleEnabledChangeRequested(&TypedEventHandler::<
+                SystemMediaTransportControls,
+                ShuffleEnabledChangeRequestedEventArgs,
+            >::new(move |_, _| {
+                // TODO: do better than this
+                bridge.toggle_shuffle();
 
-            Ok(())
-        }))?;
+                Ok(())
+            }))?;
 
         let bridge = self.bridge.clone();
-        self.controls.AutoRepeatModeChangeRequested(&TypedEventHandler::<
-            SystemMediaTransportControls,
-            AutoRepeatModeChangeRequestedEventArgs,
-        >::new(move |_, args| {
-            let mode = args.as_ref().unwrap().RequestedAutoRepeatMode().unwrap();
+        self.controls
+            .AutoRepeatModeChangeRequested(&TypedEventHandler::<
+                SystemMediaTransportControls,
+                AutoRepeatModeChangeRequestedEventArgs,
+            >::new(move |_, args| {
+                let mode = args.as_ref().unwrap().RequestedAutoRepeatMode().unwrap();
 
-            bridge.set_repeat(match mode {
-                MediaPlaybackAutoRepeatMode::List => RepeatState::Repeating,
-                MediaPlaybackAutoRepeatMode::Track => RepeatState::RepeatingOne,
-                _ => RepeatState::NotRepeating,
-            });
+                bridge.set_repeat(match mode {
+                    MediaPlaybackAutoRepeatMode::List => RepeatState::Repeating,
+                    MediaPlaybackAutoRepeatMode::Track => RepeatState::RepeatingOne,
+                    _ => RepeatState::NotRepeating,
+                });
 
-            Ok(())
-        }))?;
+                Ok(())
+            }))?;
 
         Ok(())
     }
