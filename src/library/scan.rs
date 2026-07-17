@@ -2,6 +2,7 @@ pub(crate) mod database;
 mod decode;
 mod discover;
 mod disk;
+mod fs_case;
 mod record;
 
 use std::{
@@ -29,9 +30,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     library::scan::{
-        database::{AlbumCacheKey, AlbumPathCacheKey, update_metadata},
+        database::{AlbumCacheKey, AlbumPathCacheKey, relocate_track, update_metadata},
         decode::{FileInformation, read_metadata_for_path},
-        discover::{cleanup_stale_tracks, discover, rescan_discover},
+        discover::{Relocation, cleanup_stale_tracks, discover, rescan_discover},
+        fs_case::fold_path,
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_checkpoint, write_scan_record},
     },
     paths,
@@ -334,10 +336,13 @@ async fn run_scanner(
     // attempt to recover checkpoint data from a previous crashed scan
     if try_exists(&checkpoint_path).await.unwrap_or(false) {
         let checkpoint = load_scan_record(&checkpoint_path).await;
-        let base_dirs: FxHashSet<Utf8PathBuf> =
-            scan_record_state.directories.iter().cloned().collect();
+        let base_dirs: FxHashSet<Utf8PathBuf> = scan_record_state
+            .directories
+            .iter()
+            .map(|d| fold_path(d))
+            .collect();
         for dir in checkpoint.directories {
-            if !base_dirs.contains(&dir) {
+            if !base_dirs.contains(&fold_path(&dir)) {
                 scan_record_state.directories.push(dir);
             }
         }
@@ -489,12 +494,15 @@ async fn run_scanner(
         // immediately since rescanning won't help until the file changes
         let (decode_fail_tx, mut decode_fail_rx) =
             tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(meta_capacity);
+        // case-only renames spotted during discovery, applied without a rescan
+        let (relocate_tx, mut relocate_rx) = tokio::sync::mpsc::channel::<Relocation>(64);
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         // we run the discovery and metadata reading stages in separate tasks, that way they can
         // run concurrently and no step in the scanning process blocks the other
         let spawn_discover = |path_tx: tokio::sync::mpsc::Sender<(Utf8PathBuf, SystemTime)>,
+                              relocate_tx: tokio::sync::mpsc::Sender<Relocation>,
                               cancel: Arc<AtomicBool>|
          -> tokio::task::JoinHandle<u64> {
             let settings = scan_settings.clone();
@@ -504,7 +512,7 @@ async fn run_scanner(
                 ScanMode::Full { .. } => {
                     let mut settings = settings;
                     settings.paths = paths;
-                    spawn_blocking(move || discover(settings, sr, path_tx, cancel))
+                    spawn_blocking(move || discover(settings, sr, path_tx, relocate_tx, cancel))
                 }
                 ScanMode::Targeted { paths } => {
                     let paths = paths.clone();
@@ -539,7 +547,7 @@ async fn run_scanner(
                 tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
 
             let cancel_for_discover = Arc::clone(&cancel_flag);
-            let discover_task = spawn_discover(path_tx, cancel_for_discover);
+            let discover_task = spawn_discover(path_tx, relocate_tx, cancel_for_discover);
             slow_discover_task = Some(discover_task);
 
             let router_cancel = Arc::clone(&cancel_flag);
@@ -606,7 +614,7 @@ async fn run_scanner(
             let (path_tx, path_rx) = tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(64);
 
             let cancel_for_discover = Arc::clone(&cancel_flag);
-            let discover = spawn_discover(path_tx, cancel_for_discover);
+            let discover = spawn_discover(path_tx, relocate_tx, cancel_for_discover);
 
             let path_rx_shared = Arc::new(Mutex::new(path_rx));
 
@@ -652,6 +660,9 @@ async fn run_scanner(
         let mut discovery_complete = false;
         let mut discovered_total: u64 = 0;
         let mut pending_commit: Vec<(Utf8PathBuf, SystemTime)> = Vec::with_capacity(BATCH_SIZE);
+        // relocations already applied to the open transaction; their record-key swaps land only
+        // when that transaction commits
+        let mut pending_relocations: Vec<Relocation> = Vec::new();
         let scan_checkpoint: Arc<Mutex<FxHashMap<Utf8PathBuf, SystemTime>>> =
             Arc::new(Mutex::new(FxHashMap::default()));
         let mut checkpoint_handle: Option<tokio::task::JoinHandle<()>> = None;
@@ -667,6 +678,8 @@ async fn run_scanner(
                             cancel_flag.store(true, Ordering::Relaxed);
                             meta_rx.close();
                             decode_fail_rx.close();
+                            // unblock a discover task wedged on a full relocation channel
+                            relocate_rx.close();
                             break;
                         }
                         Some(ScanCommand::Scan) => {
@@ -709,9 +722,35 @@ async fn run_scanner(
                     sr.records.insert(path, timestamp);
                 }
 
+                // case-only rename: repoint the row in the open transaction and swap the
+                // scan-record key once the batch commits
+                Some((old, new, ts)) = relocate_rx.recv(), if !cancelled => {
+                    let result = relocate_track(
+                        tx.as_mut().expect("scan transaction should be active"),
+                        &old,
+                        &new,
+                    )
+                    .await;
+
+                    match result {
+                        Ok(updated) => {
+                            if !updated.is_empty() {
+                                let _ = event_tx.send(ScanEvent::PlaylistsUpdated(updated));
+                            }
+                            pending_relocations.push((old, new, ts));
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to relocate track from {:?} to {:?}: {:?}",
+                                old, new, e
+                            );
+                        }
+                    }
+                }
+
                 item = meta_rx.recv() => {
                     let Some((path, timestamp, (metadata, length, image))) = item else {
-                        if items_in_tx > 0 {
+                        if items_in_tx > 0 || !pending_relocations.is_empty() {
                             if let Err(e) = tx
                                 .take()
                                 .expect("scan transaction should be active")
@@ -720,10 +759,15 @@ async fn run_scanner(
                             {
                                 error!("Failed to commit final scan transaction: {:?}", e);
                                 pending_commit.clear();
+                                pending_relocations.clear();
                             } else {
                                 let mut sr = scan_record_shared.lock().await;
                                 for (p, ts) in pending_commit.drain(..) {
                                     sr.records.insert(p, ts);
+                                }
+                                for (old, new, ts) in pending_relocations.drain(..) {
+                                    sr.records.remove(&old);
+                                    sr.records.entry(new).or_insert(ts);
                                 }
                             }
                         }
@@ -768,10 +812,15 @@ async fn run_scanner(
                         {
                             error!("Failed to commit scan batch transaction: {:?}", e);
                             pending_commit.clear();
+                            pending_relocations.clear();
                         } else {
                             let mut ckpt = scan_checkpoint.lock().await;
                             for (p, ts) in &pending_commit {
                                 ckpt.insert(p.clone(), *ts);
+                            }
+                            for (old, new, ts) in &pending_relocations {
+                                ckpt.remove(old);
+                                ckpt.entry(new.clone()).or_insert(*ts);
                             }
 
                             drop(ckpt);
@@ -779,6 +828,10 @@ async fn run_scanner(
                             let mut sr = scan_record_shared.lock().await;
                             for (p, ts) in pending_commit.drain(..) {
                                 sr.records.insert(p, ts);
+                            }
+                            for (old, new, ts) in pending_relocations.drain(..) {
+                                sr.records.remove(&old);
+                                sr.records.entry(new).or_insert(ts);
                             }
                         }
 
@@ -836,11 +889,43 @@ async fn run_scanner(
             sr.records.insert(path, timestamp);
         }
 
+        // drain remaining relocations: discovery can outpace the metadata pipeline at scan end,
+        // and dropping these would strand the old row as a permanent duplicate
+        while let Ok((old, new, ts)) = relocate_rx.try_recv() {
+            if tx.is_none() {
+                tx = Some(
+                    pool.begin()
+                        .await
+                        .expect("could not begin scan transaction"),
+                );
+            }
+            match relocate_track(
+                tx.as_mut().expect("scan transaction should be active"),
+                &old,
+                &new,
+            )
+            .await
+            {
+                Ok(updated) => {
+                    if !updated.is_empty() {
+                        let _ = event_tx.send(ScanEvent::PlaylistsUpdated(updated));
+                    }
+                    pending_relocations.push((old, new, ts));
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to relocate track from {:?} to {:?}: {:?}",
+                        old, new, e
+                    );
+                }
+            }
+        }
+
         let time_end = std::time::Instant::now();
         let duration = time_end.duration_since(time_start);
 
         if cancelled {
-            if items_in_tx > 0 {
+            if items_in_tx > 0 || !pending_relocations.is_empty() {
                 if tx
                     .take()
                     .expect("scan transaction should be active")
@@ -852,9 +937,15 @@ async fn run_scanner(
                     for (p, ts) in &pending_commit {
                         ckpt.insert(p.clone(), *ts);
                     }
+                    for (old, new, ts) in &pending_relocations {
+                        ckpt.remove(old);
+                        ckpt.entry(new.clone()).or_insert(*ts);
+                    }
                     pending_commit.clear();
+                    pending_relocations.clear();
                 } else {
                     pending_commit.clear();
+                    pending_relocations.clear();
                 }
             }
 
@@ -882,6 +973,25 @@ async fn run_scanner(
 
             let _ = event_tx.send(mode.completion_event());
             continue;
+        }
+
+        // relocations drained after the final batch commit land in their own transaction
+        if !pending_relocations.is_empty() {
+            if let Err(e) = tx
+                .take()
+                .expect("scan transaction should be active")
+                .commit()
+                .await
+            {
+                error!("Failed to commit relocation transaction: {:?}", e);
+                pending_relocations.clear();
+            } else {
+                let mut sr = scan_record_shared.lock().await;
+                for (old, new, ts) in pending_relocations.drain(..) {
+                    sr.records.remove(&old);
+                    sr.records.entry(new).or_insert(ts);
+                }
+            }
         }
 
         info!(

@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use crate::{
     library::{
-        scan::decode::process_album_art,
+        scan::{decode::process_album_art, fs_case::paths_equal},
         types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
     },
     media::metadata::Metadata,
@@ -212,7 +212,7 @@ async fn insert_track(
 
     // Check album-path cache first to avoid DB round-trips
     if let Some(cached_path) = album_path_cache.get(&ap_key) {
-        if cached_path.as_path() != parent {
+        if !paths_equal(cached_path, parent) {
             return Ok(None);
         }
     } else {
@@ -227,7 +227,7 @@ async fn insert_track(
             Ok(found) => {
                 let found_path = Utf8PathBuf::from(&found.0);
                 album_path_cache.insert(ap_key, found_path.clone());
-                if found_path.as_path() != parent {
+                if !paths_equal(&found_path, parent) {
                     return Ok(None);
                 }
             }
@@ -275,6 +275,80 @@ async fn insert_track(
         Err(sqlx::Error::RowNotFound) => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Update a track's stored location after a case-only rename, keeping its row (and playlist/lyrics
+/// references). If a row already exists at the new location, its playlist items are merged over
+/// and the stale row deleted.
+///
+/// Returns the IDs of playlists whose items were repointed.
+pub async fn relocate_track(
+    conn: &mut SqliteConnection,
+    old: &Utf8Path,
+    new: &Utf8Path,
+) -> anyhow::Result<Vec<i64>> {
+    let Some(new_parent) = new.parent() else {
+        return Ok(Vec::new());
+    };
+
+    let existing: Option<(i64,)> = sqlx::query_as(include_str!(
+        "../../../queries/scan/get_track_id_at_location.sql"
+    ))
+    .bind(new.as_str())
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let mut updated_playlists = Vec::new();
+
+    if let Some((target_id,)) = existing {
+        let stale: Option<(i64,)> = sqlx::query_as(include_str!(
+            "../../../queries/scan/get_track_id_at_location.sql"
+        ))
+        .bind(old.as_str())
+        .fetch_optional(&mut *conn)
+        .await?;
+
+        if let Some((stale_id,)) = stale {
+            updated_playlists = sqlx::query_scalar::<_, i64>(include_str!(
+                "../../../queries/scan/list_playlist_ids_for_track.sql"
+            ))
+            .bind(old.as_str())
+            .fetch_all(&mut *conn)
+            .await?;
+
+            sqlx::query(include_str!(
+                "../../../queries/scan/repoint_playlist_items.sql"
+            ))
+            .bind(target_id)
+            .bind(stale_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(include_str!("../../../queries/scan/delete_track.sql"))
+                .bind(old.as_str())
+                .execute(&mut *conn)
+                .await?;
+        }
+    } else {
+        sqlx::query(include_str!("../../../queries/scan/relocate_track.sql"))
+            .bind(new.as_str())
+            .bind(new_parent.as_str())
+            .bind(old.as_str())
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    if let Some(old_parent) = old.parent() {
+        sqlx::query(include_str!(
+            "../../../queries/scan/relocate_album_folder.sql"
+        ))
+        .bind(new_parent.as_str())
+        .bind(old_parent.as_str())
+        .execute(&mut *conn)
+        .await?;
+    }
+
+    Ok(updated_playlists)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -382,7 +456,9 @@ mod tests {
         );
     }
 
-    use crate::test_support::{count_rows, create_test_pool, insert_metadata, track_metadata};
+    use crate::test_support::{
+        add_track_to_playlist, count_rows, create_test_pool, insert_metadata, track_metadata,
+    };
 
     #[tokio::test]
     async fn update_metadata_inserts_artist_album_track() {
@@ -477,6 +553,110 @@ mod tests {
         insert_metadata(&mut conn, &meta, &path2).await.unwrap();
 
         assert_eq!(count_rows(&pool, "track").await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_accepts_case_variant_folder_for_same_album_disc() {
+        let (dir, pool) = create_test_pool("db-case-test").await;
+        if !crate::library::scan::fs_case::is_case_insensitive(&dir.utf8_path()) {
+            return;
+        }
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path1 = dir.utf8_path().join("Disc1").join("track1.flac");
+        let path2 = dir.utf8_path().join("disc1").join("track2.flac");
+
+        let meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        let meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "track").await, 2);
+    }
+
+    #[tokio::test]
+    async fn relocate_track_updates_location_and_preserves_references() {
+        let (dir, pool) = create_test_pool("db-relocate-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let old = dir.utf8_join("disc1").join("track.flac");
+        let new = dir.utf8_join("Disc1").join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.lyrics = Some("lyrics".to_string());
+        insert_metadata(&mut conn, &meta, &old).await.unwrap();
+        drop(conn);
+
+        add_track_to_playlist(&pool, &old, "Playlist").await;
+        let (row_id_before,): (i64,) = sqlx::query_as("SELECT id FROM track WHERE location = $1")
+            .bind(old.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let updated = relocate_track(&mut conn, &old, &new).await.unwrap();
+        drop(conn);
+
+        assert!(updated.is_empty());
+        assert_eq!(count_rows(&pool, "track").await, 1);
+        assert_eq!(count_rows(&pool, "lyrics").await, 1);
+        assert_eq!(count_rows(&pool, "playlist_item").await, 1);
+
+        let (row_id_after, location, folder): (i64, String, String) =
+            sqlx::query_as("SELECT id, location, folder FROM track")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row_id_after, row_id_before);
+        assert_eq!(location, new.as_str());
+        assert_eq!(folder, new.parent().unwrap().as_str());
+
+        let album_folder: (String,) = sqlx::query_as("SELECT path FROM album_path")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(album_folder.0, new.parent().unwrap().as_str());
+    }
+
+    #[tokio::test]
+    async fn relocate_track_merges_into_existing_row() {
+        let (dir, pool) = create_test_pool("db-relocate-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let stale_path = dir.utf8_join("TRACK.FLAC");
+        let current_path = dir.utf8_join("Track.flac");
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &stale_path)
+            .await
+            .unwrap();
+        insert_metadata(&mut conn, &meta, &current_path)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let playlist_id = add_track_to_playlist(&pool, &stale_path, "Playlist").await;
+        let (kept_id,): (i64,) = sqlx::query_as("SELECT id FROM track WHERE location = $1")
+            .bind(current_path.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let updated = relocate_track(&mut conn, &stale_path, &current_path)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(updated, vec![playlist_id]);
+        assert_eq!(count_rows(&pool, "track").await, 1);
+
+        let (track_id,): (i64,) = sqlx::query_as("SELECT track_id FROM playlist_item")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(track_id, kept_id);
     }
 
     #[tokio::test]

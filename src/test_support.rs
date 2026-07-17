@@ -2,7 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Once,
+        LazyLock, Once,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -88,8 +88,11 @@ pub(crate) struct TestDir {
 
 impl TestDir {
     pub(crate) fn new(prefix: &str) -> Self {
+        // unique per test process: a leftover dir from a crashed/killed run (Windows can refuse
+        // removal while SQLite handles close) must not be reused with its stale contents
+        static RUN_ID: LazyLock<u32> = LazyLock::new(rand::random);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("{prefix}-{id}"));
+        let path = std::env::temp_dir().join(format!("{prefix}-{}-{id}", *RUN_ID));
         fs::create_dir_all(&path).unwrap();
         Self { path }
     }
