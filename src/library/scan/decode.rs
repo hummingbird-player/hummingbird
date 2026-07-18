@@ -7,7 +7,8 @@ use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
 use rustc_hash::FxHashMap;
 
 use crate::media::{
-    lookup_table::try_open_media, metadata::Metadata, traits::MediaProviderFeatures,
+    errors::OpenError, lookup_table::try_open_media, metadata::Metadata,
+    traits::MediaProviderFeatures,
 };
 
 /// Information extracted from a media file during the metadata reading stage.
@@ -15,27 +16,65 @@ use crate::media::{
 /// happens in `insert_album` when a new album is actually created.
 pub type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
 
+/// Why a file failed to read during a scan. Drives the scan-record policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanReadError {
+    /// Vanished between discovery and read.
+    Missing,
+    /// Unreadable right now; not recorded, so it is retried on the next scan. Default bucket.
+    Transient,
+    /// Unparseable; recorded so it isn't retried until the file changes.
+    Corrupt,
+}
+
+fn classify_io_kind(kind: std::io::ErrorKind) -> ScanReadError {
+    match kind {
+        std::io::ErrorKind::NotFound => ScanReadError::Missing,
+        // anything else is assumed recoverable
+        _ => ScanReadError::Transient,
+    }
+}
+
+fn classify_open_error(e: &anyhow::Error) -> ScanReadError {
+    if let Some(io) = e.downcast_ref::<std::io::Error>() {
+        return classify_io_kind(io.kind());
+    }
+    match e.downcast_ref::<OpenError>() {
+        Some(OpenError::Io(kind)) => classify_io_kind(*kind),
+        Some(_) => ScanReadError::Corrupt,
+        None => ScanReadError::Transient,
+    }
+}
+
 /// Read metadata, duration, and embedded image from a file using the global provider lookup table.
 /// Returns raw (unprocessed) image bytes.
-fn scan_path(path: &Utf8Path) -> Result<FileInformation, ()> {
+fn scan_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
     let mut stream = try_open_media(
         path.as_std_path(),
         MediaProviderFeatures::PROVIDES_METADATA | MediaProviderFeatures::ALLOWS_INDEXING,
     )
-    .map_err(|_| ())?
-    .ok_or(())?;
-    stream.start_playback().map_err(|_| ())?;
-    let metadata = stream.read_metadata().cloned().map_err(|_| ())?;
-    let image = stream.read_image().map_err(|_| ())?;
+    .map_err(|e| classify_open_error(&e))?
+    // no provider registered for the extension: unsupported, don't retry every scan
+    .ok_or(ScanReadError::Corrupt)?;
+    stream
+        .start_playback()
+        .map_err(|_| ScanReadError::Corrupt)?;
+    let metadata = stream
+        .read_metadata()
+        .cloned()
+        .map_err(|_| ScanReadError::Corrupt)?;
+    let image = stream.read_image().map_err(|_| ScanReadError::Corrupt)?;
 
-    stream.close().map_err(|_| ())?;
+    stream.close().map_err(|_| ScanReadError::Corrupt)?;
 
     let mut decoder = try_open_media(path.as_std_path(), MediaProviderFeatures::PROVIDES_DECODER)
-        .map_err(|_| ())?
-        .ok_or(())?;
-    decoder.start_playback().map_err(|_| ())?;
-    let len = decoder.duration_ms().map_err(|_| ())? / 1_000;
-    decoder.close().map_err(|_| ())?;
+        .map_err(|e| classify_open_error(&e))?
+        .ok_or(ScanReadError::Corrupt)?;
+    decoder
+        .start_playback()
+        .map_err(|_| ScanReadError::Corrupt)?;
+    let len = decoder.duration_ms().map_err(|_| ScanReadError::Corrupt)? / 1_000;
+    decoder.close().map_err(|_| ScanReadError::Corrupt)?;
 
     Ok((metadata, len, image))
 }
@@ -137,24 +176,22 @@ pub fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
 pub fn read_metadata_for_path(
     path: &Utf8Path,
     art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
-) -> Option<FileInformation> {
-    if let Ok(mut metadata) = scan_path(path) {
-        // Only scan for directory-level album art when the DB writer will use it
-        // (track 1 or unknown, disc 1 or unknown; see database.rs insert_track guard).
-        if metadata.2.is_none()
-            && metadata.0.track_current.is_none_or(|t| t == 1 || t == 0)
-            && metadata.0.disc_current.is_none_or(|d| d == 1 || d == 0)
-            && let Some(art) = scan_path_for_album_art(path, art_cache)
-        {
-            metadata.2 = Some(art.to_vec().into_boxed_slice());
-        }
+) -> Result<FileInformation, ScanReadError> {
+    let mut metadata = scan_path(path)?;
 
-        metadata.0.lyrics = resolve_lyrics(path, metadata.0.lyrics.take());
-
-        Some(metadata)
-    } else {
-        None
+    // Only scan for directory-level album art when the DB writer will use it
+    // (track 1 or unknown, disc 1 or unknown; see database.rs insert_track guard).
+    if metadata.2.is_none()
+        && metadata.0.track_current.is_none_or(|t| t == 1 || t == 0)
+        && metadata.0.disc_current.is_none_or(|d| d == 1 || d == 0)
+        && let Some(art) = scan_path_for_album_art(path, art_cache)
+    {
+        metadata.2 = Some(art.to_vec().into_boxed_slice());
     }
+
+    metadata.0.lyrics = resolve_lyrics(path, metadata.0.lyrics.take());
+
+    Ok(metadata)
 }
 
 #[cfg(test)]
@@ -265,5 +302,81 @@ mod tests {
         let mut cache = FxHashMap::default();
         let info = read_metadata_for_path(&track, &mut cache).unwrap();
         assert_eq!(info.0.lyrics.as_deref(), Some("[00:00.00] Test lyrics"));
+    }
+
+    #[test]
+    fn classify_io_kind_only_not_found_is_missing() {
+        assert_eq!(
+            classify_io_kind(std::io::ErrorKind::NotFound),
+            ScanReadError::Missing
+        );
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            assert_eq!(classify_io_kind(kind), ScanReadError::Transient);
+        }
+    }
+
+    #[test]
+    fn read_metadata_for_nonexistent_path_is_missing() {
+        register_test_media_providers();
+        let dir = TestDir::new("decode-missing-test");
+        let track = dir.utf8_join("nonexistent.flac");
+
+        let mut cache = FxHashMap::default();
+        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
+        assert_eq!(err, ScanReadError::Missing);
+    }
+
+    #[test]
+    fn read_metadata_for_garbage_file_is_corrupt() {
+        register_test_media_providers();
+        let dir = TestDir::new("decode-corrupt-test");
+        let track = dir.utf8_join("garbage.flac");
+        fs::write(&track, b"this is definitely not a flac stream").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
+        assert_eq!(err, ScanReadError::Corrupt);
+    }
+
+    #[test]
+    fn read_metadata_for_truncated_file_is_corrupt() {
+        register_test_media_providers();
+        let dir = TestDir::new("decode-truncated-test");
+        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
+        let track = dir.utf8_join("truncated.flac");
+        // truncated streams must not be classed transient
+        let bytes = fs::read(src).unwrap();
+        fs::write(&track, &bytes[..bytes.len() / 4]).unwrap();
+
+        let mut cache = FxHashMap::default();
+        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
+        assert_eq!(err, ScanReadError::Corrupt);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_metadata_for_unreadable_file_is_transient() {
+        use std::os::unix::fs::PermissionsExt;
+        register_test_media_providers();
+        let dir = TestDir::new("decode-transient-test");
+        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
+        let track = dir.utf8_join("locked.flac");
+        fs::copy(src, &track).unwrap();
+        fs::set_permissions(&track, fs::Permissions::from_mode(0o000)).unwrap();
+
+        // a privileged process (e.g. root) can still open the file; skip in that case
+        if std::fs::File::open(&track).is_ok() {
+            return;
+        }
+
+        let mut cache = FxHashMap::default();
+        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
+        assert_eq!(err, ScanReadError::Transient);
     }
 }

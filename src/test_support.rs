@@ -167,7 +167,8 @@ pub(crate) async fn insert_metadata(
         &mut FxHashMap::default(),
         &mut FxHashMap::default(),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn add_track_to_playlist(

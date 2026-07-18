@@ -89,6 +89,18 @@ fn classify_next_packet_error(err: Error) -> Result<DecodeResult, PlaybackReadEr
     }
 }
 
+/// Surface the I/O error kind on probe failures so the scanner can tell transient read
+/// failures from corrupt files.
+fn map_probe_error(err: Error) -> OpenError {
+    match err {
+        Error::IoError(io) if io.kind() == std::io::ErrorKind::UnexpectedEof => {
+            OpenError::UnsupportedFormat
+        }
+        Error::IoError(io) => OpenError::Io(io.kind()),
+        _ => OpenError::UnsupportedFormat,
+    }
+}
+
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
@@ -309,13 +321,13 @@ impl MediaProvider for SymphoniaProvider {
 
             symphonia::default::get_probe()
                 .probe(&hint, mss, fmt_opts, meta_opts)
-                .map_err(|_| OpenError::UnsupportedFormat)?
+                .map_err(map_probe_error)?
         } else {
             let hint = Hint::new();
 
             symphonia::default::get_probe()
                 .probe(&hint, mss, fmt_opts, meta_opts)
-                .map_err(|_| OpenError::UnsupportedFormat)?
+                .map_err(map_probe_error)?
         };
 
         let mut stream = SymphoniaStream {
@@ -862,5 +874,31 @@ impl MediaStream for SymphoniaStream {
             self.pending_loop_seek = false;
             self.needs_loop_start_trim = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_probe_error_treats_truncated_file_as_corrupt() {
+        let err = Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "eof",
+        ));
+        assert_eq!(map_probe_error(err), OpenError::UnsupportedFormat);
+    }
+
+    #[test]
+    fn map_probe_error_preserves_io_kind() {
+        let err = Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        ));
+        assert_eq!(
+            map_probe_error(err),
+            OpenError::Io(std::io::ErrorKind::PermissionDenied)
+        );
     }
 }

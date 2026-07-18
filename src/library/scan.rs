@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use gpui::{App, Global};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -30,8 +30,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     library::scan::{
-        database::{AlbumCacheKey, AlbumPathCacheKey, relocate_track, update_metadata},
-        decode::{FileInformation, read_metadata_for_path},
+        database::{
+            AlbumCacheKey, AlbumPathCacheKey, TrackWriteOutcome, relocate_track, update_metadata,
+        },
+        decode::{FileInformation, ScanReadError, read_metadata_for_path},
         discover::{Relocation, cleanup_stale_tracks, discover, rescan_discover},
         fs_case::fold_path,
         record::{SCAN_VERSION, ScanRecord, load_scan_record, write_checkpoint, write_scan_record},
@@ -241,7 +243,7 @@ async fn resolve_missing_folder_action(
 fn run_metadata_reader(
     mut recv: impl FnMut() -> Option<(Utf8PathBuf, SystemTime)>,
     meta_tx: Sender<(Utf8PathBuf, SystemTime, FileInformation)>,
-    decode_fail_tx: Sender<(Utf8PathBuf, SystemTime)>,
+    decode_fail_tx: Sender<(Utf8PathBuf, SystemTime, ScanReadError)>,
     cancel_flag: Arc<AtomicBool>,
 ) {
     let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
@@ -254,17 +256,76 @@ fn run_metadata_reader(
             break;
         };
 
-        if let Some(info) = read_metadata_for_path(&path, &mut art_cache) {
-            if meta_tx.blocking_send((path, timestamp, info)).is_err() {
-                break;
+        match read_metadata_for_path(&path, &mut art_cache) {
+            Ok(info) => {
+                if meta_tx.blocking_send((path, timestamp, info)).is_err() {
+                    break;
+                }
             }
-        } else {
-            warn!("Could not read metadata for file: {:?}", path);
-            if decode_fail_tx.blocking_send((path, timestamp)).is_err() {
-                break;
+            Err(class) => {
+                warn!("Could not read metadata for file {:?}: {:?}", path, class);
+                if decode_fail_tx
+                    .blocking_send((path, timestamp, class))
+                    .is_err()
+                {
+                    break;
+                }
             }
         }
     }
+}
+
+/// Per-class tally of files the metadata readers could not read, reported in the completion log.
+#[derive(Default)]
+struct DecodeFailureCounters {
+    missing: u64,
+    transient: u64,
+    corrupt: u64,
+}
+
+impl DecodeFailureCounters {
+    fn count(&mut self, class: ScanReadError) {
+        match class {
+            ScanReadError::Missing => self.missing += 1,
+            ScanReadError::Transient => self.transient += 1,
+            ScanReadError::Corrupt => self.corrupt += 1,
+        }
+    }
+}
+
+fn apply_decode_failure(
+    records: &mut FxHashMap<Utf8PathBuf, SystemTime>,
+    path: &Utf8Path,
+    timestamp: SystemTime,
+    class: ScanReadError,
+) {
+    match class {
+        ScanReadError::Missing | ScanReadError::Transient => {
+            records.remove(path);
+        }
+        ScanReadError::Corrupt => {
+            records.insert(path.to_path_buf(), timestamp);
+        }
+    }
+}
+
+async fn record_decode_failure(
+    scan_checkpoint: &Mutex<FxHashMap<Utf8PathBuf, SystemTime>>,
+    scan_record: &Mutex<ScanRecord>,
+    counters: &mut DecodeFailureCounters,
+    path: &Utf8Path,
+    timestamp: SystemTime,
+    class: ScanReadError,
+) {
+    counters.count(class);
+    if class == ScanReadError::Corrupt {
+        scan_checkpoint
+            .lock()
+            .await
+            .insert(path.to_path_buf(), timestamp);
+    }
+    let mut sr = scan_record.lock().await;
+    apply_decode_failure(&mut sr.records, path, timestamp, class);
 }
 
 async fn run_scanner(
@@ -490,10 +551,9 @@ async fn run_scanner(
         };
         let (meta_tx, mut meta_rx) =
             tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, FileInformation)>(meta_capacity);
-        // Channel for files that failed metadata decoding - these should be added to scan_record
-        // immediately since rescanning won't help until the file changes
+        // files that failed metadata decoding
         let (decode_fail_tx, mut decode_fail_rx) =
-            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime)>(meta_capacity);
+            tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, ScanReadError)>(meta_capacity);
         // case-only renames spotted during discovery, applied without a rescan
         let (relocate_tx, mut relocate_rx) = tokio::sync::mpsc::channel::<Relocation>(64);
 
@@ -646,6 +706,11 @@ async fn run_scanner(
         // DB writing and event reporting — single task since SQLite serializes writes anyway.
         // We batch multiple inserts into a single transaction for dramatically fewer fsyncs.
         let mut scanned: u64 = 0;
+        // progress counter: every file that left the reader pipeline
+        let mut processed: u64 = 0;
+        let mut skipped_duplicate: u64 = 0;
+        let mut no_album: u64 = 0;
+        let mut decode_failures = DecodeFailureCounters::default();
         let mut force_encountered_albums: FxHashSet<i64> = FxHashSet::default();
         let mut artist_cache: FxHashMap<String, i64> = FxHashMap::default();
         let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
@@ -715,11 +780,17 @@ async fn run_scanner(
                     }
                 }
 
-                // if a decode failed that file still needs to be in the scan record
-                Some((path, timestamp)) = decode_fail_rx.recv(), if !cancelled => {
-                    scan_checkpoint.lock().await.insert(path.clone(), timestamp);
-                    let mut sr = scan_record_shared.lock().await;
-                    sr.records.insert(path, timestamp);
+                Some((path, timestamp, class)) = decode_fail_rx.recv(), if !cancelled => {
+                    processed += 1;
+                    record_decode_failure(
+                        &scan_checkpoint,
+                        &scan_record_shared,
+                        &mut decode_failures,
+                        &path,
+                        timestamp,
+                        class,
+                    )
+                    .await;
                 }
 
                 // case-only rename: repoint the row in the open transaction and swap the
@@ -789,11 +860,19 @@ async fn run_scanner(
                     )
                     .await;
 
+                    processed += 1;
                     match result {
-                        Ok(_) => {
+                        Ok(outcome) => {
+                            // skipped files are still recorded so they aren't re-read every scan
                             pending_commit.push((path, timestamp));
-                            scanned += 1;
                             items_in_tx += 1;
+                            match outcome {
+                                TrackWriteOutcome::Written(_) => scanned += 1,
+                                TrackWriteOutcome::SkippedDuplicateFolder => {
+                                    skipped_duplicate += 1
+                                }
+                                TrackWriteOutcome::SkippedNoAlbum => no_album += 1,
+                            }
                         }
                         Err(err) => {
                             error!(
@@ -855,14 +934,14 @@ async fn run_scanner(
                         items_in_tx = 0;
                     }
 
-                    if scanned.is_multiple_of(5) {
+                    if processed.is_multiple_of(5) {
                         let total = if discovery_complete {
                             discovered_total
                         } else {
                             u64::MAX // total unknown until discovery completes
                         };
                         let _ = event_tx.send(ScanEvent::ScanProgress {
-                            current: scanned,
+                            current: processed,
                             total,
                         });
                     }
@@ -883,10 +962,16 @@ async fn run_scanner(
         }
 
         // drain remaining decode failures
-        while let Ok((path, timestamp)) = decode_fail_rx.try_recv() {
-            scan_checkpoint.lock().await.insert(path.clone(), timestamp);
-            let mut sr = scan_record_shared.lock().await;
-            sr.records.insert(path, timestamp);
+        while let Ok((path, timestamp, class)) = decode_fail_rx.try_recv() {
+            record_decode_failure(
+                &scan_checkpoint,
+                &scan_record_shared,
+                &mut decode_failures,
+                &path,
+                timestamp,
+                class,
+            )
+            .await;
         }
 
         // drain remaining relocations: discovery can outpace the metadata pipeline at scan end,
@@ -995,9 +1080,15 @@ async fn run_scanner(
         }
 
         info!(
-            "Scan complete, {} files scanned in {} seconds, writing record.",
+            "Scan complete, {} files scanned in {} seconds, writing record. \
+             (skipped: {} duplicate-folder, {} no-album; unreadable: {} missing, {} transient, {} corrupt)",
             scanned,
-            duration.as_secs_f32()
+            duration.as_secs_f32(),
+            skipped_duplicate,
+            no_album,
+            decode_failures.missing,
+            decode_failures.transient,
+            decode_failures.corrupt,
         );
 
         if let Some(handle) = checkpoint_handle.take() {
@@ -1077,6 +1168,7 @@ mod tests {
 
     #[test]
     fn run_metadata_reader_forwards_decode_failure() {
+        crate::test_support::register_test_media_providers();
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let (meta_tx, _meta_rx) = channel(1);
         let (fail_tx, mut fail_rx) = channel(1);
@@ -1106,5 +1198,92 @@ mod tests {
             .expect("should have received decode failure");
         assert_eq!(received.0, nonexistent);
         assert_eq!(received.1, ts);
+        assert_eq!(received.2, ScanReadError::Missing);
+    }
+
+    #[test]
+    fn apply_decode_failure_missing_removes_existing_entry() {
+        let mut records = FxHashMap::default();
+        let path = Utf8PathBuf::from("/music/gone.flac");
+        records.insert(path.clone(), UNIX_EPOCH);
+
+        apply_decode_failure(
+            &mut records,
+            &path,
+            SystemTime::now(),
+            ScanReadError::Missing,
+        );
+
+        assert!(!records.contains_key(&path));
+    }
+
+    #[test]
+    fn apply_decode_failure_transient_leaves_no_entry() {
+        let mut records = FxHashMap::default();
+        let path = Utf8PathBuf::from("/music/locked.flac");
+        records.insert(path.clone(), UNIX_EPOCH);
+
+        apply_decode_failure(
+            &mut records,
+            &path,
+            SystemTime::now(),
+            ScanReadError::Transient,
+        );
+
+        assert!(!records.contains_key(&path));
+    }
+
+    #[test]
+    fn apply_decode_failure_corrupt_records() {
+        let mut records = FxHashMap::default();
+        let path = Utf8PathBuf::from("/music/broken.flac");
+        let ts = SystemTime::now();
+
+        apply_decode_failure(&mut records, &path, ts, ScanReadError::Corrupt);
+
+        assert_eq!(records.get(&path), Some(&ts));
+    }
+
+    #[tokio::test]
+    async fn record_decode_failure_counts_and_checkpoints_corrupt_only() {
+        let checkpoint = Mutex::new(FxHashMap::default());
+        let record = Mutex::new(ScanRecord::new_current());
+        let mut counters = DecodeFailureCounters::default();
+        let ts = SystemTime::now();
+
+        let corrupt = Utf8PathBuf::from("/music/broken.flac");
+        let locked = Utf8PathBuf::from("/music/locked.flac");
+
+        record_decode_failure(
+            &checkpoint,
+            &record,
+            &mut counters,
+            &corrupt,
+            ts,
+            ScanReadError::Corrupt,
+        )
+        .await;
+        record_decode_failure(
+            &checkpoint,
+            &record,
+            &mut counters,
+            &locked,
+            ts,
+            ScanReadError::Transient,
+        )
+        .await;
+
+        assert_eq!(counters.corrupt, 1);
+        assert_eq!(counters.transient, 1);
+        assert_eq!(counters.missing, 0);
+
+        let ckpt = checkpoint.lock().await;
+        assert_eq!(ckpt.len(), 1);
+        assert_eq!(ckpt.get(&corrupt), Some(&ts));
+        drop(ckpt);
+
+        let sr = record.lock().await;
+        assert_eq!(sr.records.get(&corrupt), Some(&ts));
+        assert!(!sr.records.contains_key(&locked));
     }
 }

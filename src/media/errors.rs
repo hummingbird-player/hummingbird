@@ -8,6 +8,8 @@ pub enum OpenError {
     FileCorrupt,
     #[error("Format not supported by decoder")]
     UnsupportedFormat,
+    #[error("I/O error: `{0:?}`")]
+    Io(std::io::ErrorKind),
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
 }

@@ -172,6 +172,53 @@ async fn insert_album(
 /// Album-path cache key: (album_id, disc_num).
 pub type AlbumPathCacheKey = (i64, i64);
 
+/// Result of writing one file's metadata, so the scan writer can count skips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackWriteOutcome {
+    /// Carries the track id for the lyrics write.
+    Written(i64),
+    /// Rejected on purpose: the album already has a genuine copy in a different folder.
+    SkippedDuplicateFolder,
+    /// The file has no album tag.
+    SkippedNoAlbum,
+}
+
+/// Whether the album's folder claim is still backed by a real track row.
+async fn album_path_still_populated(
+    conn: &mut SqliteConnection,
+    album_id: i64,
+    disc_num: i64,
+    claimed_folder: &Utf8Path,
+) -> anyhow::Result<bool> {
+    let folders: Vec<(String,)> = sqlx::query_as(include_str!(
+        "../../../queries/scan/album_path_still_populated.sql"
+    ))
+    .bind(album_id)
+    .bind(disc_num)
+    .fetch_all(&mut *conn)
+    .await?;
+    // match the guard's case rules, not SQL's byte equality
+    Ok(folders
+        .iter()
+        .any(|(folder,)| paths_equal(Utf8Path::new(folder), claimed_folder)))
+}
+
+/// Repoint an (album, disc) folder claim at a new folder.
+async fn repair_album_path(
+    conn: &mut SqliteConnection,
+    album_id: i64,
+    disc_num: i64,
+    new_folder: &Utf8Path,
+) -> anyhow::Result<()> {
+    sqlx::query(include_str!("../../../queries/scan/update_album_path.sql"))
+        .bind(album_id)
+        .bind(disc_num)
+        .bind(new_folder.as_str())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 async fn upsert_lyrics(
     conn: &mut SqliteConnection,
     track_id: i64,
@@ -193,6 +240,30 @@ async fn delete_lyrics(conn: &mut SqliteConnection, track_id: i64) -> anyhow::Re
     Ok(())
 }
 
+/// On a folder mismatch repoint the claim if it is stale (no backing rows), otherwise reject
+/// the track as a genuine duplicate. Returns true when the track may be written.
+async fn handle_folder_mismatch(
+    conn: &mut SqliteConnection,
+    album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
+    ap_key: AlbumPathCacheKey,
+    claimed: &Utf8Path,
+    parent: &Utf8Path,
+) -> anyhow::Result<bool> {
+    let (album_id, disc_num) = ap_key;
+    if album_path_still_populated(conn, album_id, disc_num, claimed).await? {
+        warn!(
+            "Rejecting track in {:?}: album id {} disc {} is claimed by {:?} (duplicate copy of the album?)",
+            parent, album_id, disc_num, claimed
+        );
+        return Ok(false);
+    }
+
+    repair_album_path(conn, album_id, disc_num, parent).await?;
+    // the cache otherwise keeps serving the stale path for the rest of the scan
+    album_path_cache.insert(ap_key, parent.to_path_buf());
+    Ok(true)
+}
+
 async fn insert_track(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
@@ -200,22 +271,17 @@ async fn insert_track(
     path: &Utf8Path,
     length: u64,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
-) -> anyhow::Result<Option<i64>> {
-    if album_id.is_none() {
-        return Ok(None);
-    }
+) -> anyhow::Result<TrackWriteOutcome> {
+    let Some(album_id_val) = album_id else {
+        return Ok(TrackWriteOutcome::SkippedNoAlbum);
+    };
 
-    let album_id_val = album_id.unwrap();
     let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
     let parent = path.parent().unwrap();
     let ap_key = (album_id_val, disc_num);
 
-    // Check album-path cache first to avoid DB round-trips
-    if let Some(cached_path) = album_path_cache.get(&ap_key) {
-        if !paths_equal(cached_path, parent) {
-            return Ok(None);
-        }
-    } else {
+    // fetch or create the claim on a cache miss
+    if album_path_cache.get(&ap_key).is_none() {
         let find_path: Result<(String,), _> =
             sqlx::query_as(include_str!("../../../queries/scan/get_album_path.sql"))
                 .bind(album_id)
@@ -223,14 +289,8 @@ async fn insert_track(
                 .fetch_one(&mut *conn)
                 .await;
 
-        match find_path {
-            Ok(found) => {
-                let found_path = Utf8PathBuf::from(&found.0);
-                album_path_cache.insert(ap_key, found_path.clone());
-                if !paths_equal(&found_path, parent) {
-                    return Ok(None);
-                }
-            }
+        let resolved = match find_path {
+            Ok(found) => Utf8PathBuf::from(&found.0),
             Err(sqlx::Error::RowNotFound) => {
                 sqlx::query(include_str!("../../../queries/scan/create_album_path.sql"))
                     .bind(album_id)
@@ -238,9 +298,21 @@ async fn insert_track(
                     .bind(disc_num)
                     .execute(&mut *conn)
                     .await?;
-                album_path_cache.insert(ap_key, parent.to_path_buf());
+                parent.to_path_buf()
             }
             Err(e) => return Err(e.into()),
+        };
+        album_path_cache.insert(ap_key, resolved);
+    }
+
+    let claimed = album_path_cache
+        .get(&ap_key)
+        .expect("album path cache populated above");
+    if !paths_equal(claimed, parent) {
+        // end the borrow before the &mut heal call
+        let claimed = claimed.clone();
+        if !handle_folder_mismatch(conn, album_path_cache, ap_key, &claimed, parent).await? {
+            return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
         }
     }
 
@@ -271,8 +343,9 @@ async fn insert_track(
             .await;
 
     match result {
-        Ok((track_id,)) => Ok(Some(track_id)),
-        Err(sqlx::Error::RowNotFound) => Ok(None),
+        Ok((track_id,)) => Ok(TrackWriteOutcome::Written(track_id)),
+        // the upsert always has a RETURNING clause, so this is unreachable in practice
+        Err(sqlx::Error::RowNotFound) => Err(anyhow::anyhow!("create_track returned no row")),
         Err(e) => Err(e.into()),
     }
 }
@@ -363,7 +436,7 @@ pub async fn update_metadata(
     artist_cache: &mut FxHashMap<String, i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<TrackWriteOutcome> {
     debug!(
         "Adding/updating record for {:?} - {:?}",
         metadata.artist, metadata.name
@@ -393,9 +466,10 @@ pub async fn update_metadata(
         album_cache,
     )
     .await?;
-    let track_id = insert_track(conn, metadata, album_id, path, length, album_path_cache).await?;
 
-    if let Some(track_id) = track_id {
+    let outcome = insert_track(conn, metadata, album_id, path, length, album_path_cache).await?;
+
+    if let TrackWriteOutcome::Written(track_id) = outcome {
         if let Some(lyrics) = &metadata.lyrics {
             upsert_lyrics(conn, track_id, lyrics).await?;
         } else {
@@ -403,7 +477,7 @@ pub async fn update_metadata(
         }
     }
 
-    Ok(())
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -457,7 +531,8 @@ mod tests {
     }
 
     use crate::test_support::{
-        add_track_to_playlist, count_rows, create_test_pool, insert_metadata, track_metadata,
+        TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata,
+        track_metadata,
     };
 
     #[tokio::test]
@@ -739,5 +814,168 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sort_name.0, "Sorted Name");
+    }
+
+    /// The per-scan caches the scan writer threads through `update_metadata`.
+    #[derive(Default)]
+    struct WriteCaches {
+        force_encountered: FxHashSet<i64>,
+        artists: FxHashMap<String, i64>,
+        albums: FxHashMap<AlbumCacheKey, i64>,
+        paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
+    }
+
+    /// Call `update_metadata` with shared caches, as the scan writer does within one scan.
+    async fn write(
+        conn: &mut SqliteConnection,
+        meta: &Metadata,
+        path: &Utf8Path,
+        caches: &mut WriteCaches,
+    ) -> TrackWriteOutcome {
+        update_metadata(
+            conn,
+            meta,
+            path,
+            100,
+            &None,
+            false,
+            &mut caches.force_encountered,
+            &mut caches.artists,
+            &mut caches.albums,
+            &mut caches.paths,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// Create a folder in the test dir and return the path of a (not yet written) track in it.
+    fn track_path(dir: &TestDir, folder: &str, file: &str) -> Utf8PathBuf {
+        let folder = dir.join(folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        Utf8PathBuf::from_path_buf(folder.join(file)).unwrap()
+    }
+
+    /// Read the folder claim of the only `album_path` row.
+    async fn sole_claim(conn: &mut SqliteConnection) -> String {
+        let (path,): (String,) = sqlx::query_as("SELECT path FROM album_path")
+            .fetch_one(conn)
+            .await
+            .unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn update_metadata_heals_stale_album_path_claim() {
+        let (dir, pool) = create_test_pool("db-heal-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path_a = track_path(&dir, "a", "track1.flac");
+        let path_b1 = track_path(&dir, "b", "track1.flac");
+        let path_b2 = track_path(&dir, "b", "track2.flac");
+
+        let mut meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        meta1.disc_current = Some(1);
+        insert_metadata(&mut conn, &meta1, &path_a).await.unwrap();
+
+        // a stale claim for disc 2, the folder holds no disc 2 rows
+        let stale = dir.utf8_join("stale");
+        let (album_id,): (i64,) = sqlx::query_as("SELECT id FROM album")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO album_path (album_id, path, disc_num) VALUES ($1, $2, 2)")
+            .bind(album_id)
+            .bind(stale.as_str())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // shared caches, as in one scan
+        let mut caches = WriteCaches::default();
+
+        let mut meta2 = track_metadata("Album", "Artist", "Track 1", 1);
+        meta2.disc_current = Some(2);
+        let outcome = write(&mut conn, &meta2, &path_b1, &mut caches).await;
+        assert!(matches!(outcome, TrackWriteOutcome::Written(_)));
+
+        // a second disc 2 file in the same scan must pass the healed claim via the cache
+        let mut meta3 = track_metadata("Album", "Artist", "Track 2", 2);
+        meta3.disc_current = Some(2);
+        let outcome = write(&mut conn, &meta3, &path_b2, &mut caches).await;
+        assert!(matches!(outcome, TrackWriteOutcome::Written(_)));
+
+        let claim: (String,) =
+            sqlx::query_as("SELECT path FROM album_path WHERE album_id = $1 AND disc_num = 2")
+                .bind(album_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+        assert_eq!(claim.0, path_b1.parent().unwrap().as_str());
+        assert_eq!(count_rows(&pool, "track").await, 3);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_genuine_duplicate_folder() {
+        let (dir, pool) = create_test_pool("db-dup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path_a = track_path(&dir, "a", "track1.flac");
+        let path_b = track_path(&dir, "b", "track1.flac");
+
+        let meta = track_metadata("Album", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta, &path_a).await.unwrap();
+
+        let outcome = write(&mut conn, &meta, &path_b, &mut WriteCaches::default()).await;
+        assert_eq!(outcome, TrackWriteOutcome::SkippedDuplicateFolder);
+
+        assert_eq!(count_rows(&pool, "track").await, 1);
+        assert_eq!(
+            sole_claim(&mut conn).await,
+            path_a.parent().unwrap().as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_metadata_populated_check_matches_case_variant_claim() {
+        let (dir, pool) = create_test_pool("db-case-populated-test").await;
+        if !crate::library::scan::fs_case::is_case_insensitive(&dir.utf8_path()) {
+            return;
+        }
+        let mut conn = pool.acquire().await.unwrap();
+
+        let path_a = track_path(&dir, "Claimed", "track1.flac");
+
+        let meta = track_metadata("Album", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta, &path_a).await.unwrap();
+
+        // stale-casing claim: the same folder on a case-insensitive volume, a different string
+        let lower = dir.utf8_join("claimed");
+        sqlx::query("UPDATE album_path SET path = $1")
+            .bind(lower.as_str())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        let path_b = track_path(&dir, "Other", "track1.flac");
+
+        // fresh caches so the claim comes from the DB
+        let outcome = write(&mut conn, &meta, &path_b, &mut WriteCaches::default()).await;
+
+        assert_eq!(outcome, TrackWriteOutcome::SkippedDuplicateFolder);
+        assert_eq!(count_rows(&pool, "track").await, 1);
+        assert_eq!(sole_claim(&mut conn).await, lower.as_str());
+    }
+
+    #[tokio::test]
+    async fn update_metadata_reports_no_album_tag() {
+        let (dir, pool) = create_test_pool("db-noalbum-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album = None;
+
+        let outcome = write(&mut conn, &meta, &path, &mut WriteCaches::default()).await;
+        assert_eq!(outcome, TrackWriteOutcome::SkippedNoAlbum);
     }
 }
