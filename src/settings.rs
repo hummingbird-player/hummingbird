@@ -1,3 +1,5 @@
+#[allow(dead_code)] // wired into PlaybackSettings in a follow-up
+pub mod equalizer;
 pub mod interface;
 pub mod playback;
 pub mod replaygain;
