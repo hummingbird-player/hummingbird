@@ -9,6 +9,7 @@ use url::Url;
 #[include = "images/*"]
 #[exclude = "*.DS_Store"]
 #[exclude = "icons/LICENSE"]
+#[exclude = "icons/LICENSE-hummingbird-icons"]
 pub struct BundledAssets;
 
 impl BundledAssets {

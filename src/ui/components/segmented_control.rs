@@ -6,14 +6,27 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::{
+    components::{icons::icon, tooltip::build_tooltip},
+    theme::Theme,
+};
 
 pub type ChangeHandler<T> = dyn Fn(&T, &mut Window, &mut App);
+
+#[derive(Clone)]
+pub enum SegmentContent {
+    Label(SharedString),
+    #[allow(dead_code)]
+    Icon {
+        path: SharedString,
+        tooltip: SharedString,
+    },
+}
 
 #[derive(IntoElement)]
 pub struct SegmentedControl<T: Clone + PartialEq + 'static> {
     id: ElementId,
-    options: SmallVec<[(T, SharedString); 5]>,
+    options: SmallVec<[(T, SegmentContent); 5]>,
     selected: Option<T>,
     on_change: Option<Rc<ChangeHandler<T>>>,
     fit_content: bool,
@@ -32,7 +45,25 @@ impl<T: Clone + PartialEq + 'static> SegmentedControl<T> {
     }
 
     pub fn option(mut self, value: T, label: impl Into<SharedString>) -> Self {
-        self.options.push((value, label.into()));
+        self.options
+            .push((value, SegmentContent::Label(label.into())));
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn option_icon(
+        mut self,
+        value: T,
+        path: impl Into<SharedString>,
+        tooltip: impl Into<SharedString>,
+    ) -> Self {
+        self.options.push((
+            value,
+            SegmentContent::Icon {
+                path: path.into(),
+                tooltip: tooltip.into(),
+            },
+        ));
         self
     }
 
@@ -62,40 +93,52 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for SegmentedControl<T> {
             .border_color(theme.elevated_border_color)
             .bg(theme.background_secondary);
 
-        for (i, (value, label)) in self.options.iter().enumerate() {
+        for (i, (value, content)) in self.options.iter().enumerate() {
             let is_selected = self.selected.as_ref() == Some(value);
             let on_change = self.on_change.clone();
             let value = value.clone();
             let segment_id: ElementId = format!("{}-seg-{}", self.id, i).into();
 
-            row = row.child(
-                div()
-                    .id(segment_id)
-                    .when(!self.fit_content, |this| this.flex_1())
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .px(px(8.0))
-                    .pt(px(3.0))
-                    .pb(px(2.0))
-                    .text_xs()
-                    .cursor_pointer()
-                    .rounded(px(3.0))
-                    .when(is_selected, |this| {
-                        this.bg(theme.button_primary)
-                            .text_color(theme.button_primary_text)
-                    })
-                    .when(!is_selected, |this| {
-                        this.text_color(theme.text_secondary)
-                            .hover(|this| this.bg(theme.playback_button_hover))
-                    })
-                    .on_click(move |_, window, cx| {
-                        if let Some(on_change) = &on_change {
-                            on_change(&value, window, cx);
-                        }
-                    })
-                    .child(label.clone()),
-            );
+            let segment = div()
+                .id(segment_id)
+                .when(!self.fit_content, |this| this.flex_1())
+                .flex()
+                .items_center()
+                .justify_center()
+                .px(px(8.0))
+                .pt(px(3.0))
+                .pb(px(2.0))
+                .text_xs()
+                .cursor_pointer()
+                .rounded(px(3.0))
+                .when(is_selected, |this| {
+                    this.bg(theme.button_primary)
+                        .text_color(theme.button_primary_text)
+                })
+                .when(!is_selected, |this| {
+                    this.text_color(theme.text_secondary)
+                        .hover(|this| this.bg(theme.playback_button_hover))
+                })
+                .on_click(move |_, window, cx| {
+                    if let Some(on_change) = &on_change {
+                        on_change(&value, window, cx);
+                    }
+                });
+
+            let text_color = if is_selected {
+                theme.button_primary_text
+            } else {
+                theme.text_secondary
+            };
+
+            let segment = match content {
+                SegmentContent::Label(label) => segment.child(label.clone()),
+                SegmentContent::Icon { path, tooltip } => segment
+                    .child(icon(path.clone()).size(px(16.0)).text_color(text_color))
+                    .tooltip(build_tooltip(tooltip.clone())),
+            };
+
+            row = row.child(segment);
         }
 
         self.div.id(self.id).child(row)

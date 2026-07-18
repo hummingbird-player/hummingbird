@@ -100,6 +100,10 @@ impl Textbox {
             cx.notify();
         });
     }
+
+    pub fn select_all(&self, cx: &mut App) {
+        self.input.update(cx, |input, cx| input.select_all_text(cx));
+    }
 }
 
 impl Render for Textbox {
