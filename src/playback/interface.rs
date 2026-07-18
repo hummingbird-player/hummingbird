@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::{
     playback::events::RepeatState,
     power::PowerManager,
-    settings::playback::PlaybackSettings,
+    settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
     ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
 };
 
@@ -168,6 +168,12 @@ impl PlaybackInterface {
     pub fn update_settings(&self, settings: PlaybackSettings) {
         self.cmd_tx
             .send(PlaybackCommand::SettingsChanged(settings))
+            .unwrap();
+    }
+
+    pub fn set_equalizer(&self, settings: EqualizerSettings) {
+        self.cmd_tx
+            .send(PlaybackCommand::SetEqualizer(settings))
             .unwrap();
     }
 

@@ -20,6 +20,7 @@ use crate::{
     media::errors::PlaybackStartError,
     playback::{events::RepeatState, session_storage::PlaybackSessionData},
     settings::{
+        equalizer::EqualizerSettings,
         playback::PlaybackSettings,
         replaygain::{ReplayGainAutoHint, calculate_gain},
     },
@@ -234,6 +235,7 @@ impl PlaybackThread {
                 PlaybackCommand::MoveItems { indices, to } => self.move_items(indices, to),
                 PlaybackCommand::Undo => self.undo(),
                 PlaybackCommand::SettingsChanged(settings) => self.settings_changed(settings),
+                PlaybackCommand::SetEqualizer(settings) => self.set_equalizer(settings),
                 PlaybackCommand::SetPositionBroadcastActive(active) => {
                     self.set_position_broadcast_active(active)
                 }
@@ -1021,6 +1023,12 @@ impl PlaybackThread {
         self.playback_settings = settings;
         self.send_event(PlaybackEvent::RepeatChanged(self.queue.repeat_state()));
         self.reapply_replaygain();
+    }
+
+    /// Applies new equalizer settings live. Persistence happens separately through save_settings.
+    fn set_equalizer(&mut self, settings: EqualizerSettings) {
+        self.engine.set_equalizer(&settings);
+        self.playback_settings.equalizer = settings;
     }
 
     fn set_position_broadcast_active(&mut self, active: bool) {

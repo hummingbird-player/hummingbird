@@ -1,7 +1,6 @@
 use tracing::{info, warn};
 
 use crate::devices::channels::{ChannelLabel, ChannelLayout, ChannelPosition};
-use crate::media::pipeline::{ChannelProducers, WriteError};
 
 pub const SURROUND_ATTENUATION: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
@@ -383,23 +382,13 @@ impl ChannelMixer {
         }
     }
 
-    /// Mix planar per-channel input planes and write the mixed planes to `output`.
-    ///
-    /// `input` is expected to carry `in_channels` planes of equal length (the number of
-    /// frames). Missing planes or samples are treated as silence. Returns the number of
-    /// frames written.
-    pub fn process(
-        &mut self,
-        input: &[Vec<f64>],
-        output: &mut ChannelProducers<f64>,
-    ) -> Result<usize, WriteError> {
+    /// Mix planar per-channel input planes into the output planes, returning the frame count.
+    /// Missing planes or samples are treated as silence.
+    pub fn mix(&mut self, input: &[Vec<f64>]) -> usize {
         let frames = (0..self.in_channels)
             .filter_map(|ch| input.get(ch).map(Vec::len))
             .min()
             .unwrap_or(0);
-        if frames == 0 {
-            return Ok(0);
-        }
 
         for plane in &mut self.output_planes {
             plane.clear();
@@ -416,11 +405,17 @@ impl ChannelMixer {
             }
         }
 
-        let slices: smallvec::SmallVec<[&[f64]; 8]> =
-            self.output_planes.iter().map(|p| p.as_slice()).collect();
-        output.write_slices(&slices)?;
+        frames
+    }
 
-        Ok(frames)
+    /// Planes produced by the last `mix` call.
+    pub fn output_planes(&self) -> &[Vec<f64>] {
+        &self.output_planes
+    }
+
+    /// Output planes, mutable so downstream DSP can run in place.
+    pub fn output_planes_mut(&mut self) -> &mut [Vec<f64>] {
+        &mut self.output_planes
     }
 }
 
@@ -804,8 +799,9 @@ mod tests {
         let (mut producers, mut consumers) =
             ChannelBuffers::<f64>::new(mixer.out_channels(), frames.max(1) * 2).split();
 
-        let written = mixer.process(&input, &mut producers).unwrap();
+        let written = mixer.mix(&input);
         assert_eq!(written, frames);
+        producers.write_vecs(mixer.output_planes()).unwrap();
 
         let read = consumers.try_read_to_staging(frames);
         assert_eq!(read, frames);
@@ -846,8 +842,7 @@ mod tests {
         let mono = ChannelLayout::Positioned(ChannelPosition::FRONT_CENTER);
         let mut mixer = ChannelMixer::new(stereo, mono, MixOptions::default());
 
-        use crate::media::pipeline::ChannelBuffers;
-        let (mut producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
-        assert_eq!(mixer.process(&[vec![], vec![]], &mut producers), Ok(0));
+        assert_eq!(mixer.mix(&[vec![], vec![]]), 0);
+        assert!(mixer.output_planes().iter().all(Vec::is_empty));
     }
 }

@@ -12,8 +12,8 @@ use crate::{
         errors::{PlaybackStartError, SeekError},
         pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
     },
-    playback::thread::media_controller::CompleteMetadata,
-    settings::playback::PlaybackSettings,
+    playback::{dsp::equalizer::EqualizerProcessor, thread::media_controller::CompleteMetadata},
+    settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
 };
 
 use super::device_controller::DeviceController;
@@ -97,6 +97,8 @@ pub struct AudioEngine {
     resampler: Option<Resampler>,
     /// Mixer between source-channel resampler output and device-channel input.
     mixer: Option<ChannelMixer>,
+    /// Parametric EQ, runs on the post-mix device-rate block.
+    eq: EqualizerProcessor,
     state: EngineState,
     /// Whether a stream reset is pending (e.g., after seek).
     pending_reset: bool,
@@ -113,6 +115,8 @@ impl AudioEngine {
             pipeline: None,
             resampler: None,
             mixer: None,
+            // re-synced to the real stream format on stream creation
+            eq: EqualizerProcessor::new(48_000.0, 2),
             state: EngineState::Idle,
             pending_reset: false,
             drain: DrainState::Inactive,
@@ -133,6 +137,8 @@ impl AudioEngine {
                 e
             )));
         }
+
+        self.sync_eq_format();
 
         Ok(())
     }
@@ -186,6 +192,7 @@ impl AudioEngine {
                     e
                 )));
             }
+            self.sync_eq_format();
 
             if let Err(e) = self.device.play() {
                 error!("Device was recreated and we still can't play: {:?}", e);
@@ -271,6 +278,7 @@ impl AudioEngine {
                                     e
                                 )));
                             }
+                            self.sync_eq_format();
                         }
                         self.pending_reset = false;
                     }
@@ -287,6 +295,7 @@ impl AudioEngine {
                                 e
                             )));
                         }
+                        self.sync_eq_format();
 
                         if let Err(e) = self.device.play() {
                             return Err(EngineError::DeviceError(format!(
@@ -369,8 +378,8 @@ impl AudioEngine {
         result
     }
 
-    /// Drop everything buffered from before a seek: the device's own queue, both pipeline ring
-    /// buffers, and the resampler/mixer state, so post-seek audio plays cleanly and immediately.
+    /// Drop everything buffered before a seek: the device's own queue, both pipeline ring buffers,
+    /// and the resampler/mixer/EQ state, so post-seek audio plays cleanly and immediately.
     fn flush_for_seek(&mut self) {
         if self.device.has_stream() {
             if let Err(err) = self.device.reset() {
@@ -386,6 +395,7 @@ impl AudioEngine {
         if let Some(mixer) = &mut self.mixer {
             mixer.reset();
         }
+        self.eq.reset();
         if let Some(pipeline) = &mut self.pipeline {
             pipeline.flush_buffers();
         }
@@ -428,13 +438,24 @@ impl AudioEngine {
         self.device.current_format()
     }
 
+    /// Sync the EQ to the current stream format. Called after every stream (re)creation.
+    fn sync_eq_format(&mut self) {
+        let Some(format) = self.device.current_format() else {
+            return;
+        };
+        self.eq.set_sample_rate(f64::from(format.sample_rate));
+        self.eq
+            .set_channel_count(format.channels.to_layout().count().max(1));
+    }
+
     /// Update settings that affect playback.
-    ///
-    /// Currently this is a placeholder for future settings that might affect
-    /// the audio engine directly (e.g., resampler quality settings).
-    pub fn update_settings(&mut self, _settings: &PlaybackSettings) {
-        // Currently no engine-specific settings to update.
-        // This method exists for future extensibility.
+    pub fn update_settings(&mut self, settings: &PlaybackSettings) {
+        self.eq.set_config(&settings.equalizer);
+    }
+
+    /// Apply new equalizer settings live.
+    pub fn set_equalizer(&mut self, settings: &EqualizerSettings) {
+        self.eq.set_config(settings);
     }
 
     /// Enable or disable loop-aware decoding on the media stream.
@@ -561,7 +582,7 @@ impl AudioEngine {
                     );
                 }
             }
-            Self::route_resampler_output(p, &mut self.mixer);
+            Self::route_resampler_output(p, &mut self.mixer, &mut self.eq);
         }
 
         match self.consume_to_device() {
@@ -605,6 +626,7 @@ impl AudioEngine {
                 error!(parent: &s, "Failed to recreate stream: {:?}", e);
                 return EngineCycleResult::NothingToDo;
             }
+            self.sync_eq_format();
 
             let Some(pipeline) = &mut self.pipeline else {
                 return EngineCycleResult::NothingToDo;
@@ -691,6 +713,7 @@ impl AudioEngine {
         self.pipeline = None;
         self.resampler = None;
         self.mixer = None;
+        self.eq.reset();
         self.drain = DrainState::Inactive;
         self.rebuild_attempts = 0;
     }
@@ -749,7 +772,7 @@ impl AudioEngine {
                 if rate == p.target_rate {
                     if let Some(mut old) = self.resampler.take() {
                         info!("Source rate now matches device; dropping resampler");
-                        Self::flush_old_resampler(&mut old, p, &mut self.mixer);
+                        Self::flush_old_resampler(&mut old, p, &mut self.mixer, &mut self.eq);
                     }
                 } else {
                     let duration = self.media.frame_duration().unwrap_or(1024);
@@ -770,7 +793,7 @@ impl AudioEngine {
                                  duration {}); flushing and rebuilding resampler",
                                 p.source_rate, rate, duration
                             );
-                            Self::flush_old_resampler(&mut old, p, &mut self.mixer);
+                            Self::flush_old_resampler(&mut old, p, &mut self.mixer, &mut self.eq);
                         }
                         let resampler = Resampler::new(
                             rate,
@@ -807,18 +830,28 @@ impl AudioEngine {
             }
         }
 
-        Self::route_resampler_output(p, &mut self.mixer);
+        Self::route_resampler_output(p, &mut self.mixer, &mut self.eq);
 
         Ok(DecodeStepResult::Continue)
     }
 
-    fn route_resampler_output(p: &mut AudioPipeline, mixer: &mut Option<ChannelMixer>) {
+    fn route_resampler_output(
+        p: &mut AudioPipeline,
+        mixer: &mut Option<ChannelMixer>,
+        eq: &mut EqualizerProcessor,
+    ) {
         let result = if let Some(mixer) = mixer {
-            mixer
-                .process(&p.resampler_output, &mut p.device_input_producers)
-                .map(|_| ())
+            let frames = mixer.mix(&p.resampler_output);
+            eq.process(mixer.output_planes_mut(), frames);
+            Self::passthrough_to_device(
+                mixer.output_planes(),
+                frames,
+                &mut p.device_input_producers,
+            )
         } else if p.source_channel_count == p.device_channel_count {
-            Self::passthrough_to_device(&p.resampler_output, &mut p.device_input_producers)
+            let frames = p.resampler_output.iter().map(Vec::len).min().unwrap_or(0);
+            eq.process(&mut p.resampler_output, frames);
+            Self::passthrough_to_device(&p.resampler_output, frames, &mut p.device_input_producers)
         } else {
             warn!(
                 "No mixer for {} -> {} channel mismatch; dropping frames",
@@ -841,6 +874,7 @@ impl AudioEngine {
         old: &mut Resampler,
         p: &mut AudioPipeline,
         mixer: &mut Option<ChannelMixer>,
+        eq: &mut EqualizerProcessor,
     ) {
         if old.channels() != p.source_channel_count {
             warn!(
@@ -854,7 +888,7 @@ impl AudioEngine {
         let flushed = old.flush_into(&mut p.resampler_output);
         if flushed > 0 {
             info!("flushed {flushed} tail frames from the previous resampler");
-            Self::route_resampler_output(p, mixer);
+            Self::route_resampler_output(p, mixer, eq);
         }
     }
 
@@ -866,7 +900,7 @@ impl AudioEngine {
             return;
         };
 
-        Self::flush_old_resampler(resampler, p, &mut self.mixer);
+        Self::flush_old_resampler(resampler, p, &mut self.mixer, &mut self.eq);
 
         // do it a few times to ensure all buffered frames are flushed (in case the entire buffer is
         // not consumed in a single pass)
@@ -883,13 +917,13 @@ impl AudioEngine {
 
     fn passthrough_to_device(
         input: &[Vec<f64>],
+        frames: usize,
         output: &mut crate::media::pipeline::ChannelProducers<f64>,
     ) -> Result<(), crate::media::pipeline::WriteError> {
-        let frames = input.first().map(|v| v.len()).unwrap_or(0);
         if frames == 0 {
             return Ok(());
         }
-        let slices: smallvec::SmallVec<[&[f64]; 8]> = input.iter().map(|v| v.as_slice()).collect();
+        let slices: smallvec::SmallVec<[&[f64]; 8]> = input.iter().map(|v| &v[..frames]).collect();
 
         output.write_slices(&slices)
     }
@@ -948,4 +982,97 @@ enum DecodeStepResult {
     Eof,
     FatalError(String),
     Rebuild(PipelineOverrides),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::channels::{ChannelLayout, ChannelPosition};
+    use crate::settings::equalizer::{EqBandKind, EqBandSettings, EqualizerSettings};
+
+    fn sine(frequency: f64, frames: usize, sample_rate: f64) -> Vec<f64> {
+        (0..frames)
+            .map(|i| (2.0 * std::f64::consts::PI * frequency * i as f64 / sample_rate).sin())
+            .collect()
+    }
+
+    fn config(kind: EqBandKind, frequency: f64, gain_db: f64, enabled: bool) -> EqualizerSettings {
+        EqualizerSettings {
+            enabled,
+            bands: vec![EqBandSettings {
+                kind,
+                frequency,
+                gain_db,
+                q: 1.0,
+                enabled: true,
+            }],
+        }
+    }
+
+    fn peak(planes: &[Vec<f64>]) -> f64 {
+        planes
+            .iter()
+            .flat_map(|p| p.iter())
+            .fold(0.0_f64, |peak, &s| peak.max(s.abs()))
+    }
+
+    #[test]
+    fn route_passthrough_applies_eq() {
+        let mut p = AudioPipeline::new(2, 2, 48_000, 48_000, 64);
+        let mut eq = EqualizerProcessor::new(48_000.0, 2);
+        eq.set_config(&config(EqBandKind::Bell, 1_000.0, 24.0, true));
+
+        let dry = sine(1_000.0, 64 * 64, 48_000.0);
+        let in_peak = peak(std::slice::from_ref(&dry));
+        let mut out_peak = 0.0;
+        // the gain ramp needs a few blocks to converge
+        for block in 0..64 {
+            let chunk: Vec<f64> = dry[block * 64..(block + 1) * 64].to_vec();
+            p.resampler_output = vec![chunk.clone(), chunk];
+            AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq);
+            assert_eq!(p.device_input.try_read_to_staging(64), 64);
+            out_peak = peak(p.device_input.staging());
+        }
+
+        assert!(out_peak > in_peak * 10.0);
+        assert!(out_peak < in_peak * 25.0);
+    }
+
+    #[test]
+    fn route_passthrough_bypassed_eq_is_bit_exact() {
+        let mut p = AudioPipeline::new(2, 2, 48_000, 48_000, 64);
+        let mut eq = EqualizerProcessor::new(48_000.0, 2);
+        eq.set_config(&config(EqBandKind::Bell, 1_000.0, 24.0, false));
+
+        let dry = sine(1_000.0, 64, 48_000.0);
+        p.resampler_output = vec![dry.clone(), dry.clone()];
+        AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq);
+
+        assert_eq!(p.device_input.try_read_to_staging(64), 64);
+        assert_eq!(p.device_input.staging()[0], dry);
+    }
+
+    #[test]
+    fn route_mixer_path_applies_eq_after_mixing() {
+        let mut p = AudioPipeline::new(1, 2, 48_000, 48_000, 64);
+        let mut mixer = Some(ChannelMixer::new(
+            ChannelLayout::Positioned(ChannelPosition::FRONT_CENTER),
+            ChannelLayout::Positioned(ChannelPosition::FRONT_LEFT | ChannelPosition::FRONT_RIGHT),
+            MixOptions::default(),
+        ));
+        let mut eq = EqualizerProcessor::new(48_000.0, 2);
+        eq.set_config(&config(EqBandKind::Notch, 1_000.0, 0.0, true));
+
+        let dry = sine(1_000.0, 64 * 64, 48_000.0);
+        let mut out_peak = 1.0;
+        for block in 0..64 {
+            p.resampler_output = vec![dry[block * 64..(block + 1) * 64].to_vec()];
+            AudioEngine::route_resampler_output(&mut p, &mut mixer, &mut eq);
+            assert_eq!(p.device_input.try_read_to_staging(64), 64);
+            assert_eq!(p.device_input.staging().len(), 2);
+            out_peak = peak(p.device_input.staging());
+        }
+
+        assert!(out_peak < 0.01);
+    }
 }
