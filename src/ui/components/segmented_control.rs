@@ -16,7 +16,6 @@ pub type ChangeHandler<T> = dyn Fn(&T, &mut Window, &mut App);
 #[derive(Clone)]
 pub enum SegmentContent {
     Label(SharedString),
-    #[allow(dead_code)]
     Icon {
         path: SharedString,
         tooltip: SharedString,
@@ -50,7 +49,6 @@ impl<T: Clone + PartialEq + 'static> SegmentedControl<T> {
         self
     }
 
-    #[allow(dead_code)]
     pub fn option_icon(
         mut self,
         value: T,

@@ -20,6 +20,15 @@ impl EqBandKind {
     pub fn has_gain(self) -> bool {
         matches!(self, Self::Bell)
     }
+
+    /// The Q a band of this type starts with, Butterworth for the passes.
+    pub fn default_q(self) -> f64 {
+        match self {
+            Self::Bell => 1.0,
+            Self::LowPass | Self::HighPass => std::f64::consts::FRAC_1_SQRT_2,
+            Self::BandPass | Self::Notch => 4.0,
+        }
+    }
 }
 
 /// A single parametric equalizer band.

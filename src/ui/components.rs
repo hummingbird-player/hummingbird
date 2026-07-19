@@ -7,7 +7,6 @@ pub mod drag_drop;
 pub mod dropdown;
 pub mod icons;
 pub mod input;
-#[allow(dead_code)]
 pub mod knob;
 pub mod label;
 pub mod labeled_slider;

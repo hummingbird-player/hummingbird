@@ -51,6 +51,26 @@ pub fn format_hz(hz: f64) -> String {
     }
 }
 
+/// Inverse of `format_hz`, accepts "1240", "1.24k", "1.24 kHz" and friends.
+pub fn parse_hz(text: &str) -> Option<f64> {
+    let text = text.trim().to_lowercase();
+    let (text, multiplier) = match text.strip_suffix("hz") {
+        Some(text) => match text.trim_end().strip_suffix("k") {
+            Some(text) => (text, 1_000.0),
+            None => (text, 1.0),
+        },
+        None => match text.strip_suffix("k") {
+            Some(text) => (text, 1_000.0),
+            None => (text.as_str(), 1.0),
+        },
+    };
+    text.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value * multiplier)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +133,30 @@ mod tests {
         assert_eq!(format_hz(1_250.0), "1.25 kHz");
         assert_eq!(format_hz(10_000.0), "10 kHz");
         assert_eq!(format_hz(20_000.0), "20 kHz");
+    }
+
+    #[test]
+    fn parse_hz_variants() {
+        assert_eq!(parse_hz("1240"), Some(1_240.0));
+        assert_eq!(parse_hz("1.24k"), Some(1_240.0));
+        assert_eq!(parse_hz("1.24 kHz"), Some(1_240.0));
+        assert_eq!(parse_hz(" 20 hz "), Some(20.0));
+        assert_eq!(parse_hz("20Hz"), Some(20.0));
+        assert_eq!(parse_hz("10 K"), Some(10_000.0));
+    }
+
+    #[test]
+    fn parse_hz_rejects_garbage() {
+        for text in ["", "k", "hz", "abc", "-5", "0", "nan", "inf", "1.2.3"] {
+            assert_eq!(parse_hz(text), None, "{text:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn format_parse_round_trip() {
+        for hz in [20.0, 100.0, 999.0, 1_000.0, 1_240.0, 6_300.0, 20_000.0] {
+            let parsed = parse_hz(&format_hz(hz)).unwrap();
+            assert!((parsed - hz).abs() / hz < 0.01, "{hz} -> {parsed}");
+        }
     }
 }

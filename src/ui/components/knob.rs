@@ -27,27 +27,6 @@ const ERROR_FLASH: Duration = Duration::from_millis(600);
 const ARC_START: f32 = -3.0 * std::f32::consts::FRAC_PI_4;
 const ARC_SWEEP: f32 = 3.0 * std::f32::consts::FRAC_PI_2;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum KnobTaper {
-    Linear,
-    Log,
-}
-
-// Log spreads low values over more travel, finer control at the bottom of the range
-pub(crate) fn taper_position(taper: KnobTaper, value: f32) -> f32 {
-    match taper {
-        KnobTaper::Linear => value,
-        KnobTaper::Log => (1.0 + value * (std::f32::consts::E - 1.0)).ln(),
-    }
-}
-
-pub(crate) fn taper_value(taper: KnobTaper, position: f32) -> f32 {
-    match taper {
-        KnobTaper::Linear => position,
-        KnobTaper::Log => (position.exp() - 1.0) / (std::f32::consts::E - 1.0),
-    }
-}
-
 fn arc_point(center: Point<Pixels>, radius: f32, angle: f32) -> Point<Pixels> {
     point(
         center.x + px(radius * angle.sin()),
@@ -124,7 +103,6 @@ pub struct Knob {
     style: StyleRefinement,
     value: f32,
     default_value: Option<f32>,
-    taper: KnobTaper,
     bipolar: bool,
     label: Option<SharedString>,
     format: Rc<ValueFormatter>,
@@ -141,11 +119,6 @@ impl Knob {
 
     pub fn default_value(mut self, value: f32) -> Self {
         self.default_value = Some(value);
-        self
-    }
-
-    pub fn taper(mut self, taper: KnobTaper) -> Self {
-        self.taper = taper;
         self
     }
 
@@ -335,8 +308,7 @@ impl Element for Knob {
 
         let center = arc_center(bounds);
         let angle = |position: f32| ARC_START + ARC_SWEEP * position;
-        let value = self.value.clamp(0.0, 1.0);
-        let position = taper_position(self.taper, value);
+        let position = self.value.clamp(0.0, 1.0);
         let from = if self.bipolar { 0.5 } else { 0.0 };
 
         let mut track = PathBuilder::stroke(px(2.5));
@@ -424,7 +396,6 @@ impl Element for Knob {
         };
 
         let hitbox = prepaint.hitbox.clone();
-        let taper = self.taper;
         let format = self.format.clone();
         let parse = self.parse.clone();
         let default_value = self.default_value;
@@ -473,7 +444,7 @@ impl Element for Knob {
                                 },
                             );
                             textbox.update(cx, |textbox, cx| {
-                                textbox.set_value(cx, (format)(value));
+                                textbox.set_value(cx, (format)(position));
                                 textbox.select_all(cx);
                             });
                             let focus = textbox.read(cx).focus_handle();
@@ -510,7 +481,7 @@ impl Element for Knob {
                     let dy: f32 = (start_y - ev.position.y).into();
                     let scale = if ev.modifiers.shift { 0.1 } else { 1.0 };
                     let position = (start_position + dy / DRAG_PIXELS * scale).clamp(0.0, 1.0);
-                    (on_change.borrow_mut())(taper_value(taper, position), cx);
+                    (on_change.borrow_mut())(position, cx);
                 });
             }
 
@@ -541,14 +512,15 @@ impl Element for Knob {
                         ev.delta.pixel_delta(px(SCROLL_STEP)).y.into()
                     };
                     let position = (position + delta).clamp(0.0, 1.0);
-                    (on_change.borrow_mut())(taper_value(taper, position), cx);
+                    (on_change.borrow_mut())(position, cx);
                 });
             }
 
             {
                 let state = state.clone();
                 window.on_key_event(move |ev: &KeyDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || ev.keystroke.key != "escape" {
+                    // capture phase, an open editor cancels before the graph clears selection
+                    if phase != DispatchPhase::Capture || ev.keystroke.key != "escape" {
                         return;
                     }
 
@@ -577,35 +549,11 @@ pub fn knob(id: impl Into<ElementId>) -> Knob {
         style: StyleRefinement::default(),
         value: 0.0,
         default_value: None,
-        taper: KnobTaper::Linear,
         bipolar: false,
         label: None,
         format: Rc::new(|value| format!("{value:.2}").into()),
         parse: None,
         on_change: None,
         disabled: false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{KnobTaper, taper_position, taper_value};
-
-    #[test]
-    fn taper_round_trips() {
-        for taper in [KnobTaper::Linear, KnobTaper::Log] {
-            for i in 0..=100 {
-                let value = i as f32 / 100.0;
-                let position = taper_position(taper, value);
-                assert!((taper_value(taper, position) - value).abs() < 1e-5);
-            }
-        }
-    }
-
-    #[test]
-    fn log_taper_spreads_low_values() {
-        assert!(taper_position(KnobTaper::Log, 0.0).abs() < 1e-6);
-        assert!((taper_position(KnobTaper::Log, 1.0) - 1.0).abs() < 1e-6);
-        assert!(taper_position(KnobTaper::Log, 0.5) > 0.5);
     }
 }

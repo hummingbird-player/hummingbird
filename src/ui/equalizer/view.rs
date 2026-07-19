@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Task, Window,
-    div, prelude::FluentBuilder, px,
+    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, Point, Render,
+    Styled, Task, Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -21,11 +21,22 @@ use crate::{
             icons::TRASH,
             label::label,
         },
-        equalizer::graph::eq_graph,
+        equalizer::{
+            band_editor::{BandEdit, band_editor},
+            graph::{PlotSlot, dot_position, eq_graph},
+        },
         models::PlaybackInfo,
         theme::Theme,
     },
 };
+
+/// Frozen popover position plus the inputs that re-anchor it when they change.
+#[derive(Clone, Copy)]
+struct PopoverAnchor {
+    selected: Option<usize>,
+    plot: Option<Bounds<Pixels>>,
+    point: Point<Pixels>,
+}
 
 pub struct EqualizerView {
     settings: Entity<Settings>,
@@ -33,6 +44,8 @@ pub struct EqualizerView {
     sample_rate: u32,
     selected: Option<usize>,
     dragging: bool,
+    popover_anchor: Option<PopoverAnchor>,
+    plot_slot: PlotSlot,
     confirm_reset: bool,
     save_task: Option<Task<()>>,
 }
@@ -98,10 +111,26 @@ impl EqualizerView {
                 sample_rate,
                 selected: None,
                 dragging: false,
+                popover_anchor: None,
+                plot_slot: Rc::new(Cell::new(None)),
                 confirm_reset: false,
                 save_task: None,
             }
         })
+    }
+
+    /// Remove a band and keep the selection coherent.
+    fn remove_band(&mut self, cx: &mut Context<Self>, index: usize) {
+        self.mutate(cx, |config| {
+            if index < config.bands.len() {
+                config.bands.remove(index);
+            }
+        });
+        match self.selected {
+            Some(selected) if selected == index => self.selected = None,
+            Some(selected) if selected > index => self.selected = Some(selected - 1),
+            _ => {}
+        }
     }
 
     /// Single funnel for edits: apply, push live to the DSP, arm the save debounce.
@@ -139,7 +168,30 @@ impl Render for EqualizerView {
         let caption_color = cx.global::<Theme>().text_secondary;
         let view = cx.entity().clone();
 
-        let mut graph = eq_graph("eq-graph", &self.config).selected(self.selected);
+        let plot = self.plot_slot.get();
+        let dot = self
+            .selected
+            .and_then(|index| Some(dot_position(self.config.bands.get(index)?, plot?)));
+        // the anchor freezes once computed, released on drag end, selection, or layout changes
+        let anchor = self
+            .popover_anchor
+            .filter(|anchor| anchor.selected == self.selected && anchor.plot == plot)
+            .map(|anchor| anchor.point)
+            .or(dot);
+        self.popover_anchor = anchor.map(|point| PopoverAnchor {
+            selected: self.selected,
+            plot,
+            point,
+        });
+        let editor = anchor.and_then(|point| {
+            let index = self.selected?;
+            let band = *self.config.bands.get(index)?;
+            Some((index, point, band))
+        });
+
+        let mut graph = eq_graph("eq-graph", &self.config)
+            .selected(self.selected)
+            .plot_slot(self.plot_slot.clone());
         if self.sample_rate > 0 {
             graph = graph.sample_rate(f64::from(self.sample_rate));
         }
@@ -172,20 +224,7 @@ impl Render for EqualizerView {
             .on_remove({
                 let view = view.clone();
                 move |index, cx| {
-                    view.update(cx, |this, cx| {
-                        this.mutate(cx, |config| {
-                            if index < config.bands.len() {
-                                config.bands.remove(index);
-                            }
-                        });
-                        match this.selected {
-                            Some(selected) if selected == index => this.selected = None,
-                            Some(selected) if selected > index => {
-                                this.selected = Some(selected - 1)
-                            }
-                            _ => {}
-                        }
-                    });
+                    view.update(cx, |this, cx| this.remove_band(cx, index));
                 }
             })
             .on_toggle_enabled({
@@ -231,7 +270,13 @@ impl Render for EqualizerView {
             .on_drag_active({
                 let view = view.clone();
                 move |active, cx| {
-                    view.update(cx, |this, _| this.dragging = active);
+                    view.update(cx, |this, _| {
+                        this.dragging = active;
+                        if !active {
+                            // re-anchor the popover onto the dot's resting spot
+                            this.popover_anchor = None;
+                        }
+                    });
                 }
             });
 
@@ -302,6 +347,50 @@ impl Render for EqualizerView {
                             cx.notify();
                         });
                     }),
+                )
+            })
+            .when_some(editor, |this, (index, point, band)| {
+                let view = cx.entity().clone();
+                this.child(
+                    band_editor(index, band, point)
+                        .on_edit({
+                            let view = view.clone();
+                            move |edit, cx| {
+                                view.update(cx, |this, cx| {
+                                    this.mutate(cx, |config| {
+                                        let Some(band) = config.bands.get_mut(index) else {
+                                            return;
+                                        };
+                                        match edit {
+                                            BandEdit::Kind(kind) => {
+                                                // follow the default Q across types, keep a custom
+                                                // one
+                                                if band.q == band.kind.default_q() {
+                                                    band.q = kind.default_q();
+                                                }
+                                                band.kind = kind;
+                                            }
+                                            BandEdit::Frequency(frequency) => {
+                                                band.frequency = frequency
+                                            }
+                                            BandEdit::Gain(gain_db) => band.gain_db = gain_db,
+                                            BandEdit::Q(q) => band.q = q,
+                                            BandEdit::Enabled(enabled) => band.enabled = enabled,
+                                        }
+                                    });
+                                });
+                            }
+                        })
+                        .on_remove({
+                            let view = view.clone();
+                            move |cx| view.update(cx, |this, cx| this.remove_band(cx, index))
+                        })
+                        .on_dismiss(move |_, cx| {
+                            view.update(cx, |this, cx| {
+                                this.selected = None;
+                                cx.notify();
+                            });
+                        }),
                 )
             })
     }

@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Instant,
+};
 
 use gpui::*;
 
@@ -48,7 +52,12 @@ struct DragState {
     start: Point<Pixels>,
     start_frequency: f64,
     start_gain_db: f64,
+    was_selected: bool,
+    moved: bool,
 }
+
+/// Slot the graph writes its plot area into each frame, so the view can anchor popovers to dots.
+pub type PlotSlot = Rc<Cell<Option<Bounds<Pixels>>>>;
 
 struct CurveCache {
     config: EqualizerSettings,
@@ -81,7 +90,7 @@ fn composite_db(config: &EqualizerSettings, rate: f64, frequency: f64) -> f64 {
         .sum()
 }
 
-fn dot_position(band: &EqBandSettings, plot: Bounds<Pixels>) -> Point<Pixels> {
+pub(crate) fn dot_position(band: &EqBandSettings, plot: Bounds<Pixels>) -> Point<Pixels> {
     let x = freq_to_x(band.frequency as f32, plot.size.width.into());
     let gain = if band.kind.has_gain() {
         band.gain_db as f32
@@ -206,6 +215,7 @@ pub struct EqGraph {
     on_scroll_q: Option<Rc<RefCell<ScrollQHandler>>>,
     on_add: Option<Rc<RefCell<AddHandler>>>,
     on_drag_active: Option<Rc<RefCell<DragActiveHandler>>>,
+    plot_slot: Option<PlotSlot>,
 }
 
 impl EqGraph {
@@ -260,6 +270,12 @@ impl EqGraph {
 
     pub fn on_drag_active(mut self, on_drag_active: impl FnMut(bool, &mut App) + 'static) -> Self {
         self.on_drag_active = Some(Rc::new(RefCell::new(on_drag_active)));
+        self
+    }
+
+    /// Receives the plot area each frame so popovers can anchor to a band dot.
+    pub fn plot_slot(mut self, slot: PlotSlot) -> Self {
+        self.plot_slot = Some(slot);
         self
     }
 }
@@ -329,6 +345,13 @@ impl Element for EqGraph {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let plot = plot_bounds(bounds);
+        if let Some(slot) = &self.plot_slot
+            && slot.get() != Some(plot)
+        {
+            slot.set(Some(plot));
+            // re-render so the anchored band editor tracks the new layout
+            window.refresh();
+        }
         let plot_width: f32 = plot.size.width.into();
         let plot_height: f32 = plot.size.height.into();
         let scale = window.scale_factor();
@@ -718,8 +741,13 @@ impl Element for EqGraph {
                                         state.borrow().last_add.is_some_and(|(at, band)| {
                                             band == index && at.elapsed().as_millis() < 500
                                         });
-                                    if !fresh && let Some(toggle) = &on_toggle_enabled {
-                                        (toggle.borrow_mut())(index, cx);
+                                    if !fresh {
+                                        if let Some(toggle) = &on_toggle_enabled {
+                                            (toggle.borrow_mut())(index, cx);
+                                        }
+                                        if let Some(select) = &on_select {
+                                            (select.borrow_mut())(Some(index), cx);
+                                        }
                                     }
                                 }
                                 MouseButton::Left => {
@@ -732,6 +760,8 @@ impl Element for EqGraph {
                                             start: ev.position,
                                             start_frequency: band.frequency,
                                             start_gain_db: band.gain_db,
+                                            was_selected: selected == Some(index),
+                                            moved: false,
                                         });
                                         if let Some(drag_active) = &on_drag_active {
                                             (drag_active.borrow_mut())(true, cx);
@@ -767,6 +797,8 @@ impl Element for EqGraph {
                                     start: ev.position,
                                     start_frequency: frequency,
                                     start_gain_db: gain_db,
+                                    was_selected: false,
+                                    moved: false,
                                 });
                                 state.last_add = Some((Instant::now(), index));
                                 drop(state);
@@ -795,7 +827,8 @@ impl Element for EqGraph {
                         return;
                     }
 
-                    if let Some(drag) = state.borrow().drag {
+                    let drag = state.borrow().drag;
+                    if let Some(mut drag) = drag {
                         let Some(on_change) = &on_band_change else {
                             return;
                         };
@@ -806,11 +839,15 @@ impl Element for EqGraph {
                         let scale = if ev.modifiers.shift { 0.1 } else { 1.0 };
                         let width: f32 = plot.size.width.into();
                         let dx: f32 = (ev.position.x - drag.start.x).into();
+                        let dy: f32 = (ev.position.y - drag.start.y).into();
+                        if !drag.moved && dx.abs() + dy.abs() > 3.0 {
+                            drag.moved = true;
+                            state.borrow_mut().drag = Some(drag);
+                        }
                         let start_x = freq_to_x(drag.start_frequency as f32, width);
                         let frequency = x_to_freq(start_x + dx * scale, width) as f64;
                         let gain_db = if band.kind.has_gain() {
                             let height: f32 = plot.size.height.into();
-                            let dy: f32 = (ev.position.y - drag.start.y).into();
                             let db = drag.start_gain_db
                                 - f64::from(dy * scale) * 2.0 * f64::from(DB_WINDOW)
                                     / f64::from(height);
@@ -837,14 +874,23 @@ impl Element for EqGraph {
             {
                 let state = state.clone();
                 let on_drag_active = on_drag_active.clone();
+                let on_select = on_select.clone();
                 window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
-                    if state.borrow_mut().drag.take().is_some()
-                        && let Some(drag_active) = &on_drag_active
-                    {
+                    let Some(drag) = state.borrow_mut().drag.take() else {
+                        return;
+                    };
+                    if let Some(drag_active) = &on_drag_active {
                         (drag_active.borrow_mut())(false, cx);
+                    }
+                    // a click that never moved off the selected dot dismisses it
+                    if !drag.moved
+                        && drag.was_selected
+                        && let Some(select) = &on_select
+                    {
+                        (select.borrow_mut())(None, cx);
                     }
                 });
             }
@@ -924,5 +970,6 @@ pub fn eq_graph(id: impl Into<ElementId>, config: &EqualizerSettings) -> EqGraph
         on_scroll_q: None,
         on_add: None,
         on_drag_active: None,
+        plot_slot: None,
     }
 }
