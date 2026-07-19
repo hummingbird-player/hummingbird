@@ -24,7 +24,7 @@ pub fn clamp_frequency(frequency: f64, sample_rate: f64) -> f64 {
 }
 
 #[inline]
-fn omega(frequency: f64, sample_rate: f64) -> f64 {
+pub(crate) fn omega(frequency: f64, sample_rate: f64) -> f64 {
     2.0 * PI * frequency / sample_rate
 }
 
@@ -105,7 +105,6 @@ impl Biquad {
     }
 
     /// Analytic magnitude response in dB at angular frequency `omega`.
-    #[allow(dead_code)]
     pub fn magnitude_db(&self, omega: f64) -> f64 {
         let (c1, c2) = (omega.cos(), (2.0 * omega).cos());
         let (s1, s2) = (omega.sin(), (2.0 * omega).sin());
@@ -147,7 +146,6 @@ impl BiquadState {
 
 /// Analytic response of a single band in dB. Used by the UI to draw the curve, so display and DSP
 /// can never disagree.
-#[allow(dead_code)]
 pub fn band_response_db(band: &EqBandSettings, sample_rate: f64, at_frequency: f64) -> f64 {
     Biquad::new(band.kind, sample_rate, band.frequency, band.gain_db, band.q)
         .magnitude_db(omega(at_frequency, sample_rate))

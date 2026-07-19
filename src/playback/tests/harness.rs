@@ -4,6 +4,8 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+use tokio::sync::mpsc::unbounded_channel;
+
 use crate::playback::thread::audio_engine::{AudioEngine, EngineCycleResult};
 
 pub fn engine_lock() -> MutexGuard<'static, ()> {
@@ -43,7 +45,7 @@ pub fn configure_device_death(frames: usize) {
 pub fn engine_playing(path: &Path) -> AudioEngine {
     crate::test_support::register_test_media_providers();
 
-    let mut engine = AudioEngine::new();
+    let mut engine = AudioEngine::new(unbounded_channel().0);
     engine.initialize().expect("engine initialization failed");
     engine.set_volume(1.0).expect("failed to set volume");
     engine

@@ -335,6 +335,14 @@ impl PlaybackInterface {
                                 cx.notify();
                             })
                         }
+                        PlaybackEvent::SampleRateChanged(rate) => {
+                            playback_info.sample_rate.update(cx, |m, cx| {
+                                if *m != rate {
+                                    *m = rate;
+                                    cx.notify();
+                                }
+                            })
+                        }
                     }
                 }
             }

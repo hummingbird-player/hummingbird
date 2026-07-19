@@ -112,6 +112,7 @@ impl PlaybackThread {
     ) -> PlaybackInterface {
         let (commands_tx, commands_rx) = unbounded_channel();
         let (events_tx, events_rx) = unbounded_channel();
+        let engine_events_tx = events_tx.clone();
 
         std::thread::Builder::new()
             .name("playback".to_string())
@@ -126,7 +127,7 @@ impl PlaybackThread {
                     last_timestamp: u64::MAX,
                     last_broadcast_timestamp: u64::MAX,
                     position_broadcast_active: true,
-                    engine: AudioEngine::new(),
+                    engine: AudioEngine::new(engine_events_tx),
                     queue: queue_manager,
                     initial_volume: last_volume,
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,

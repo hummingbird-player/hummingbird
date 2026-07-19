@@ -135,4 +135,6 @@ pub enum PlaybackEvent {
     VolumeChanged(f64),
     /// Indicates that stop-after-current has been set or cleared.
     StopAfterCurrentChanged(bool),
+    /// Indicates that the output stream's sample rate has changed.
+    SampleRateChanged(u32),
 }

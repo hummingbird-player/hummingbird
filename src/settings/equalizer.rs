@@ -15,6 +15,13 @@ pub enum EqBandKind {
     Notch,
 }
 
+impl EqBandKind {
+    /// Whether bands of this type apply their `gain_db`.
+    pub fn has_gain(self) -> bool {
+        matches!(self, Self::Bell)
+    }
+}
+
 /// A single parametric equalizer band.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

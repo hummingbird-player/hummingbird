@@ -455,6 +455,48 @@
     "plural": false,
     "description": null
   },
+  "EQUALIZER": {
+    "context": "settings.rs",
+    "definedIn": "src/ui/settings.rs:161",
+    "plural": false,
+    "description": null
+  },
+  "EQ_ENABLED": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:251",
+    "plural": false,
+    "description": null
+  },
+  "EQ_GRAPH_HINT": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:271",
+    "plural": false,
+    "description": null
+  },
+  "EQ_RESET": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:264",
+    "plural": false,
+    "description": null
+  },
+  "EQ_RESET_BODY": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:281",
+    "plural": false,
+    "description": null
+  },
+  "EQ_RESET_CONFIRM": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:286",
+    "plural": false,
+    "description": null
+  },
+  "EQ_RESET_TITLE": {
+    "context": "view.rs",
+    "definedIn": "src/ui/equalizer/view.rs:280",
+    "plural": false,
+    "description": null
+  },
   "EXPAND_SIDEBAR": {
     "context": "sidebar.rs",
     "definedIn": "src/ui/library/sidebar.rs:230",
@@ -535,7 +577,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:154",
+    "definedIn": "src/ui/settings.rs:158",
     "plural": false,
     "description": null
   },
@@ -679,7 +721,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:155",
+    "definedIn": "src/ui/settings.rs:159",
     "plural": false,
     "description": null
   },
@@ -715,7 +757,7 @@
   },
   "LIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:309",
+    "definedIn": "src/ui/library/release_view.rs:305",
     "plural": false,
     "description": null
   },
@@ -787,7 +829,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:156",
+    "definedIn": "src/ui/settings.rs:160",
     "plural": false,
     "description": null
   },
@@ -913,13 +955,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:416",
+    "definedIn": "src/ui/library/release_view.rs:412",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:431",
+    "definedIn": "src/ui/library/release_view.rs:427",
     "plural": false,
     "description": null
   },
@@ -1213,7 +1255,7 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:157",
+    "definedIn": "src/ui/settings.rs:162",
     "plural": false,
     "description": null
   },
@@ -1327,7 +1369,7 @@
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:82",
+    "definedIn": "src/ui/settings.rs:83",
     "plural": false,
     "description": null
   },
@@ -1615,7 +1657,7 @@
   },
   "UNLIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:307",
+    "definedIn": "src/ui/library/release_view.rs:303",
     "plural": false,
     "description": null
   },
@@ -1633,7 +1675,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:159",
+    "definedIn": "src/ui/settings.rs:164",
     "plural": false,
     "description": null
   },

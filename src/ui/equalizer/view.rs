@@ -1,0 +1,308 @@
+use std::time::Duration;
+
+use cntp_i18n::tr;
+use gpui::{
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Task, Window,
+    div, prelude::FluentBuilder, px,
+};
+
+use crate::{
+    playback::interface::PlaybackInterface,
+    settings::{
+        Settings, SettingsGlobal,
+        equalizer::{EqBandSettings, EqualizerSettings, MAX_EQ_BANDS},
+        save_settings,
+    },
+    ui::{
+        components::{
+            action_dialog::{ActionDialog, ActionDialogAction},
+            button::{ButtonIntent, ButtonStyle, button},
+            checkbox::checkbox,
+            icons::TRASH,
+            label::label,
+        },
+        equalizer::graph::eq_graph,
+        models::PlaybackInfo,
+        theme::Theme,
+    },
+};
+
+pub struct EqualizerView {
+    settings: Entity<Settings>,
+    config: EqualizerSettings,
+    sample_rate: u32,
+    selected: Option<usize>,
+    dragging: bool,
+    confirm_reset: bool,
+    save_task: Option<Task<()>>,
+}
+
+impl EqualizerView {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
+            let settings = cx.global::<SettingsGlobal>().model.clone();
+            let mut config = settings.read(cx).playback.equalizer.clone();
+            config.bands.truncate(MAX_EQ_BANDS);
+
+            // hot-reloads and external edits sync in, unless a drag owns the state
+            cx.observe(&settings, |this: &mut Self, settings, cx| {
+                if this.dragging {
+                    return;
+                }
+                let mut config = settings.read(cx).playback.equalizer.clone();
+                config.bands.truncate(MAX_EQ_BANDS);
+                if config != this.config {
+                    this.config = config;
+                    if this.selected.is_some_and(|i| i >= this.config.bands.len()) {
+                        this.selected = None;
+                    }
+                    cx.notify();
+                }
+            })
+            .detach();
+
+            // a pending debounced save dies with the view, flush it on release
+            cx.on_release(|this, cx| {
+                if this.settings.read(cx).playback.equalizer == this.config {
+                    return;
+                }
+                let config = this.config.clone();
+                this.settings.update(cx, |settings, cx| {
+                    settings.playback.equalizer = config;
+                    save_settings(cx, settings);
+                    cx.notify();
+                });
+            })
+            .detach();
+
+            // redraw the curve when the output stream's rate changes
+            let sample_rate = if cx.has_global::<PlaybackInfo>() {
+                let model = cx.global::<PlaybackInfo>().sample_rate.clone();
+                let rate = *model.read(cx);
+                cx.observe(&model, |this: &mut Self, model, cx| {
+                    let rate = *model.read(cx);
+                    if rate != this.sample_rate {
+                        this.sample_rate = rate;
+                        cx.notify();
+                    }
+                })
+                .detach();
+                rate
+            } else {
+                0
+            };
+
+            Self {
+                settings,
+                config,
+                sample_rate,
+                selected: None,
+                dragging: false,
+                confirm_reset: false,
+                save_task: None,
+            }
+        })
+    }
+
+    /// Single funnel for edits: apply, push live to the DSP, arm the save debounce.
+    pub fn mutate(&mut self, cx: &mut Context<Self>, update: impl FnOnce(&mut EqualizerSettings)) {
+        update(&mut self.config);
+        self.config.bands.truncate(MAX_EQ_BANDS);
+
+        if cx.has_global::<PlaybackInterface>() {
+            cx.global::<PlaybackInterface>()
+                .set_equalizer(self.config.clone());
+        }
+
+        // persist on the trailing edge so rapid edits collapse into one write
+        self.save_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            this.update(cx, |this, cx| {
+                let config = this.config.clone();
+                this.settings.update(cx, |settings, cx| {
+                    settings.playback.equalizer = config;
+                    save_settings(cx, settings);
+                    cx.notify();
+                });
+            })
+            .ok();
+        }));
+
+        cx.notify();
+    }
+}
+
+impl Render for EqualizerView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let caption_color = cx.global::<Theme>().text_secondary;
+        let view = cx.entity().clone();
+
+        let mut graph = eq_graph("eq-graph", &self.config).selected(self.selected);
+        if self.sample_rate > 0 {
+            graph = graph.sample_rate(f64::from(self.sample_rate));
+        }
+
+        let graph = graph
+            .on_band_change({
+                let view = view.clone();
+                move |index, frequency, gain_db, cx| {
+                    view.update(cx, |this, cx| {
+                        this.mutate(cx, |config| {
+                            if let Some(band) = config.bands.get_mut(index) {
+                                band.frequency = frequency;
+                                if band.kind.has_gain() {
+                                    band.gain_db = gain_db;
+                                }
+                            }
+                        });
+                    });
+                }
+            })
+            .on_select({
+                let view = view.clone();
+                move |selected, cx| {
+                    view.update(cx, |this, cx| {
+                        this.selected = selected;
+                        cx.notify();
+                    });
+                }
+            })
+            .on_remove({
+                let view = view.clone();
+                move |index, cx| {
+                    view.update(cx, |this, cx| {
+                        this.mutate(cx, |config| {
+                            if index < config.bands.len() {
+                                config.bands.remove(index);
+                            }
+                        });
+                        match this.selected {
+                            Some(selected) if selected == index => this.selected = None,
+                            Some(selected) if selected > index => {
+                                this.selected = Some(selected - 1)
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+            })
+            .on_toggle_enabled({
+                let view = view.clone();
+                move |index, cx| {
+                    view.update(cx, |this, cx| {
+                        this.mutate(cx, |config| {
+                            if let Some(band) = config.bands.get_mut(index) {
+                                band.enabled = !band.enabled;
+                            }
+                        });
+                    });
+                }
+            })
+            .on_scroll_q({
+                let view = view.clone();
+                move |index, q, cx| {
+                    view.update(cx, |this, cx| {
+                        this.mutate(cx, |config| {
+                            if let Some(band) = config.bands.get_mut(index) {
+                                band.q = q;
+                            }
+                        });
+                    });
+                }
+            })
+            .on_add({
+                let view = view.clone();
+                move |frequency, gain_db, cx| {
+                    view.update(cx, |this, cx| {
+                        let band = EqBandSettings {
+                            frequency,
+                            gain_db,
+                            ..Default::default()
+                        };
+                        this.mutate(cx, |config| config.bands.push(band));
+                        let index = this.config.bands.len() - 1;
+                        this.selected = Some(index);
+                        index
+                    })
+                }
+            })
+            .on_drag_active({
+                let view = view.clone();
+                move |active, cx| {
+                    view.update(cx, |this, _| this.dragging = active);
+                }
+            });
+
+        div()
+            .flex_grow()
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        label("eq-enabled", tr!("EQ_ENABLED", "Enable equalizer"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let enabled = !this.config.enabled;
+                                this.mutate(cx, |config| config.enabled = enabled);
+                            }))
+                            .child(checkbox("eq-enabled-check", self.config.enabled)),
+                    )
+                    .child(
+                        button()
+                            .id("eq-reset")
+                            .style(ButtonStyle::Regular)
+                            .intent(ButtonIntent::Secondary)
+                            .child(tr!("EQ_RESET", "Reset"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirm_reset = true;
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().text_xs().text_color(caption_color).child(tr!(
+                        "EQ_GRAPH_HINT",
+                        "Click the curve to add a band · right-click a dot to remove it"
+                    ))),
+            )
+            .child(graph.flex_grow().min_h(px(160.0)))
+            .when(self.confirm_reset, |this| {
+                let view = view.clone();
+                this.child(
+                    ActionDialog::new(
+                        tr!("EQ_RESET_TITLE", "Reset equalizer"),
+                        tr!("EQ_RESET_BODY", "Remove all bands? This cannot be undone."),
+                    )
+                    .action(ActionDialogAction::new(
+                        "eq-reset-confirm",
+                        TRASH,
+                        tr!("EQ_RESET_CONFIRM", "Remove all bands"),
+                        ButtonIntent::Danger,
+                        {
+                            let view = view.clone();
+                            move |_, _, cx| {
+                                view.update(cx, |this, cx| {
+                                    this.confirm_reset = false;
+                                    this.selected = None;
+                                    this.mutate(cx, |config| config.bands.clear());
+                                });
+                            }
+                        },
+                    ))
+                    .on_dismiss(move |_, cx| {
+                        view.update(cx, |this, cx| {
+                            this.confirm_reset = false;
+                            cx.notify();
+                        });
+                    }),
+                )
+            })
+    }
+}

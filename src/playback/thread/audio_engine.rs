@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tracing::{error, info, trace_span, warn};
 
 use crate::{
@@ -12,7 +13,10 @@ use crate::{
         errors::{PlaybackStartError, SeekError},
         pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
     },
-    playback::{dsp::equalizer::EqualizerProcessor, thread::media_controller::CompleteMetadata},
+    playback::{
+        dsp::equalizer::EqualizerProcessor, events::PlaybackEvent,
+        thread::media_controller::CompleteMetadata,
+    },
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
 };
 
@@ -99,6 +103,10 @@ pub struct AudioEngine {
     mixer: Option<ChannelMixer>,
     /// Parametric EQ, runs on the post-mix device-rate block.
     eq: EqualizerProcessor,
+    /// Event channel to the UI, used to report the device stream rate.
+    events_tx: UnboundedSender<PlaybackEvent>,
+    /// Last rate reported to the UI, events only fire on change.
+    reported_sample_rate: u32,
     state: EngineState,
     /// Whether a stream reset is pending (e.g., after seek).
     pending_reset: bool,
@@ -108,7 +116,7 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new() -> Self {
+    pub fn new(events_tx: UnboundedSender<PlaybackEvent>) -> Self {
         Self {
             media: MediaController::new(),
             device: DeviceController::new(),
@@ -117,6 +125,8 @@ impl AudioEngine {
             mixer: None,
             // re-synced to the real stream format on stream creation
             eq: EqualizerProcessor::new(48_000.0, 2),
+            events_tx,
+            reported_sample_rate: 0,
             state: EngineState::Idle,
             pending_reset: false,
             drain: DrainState::Inactive,
@@ -443,6 +453,12 @@ impl AudioEngine {
         let Some(format) = self.device.current_format() else {
             return;
         };
+        if self.reported_sample_rate != format.sample_rate {
+            self.reported_sample_rate = format.sample_rate;
+            let _ = self
+                .events_tx
+                .send(PlaybackEvent::SampleRateChanged(format.sample_rate));
+        }
         self.eq.set_sample_rate(f64::from(format.sample_rate));
         self.eq
             .set_channel_count(format.channels.to_layout().count().max(1));
@@ -972,7 +988,7 @@ impl AudioEngine {
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(unbounded_channel().0)
     }
 }
 

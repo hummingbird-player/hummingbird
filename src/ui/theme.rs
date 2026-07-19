@@ -92,6 +92,17 @@ pub struct Theme {
     pub slider_foreground: Rgba,
     pub slider_background: Rgba,
 
+    pub eq_grid_line: Rgba,
+    pub eq_grid_line_zero: Rgba,
+    pub eq_curve: Rgba,
+    pub eq_curve_fill: Rgba,
+    pub eq_band_curve: Rgba,
+    pub eq_dot: Rgba,
+    pub eq_dot_selected: Rgba,
+    pub eq_dot_disabled: Rgba,
+    pub eq_spectrum_pre: Rgba,
+    pub eq_spectrum_post: Rgba,
+
     pub elevated_background: Rgba,
     pub elevated_border_color: Rgba,
 
@@ -242,6 +253,17 @@ impl Default for Theme {
 
             slider_foreground: rgb(0x688CF0),
             slider_background: rgb(0x38374E),
+
+            eq_grid_line: rgb(0x202233),
+            eq_grid_line_zero: rgb(0x2B2F44),
+            eq_curve: rgb(0x688CF0),
+            eq_curve_fill: rgba(0x688CF02E),
+            eq_band_curve: rgb(0x93ACF2),
+            eq_dot: rgb(0xA0A1AD),
+            eq_dot_selected: rgb(0x5774E7),
+            eq_dot_disabled: rgb(0x5F5F71),
+            eq_spectrum_pre: rgba(0xA0A1AD1A),
+            eq_spectrum_post: rgba(0x688CF024),
 
             elevated_background: rgb(0x161820),
             elevated_border_color: rgb(0x23253B),
