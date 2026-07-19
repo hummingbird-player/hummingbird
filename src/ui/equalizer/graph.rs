@@ -12,7 +12,7 @@ use crate::{
     ui::{
         equalizer::mapping::{
             CURVE_MAX_DB, CURVE_MIN_DB, DB_WINDOW, db_to_y, db_to_y_unclamped, format_hz,
-            freq_to_x, scroll_q, x_to_freq,
+            freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq,
         },
         theme::Theme,
     },
@@ -159,6 +159,35 @@ fn curve_path(builder: &mut PathBuilder, samples: &[f32], plot: Bounds<Pixels>, 
     }
 }
 
+// Top edge of a spectrum curve as a Catmull-Rom spline, points spread evenly across the width
+fn spectrum_path(builder: &mut PathBuilder, points: &[f32], plot: Bounds<Pixels>) {
+    let width: f32 = plot.size.width.into();
+    let height: f32 = plot.size.height.into();
+    let last = points.len().saturating_sub(1);
+    if last == 0 {
+        return;
+    }
+    // plot-local pixels for a display point index
+    let at = |i: usize| {
+        (
+            i as f32 / last as f32 * width,
+            spectrum_db_to_y(points[i], height),
+        )
+    };
+    let vertex = |(x, y): (f32, f32)| point(plot.origin.x + px(x), plot.origin.y + px(y));
+
+    builder.move_to(vertex(at(0)));
+    for i in 0..last {
+        let (x0, y0) = at(i.saturating_sub(1));
+        let (x1, y1) = at(i);
+        let (x2, y2) = at(i + 1);
+        let (x3, y3) = at((i + 2).min(last));
+        let ctrl_a = vertex((x1 + (x2 - x0) / 6.0, y1 + (y2 - y0) / 6.0));
+        let ctrl_b = vertex((x2 - (x3 - x1) / 6.0, y2 - (y3 - y1) / 6.0));
+        builder.cubic_bezier_to(vertex((x2, y2)), ctrl_a, ctrl_b);
+    }
+}
+
 // Plot area inside the panel, leaving room for axis labels
 fn plot_bounds(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     Bounds::new(
@@ -208,6 +237,8 @@ pub struct EqGraph {
     config: EqualizerSettings,
     sample_rate: f64,
     selected: Option<usize>,
+    spectrum_pre: Rc<Vec<f32>>,
+    spectrum_post: Rc<Vec<f32>>,
     on_band_change: Option<Rc<RefCell<BandChangeHandler>>>,
     on_select: Option<Rc<RefCell<SelectHandler>>>,
     on_remove: Option<Rc<RefCell<IndexHandler>>>,
@@ -227,6 +258,13 @@ impl EqGraph {
 
     pub fn selected(mut self, selected: Option<usize>) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Latest analyzer curves, dB values spread across the plot width, empty vecs paint nothing.
+    pub fn spectrum(mut self, pre: Rc<Vec<f32>>, post: Rc<Vec<f32>>) -> Self {
+        self.spectrum_pre = pre;
+        self.spectrum_post = post;
         self
     }
 
@@ -299,6 +337,8 @@ pub struct EqGraphPrepaint {
     plot: Bounds<Pixels>,
     composite: Rc<Vec<f32>>,
     band_curve: Option<Rc<Vec<f32>>>,
+    spectrum_pre: Rc<Vec<f32>>,
+    spectrum_post: Rc<Vec<f32>>,
     scale: f32,
     labels: Vec<(ShapedLine, Point<Pixels>)>,
     dots: Vec<Point<Pixels>>,
@@ -487,6 +527,8 @@ impl Element for EqGraph {
             plot,
             composite,
             band_curve,
+            spectrum_pre: self.spectrum_pre.clone(),
+            spectrum_post: self.spectrum_post.clone(),
             scale,
             labels,
             dots,
@@ -514,6 +556,9 @@ impl Element for EqGraph {
         let grid_zero = theme.eq_grid_line_zero;
         let curve_color = theme.eq_curve;
         let curve_fill = theme.eq_curve_fill;
+        let spectrum_pre = theme.eq_spectrum_pre;
+        let spectrum_post = theme.eq_spectrum_post;
+        let spectrum_edge = theme.eq_spectrum_edge;
         let band_color = theme.eq_band_curve;
         let dot_color = theme.eq_dot;
         let dot_selected = theme.eq_dot_selected;
@@ -563,7 +608,36 @@ impl Element for EqGraph {
         }
 
         let zero_y = plot.origin.y + px(db_to_y(0.0, plot_height));
+        let bottom_y = plot.origin.y + plot.size.height;
         window.with_content_mask(Some(ContentMask { bounds: plot }), |window| {
+            for (points, color) in [
+                (&prepaint.spectrum_pre, spectrum_pre),
+                (&prepaint.spectrum_post, spectrum_post),
+            ] {
+                if points.is_empty() {
+                    continue;
+                }
+                let mut fill = PathBuilder::fill();
+                spectrum_path(&mut fill, points, plot);
+                fill.line_to(point(plot.origin.x + plot.size.width, bottom_y));
+                fill.line_to(point(plot.origin.x, bottom_y));
+                if let Ok(path) = fill.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            if !prepaint.spectrum_post.is_empty() {
+                // dimmed alongside the response curve while the EQ is bypassed
+                let mut edge_color: Hsla = spectrum_edge.into();
+                if !self.config.enabled {
+                    edge_color.a *= 0.4;
+                }
+                let mut edge = PathBuilder::stroke(px(1.5));
+                spectrum_path(&mut edge, &prepaint.spectrum_post, plot);
+                if let Ok(path) = edge.build() {
+                    window.paint_path(path, edge_color);
+                }
+            }
+
             if let Some(band_curve) = &prepaint.band_curve {
                 let mut builder = PathBuilder::stroke(px(1.5));
                 curve_path(&mut builder, band_curve, plot, prepaint.scale);
@@ -963,6 +1037,8 @@ pub fn eq_graph(id: impl Into<ElementId>, config: &EqualizerSettings) -> EqGraph
         config: config.clone(),
         sample_rate: 48_000.0,
         selected: None,
+        spectrum_pre: Rc::default(),
+        spectrum_post: Rc::default(),
         on_band_change: None,
         on_select: None,
         on_remove: None,

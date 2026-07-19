@@ -6,7 +6,7 @@ use gpui::App;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    playback::events::RepeatState,
+    playback::{dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
     power::PowerManager,
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
     ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
@@ -32,6 +32,7 @@ use super::{
 pub struct PlaybackInterface {
     cmd_tx: UnboundedSender<PlaybackCommand>,
     events_rx: Option<UnboundedReceiver<PlaybackEvent>>,
+    spectrum_tap: Option<SpectrumTapConsumer>,
 }
 
 impl gpui::Global for PlaybackInterface {}
@@ -40,11 +41,18 @@ impl PlaybackInterface {
     pub fn new(
         cmd_tx: UnboundedSender<PlaybackCommand>,
         events_rx: UnboundedReceiver<PlaybackEvent>,
+        spectrum_tap: SpectrumTapConsumer,
     ) -> Self {
         Self {
             cmd_tx,
             events_rx: Some(events_rx),
+            spectrum_tap: Some(spectrum_tap),
         }
+    }
+
+    /// Consumer half of the spectrum taps, taken once when the spectrum analyzer starts.
+    pub fn take_spectrum_tap(&mut self) -> Option<SpectrumTapConsumer> {
+        self.spectrum_tap.take()
     }
 
     pub fn play(&self) {

@@ -493,7 +493,7 @@
   },
   "EQ_ENABLED": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:296",
+    "definedIn": "src/ui/equalizer/view.rs:338",
     "plural": false,
     "description": null
   },
@@ -529,31 +529,31 @@
   },
   "EQ_GRAPH_HINT": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:316",
+    "definedIn": "src/ui/equalizer/view.rs:358",
     "plural": false,
     "description": null
   },
   "EQ_RESET": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:309",
+    "definedIn": "src/ui/equalizer/view.rs:351",
     "plural": false,
     "description": null
   },
   "EQ_RESET_BODY": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:326",
+    "definedIn": "src/ui/equalizer/view.rs:368",
     "plural": false,
     "description": null
   },
   "EQ_RESET_CONFIRM": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:331",
+    "definedIn": "src/ui/equalizer/view.rs:373",
     "plural": false,
     "description": null
   },
   "EQ_RESET_TITLE": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:325",
+    "definedIn": "src/ui/equalizer/view.rs:367",
     "plural": false,
     "description": null
   },

@@ -13,6 +13,9 @@ pub const DB_WINDOW: f32 = 30.0;
 pub const CURVE_MIN_DB: f64 = -90.0;
 pub const CURVE_MAX_DB: f64 = 36.0;
 
+/// Spectrum dB floor, mapped to the graph's bottom edge.
+pub const SPECTRUM_MIN_DB: f32 = -96.0;
+
 /// Horizontal pixel for a frequency, log scale.
 pub fn freq_to_x(freq: f32, width: f32) -> f32 {
     let t = (freq.clamp(MIN_FREQ, MAX_FREQ).log10() - MIN_FREQ.log10())
@@ -34,6 +37,11 @@ pub fn db_to_y(db: f32, height: f32) -> f32 {
 /// Unclamped variant for curve samples, which may plunge off the plot for the content mask to cut.
 pub fn db_to_y_unclamped(db: f32, height: f32) -> f32 {
     (DB_WINDOW - db) / (2.0 * DB_WINDOW) * height
+}
+
+/// Vertical pixel for a spectrum dB value, the spectrum spans the floor up to the window top.
+pub fn spectrum_db_to_y(db: f32, height: f32) -> f32 {
+    (DB_WINDOW - db) / (DB_WINDOW - SPECTRUM_MIN_DB) * height
 }
 
 /// Multiplicative Q nudge from scroll input, one notch per wheel line.
@@ -114,6 +122,14 @@ mod tests {
         assert_eq!(db_to_y_unclamped(0.0, 420.0), 210.0);
         assert!(db_to_y_unclamped(-90.0, 420.0) > 420.0);
         assert!(db_to_y_unclamped(36.0, 420.0) < 0.0);
+    }
+
+    #[test]
+    fn spectrum_db_y_endpoints() {
+        assert_eq!(spectrum_db_to_y(SPECTRUM_MIN_DB, 420.0), 420.0);
+        assert_eq!(spectrum_db_to_y(DB_WINDOW, 420.0), 0.0);
+        assert_eq!(spectrum_db_to_y(-30.0, 420.0), 200.0);
+        assert!(spectrum_db_to_y(CURVE_MAX_DB as f32, 420.0) < 0.0);
     }
 
     #[test]

@@ -1,4 +1,12 @@
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use cntp_i18n::tr;
 use gpui::{
@@ -24,6 +32,7 @@ use crate::{
         equalizer::{
             band_editor::{BandEdit, band_editor},
             graph::{PlotSlot, dot_position, eq_graph},
+            spectrum::{SpectrumData, SpectrumState, ensure_analyzer},
         },
         models::PlaybackInfo,
         theme::Theme,
@@ -46,6 +55,9 @@ pub struct EqualizerView {
     dragging: bool,
     popover_anchor: Option<PopoverAnchor>,
     plot_slot: PlotSlot,
+    spectrum: Option<Entity<SpectrumData>>,
+    /// Shared viewer count gating the audio taps, decremented when the view is released.
+    spectrum_viewers: Option<Arc<AtomicUsize>>,
     confirm_reset: bool,
     save_task: Option<Task<()>>,
 }
@@ -76,6 +88,10 @@ impl EqualizerView {
 
             // a pending debounced save dies with the view, flush it on release
             cx.on_release(|this, cx| {
+                // one less open view, the taps gate shut when the last view leaves
+                if let Some(viewers) = &this.spectrum_viewers {
+                    viewers.fetch_sub(1, Ordering::Relaxed);
+                }
                 if this.settings.read(cx).playback.equalizer == this.config {
                     return;
                 }
@@ -105,6 +121,20 @@ impl EqualizerView {
                 0
             };
 
+            // the process-long analyzer publishes into a shared entity, open views gate the taps
+            ensure_analyzer(cx);
+            let (spectrum, spectrum_viewers) = if cx.has_global::<SpectrumState>() {
+                let (data, viewers) = {
+                    let state = cx.global::<SpectrumState>();
+                    (state.data.clone(), state.viewers.clone())
+                };
+                viewers.fetch_add(1, Ordering::Relaxed);
+                cx.observe(&data, |_, _, cx| cx.notify()).detach();
+                (Some(data), Some(viewers))
+            } else {
+                (None, None)
+            };
+
             Self {
                 settings,
                 config,
@@ -113,6 +143,8 @@ impl EqualizerView {
                 dragging: false,
                 popover_anchor: None,
                 plot_slot: Rc::new(Cell::new(None)),
+                spectrum,
+                spectrum_viewers,
                 confirm_reset: false,
                 save_task: None,
             }
@@ -189,8 +221,18 @@ impl Render for EqualizerView {
             Some((index, point, band))
         });
 
+        let (spectrum_pre, spectrum_post) = self
+            .spectrum
+            .as_ref()
+            .map(|spectrum| {
+                let spectrum = spectrum.read(cx);
+                (spectrum.pre.clone(), spectrum.post.clone())
+            })
+            .unwrap_or_default();
+
         let mut graph = eq_graph("eq-graph", &self.config)
             .selected(self.selected)
+            .spectrum(spectrum_pre, spectrum_post)
             .plot_slot(self.plot_slot.clone());
         if self.sample_rate > 0 {
             graph = graph.sample_rate(f64::from(self.sample_rate));

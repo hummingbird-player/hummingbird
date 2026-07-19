@@ -148,6 +148,7 @@ A `theme.json` for the default theme is provided here.
   "eq_dot_disabled": "#5F5F71",
   "eq_spectrum_pre": "#A0A1AD1A",
   "eq_spectrum_post": "#688CF024",
+  "eq_spectrum_edge": "#688CF099",
 
   "elevated_background": "#161820",
   "elevated_border_color": "#23253B",

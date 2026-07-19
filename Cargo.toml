@@ -49,6 +49,7 @@ open = "5"
 postcard = { version = "1", features = ["use-std"] }
 rand = "0.10"
 raw-window-handle = "0.6"
+realfft = "3"
 regex = "1"
 rtrb = "0.3"
 rubato = "3"

@@ -102,6 +102,7 @@ pub struct Theme {
     pub eq_dot_disabled: Rgba,
     pub eq_spectrum_pre: Rgba,
     pub eq_spectrum_post: Rgba,
+    pub eq_spectrum_edge: Rgba,
 
     pub elevated_background: Rgba,
     pub elevated_border_color: Rgba,
@@ -264,6 +265,7 @@ impl Default for Theme {
             eq_dot_disabled: rgb(0x5F5F71),
             eq_spectrum_pre: rgba(0xA0A1AD1A),
             eq_spectrum_post: rgba(0x688CF024),
+            eq_spectrum_edge: rgba(0x688CF099),
 
             elevated_background: rgb(0x161820),
             elevated_border_color: rgb(0x23253B),

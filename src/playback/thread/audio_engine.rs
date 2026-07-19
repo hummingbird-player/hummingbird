@@ -14,7 +14,11 @@ use crate::{
         pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
     },
     playback::{
-        dsp::equalizer::EqualizerProcessor, events::PlaybackEvent,
+        dsp::{
+            equalizer::EqualizerProcessor,
+            spectrum::{SpectrumTap, spectrum_tap},
+        },
+        events::PlaybackEvent,
         thread::media_controller::CompleteMetadata,
     },
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
@@ -103,6 +107,8 @@ pub struct AudioEngine {
     mixer: Option<ChannelMixer>,
     /// Parametric EQ, runs on the post-mix device-rate block.
     eq: EqualizerProcessor,
+    /// Spectrum taps bracketing the EQ stage, gated by the analyzer's UI flag.
+    tap: SpectrumTap,
     /// Event channel to the UI, used to report the device stream rate.
     events_tx: UnboundedSender<PlaybackEvent>,
     /// Last rate reported to the UI, events only fire on change.
@@ -116,7 +122,7 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new(events_tx: UnboundedSender<PlaybackEvent>) -> Self {
+    pub fn new(events_tx: UnboundedSender<PlaybackEvent>, tap: SpectrumTap) -> Self {
         Self {
             media: MediaController::new(),
             device: DeviceController::new(),
@@ -125,6 +131,7 @@ impl AudioEngine {
             mixer: None,
             // re-synced to the real stream format on stream creation
             eq: EqualizerProcessor::new(48_000.0, 2),
+            tap,
             events_tx,
             reported_sample_rate: 0,
             state: EngineState::Idle,
@@ -598,7 +605,7 @@ impl AudioEngine {
                     );
                 }
             }
-            Self::route_resampler_output(p, &mut self.mixer, &mut self.eq);
+            Self::route_resampler_output(p, &mut self.mixer, &mut self.eq, &mut self.tap);
         }
 
         match self.consume_to_device() {
@@ -788,7 +795,13 @@ impl AudioEngine {
                 if rate == p.target_rate {
                     if let Some(mut old) = self.resampler.take() {
                         info!("Source rate now matches device; dropping resampler");
-                        Self::flush_old_resampler(&mut old, p, &mut self.mixer, &mut self.eq);
+                        Self::flush_old_resampler(
+                            &mut old,
+                            p,
+                            &mut self.mixer,
+                            &mut self.eq,
+                            &mut self.tap,
+                        );
                     }
                 } else {
                     let duration = self.media.frame_duration().unwrap_or(1024);
@@ -809,7 +822,13 @@ impl AudioEngine {
                                  duration {}); flushing and rebuilding resampler",
                                 p.source_rate, rate, duration
                             );
-                            Self::flush_old_resampler(&mut old, p, &mut self.mixer, &mut self.eq);
+                            Self::flush_old_resampler(
+                                &mut old,
+                                p,
+                                &mut self.mixer,
+                                &mut self.eq,
+                                &mut self.tap,
+                            );
                         }
                         let resampler = Resampler::new(
                             rate,
@@ -846,7 +865,7 @@ impl AudioEngine {
             }
         }
 
-        Self::route_resampler_output(p, &mut self.mixer, &mut self.eq);
+        Self::route_resampler_output(p, &mut self.mixer, &mut self.eq, &mut self.tap);
 
         Ok(DecodeStepResult::Continue)
     }
@@ -855,10 +874,11 @@ impl AudioEngine {
         p: &mut AudioPipeline,
         mixer: &mut Option<ChannelMixer>,
         eq: &mut EqualizerProcessor,
+        tap: &mut SpectrumTap,
     ) {
         let result = if let Some(mixer) = mixer {
             let frames = mixer.mix(&p.resampler_output);
-            eq.process(mixer.output_planes_mut(), frames);
+            Self::eq_with_tap(eq, tap, mixer.output_planes_mut(), frames);
             Self::passthrough_to_device(
                 mixer.output_planes(),
                 frames,
@@ -866,7 +886,7 @@ impl AudioEngine {
             )
         } else if p.source_channel_count == p.device_channel_count {
             let frames = p.resampler_output.iter().map(Vec::len).min().unwrap_or(0);
-            eq.process(&mut p.resampler_output, frames);
+            Self::eq_with_tap(eq, tap, &mut p.resampler_output, frames);
             Self::passthrough_to_device(&p.resampler_output, frames, &mut p.device_input_producers)
         } else {
             warn!(
@@ -885,12 +905,25 @@ impl AudioEngine {
         p.clear_resampler_output();
     }
 
+    /// Tap the planes around the EQ stage, pre and post rings always see the same frames.
+    fn eq_with_tap(
+        eq: &mut EqualizerProcessor,
+        tap: &mut SpectrumTap,
+        planes: &mut [Vec<f64>],
+        frames: usize,
+    ) {
+        let tapped = tap.push_pre(planes, frames);
+        eq.process(planes, frames);
+        tap.push_post(planes, tapped);
+    }
+
     /// Flush the resampler and clear its output.
     fn flush_old_resampler(
         old: &mut Resampler,
         p: &mut AudioPipeline,
         mixer: &mut Option<ChannelMixer>,
         eq: &mut EqualizerProcessor,
+        tap: &mut SpectrumTap,
     ) {
         if old.channels() != p.source_channel_count {
             warn!(
@@ -904,7 +937,7 @@ impl AudioEngine {
         let flushed = old.flush_into(&mut p.resampler_output);
         if flushed > 0 {
             info!("flushed {flushed} tail frames from the previous resampler");
-            Self::route_resampler_output(p, mixer, eq);
+            Self::route_resampler_output(p, mixer, eq, tap);
         }
     }
 
@@ -916,7 +949,7 @@ impl AudioEngine {
             return;
         };
 
-        Self::flush_old_resampler(resampler, p, &mut self.mixer, &mut self.eq);
+        Self::flush_old_resampler(resampler, p, &mut self.mixer, &mut self.eq, &mut self.tap);
 
         // do it a few times to ensure all buffered frames are flushed (in case the entire buffer is
         // not consumed in a single pass)
@@ -988,7 +1021,7 @@ impl AudioEngine {
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new(unbounded_channel().0)
+        Self::new(unbounded_channel().0, spectrum_tap().0)
     }
 }
 
@@ -1040,12 +1073,13 @@ mod tests {
 
         let dry = sine(1_000.0, 64 * 64, 48_000.0);
         let in_peak = peak(std::slice::from_ref(&dry));
+        let (mut tap, _consumer) = spectrum_tap();
         let mut out_peak = 0.0;
         // the gain ramp needs a few blocks to converge
         for block in 0..64 {
             let chunk: Vec<f64> = dry[block * 64..(block + 1) * 64].to_vec();
             p.resampler_output = vec![chunk.clone(), chunk];
-            AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq);
+            AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq, &mut tap);
             assert_eq!(p.device_input.try_read_to_staging(64), 64);
             out_peak = peak(p.device_input.staging());
         }
@@ -1061,8 +1095,9 @@ mod tests {
         eq.set_config(&config(EqBandKind::Bell, 1_000.0, 24.0, false));
 
         let dry = sine(1_000.0, 64, 48_000.0);
+        let (mut tap, _consumer) = spectrum_tap();
         p.resampler_output = vec![dry.clone(), dry.clone()];
-        AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq);
+        AudioEngine::route_resampler_output(&mut p, &mut None, &mut eq, &mut tap);
 
         assert_eq!(p.device_input.try_read_to_staging(64), 64);
         assert_eq!(p.device_input.staging()[0], dry);
@@ -1080,10 +1115,11 @@ mod tests {
         eq.set_config(&config(EqBandKind::Notch, 1_000.0, 0.0, true));
 
         let dry = sine(1_000.0, 64 * 64, 48_000.0);
+        let (mut tap, _consumer) = spectrum_tap();
         let mut out_peak = 1.0;
         for block in 0..64 {
             p.resampler_output = vec![dry[block * 64..(block + 1) * 64].to_vec()];
-            AudioEngine::route_resampler_output(&mut p, &mut mixer, &mut eq);
+            AudioEngine::route_resampler_output(&mut p, &mut mixer, &mut eq, &mut tap);
             assert_eq!(p.device_input.try_read_to_staging(64), 64);
             assert_eq!(p.device_input.staging().len(), 2);
             out_peak = peak(p.device_input.staging());
