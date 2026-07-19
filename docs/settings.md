@@ -55,6 +55,39 @@ Controls the selected theme.
 You can change this from **Settings > Interface > Theme**. Theme changes apply
 immediately.
 
+## Equalizer
+The parametric equalizer is configured from **Settings > Equalizer**, which you can
+also open directly with the **Hummingbird: Open Equalizer** command palette action.
+Edits apply to playback immediately and are saved automatically.
+
+The equalizer state lives under `playback.equalizer` in `settings.json`:
+
+```json
+{
+  "playback": {
+    "equalizer": {
+      "enabled": true,
+      "bands": [
+        { "kind": "Bell", "frequency": 1200.0, "gain_db": 3.5, "q": 1.0, "enabled": true },
+        { "kind": "LowPass", "frequency": 16000.0, "gain_db": 0.0, "q": 0.7071, "enabled": true }
+      ]
+    }
+  }
+}
+```
+
+- `enabled`: global bypass for the whole equalizer
+- `bands`: up to 16 bands, each with a `kind` (`Bell`, `LowPass`, `HighPass`,
+  `BandPass`, or `Notch`), a `frequency` in Hz (10-30000, the graph covers
+  20-20000), a `q` (0.1-40), and an `enabled` flag
+- `gain_db` (-24 to +24) only affects `Bell` bands, it is kept for the other kinds so
+  switching a band's type back and forth does not lose the value
+
+The toolbar's **Clip** indicator lights when the equalizer's output exceeds full
+scale by more than about a dB, meaning the curve needs headroom. It only watches
+while the equalizer is on, and it is measured before ReplayGain and volume are
+applied, so it does not track what actually saturates at the output device.
+
 ## Logs
 Hummingbird writes logs to stderr and also saves them to `hummingbird.log`.
 You can open the current log from the command palette with the **Hummingbird: Open Log** action.

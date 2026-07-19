@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -38,12 +38,18 @@ const TILT_DB_PER_OCT: f32 = 4.5;
 const SMOOTHING_TAU_MS: f32 = 250.0;
 /// Silent ticks before decay starts, bridges the gaps between engine pushes (~130 ms).
 const COAST_AFTER_FRAMES: u32 = 8;
+/// Ticks a clip latch stays lit after the last over-full-scale sample, about a second.
+const CLIP_HOLD_FRAMES: u32 = 30;
+/// Latch threshold, about 1 dB over full scale, resampler overshoot stays below it.
+const CLIP_THRESHOLD: f32 = 1.122;
 
 /// Latest smoothed curves for the graph, empty vecs mean nothing to paint.
 #[derive(Default)]
 pub struct SpectrumData {
     pub pre: Rc<Vec<f32>>,
     pub post: Rc<Vec<f32>>,
+    /// Latched while post-EQ samples exceed full scale.
+    pub clipping: bool,
 }
 
 /// Process-long analyzer state, equalizer views bump `viewers` while open.
@@ -95,12 +101,13 @@ pub fn ensure_analyzer(cx: &mut App) {
                 } else {
                     analyzer.tick(rate)
                 };
-                let Some((pre, post)) = frame else {
+                let Some((pre, post, clipping)) = frame else {
                     continue;
                 };
                 data.update(cx, |data, cx| {
                     data.pre = Rc::new(pre);
                     data.post = Rc::new(post);
+                    data.clipping = clipping;
                     cx.notify();
                 });
             }
@@ -187,8 +194,12 @@ struct Analyzer {
     pre: TapAnalyzer,
     post: TapAnalyzer,
     scratch: FftScratch,
+    /// Per-channel post-EQ peak from the engine, cleared each tick.
+    post_peak: Arc<AtomicU32>,
     /// Consecutive ticks with no new audio, decay starts only after COAST_AFTER_FRAMES.
     empty_frames: u32,
+    /// Ticks left on the clip latch, lit by post-EQ samples over full scale.
+    clip_frames: u32,
     idle: bool,
 }
 
@@ -211,6 +222,7 @@ impl Analyzer {
         Self {
             pre: tap_analyzer(tap.pre),
             post: tap_analyzer(tap.post),
+            post_peak: tap.post_peak,
             scratch: FftScratch {
                 input: fft.make_input_vec(),
                 bins: fft.make_output_vec(),
@@ -223,6 +235,7 @@ impl Analyzer {
             },
             idle: false,
             empty_frames: 0,
+            clip_frames: 0,
         }
     }
 
@@ -230,10 +243,17 @@ impl Analyzer {
         self.pre.ring.slots() > 0 || self.post.ring.slots() > 0
     }
 
-    /// Smoothed display curves while anything moved, None when frozen or fully floored.
-    fn tick(&mut self, rate: u32) -> Option<(Vec<f32>, Vec<f32>)> {
+    /// Smoothed display curves plus the clip latch, None when frozen or fully floored.
+    fn tick(&mut self, rate: u32) -> Option<(Vec<f32>, Vec<f32>, bool)> {
         let pre_fresh = drain(&mut self.pre);
         let post_fresh = drain(&mut self.post);
+        let post_peak = f32::from_bits(self.post_peak.swap(0, Ordering::Relaxed));
+        if post_peak > CLIP_THRESHOLD {
+            self.clip_frames = CLIP_HOLD_FRAMES;
+        } else {
+            self.clip_frames = self.clip_frames.saturating_sub(1);
+        }
+        let clipping = self.clip_frames > 0;
         if pre_fresh || post_fresh {
             self.empty_frames = 0;
         } else {
@@ -274,11 +294,15 @@ impl Analyzer {
 
         if live {
             self.idle = false;
-            return Some((self.pre.display.clone(), self.post.display.clone()));
+            return Some((
+                self.pre.display.clone(),
+                self.post.display.clone(),
+                clipping,
+            ));
         }
         // one last frame of empty curves so the graph stops painting
         self.idle = true;
-        Some((Vec::new(), Vec::new()))
+        Some((Vec::new(), Vec::new(), false))
     }
 }
 
@@ -337,7 +361,7 @@ mod tests {
             push_sine(&mut tap, 1_000.0, 2_048);
             frame = analyzer.tick(48_000);
         }
-        let (pre, post) = frame.unwrap();
+        let (pre, post, _) = frame.unwrap();
 
         let peak = pre
             .iter()
@@ -448,12 +472,70 @@ mod tests {
         );
 
         // a stretched-out gap starts the decay
-        let (pre, _) = analyzer.tick(48_000).unwrap();
+        let (pre, ..) = analyzer.tick(48_000).unwrap();
         let decayed = pre.iter().cloned().fold(f32::MIN, f32::max);
         assert!(
             decayed < held - 1.0,
             "decayed to {decayed} dB from {held} dB"
         );
+    }
+
+    #[test]
+    fn post_peaks_above_full_scale_latch_clipping() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        let mut analyzer = Analyzer::new(consumer);
+
+        let loud = vec![1.5; 2_048];
+        tap.push_post(std::slice::from_ref(&loud), 2_048, true);
+        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        assert!(clipping, "over-full-scale post audio did not latch");
+
+        let cleared = (0..CLIP_HOLD_FRAMES + 20)
+            .filter_map(|_| analyzer.tick(48_000))
+            .any(|(.., clipping)| !clipping);
+        assert!(cleared, "clip latch never released");
+    }
+
+    #[test]
+    fn full_scale_audio_does_not_latch_clipping() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        let mut analyzer = Analyzer::new(consumer);
+
+        // a full-scale sine touches 1.0 but never exceeds it
+        let plane: Vec<f64> = (0..2_048)
+            .map(|i| (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin())
+            .collect();
+        for _ in 0..8 {
+            tap.push_post(std::slice::from_ref(&plane), 2_048, true);
+            let (.., clipping) = analyzer.tick(48_000).unwrap();
+            assert!(!clipping, "full-scale sine latched the clip indicator");
+        }
+    }
+
+    #[test]
+    fn resampler_scale_overshoot_does_not_latch_clipping() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        let mut analyzer = Analyzer::new(consumer);
+
+        // +0.4 dB over, the sort of inter-sample peak a sinc resampler produces
+        tap.push_post(&[vec![1.05; 2_048]], 2_048, true);
+        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        assert!(!clipping, "small overshoot latched the clip indicator");
+    }
+
+    #[test]
+    fn one_hot_channel_latches_clipping() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        let mut analyzer = Analyzer::new(consumer);
+
+        // a hard-panned over-full-scale channel averages to 0.75 in the mono rings
+        tap.push_post(&[vec![1.5; 2_048], vec![0.0; 2_048]], 2_048, true);
+        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        assert!(clipping, "per-channel clip hidden by the mono downmix");
     }
 
     #[test]
@@ -469,7 +551,7 @@ mod tests {
         // coasting from 0 dB to the floor at tau 250 ms takes ~45 frames plus the empty one
         let mut frames: Vec<_> = (0..160).filter_map(|_| analyzer.tick(48_000)).collect();
         assert!(frames.len() >= 40, "only {} frames", frames.len());
-        let (pre, post) = frames.pop().unwrap();
+        let (pre, post, _) = frames.pop().unwrap();
         assert!(pre.is_empty() && post.is_empty());
         assert!(analyzer.tick(48_000).is_none());
     }

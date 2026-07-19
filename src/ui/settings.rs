@@ -232,12 +232,17 @@ impl SettingsWindow {
     fn new(initial_section: SettingsSectionKind, cx: &mut App) -> gpui::Entity<Self> {
         let focus_handle = cx.focus_handle();
         let active = SettingsSection::new(initial_section, cx);
-        cx.new(|_| Self {
-            active,
-            scroll_handle: ScrollHandle::new(),
-            first_render: true,
-            focus_handle,
-            redraw: false,
+        cx.new(|cx| {
+            // the equalizer's sidebar icon tracks its enabled state
+            let settings = cx.global::<SettingsGlobal>().model.clone();
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            Self {
+                active,
+                scroll_handle: ScrollHandle::new(),
+                first_render: true,
+                focus_handle,
+                redraw: false,
+            }
         })
     }
 
@@ -260,13 +265,26 @@ impl SettingsWindow {
         section: SettingsSectionKind,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        sidebar_item(section.id())
+        let item = sidebar_item(section.id())
             .icon(section.icon())
             .child(section.label())
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.switch_section(section, cx);
             }))
-            .when(self.active.kind() == section, |this| this.active())
+            .when(self.active.kind() == section, |this| this.active());
+        if section == SettingsSectionKind::Equalizer
+            && cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .playback
+                .equalizer
+                .enabled
+        {
+            item.icon_color(cx.global::<Theme>().playback_button_toggled)
+        } else {
+            item
+        }
     }
 }
 

@@ -914,7 +914,7 @@ impl AudioEngine {
     ) {
         let tapped = tap.push_pre(planes, frames);
         eq.process(planes, frames);
-        tap.push_post(planes, tapped);
+        tap.push_post(planes, tapped, eq.audible());
     }
 
     /// Flush the resampler and clear its output.

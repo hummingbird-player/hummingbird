@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -15,27 +15,33 @@ pub struct SpectrumTap {
     viewers: Arc<AtomicUsize>,
     pre: Producer<f32>,
     post: Producer<f32>,
+    post_peak: Arc<AtomicU32>,
 }
 
 /// Consumer half plus the viewer count, handed to the UI once at startup.
 pub struct SpectrumTapConsumer {
     /// Open equalizer views, the producer feeds the rings only while this is non-zero.
     pub viewers: Arc<AtomicUsize>,
+    /// Highest post-EQ per-channel peak since the UI last cleared it, as f32 bits.
+    pub post_peak: Arc<AtomicU32>,
     pub pre: Consumer<f32>,
     pub post: Consumer<f32>,
 }
 
 pub fn spectrum_tap() -> (SpectrumTap, SpectrumTapConsumer) {
     let viewers = Arc::new(AtomicUsize::new(0));
+    let post_peak = Arc::new(AtomicU32::new(0));
     let (pre_producer, pre_consumer) = RingBuffer::new(TAP_CAPACITY);
     let (post_producer, post_consumer) = RingBuffer::new(TAP_CAPACITY);
     let tap = SpectrumTap {
         viewers: viewers.clone(),
         pre: pre_producer,
         post: post_producer,
+        post_peak: post_peak.clone(),
     };
     let consumer = SpectrumTapConsumer {
         viewers,
+        post_peak,
         pre: pre_consumer,
         post: post_consumer,
     };
@@ -49,8 +55,22 @@ impl SpectrumTap {
     }
 
     /// Tap the planes after the EQ stage, pass push_pre's return so the rings stay aligned.
-    pub fn push_post(&mut self, planes: &[Vec<f64>], frames: usize) {
-        push(&mut self.post, &self.viewers, planes, frames);
+    /// Peak tracking is skipped while the EQ is bypassed, the clip indicator warns about
+    /// headroom the EQ consumes, a flat curve has none to warn about.
+    pub fn push_post(&mut self, planes: &[Vec<f64>], frames: usize, track_peak: bool) {
+        let written = push(&mut self.post, &self.viewers, planes, frames);
+        if written == 0 || !track_peak {
+            return;
+        }
+        // per-channel peak, a hard-panned clip must not hide inside the mono downmix
+        let block = planes.iter().map(Vec::len).min().unwrap_or(0);
+        let mut peak = 0.0f32;
+        for plane in planes {
+            for &sample in &plane[block - written..block] {
+                peak = peak.max(sample.abs() as f32);
+            }
+        }
+        self.post_peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -102,7 +122,7 @@ mod tests {
     fn gated_tap_pushes_nothing() {
         let (mut tap, consumer) = spectrum_tap();
         tap.push_pre(&planes(64), 64);
-        tap.push_post(&planes(64), 64);
+        tap.push_post(&planes(64), 64, true);
         assert_eq!(consumer.pre.slots(), 0);
         assert_eq!(consumer.post.slots(), 0);
     }
@@ -138,8 +158,38 @@ mod tests {
         consumer.viewers.fetch_add(1, Ordering::Relaxed);
         let planes = planes(TAP_CAPACITY + 128);
         let kept = tap.push_pre(&planes, TAP_CAPACITY + 128);
-        tap.push_post(&planes, kept);
+        tap.push_post(&planes, kept, true);
 
         assert_eq!(read_all(&mut consumer.pre), read_all(&mut consumer.post));
+    }
+
+    #[test]
+    fn post_peak_tracks_each_channel() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+
+        tap.push_post(&[vec![1.5; 64], vec![0.0; 64]], 64, true);
+        let peak = f32::from_bits(consumer.post_peak.swap(0, Ordering::Relaxed));
+        assert_eq!(peak, 1.5);
+
+        // clearing resets the accumulation
+        tap.push_post(&[vec![0.5; 64], vec![0.0; 64]], 64, true);
+        let peak = f32::from_bits(consumer.post_peak.load(Ordering::Relaxed));
+        assert_eq!(peak, 0.5);
+    }
+
+    #[test]
+    fn unwatched_tap_leaves_the_peak_alone() {
+        let (mut tap, consumer) = spectrum_tap();
+        tap.push_post(&[vec![1.5; 64]], 64, true);
+        assert_eq!(consumer.post_peak.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn untracked_push_leaves_the_peak_alone() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        tap.push_post(&[vec![1.5; 64]], 64, false);
+        assert_eq!(consumer.post_peak.load(Ordering::Relaxed), 0);
     }
 }

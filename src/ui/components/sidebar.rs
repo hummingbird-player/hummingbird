@@ -1,6 +1,6 @@
 use gpui::{
     App, Div, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels,
-    RenderOnce, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
+    RenderOnce, Rgba, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
     Window, deferred, div, prelude::FluentBuilder, px,
 };
 
@@ -65,6 +65,7 @@ pub struct SidebarItem {
     parent_div: Stateful<Div>,
     children_div: Div,
     icon: Option<&'static str>,
+    icon_color: Option<Rgba>,
     active: bool,
     collapsed: bool,
     label: Option<SharedString>,
@@ -74,6 +75,11 @@ pub struct SidebarItem {
 impl SidebarItem {
     pub fn icon(mut self, icon: &'static str) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn icon_color(mut self, color: Rgba) -> Self {
+        self.icon_color = Some(color);
         self
     }
 
@@ -160,12 +166,14 @@ impl RenderOnce for SidebarItem {
                 this.child(div().size(px(18.0)).flex_shrink_0().min_w(px(18.0)))
             })
             .when_some(self.icon, |this, used_icon| {
-                this.child(
-                    icon(used_icon)
-                        .size(px(18.0))
-                        .flex_shrink_0()
-                        .min_w(px(18.0)),
-                )
+                let icon = icon(used_icon)
+                    .size(px(18.0))
+                    .flex_shrink_0()
+                    .min_w(px(18.0));
+                this.child(match self.icon_color {
+                    Some(color) => icon.text_color(color),
+                    None => icon,
+                })
             })
             .when(!self.collapsed, |this| {
                 this.child(
@@ -229,6 +237,7 @@ pub fn sidebar_item(id: impl Into<ElementId>) -> SidebarItem {
         parent_div: div().id(element_id),
         children_div: div(),
         icon: None,
+        icon_color: None,
         active: false,
         collapsed: false,
         label: None,

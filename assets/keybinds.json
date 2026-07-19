@@ -16,6 +16,7 @@
     { "key": "secondary-shift-p", "action": "hummingbird::OpenPalette" },
     { "key": "secondary-,", "action": "hummingbird::Settings" },
     { "key": "escape", "action": "hummingbird::CloseWindow", "context": "SettingsWindow && !TextInput" },
+    { "key": "escape", "action": "eq::Dismiss", "context": "EqualizerView && !TextInput" },
     { "key": "secondary-z", "action": "queue::Undo", "context": "!TextInput" },
     { "key": "alt-shift-s", "action": "scan::ForceScan" },
     { "key": "alt-s", "action": "scan::Scan" },

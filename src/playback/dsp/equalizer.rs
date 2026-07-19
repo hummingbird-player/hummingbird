@@ -302,7 +302,8 @@ impl EqualizerProcessor {
         }
     }
 
-    fn audible(&self) -> bool {
+    /// Whether the EQ currently alters the signal, false while bypassed or all bands are off.
+    pub fn audible(&self) -> bool {
         self.enabled && self.bands.iter().any(|band| band.enabled)
     }
 

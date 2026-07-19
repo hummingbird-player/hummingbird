@@ -10,8 +10,9 @@ use std::{
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Pixels, Point, Render,
-    Styled, Task, Window, div, prelude::FluentBuilder, px,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, Point, Render, Styled, Task, Window, actions, div,
+    prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -32,12 +33,16 @@ use crate::{
         equalizer::{
             band_editor::{BandEdit, band_editor},
             graph::{PlotSlot, dot_position, eq_graph},
+            mapping::{nudge_frequency, nudge_gain},
             spectrum::{SpectrumData, SpectrumState, ensure_analyzer},
         },
+        global_actions::CloseWindow,
         models::PlaybackInfo,
         theme::Theme,
     },
 };
+
+actions!(eq, [Dismiss]);
 
 /// Frozen popover position plus the inputs that re-anchor it when they change.
 #[derive(Clone, Copy)]
@@ -60,6 +65,9 @@ pub struct EqualizerView {
     spectrum_viewers: Option<Arc<AtomicUsize>>,
     confirm_reset: bool,
     save_task: Option<Task<()>>,
+    focus_handle: FocusHandle,
+    /// Set when a selection change should pull keyboard focus to this view.
+    focus_pending: bool,
 }
 
 impl EqualizerView {
@@ -147,6 +155,8 @@ impl EqualizerView {
                 spectrum_viewers,
                 confirm_reset: false,
                 save_task: None,
+                focus_handle: cx.focus_handle(),
+                focus_pending: false,
             }
         })
     }
@@ -193,11 +203,57 @@ impl EqualizerView {
 
         cx.notify();
     }
+
+    /// Escape deselects the band, without a selection the key falls through to closing the window.
+    fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.take().is_some() {
+            cx.notify();
+        } else {
+            cx.dispatch_action(&CloseWindow);
+        }
+    }
+
+    /// Arrow keys nudge the selected band, Shift shrinks the step.
+    fn nudge(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.selected else {
+            return;
+        };
+        let Some(band) = self.config.bands.get(index).copied() else {
+            return;
+        };
+        let fine = ev.keystroke.modifiers.shift;
+        let (frequency, gain_db) = match ev.keystroke.key.as_str() {
+            "left" => (nudge_frequency(band.frequency, -1.0, fine), band.gain_db),
+            "right" => (nudge_frequency(band.frequency, 1.0, fine), band.gain_db),
+            "up" if band.kind.has_gain() => (band.frequency, nudge_gain(band.gain_db, 1.0, fine)),
+            "down" if band.kind.has_gain() => {
+                (band.frequency, nudge_gain(band.gain_db, -1.0, fine))
+            }
+            _ => return,
+        };
+        window.prevent_default();
+        cx.stop_propagation();
+        self.mutate(cx, |config| {
+            if let Some(band) = config.bands.get_mut(index) {
+                band.frequency = frequency;
+                band.gain_db = gain_db;
+            }
+        });
+    }
 }
 
 impl Render for EqualizerView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // key events only reach this view while it sits on the focus path
+        if self.focus_pending {
+            self.focus_pending = false;
+            if self.selected.is_some() {
+                self.focus_handle.focus(window, cx);
+            }
+        }
+
         let caption_color = cx.global::<Theme>().text_secondary;
+        let clip_color = cx.global::<Theme>().status_error;
         let view = cx.entity().clone();
 
         let plot = self.plot_slot.get();
@@ -221,12 +277,16 @@ impl Render for EqualizerView {
             Some((index, point, band))
         });
 
-        let (spectrum_pre, spectrum_post) = self
+        let (spectrum_pre, spectrum_post, clipping) = self
             .spectrum
             .as_ref()
             .map(|spectrum| {
                 let spectrum = spectrum.read(cx);
-                (spectrum.pre.clone(), spectrum.post.clone())
+                (
+                    spectrum.pre.clone(),
+                    spectrum.post.clone(),
+                    spectrum.clipping,
+                )
             })
             .unwrap_or_default();
 
@@ -259,6 +319,7 @@ impl Render for EqualizerView {
                 move |selected, cx| {
                     view.update(cx, |this, cx| {
                         this.selected = selected;
+                        this.focus_pending = selected.is_some();
                         cx.notify();
                     });
                 }
@@ -305,6 +366,7 @@ impl Render for EqualizerView {
                         this.mutate(cx, |config| config.bands.push(band));
                         let index = this.config.bands.len() - 1;
                         this.selected = Some(index);
+                        this.focus_pending = true;
                         index
                     })
                 }
@@ -323,6 +385,10 @@ impl Render for EqualizerView {
             });
 
         div()
+            .track_focus(&self.focus_handle)
+            .key_context("EqualizerView")
+            .on_action(cx.listener(Self::dismiss))
+            .on_key_down(cx.listener(Self::nudge))
             .flex_grow()
             .min_h(px(0.0))
             .flex()
@@ -357,7 +423,16 @@ impl Render for EqualizerView {
                     .child(div().text_xs().text_color(caption_color).child(tr!(
                         "EQ_GRAPH_HINT",
                         "Click the curve to add a band · right-click a dot to remove it"
-                    ))),
+                    )))
+                    .when(clipping, |this| {
+                        this.child(
+                            div()
+                                .ml_auto()
+                                .text_xs()
+                                .text_color(clip_color)
+                                .child(tr!("EQ_CLIP", "Clip")),
+                        )
+                    }),
             )
             .child(graph.flex_grow().min_h(px(160.0)))
             .when(self.confirm_reset, |this| {

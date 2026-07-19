@@ -896,6 +896,7 @@ impl Element for EqGraph {
                 let state = state.clone();
                 let config = config.clone();
                 let hitbox = hitbox.clone();
+                let on_band_change = on_band_change.clone();
                 window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
@@ -1004,24 +1005,6 @@ impl Element for EqGraph {
                     );
                     state.borrow_mut().q_flash = Some((Instant::now(), target.unwrap()));
                     window.refresh();
-                });
-            }
-
-            {
-                let on_select = on_select.clone();
-                window.on_key_event(move |ev: &KeyDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble || ev.keystroke.key != "escape" {
-                        return;
-                    }
-                    if selected.is_none() {
-                        return;
-                    }
-                    let Some(select) = &on_select else {
-                        return;
-                    };
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    (select.borrow_mut())(None, cx);
                 });
             }
 

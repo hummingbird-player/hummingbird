@@ -1,6 +1,6 @@
 //! Pure conversions between graph pixels and equalizer parameter space.
 
-use crate::playback::dsp::equalizer::{MAX_Q, MIN_Q};
+use crate::playback::dsp::equalizer::{MAX_FREQUENCY, MAX_GAIN_DB, MAX_Q, MIN_FREQUENCY, MIN_Q};
 
 /// Frequency range of the graph's x-axis, Hz.
 pub const MIN_FREQ: f32 = 20.0;
@@ -47,6 +47,19 @@ pub fn spectrum_db_to_y(db: f32, height: f32) -> f32 {
 /// Multiplicative Q nudge from scroll input, one notch per wheel line.
 pub fn scroll_q(q: f64, notches: f64) -> f64 {
     (q * 1.08f64.powf(notches)).clamp(MIN_Q, MAX_Q)
+}
+
+/// Frequency nudge from arrow keys, a semitone per press, a tenth of one with Shift held.
+/// Clamps to the DSP's range, which is wider than the graph's axis.
+pub fn nudge_frequency(freq: f64, direction: f64, fine: bool) -> f64 {
+    let semitones = if fine { 0.1 } else { 1.0 };
+    (freq * 2.0f64.powf(direction * semitones / 12.0)).clamp(MIN_FREQUENCY, MAX_FREQUENCY)
+}
+
+/// Gain nudge from arrow keys, 1 dB per press, 0.1 dB with Shift held.
+pub fn nudge_gain(gain_db: f64, direction: f64, fine: bool) -> f64 {
+    let step = if fine { 0.1 } else { 1.0 };
+    (gain_db + direction * step).clamp(-MAX_GAIN_DB, MAX_GAIN_DB)
 }
 
 /// "1.24 kHz" style readout for the drag tooltip and axis labels.
@@ -138,6 +151,33 @@ mod tests {
         assert!((scroll_q(1.0, -1.0) - 1.0 / 1.08).abs() < 1e-9);
         assert_eq!(scroll_q(30.0, 10.0), MAX_Q);
         assert_eq!(scroll_q(0.2, -50.0), MIN_Q);
+    }
+
+    #[test]
+    fn nudge_frequency_steps_semitones_and_clamps() {
+        let semitone = 2.0f64.powf(1.0 / 12.0);
+        let fine = 1_000.0 * semitone.powf(0.1);
+        assert!((nudge_frequency(1_000.0, 1.0, false) - 1_000.0 * semitone).abs() < 1e-6);
+        assert!((nudge_frequency(1_000.0, -1.0, false) - 1_000.0 / semitone).abs() < 1e-6);
+        assert!((nudge_frequency(1_000.0, 1.0, true) - fine).abs() < 1e-6);
+        assert_eq!(nudge_frequency(29_990.0, 1.0, false), MAX_FREQUENCY);
+        assert_eq!(nudge_frequency(10.0, -1.0, false), MIN_FREQUENCY);
+    }
+
+    #[test]
+    fn nudge_frequency_keeps_bands_outside_the_graph_axis() {
+        // a band beyond the graph's 20 kHz edge nudges up without snapping back into view
+        let nudged = nudge_frequency(25_000.0, 1.0, false);
+        assert!(nudged > 25_000.0, "nudged down to {nudged} Hz");
+        assert!(nudged < MAX_FREQUENCY);
+    }
+
+    #[test]
+    fn nudge_gain_steps_and_clamps() {
+        assert_eq!(nudge_gain(0.0, 1.0, false), 1.0);
+        assert_eq!(nudge_gain(0.0, -1.0, true), -0.1);
+        assert_eq!(nudge_gain(MAX_GAIN_DB, 1.0, false), MAX_GAIN_DB);
+        assert_eq!(nudge_gain(-MAX_GAIN_DB, -1.0, false), -MAX_GAIN_DB);
     }
 
     #[test]
