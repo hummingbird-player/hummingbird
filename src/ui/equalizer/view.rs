@@ -10,9 +10,9 @@ use std::{
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Point, Render, Styled, Task, Window, actions, div,
-    prelude::FluentBuilder, px,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, FontWeight, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, StatefulInteractiveElement,
+    Styled, Task, Window, actions, div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::{
@@ -24,11 +24,8 @@ use crate::{
     },
     ui::{
         components::{
-            action_dialog::{ActionDialog, ActionDialogAction},
-            button::{ButtonIntent, ButtonStyle, button},
-            checkbox::checkbox,
-            icons::TRASH,
-            label::label,
+            icons::{ALERT_CIRCLE, icon},
+            tooltip::build_tooltip,
         },
         equalizer::{
             band_editor::{BandEdit, band_editor},
@@ -63,7 +60,9 @@ pub struct EqualizerView {
     spectrum: Option<Entity<SpectrumData>>,
     /// Shared viewer count gating the audio taps, decremented when the view is released.
     spectrum_viewers: Option<Arc<AtomicUsize>>,
-    confirm_reset: bool,
+    /// First click on the header's reset button only arms it, the second clears the bands.
+    reset_armed: bool,
+    clip_latched: bool,
     save_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     /// Set when a selection change should pull keyboard focus to this view.
@@ -153,7 +152,8 @@ impl EqualizerView {
                 plot_slot: Rc::new(Cell::new(None)),
                 spectrum,
                 spectrum_viewers,
-                confirm_reset: false,
+                reset_armed: false,
+                clip_latched: false,
                 save_task: None,
                 focus_handle: cx.focus_handle(),
                 focus_pending: false,
@@ -173,6 +173,29 @@ impl EqualizerView {
             Some(selected) if selected > index => self.selected = Some(selected - 1),
             _ => {}
         }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.mutate(cx, |config| config.enabled = enabled);
+    }
+
+    pub fn request_reset(&mut self, cx: &mut Context<Self>) {
+        if self.reset_armed {
+            self.reset_armed = false;
+            self.selected = None;
+            self.mutate(cx, |config| config.bands.clear());
+        } else {
+            self.reset_armed = true;
+            cx.notify();
+        }
+    }
+
+    pub fn reset_armed(&self) -> bool {
+        self.reset_armed
     }
 
     /// Single funnel for edits: apply, push live to the DSP, arm the save debounce.
@@ -252,8 +275,6 @@ impl Render for EqualizerView {
             }
         }
 
-        let caption_color = cx.global::<Theme>().text_secondary;
-        let clip_color = cx.global::<Theme>().status_error;
         let view = cx.entity().clone();
 
         let plot = self.plot_slot.get();
@@ -289,6 +310,10 @@ impl Render for EqualizerView {
                 )
             })
             .unwrap_or_default();
+
+        if clipping {
+            self.clip_latched = true;
+        }
 
         let mut graph = eq_graph("eq-graph", &self.config)
             .selected(self.selected)
@@ -393,77 +418,42 @@ impl Render for EqualizerView {
             .min_h(px(0.0))
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap(px(12.0))
-                    .child(
-                        label("eq-enabled", tr!("EQ_ENABLED", "Enable equalizer"))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let enabled = !this.config.enabled;
-                                this.mutate(cx, |config| config.enabled = enabled);
-                            }))
-                            .child(checkbox("eq-enabled-check", self.config.enabled)),
-                    )
-                    .child(
-                        button()
-                            .id("eq-reset")
-                            .style(ButtonStyle::Regular)
-                            .intent(ButtonIntent::Secondary)
-                            .child(tr!("EQ_RESET", "Reset"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirm_reset = true;
-                                cx.notify();
-                            })),
-                    )
-                    .child(div().text_xs().text_color(caption_color).child(tr!(
-                        "EQ_GRAPH_HINT",
-                        "Click the curve to add a band · right-click a dot to remove it"
-                    )))
-                    .when(clipping, |this| {
-                        this.child(
-                            div()
-                                .ml_auto()
-                                .text_xs()
-                                .text_color(clip_color)
-                                .child(tr!("EQ_CLIP", "Clip")),
-                        )
-                    }),
-            )
+            .relative()
             .child(graph.flex_grow().min_h(px(160.0)))
-            .when(self.confirm_reset, |this| {
-                let view = view.clone();
+            .when(self.clip_latched, |this| {
+                let clip_bg = cx.global::<Theme>().status_error;
                 this.child(
-                    ActionDialog::new(
-                        tr!("EQ_RESET_TITLE", "Reset equalizer"),
-                        tr!("EQ_RESET_BODY", "Remove all bands? This cannot be undone."),
-                    )
-                    .action(ActionDialogAction::new(
-                        "eq-reset-confirm",
-                        TRASH,
-                        tr!("EQ_RESET_CONFIRM", "Remove all bands"),
-                        ButtonIntent::Danger,
-                        {
-                            let view = view.clone();
-                            move |_, _, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.confirm_reset = false;
-                                    this.selected = None;
-                                    this.mutate(cx, |config| config.bands.clear());
-                                });
-                            }
-                        },
-                    ))
-                    .on_dismiss(move |_, cx| {
-                        view.update(cx, |this, cx| {
-                            this.confirm_reset = false;
+                    div()
+                        .id("eq-clip-badge")
+                        .absolute()
+                        .top(px(10.0))
+                        .right(px(10.0))
+                        .occlude()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded_full()
+                        .bg(clip_bg)
+                        .text_color(rgb(0xffffff))
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clip_latched = false;
                             cx.notify();
-                        });
-                    }),
+                        }))
+                        .tooltip(build_tooltip(tr!(
+                            "EQ_CLIP_TOOLTIP",
+                            "Output is clipping — lower band gains. Click to dismiss."
+                        )))
+                        .child(icon(ALERT_CIRCLE).my_auto().size(px(12.0)))
+                        .child(
+                            div()
+                                .text_xs()
+                                .line_height(px(16.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(tr!("EQ_CLIP", "Clip")),
+                        ),
                 )
             })
             .when_some(editor, |this, (index, point, band)| {

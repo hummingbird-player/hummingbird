@@ -12,7 +12,7 @@ use crate::{
     ui::{
         equalizer::mapping::{
             CURVE_MAX_DB, CURVE_MIN_DB, DB_WINDOW, db_to_y, db_to_y_unclamped, format_hz,
-            freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq,
+            freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq, y_to_db,
         },
         theme::Theme,
     },
@@ -25,12 +25,9 @@ type ScrollQHandler = dyn FnMut(usize, f64, &mut App);
 type AddHandler = dyn FnMut(f64, f64, &mut App) -> usize;
 type DragActiveHandler = dyn FnMut(bool, &mut App);
 
-const DOT_RADIUS: f32 = 6.0;
-const DOT_HIT_RADIUS: f32 = 10.0;
+const DOT_RADIUS: f32 = 8.0;
+const DOT_HIT_RADIUS: f32 = 16.0;
 const CURVE_HIT_DISTANCE: f32 = 8.0;
-const LABEL_LEFT: f32 = 30.0;
-const LABEL_BOTTOM: f32 = 18.0;
-const PADDING: f32 = 8.0;
 const Q_FLASH_MS: u128 = 600;
 
 const GRID_FREQS: [f32; 13] = [
@@ -188,17 +185,12 @@ fn spectrum_path(builder: &mut PathBuilder, points: &[f32], plot: Bounds<Pixels>
     }
 }
 
-// Plot area inside the panel, leaving room for axis labels
+// Full-bleed plot: the axis labels are drawn inside it, so no gutter is
+// reserved. Only the panel's 1px top border stays outside the plot.
 fn plot_bounds(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     Bounds::new(
-        point(
-            bounds.origin.x + px(LABEL_LEFT),
-            bounds.origin.y + px(PADDING),
-        ),
-        size(
-            bounds.size.width - px(LABEL_LEFT + PADDING),
-            bounds.size.height - px(LABEL_BOTTOM + PADDING),
-        ),
+        point(bounds.origin.x, bounds.origin.y + px(1.0)),
+        size(bounds.size.width, bounds.size.height - px(1.0)),
     )
 }
 
@@ -482,12 +474,17 @@ impl Element for EqGraph {
             .map(|band| dot_position(band, plot))
             .collect();
 
+        // axis labels live inside the full-bleed plot: frequencies hug the
+        // bottom edge, dB values sit just above their grid line at the left
         let mut labels = Vec::new();
         for freq in LABEL_FREQS {
             let line = shape_label(window, format_hz(freq as f64).into(), label_color);
             let x = plot.origin.x + px(freq_to_x(freq, plot_width)) - line.width / 2.0;
-            let x = x.clamp(plot.origin.x, plot.origin.x + plot.size.width - line.width);
-            labels.push((line, point(x, plot.origin.y + plot.size.height + px(4.0))));
+            let x = x.clamp(
+                plot.origin.x + px(4.0),
+                plot.origin.x + plot.size.width - line.width - px(4.0),
+            );
+            labels.push((line, point(x, plot.origin.y + plot.size.height - px(16.0))));
         }
         for db in (-30..=30).step_by(6) {
             let text: SharedString = if db == 0 {
@@ -496,10 +493,12 @@ impl Element for EqGraph {
                 format!("{db:+}").into()
             };
             let line = shape_label(window, text, label_color);
-            let y = plot.origin.y + px(db_to_y(db as f32, plot_height)) - px(6.0);
-            let y = y.clamp(plot.origin.y, plot.origin.y + plot.size.height - px(12.0));
-            let origin = point(plot.origin.x - line.width - px(4.0), y);
-            labels.push((line, origin));
+            let y = plot.origin.y + px(db_to_y(db as f32, plot_height)) - px(14.0);
+            let y = y.clamp(
+                plot.origin.y + px(2.0),
+                plot.origin.y + plot.size.height - px(16.0),
+            );
+            labels.push((line, point(plot.origin.x + px(6.0), y)));
         }
 
         let readout = drag
@@ -568,11 +567,16 @@ impl Element for EqGraph {
 
         let plot = prepaint.plot;
 
+        // flush with the window edges: square corners, only a top border
+        // separates the panel from the section header above
         window.paint_quad(quad(
             bounds,
-            Corners::all(px(8.0)),
+            Corners::default(),
             panel_bg,
-            Edges::all(px(1.0)),
+            Edges {
+                top: px(1.0),
+                ..Default::default()
+            },
             panel_border,
             BorderStyle::Solid,
         ));
@@ -600,11 +604,6 @@ impl Element for EqGraph {
                 rgba(0x000000),
                 BorderStyle::Solid,
             ));
-        }
-
-        for (line, origin) in &prepaint.labels {
-            line.paint(*origin, px(12.0), TextAlign::Left, None, window, cx)
-                .unwrap();
         }
 
         let zero_y = plot.origin.y + px(db_to_y(0.0, plot_height));
@@ -665,6 +664,12 @@ impl Element for EqGraph {
                 window.paint_path(path, stroke_color);
             }
         });
+
+        // labels sit on top of the spectrum and curve so they stay readable
+        for (line, origin) in &prepaint.labels {
+            line.paint(*origin, px(12.0), TextAlign::Left, None, window, cx)
+                .unwrap();
+        }
 
         if let Some(drag) = prepaint.drag
             && let Some(dot) = prepaint.dots.get(drag.index)
@@ -804,6 +809,35 @@ impl Element for EqGraph {
                         return;
                     }
 
+                    // Adds a band and grabs its dot for an immediate drag.
+                    let add_band = |frequency: f64,
+                                    gain_db: f64,
+                                    position: Point<Pixels>,
+                                    window: &mut Window,
+                                    cx: &mut App| {
+                        let Some(add) = &on_add else { return };
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        let index = (add.borrow_mut())(frequency, gain_db, cx);
+                        {
+                            let mut state = state.borrow_mut();
+                            state.drag = Some(DragState {
+                                index,
+                                start: position,
+                                start_frequency: frequency,
+                                start_gain_db: gain_db,
+                                was_selected: false,
+                                moved: false,
+                            });
+                            state.last_add = Some((Instant::now(), index));
+                        }
+                        if let Some(drag_active) = &on_drag_active {
+                            (drag_active.borrow_mut())(true, cx);
+                        }
+                    };
+                    // no new bands while the band editor is open
+                    let editor_closed = selected.is_none();
+
                     match hit_test(&config, rate, plot, ev.position) {
                         Some(Hover::Dot(index)) => {
                             window.prevent_default();
@@ -853,38 +887,37 @@ impl Element for EqGraph {
                         Some(Hover::Curve(_))
                             if ev.button == MouseButton::Left
                                 && ev.click_count == 1
+                                && editor_closed
                                 && config.bands.len() < MAX_EQ_BANDS =>
                         {
-                            if let Some(add) = &on_add {
-                                window.prevent_default();
-                                cx.stop_propagation();
-                                let width: f32 = plot.size.width.into();
-                                let fx: f32 = (ev.position.x - plot.origin.x).into();
-                                let frequency = x_to_freq(fx, width) as f64;
-                                // the ghost previews the snapped curve value, match it
-                                let gain_db = composite_db(&config, rate, frequency)
-                                    .clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
-                                let index = (add.borrow_mut())(frequency, gain_db, cx);
-                                let mut state = state.borrow_mut();
-                                state.drag = Some(DragState {
-                                    index,
-                                    start: ev.position,
-                                    start_frequency: frequency,
-                                    start_gain_db: gain_db,
-                                    was_selected: false,
-                                    moved: false,
-                                });
-                                state.last_add = Some((Instant::now(), index));
-                                drop(state);
-                                if let Some(drag_active) = &on_drag_active {
-                                    (drag_active.borrow_mut())(true, cx);
-                                }
-                            }
+                            let width: f32 = plot.size.width.into();
+                            let fx: f32 = (ev.position.x - plot.origin.x).into();
+                            let frequency = x_to_freq(fx, width) as f64;
+                            // the ghost previews the snapped curve value, match it
+                            let gain_db = composite_db(&config, rate, frequency)
+                                .clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+                            add_band(frequency, gain_db, ev.position, window, cx);
                         }
                         _ => {
-                            if ev.button == MouseButton::Left
-                                && let Some(select) = &on_select
+                            if ev.button != MouseButton::Left {
+                                return;
+                            }
+                            // a click on empty plot creates a band at the cursor, but
+                            // only with the band editor closed — otherwise it deselects
+                            if ev.click_count == 1
+                                && editor_closed
+                                && config.bands.len() < MAX_EQ_BANDS
+                                && on_add.is_some()
                             {
+                                let width: f32 = plot.size.width.into();
+                                let height: f32 = plot.size.height.into();
+                                let fx: f32 = (ev.position.x - plot.origin.x).into();
+                                let fy: f32 = (ev.position.y - plot.origin.y).into();
+                                let frequency = x_to_freq(fx, width) as f64;
+                                let gain_db =
+                                    f64::from(y_to_db(fy, height)).clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+                                add_band(frequency, gain_db, ev.position, window, cx);
+                            } else if let Some(select) = &on_select {
                                 (select.borrow_mut())(None, cx);
                             }
                         }

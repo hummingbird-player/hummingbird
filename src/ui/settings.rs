@@ -21,7 +21,7 @@ use crate::{
     settings::{SettingsGlobal, storage::DEFAULT_SIDEBAR_WIDTH},
     ui::{
         components::{
-            icons::{ADJUSTMENTS, BOOKS, PLAY, WORLD},
+            icons::{ACCESS_POINT, ADJUSTMENTS, BOOKS, PLAY, WORLD},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
@@ -147,7 +147,7 @@ impl SettingsSectionKind {
             Self::Library => BOOKS,
             Self::Playback => PLAY,
             Self::Equalizer => ADJUSTMENTS,
-            Self::Services => ADJUSTMENTS,
+            Self::Services => ACCESS_POINT,
             #[cfg(feature = "update")]
             Self::Update => super::components::icons::UPDATE,
         }
@@ -232,17 +232,12 @@ impl SettingsWindow {
     fn new(initial_section: SettingsSectionKind, cx: &mut App) -> gpui::Entity<Self> {
         let focus_handle = cx.focus_handle();
         let active = SettingsSection::new(initial_section, cx);
-        cx.new(|cx| {
-            // the equalizer's sidebar icon tracks its enabled state
-            let settings = cx.global::<SettingsGlobal>().model.clone();
-            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-            Self {
-                active,
-                scroll_handle: ScrollHandle::new(),
-                first_render: true,
-                focus_handle,
-                redraw: false,
-            }
+        cx.new(|_| Self {
+            active,
+            scroll_handle: ScrollHandle::new(),
+            first_render: true,
+            focus_handle,
+            redraw: false,
         })
     }
 
@@ -272,19 +267,7 @@ impl SettingsWindow {
                 this.switch_section(section, cx);
             }))
             .when(self.active.kind() == section, |this| this.active());
-        if section == SettingsSectionKind::Equalizer
-            && cx
-                .global::<SettingsGlobal>()
-                .model
-                .read(cx)
-                .playback
-                .equalizer
-                .enabled
-        {
-            item.icon_color(cx.global::<Theme>().playback_button_toggled)
-        } else {
-            item
-        }
+        item
     }
 }
 
@@ -319,7 +302,6 @@ impl Render for SettingsWindow {
         let body = if fills_height {
             div()
                 .size_full()
-                .p(px(16.0))
                 .overflow_hidden()
                 .child(content)
                 .into_any_element()

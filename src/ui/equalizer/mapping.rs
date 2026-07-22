@@ -39,6 +39,11 @@ pub fn db_to_y_unclamped(db: f32, height: f32) -> f32 {
     (DB_WINDOW - db) / (2.0 * DB_WINDOW) * height
 }
 
+/// dB value at a vertical pixel, inverse of `db_to_y`, clamped to the window.
+pub fn y_to_db(y: f32, height: f32) -> f32 {
+    (DB_WINDOW - y / height * 2.0 * DB_WINDOW).clamp(-DB_WINDOW, DB_WINDOW)
+}
+
 /// Vertical pixel for a spectrum dB value, the spectrum spans the floor up to the window top.
 pub fn spectrum_db_to_y(db: f32, height: f32) -> f32 {
     (DB_WINDOW - db) / (DB_WINDOW - SPECTRUM_MIN_DB) * height
@@ -135,6 +140,16 @@ mod tests {
         assert_eq!(db_to_y_unclamped(0.0, 420.0), 210.0);
         assert!(db_to_y_unclamped(-90.0, 420.0) > 420.0);
         assert!(db_to_y_unclamped(36.0, 420.0) < 0.0);
+    }
+
+    #[test]
+    fn y_db_round_trip_and_clamps() {
+        for db in [-30.0, -12.5, 0.0, 6.0, 30.0] {
+            let y = db_to_y(db, 420.0);
+            assert!((y_to_db(y, 420.0) - db).abs() < 1e-4);
+        }
+        assert_eq!(y_to_db(-10.0, 420.0), DB_WINDOW);
+        assert_eq!(y_to_db(500.0, 420.0), -DB_WINDOW);
     }
 
     #[test]

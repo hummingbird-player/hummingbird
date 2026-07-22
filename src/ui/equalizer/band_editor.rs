@@ -11,14 +11,14 @@ use crate::{
     settings::equalizer::{EqBandKind, EqBandSettings},
     ui::{
         components::{
-            button::{ButtonIntent, ButtonStyle, button},
-            checkbox::checkbox,
+            button::{ButtonIntent, ButtonSize, button},
             icons::{
                 FILTER_BAND_PASS, FILTER_BELL, FILTER_HIGH_PASS, FILTER_LOW_PASS, FILTER_NOTCH,
+                POWER, TRASH, icon,
             },
             knob::knob,
-            label::label,
             segmented_control::segmented_control,
+            tooltip::build_tooltip,
         },
         equalizer::mapping::{MAX_FREQ, MIN_FREQ, format_hz, parse_hz},
         theme::Theme,
@@ -182,27 +182,53 @@ impl RenderOnce for BandEditor {
 
         let footer = div()
             .flex()
-            .items_center()
-            .justify_between()
+            .justify_start()
+            .gap(px(6.0))
+            .mx(px(3.0))
+            .mb(px(3.0))
             .child(
-                label("eq-band-enabled", tr!("EQ_BAND_ENABLED", "Enabled"))
-                    .cursor_pointer()
+                button()
+                    .id("eq-band-enabled")
+                    .size(ButtonSize::Small)
+                    .intent(if band.enabled {
+                        ButtonIntent::Primary
+                    } else {
+                        ButtonIntent::Secondary
+                    })
+                    .tooltip(build_tooltip(if band.enabled {
+                        tr!("EQ_BAND_ENABLED", "Enabled")
+                    } else {
+                        tr!("EQ_BAND_DISABLED", "Disabled")
+                    }))
+                    .child(icon(POWER).size(px(12.0)))
                     .on_click({
                         let on_edit = on_edit.clone();
                         move |_, _, cx| on_edit(BandEdit::Enabled(!band.enabled), cx)
-                    })
-                    .child(checkbox("eq-band-enabled-check", band.enabled)),
+                    }),
             )
             .child(
                 button()
                     .id("eq-band-remove")
-                    .style(ButtonStyle::Minimal)
                     .intent(ButtonIntent::Danger)
-                    .child(tr!("EQ_BAND_REMOVE", "Remove"))
+                    .size(ButtonSize::Small)
+                    .tooltip(build_tooltip(tr!("EQ_BAND_REMOVE", "Remove")))
+                    .child(icon(TRASH).size(px(12.0)))
                     .on_click({
                         let on_remove = self.on_remove.clone();
                         move |_, _, cx| on_remove(cx)
                     }),
+            )
+            .child(
+                div()
+                    .ml_auto()
+                    .text_sm()
+                    .mt_auto()
+                    .text_color(theme.text_secondary)
+                    .child(tr!(
+                        "EQ_BAND_NUMBER",
+                        "Band {{index}}",
+                        index = (self.index + 1)
+                    )),
             );
 
         let panel = div()
