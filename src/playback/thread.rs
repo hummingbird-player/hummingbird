@@ -154,6 +154,8 @@ impl PlaybackThread {
             error!("Failed to initialize audio engine: {:?}", e);
         }
 
+        self.engine.set_equalizer(&self.playback_settings.equalizer);
+
         self.set_volume(self.initial_volume);
         self.send_event(PlaybackEvent::RepeatChanged(self.queue.repeat_state()));
         self.send_event(PlaybackEvent::ShuffleToggled(
