@@ -41,7 +41,6 @@
   "ACTION_UNDO_QUEUE": "撤销",
   "ADD_FOLDER_TO_QUEUE": "将文件夹加入队列",
   "ADD_N_TO_QUEUE": {
-    "one": "将 {{count}} 首曲目加入队列",
     "other": "将 {{count}} 首曲目加入队列"
   },
   "ADD_TO_PLAYLIST": "添加到播放列表",
@@ -60,7 +59,6 @@
   "CODEBERG_ISSUES": "报告问题",
   "COLLAPSE_SIDEBAR": "收起侧边栏",
   "COLLECTION_SUMMARY_TRACKS": {
-    "one": "{{count}} 首曲目",
     "other": "{{count}} 首曲目"
   },
   "COLUMN_ALBUM": "专辑",
@@ -133,7 +131,6 @@
   "NO_LYRICS": "没有歌词",
   "OPEN_THEMES_FOLDER": "打开主题文件夹",
   "PALETTE_SHOW_MORE": {
-    "one": "再显示 {{count}} 项……",
     "other": "再显示 {{count}} 项……"
   },
   "PATREON": "在 Patreon 上支持我们",
@@ -152,14 +149,12 @@
   "PLAYBACK_RG_FALLBACK_PREAMP": "ReplayGain 备用前置增益",
   "PLAYBACK_RG_FALLBACK_PREAMP_SUBTEXT": "曲目没有 ReplayGain 数据时使用。",
   "PLAYLIST_TRACK_COUNT": {
-    "one": "{{count}} 首曲目",
     "other": "{{count}} 首曲目"
   },
   "PLAY_FOLDER": "播放文件夹",
   "PLAY_FROM_HERE": "从此处播放",
   "PLAY_NEXT": "下一首播放",
   "PLAY_N_NOW": {
-    "one": "立即播放 {{count}} 首曲目",
     "other": "立即播放 {{count}} 首曲目"
   },
   "PREVIOUS_TRACK": "上一首",
@@ -174,7 +169,6 @@
   "REMOVE_FROM_QUEUE": "从队列移除",
   "REMOVE_FROM_SELECTED_PLAYLIST": "从 {{name}} 移除",
   "REMOVE_N_FROM_QUEUE": {
-    "one": "从队列移除 {{count}} 首曲目",
     "other": "从队列移除 {{count}} 首曲目"
   },
   "RENAME": "重命名",
@@ -198,7 +192,7 @@
   "SCANNING_MISSING_DIALOG_DELETE": "删除项目",
   "SCANNING_MISSING_DIALOG_DELETE_SUBTITLE": "立即从音乐库中删除缺失文件夹中的曲目和专辑。它们也会从音乐库和播放列表中移除。",
   "SCANNING_MISSING_DIALOG_DONT_ASK_AGAIN": "不再询问",
-  "SCANNING_MISSING_DIALOG_DONT_ASK_HINT": "之后可以在“设置 > 音乐库”中更改。",
+  "SCANNING_MISSING_DIALOG_DONT_ASK_HINT": "之后可以在“设置 \u003E 音乐库”中更改。",
   "SCANNING_MISSING_DIALOG_KEEP": "保留在音乐库中",
   "SCANNING_MISSING_DIALOG_KEEP_SUBTITLE": "保留缺失的专辑和曲目。在文件夹恢复或设备重新连接前无法播放，但它们会继续保留在音乐库和播放列表中。",
   "SCANNING_MISSING_DIALOG_TITLE": "缺失的音乐库文件夹",
@@ -248,7 +242,7 @@
   "SHOW_ALL": "显示全部",
   "SHOW_IN_FILE_EXPLORER": "在文件资源管理器中显示",
   "SHOW_IN_FILE_MANAGER": "在文件管理器中显示",
-  "SHOW_IN_FINDER": "在 Finder 中显示",
+  "SHOW_IN_FINDER": "在访达中显示",
   "SHUFFLE": "随机播放",
   "SIGN_IN": "登录",
   "SIGN_OUT": "退出登录",
@@ -263,11 +257,9 @@
   "SORT_TITLE": "标题",
   "STABLE": "稳定",
   "STATS_TOTAL_LENGTH": {
-    "one": "{{count}} 分钟",
     "other": "{{count}} 分钟"
   },
   "STATS_TRACKS": {
-    "one": "{{count}} 首曲目",
     "other": "{{count}} 首曲目"
   },
   "STOP_AFTER_CURRENT_TOOLTIP": "当前曲目播放完后停止",
