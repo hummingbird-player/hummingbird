@@ -5,6 +5,7 @@ use std::{
 };
 
 use gpui::*;
+use tracing::error;
 
 use crate::ui::{components::textbox::Textbox, theme::Theme};
 
@@ -109,6 +110,8 @@ pub struct Knob {
     parse: Option<Rc<ValueParser>>,
     on_change: Option<Rc<RefCell<ChangeHandler>>>,
     disabled: bool,
+    restore_focus: Option<FocusHandle>,
+    parse_range: (f32, f32),
 }
 
 impl Knob {
@@ -151,6 +154,16 @@ impl Knob {
         self.disabled = disabled;
         self
     }
+
+    pub fn restore_focus(mut self, focus: FocusHandle) -> Self {
+        self.restore_focus = Some(focus);
+        self
+    }
+
+    pub fn parse_range(mut self, min: f32, max: f32) -> Self {
+        self.parse_range = (min, max);
+        self
+    }
 }
 
 impl Styled for Knob {
@@ -169,9 +182,11 @@ impl IntoElement for Knob {
 
 #[derive(Default)]
 struct KnobState {
-    drag: Option<(Pixels, f32)>,
+    drag: Option<(Pixels, f32, bool)>,
     textbox: Option<Entity<Textbox>>,
     parse_error: Option<Instant>,
+    refocus: bool,
+    scroll_position: Option<f32>,
 }
 
 pub struct KnobPrepaint {
@@ -238,6 +253,19 @@ impl Element for Knob {
             textbox = None;
         }
 
+        {
+            let mut state = state.borrow_mut();
+
+            state.scroll_position = None;
+
+            if state.refocus {
+                state.refocus = false;
+                if let Some(focus) = &self.restore_focus {
+                    focus.focus(window, cx);
+                }
+            }
+        }
+
         let theme = cx.global::<Theme>();
         let (label_color, readout_color) = if self.disabled {
             (theme.text_disabled, theme.text_disabled)
@@ -252,7 +280,7 @@ impl Element for Knob {
         let readout = if textbox.is_none() {
             Some(shape_caption(
                 window,
-                (self.format)(self.value.clamp(0.0, 1.0)),
+                (self.format)(self.value),
                 readout_color.into(),
             ))
         } else {
@@ -344,31 +372,33 @@ impl Element for Knob {
 
         if let Some(label) = prepaint.label.take() {
             let x = bounds.origin.x + (bounds.size.width - label.width) / 2.0;
-            label
-                .paint(
-                    point(x, bounds.origin.y + px(1.0)),
-                    px(14.0),
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                )
-                .unwrap();
+            let result = label.paint(
+                point(x, bounds.origin.y + px(1.0)),
+                px(14.0),
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+            if let Err(e) = result {
+                error!("Failed to paint knob label: {:?}", e);
+            }
         }
 
         let readout_top = bounds.origin.y + px(READOUT_OFFSET);
         if let Some(readout) = prepaint.readout.take() {
             let x = bounds.origin.x + (bounds.size.width - readout.width) / 2.0;
-            readout
-                .paint(
-                    point(x, readout_top + px(3.5)),
-                    px(14.0),
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                )
-                .unwrap();
+            let result = readout.paint(
+                point(x, readout_top + px(3.5)),
+                px(14.0),
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+            if let Err(e) = result {
+                error!("Failed to paint knob readout: {:?}", e);
+            }
         }
 
         if let Some(textbox) = prepaint.textbox.as_mut() {
@@ -401,6 +431,9 @@ impl Element for Knob {
         let default_value = self.default_value;
         let edit_bounds = textbox_bounds(bounds);
         let has_id = id.is_some();
+        let raw_value = self.value;
+        let restore_focus = self.restore_focus.clone();
+        let parse_range = self.parse_range;
 
         window.with_optional_element_state(id, move |v, window| {
             let state: Rc<RefCell<KnobState>> = v.flatten().unwrap_or_default();
@@ -409,6 +442,7 @@ impl Element for Knob {
                 let state = state.clone();
                 let hitbox = hitbox.clone();
                 let on_change = on_change.clone();
+                let restore_focus = restore_focus.clone();
                 window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
@@ -432,19 +466,24 @@ impl Element for Knob {
                                 StyleRefinement::default(),
                                 move |text, cx| match parse(text.trim()) {
                                     Some(value) => {
-                                        (commit_change.borrow_mut())(value.clamp(0.0, 1.0), cx);
+                                        (commit_change.borrow_mut())(
+                                            value.clamp(parse_range.0, parse_range.1),
+                                            cx,
+                                        );
                                         let mut state = commit_state.borrow_mut();
                                         state.textbox = None;
                                         state.parse_error = None;
+                                        state.refocus = true;
                                     }
                                     None => {
                                         commit_state.borrow_mut().parse_error =
                                             Some(Instant::now());
+                                        cx.refresh_windows();
                                     }
                                 },
                             );
                             textbox.update(cx, |textbox, cx| {
-                                textbox.set_value(cx, (format)(position));
+                                textbox.set_value(cx, (format)(raw_value));
                                 textbox.select_all(cx);
                             });
                             let focus = textbox.read(cx).focus_handle();
@@ -456,7 +495,15 @@ impl Element for Knob {
                             window.refresh();
                         }
                         MouseButton::Left => {
-                            state.borrow_mut().drag = Some((ev.position.y, position));
+                            let mut state = state.borrow_mut();
+                            // starting a drag dismisses the type-in editor
+                            if state.textbox.take().is_some() {
+                                state.parse_error = None;
+                                if let Some(focus) = &restore_focus {
+                                    focus.focus(window, cx);
+                                }
+                            }
+                            state.drag = Some((ev.position.y, position, ev.modifiers.shift));
                         }
                         MouseButton::Right => {
                             if let Some(default) = default_value {
@@ -475,11 +522,23 @@ impl Element for Knob {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
-                    let Some((start_y, start_position)) = state.borrow().drag else {
+                    let Some((start_y, start_position, start_shift)) = state.borrow().drag else {
                         return;
                     };
+                    let shift = ev.modifiers.shift;
+                    // shift toggled mid-drag, rebase so the value holds and the new scale applies
+                    // only to displacement from here on
+                    let (start_y, start_position) = if shift != start_shift {
+                        let scale = if start_shift { 0.1 } else { 1.0 };
+                        let dy: f32 = (start_y - ev.position.y).into();
+                        let current = (start_position + dy / DRAG_PIXELS * scale).clamp(0.0, 1.0);
+                        state.borrow_mut().drag = Some((ev.position.y, current, shift));
+                        (ev.position.y, current)
+                    } else {
+                        (start_y, start_position)
+                    };
                     let dy: f32 = (start_y - ev.position.y).into();
-                    let scale = if ev.modifiers.shift { 0.1 } else { 1.0 };
+                    let scale = if shift { 0.1 } else { 1.0 };
                     let position = (start_position + dy / DRAG_PIXELS * scale).clamp(0.0, 1.0);
                     (on_change.borrow_mut())(position, cx);
                 });
@@ -497,6 +556,7 @@ impl Element for Knob {
 
             {
                 let hitbox = hitbox.clone();
+                let state = state.clone();
                 window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
@@ -511,13 +571,19 @@ impl Element for Knob {
                     } else {
                         ev.delta.pixel_delta(px(SCROLL_STEP)).y.into()
                     };
-                    let position = (position + delta).clamp(0.0, 1.0);
+                    // accumulate on the last emitted value, the paint-time one is stale
+                    let mut state = state.borrow_mut();
+                    let base = state.scroll_position.unwrap_or(position);
+                    let position = (base + delta).clamp(0.0, 1.0);
+                    state.scroll_position = Some(position);
+                    drop(state);
                     (on_change.borrow_mut())(position, cx);
                 });
             }
 
             {
                 let state = state.clone();
+                let restore_focus = restore_focus.clone();
                 window.on_key_event(move |ev: &KeyDownEvent, phase, window, cx| {
                     // capture phase, an open editor cancels before the graph clears selection
                     if phase != DispatchPhase::Capture || ev.keystroke.key != "escape" {
@@ -532,6 +598,9 @@ impl Element for Knob {
                     state.textbox = None;
                     state.parse_error = None;
                     state.drag = None;
+                    if let Some(focus) = &restore_focus {
+                        focus.focus(window, cx);
+                    }
                     window.prevent_default();
                     cx.stop_propagation();
                     window.refresh();
@@ -555,5 +624,7 @@ pub fn knob(id: impl Into<ElementId>) -> Knob {
         parse: None,
         on_change: None,
         disabled: false,
+        restore_focus: None,
+        parse_range: (0.0, 1.0),
     }
 }

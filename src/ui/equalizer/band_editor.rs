@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::{
-    playback::dsp::equalizer::{MAX_GAIN_DB, MAX_Q, MIN_Q},
+    playback::dsp::equalizer::{MAX_FREQUENCY, MAX_GAIN_DB, MAX_Q, MIN_FREQUENCY, MIN_Q},
     settings::equalizer::{EqBandKind, EqBandSettings},
     ui::{
         components::{
@@ -93,7 +93,13 @@ impl BandEditor {
 }
 
 impl RenderOnce for BandEditor {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // knob type-in editors hand focus back here when they close
+        let focus = window
+            .use_keyed_state("eq-band-editor-focus", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+
         let theme = cx.global::<Theme>();
         let band = self.band;
         let on_edit = self.on_edit;
@@ -135,8 +141,11 @@ impl RenderOnce for BandEditor {
             .label(tr!("EQ_BAND_FREQ", "Freq"))
             .value(freq_to_norm(band.frequency))
             .default_value(freq_to_norm(1_000.0))
+            // typed input covers the full DSP range, the drag stays axis-bound
+            .parse_range(freq_to_norm(MIN_FREQUENCY), freq_to_norm(MAX_FREQUENCY))
             .format(|v| format_hz(norm_to_freq(v)).into())
             .parse(|s| parse_hz(s).map(freq_to_norm))
+            .restore_focus(focus.clone())
             .on_change({
                 let on_edit = on_edit.clone();
                 move |v, cx| on_edit(BandEdit::Frequency(norm_to_freq(v)), cx)
@@ -156,6 +165,7 @@ impl RenderOnce for BandEditor {
                     .filter(|v| v.is_finite())
                     .map(gain_to_norm)
             })
+            .restore_focus(focus.clone())
             .on_change({
                 let on_edit = on_edit.clone();
                 move |v, cx| on_edit(BandEdit::Gain(norm_to_gain(v)), cx)
@@ -175,6 +185,7 @@ impl RenderOnce for BandEditor {
                     .filter(|v| v.is_finite() && *v > 0.0)
                     .map(q_to_norm)
             })
+            .restore_focus(focus.clone())
             .on_change({
                 let on_edit = on_edit.clone();
                 move |v, cx| on_edit(BandEdit::Q(norm_to_q(v)), cx)
@@ -233,6 +244,7 @@ impl RenderOnce for BandEditor {
 
         let panel = div()
             .id("eq-band-editor")
+            .track_focus(&focus)
             .w(px(260.0))
             .p(px(10.0))
             .flex()

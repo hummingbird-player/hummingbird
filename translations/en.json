@@ -93,7 +93,7 @@
   "EQ_CLIP": "Clip",
   "EQ_CLIP_TOOLTIP": "Output is clipping — lower band gains. Click to dismiss.",
   "EQ_DISABLE": "Disable equalizer",
-  "EQ_ENABLED": "Enable equalizer",
+  "EQ_ENABLE": "Enable equalizer",
   "EQ_FILTER_BAND_PASS": "Band-pass",
   "EQ_FILTER_BELL": "Bell",
   "EQ_FILTER_HIGH_PASS": "High-pass",

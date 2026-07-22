@@ -61,7 +61,7 @@ impl Render for EqualizerSettings {
                                     .tooltip(build_tooltip(if enabled {
                                         tr!("EQ_DISABLE", "Disable equalizer")
                                     } else {
-                                        tr!("EQ_ENABLED", "Enable equalizer")
+                                        tr!("EQ_ENABLE", "Enable equalizer")
                                     }))
                                     .child(icon(POWER).size(px(14.0)))
                                     .on_click(cx.listener(|this, _, _, cx| {

@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicU32, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui::{App, AppContext, Entity, Global};
@@ -38,8 +38,8 @@ const TILT_DB_PER_OCT: f32 = 4.5;
 const SMOOTHING_TAU_MS: f32 = 250.0;
 /// Silent ticks before decay starts, bridges the gaps between engine pushes (~130 ms).
 const COAST_AFTER_FRAMES: u32 = 8;
-/// Ticks a clip latch stays lit after the last over-full-scale sample, about a second.
-const CLIP_HOLD_FRAMES: u32 = 30;
+/// Clip latch hold after the last over-full-scale sample, about a second at any tick cadence.
+const CLIP_HOLD: Duration = Duration::from_secs(1);
 /// Latch threshold, about 1 dB over full scale, resampler overshoot stays below it.
 const CLIP_THRESHOLD: f32 = 1.122;
 
@@ -92,14 +92,14 @@ pub fn ensure_analyzer(cx: &mut App) {
                     let (analyzer_back, frame) = cx
                         .background_executor()
                         .spawn(async move {
-                            let frame = analyzer.tick(rate);
+                            let frame = analyzer.tick(rate, frame_ms);
                             (analyzer, frame)
                         })
                         .await;
                     analyzer = analyzer_back;
                     frame
                 } else {
-                    analyzer.tick(rate)
+                    analyzer.tick(rate, frame_ms)
                 };
                 let Some((pre, post, clipping)) = frame else {
                     continue;
@@ -133,8 +133,6 @@ struct FftScratch {
     freqs: Vec<f32>,
     /// Octave spacing between display points.
     step_oct: f32,
-    /// Coast weight per tick, derived from SMOOTHING_TAU_MS.
-    alpha: f32,
     input: Vec<f32>,
     bins: Vec<Complex32>,
     bins_db: Vec<f32>,
@@ -198,8 +196,8 @@ struct Analyzer {
     post_peak: Arc<AtomicU32>,
     /// Consecutive ticks with no new audio, decay starts only after COAST_AFTER_FRAMES.
     empty_frames: u32,
-    /// Ticks left on the clip latch, lit by post-EQ samples over full scale.
-    clip_frames: u32,
+    /// Clip latch deadline, lit by post-EQ samples over full scale.
+    clip_until: Option<Instant>,
     idle: bool,
 }
 
@@ -231,11 +229,10 @@ impl Analyzer {
                 hann,
                 freqs,
                 step_oct: (MAX_FREQ / MIN_FREQ).log2() / (SPECTRUM_POINTS - 1) as f32,
-                alpha: 1.0 - (-(FRAME_MS as f32) / SMOOTHING_TAU_MS).exp(),
             },
             idle: false,
             empty_frames: 0,
-            clip_frames: 0,
+            clip_until: None,
         }
     }
 
@@ -244,16 +241,15 @@ impl Analyzer {
     }
 
     /// Smoothed display curves plus the clip latch, None when frozen or fully floored.
-    fn tick(&mut self, rate: u32) -> Option<(Vec<f32>, Vec<f32>, bool)> {
+    fn tick(&mut self, rate: u32, frame_ms: u64) -> Option<(Vec<f32>, Vec<f32>, bool)> {
         let pre_fresh = drain(&mut self.pre);
         let post_fresh = drain(&mut self.post);
         let post_peak = f32::from_bits(self.post_peak.swap(0, Ordering::Relaxed));
+        let now = Instant::now();
         if post_peak > CLIP_THRESHOLD {
-            self.clip_frames = CLIP_HOLD_FRAMES;
-        } else {
-            self.clip_frames = self.clip_frames.saturating_sub(1);
+            self.clip_until = Some(now + CLIP_HOLD);
         }
-        let clipping = self.clip_frames > 0;
+        let clipping = self.clip_until.is_some_and(|until| until > now);
         if pre_fresh || post_fresh {
             self.empty_frames = 0;
         } else {
@@ -270,7 +266,8 @@ impl Analyzer {
 
         let coasting = self.empty_frames >= COAST_AFTER_FRAMES;
         let mut live = false;
-        let alpha = self.scratch.alpha;
+        // per-tick decay weight, mirrors the hop-side smoothing at the current tick cadence
+        let alpha = 1.0 - (-(frame_ms as f32) / SMOOTHING_TAU_MS).exp();
         for (tap, fresh) in [(&mut self.pre, pre_fresh), (&mut self.post, post_fresh)] {
             if fresh {
                 // sliding windows a hop apart, so bursts are analyzed whole
@@ -359,7 +356,7 @@ mod tests {
         // the EMA needs about four time constants to converge on the peak
         for _ in 0..64 {
             push_sine(&mut tap, 1_000.0, 2_048);
-            frame = analyzer.tick(48_000);
+            frame = analyzer.tick(48_000, FRAME_MS);
         }
         let (pre, post, _) = frame.unwrap();
 
@@ -392,7 +389,7 @@ mod tests {
         let silence = vec![0.0; FFT_SIZE];
         tap.push_pre(std::slice::from_ref(&tone), FFT_SIZE);
         tap.push_pre(std::slice::from_ref(&silence), FFT_SIZE);
-        analyzer.tick(48_000);
+        analyzer.tick(48_000, FRAME_MS);
 
         let peak = analyzer
             .pre
@@ -415,7 +412,7 @@ mod tests {
         // at 24 kHz the bins stop at 12 kHz, points past 14 kHz have empty kernels
         for _ in 0..32 {
             push_sine(&mut tap, 1_000.0, 2_048);
-            analyzer.tick(24_000);
+            analyzer.tick(24_000, FRAME_MS);
         }
         for (freq, db) in analyzer.scratch.freqs.iter().zip(&analyzer.pre.display) {
             if *freq > 14_000.0 {
@@ -448,7 +445,7 @@ mod tests {
 
         for _ in 0..64 {
             push_sine(&mut tap, 1_000.0, 2_048);
-            analyzer.tick(48_000);
+            analyzer.tick(48_000, FRAME_MS);
         }
         let held = analyzer
             .pre
@@ -459,7 +456,7 @@ mod tests {
 
         // gaps shorter than COAST_AFTER_FRAMES publish nothing and decay nothing
         for _ in 1..COAST_AFTER_FRAMES {
-            assert!(analyzer.tick(48_000).is_none());
+            assert!(analyzer.tick(48_000, FRAME_MS).is_none());
         }
         assert_eq!(
             analyzer
@@ -472,7 +469,7 @@ mod tests {
         );
 
         // a stretched-out gap starts the decay
-        let (pre, ..) = analyzer.tick(48_000).unwrap();
+        let (pre, ..) = analyzer.tick(48_000, FRAME_MS).unwrap();
         let decayed = pre.iter().cloned().fold(f32::MIN, f32::max);
         assert!(
             decayed < held - 1.0,
@@ -488,13 +485,15 @@ mod tests {
 
         let loud = vec![1.5; 2_048];
         tap.push_post(std::slice::from_ref(&loud), 2_048, true);
-        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        let (.., clipping) = analyzer.tick(48_000, FRAME_MS).unwrap();
         assert!(clipping, "over-full-scale post audio did not latch");
 
-        let cleared = (0..CLIP_HOLD_FRAMES + 20)
-            .filter_map(|_| analyzer.tick(48_000))
-            .any(|(.., clipping)| !clipping);
-        assert!(cleared, "clip latch never released");
+        // once the hold elapses, quiet audio releases the latch
+        analyzer.clip_until = Some(Instant::now() - Duration::from_millis(1));
+        let quiet = vec![0.5; 2_048];
+        tap.push_post(std::slice::from_ref(&quiet), 2_048, true);
+        let (.., clipping) = analyzer.tick(48_000, FRAME_MS).unwrap();
+        assert!(!clipping, "clip latch never released");
     }
 
     #[test]
@@ -509,7 +508,7 @@ mod tests {
             .collect();
         for _ in 0..8 {
             tap.push_post(std::slice::from_ref(&plane), 2_048, true);
-            let (.., clipping) = analyzer.tick(48_000).unwrap();
+            let (.., clipping) = analyzer.tick(48_000, FRAME_MS).unwrap();
             assert!(!clipping, "full-scale sine latched the clip indicator");
         }
     }
@@ -522,7 +521,7 @@ mod tests {
 
         // +0.4 dB over, the sort of inter-sample peak a sinc resampler produces
         tap.push_post(&[vec![1.05; 2_048]], 2_048, true);
-        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        let (.., clipping) = analyzer.tick(48_000, FRAME_MS).unwrap();
         assert!(!clipping, "small overshoot latched the clip indicator");
     }
 
@@ -534,7 +533,7 @@ mod tests {
 
         // a hard-panned over-full-scale channel averages to 0.75 in the mono rings
         tap.push_post(&[vec![1.5; 2_048], vec![0.0; 2_048]], 2_048, true);
-        let (.., clipping) = analyzer.tick(48_000).unwrap();
+        let (.., clipping) = analyzer.tick(48_000, FRAME_MS).unwrap();
         assert!(clipping, "per-channel clip hidden by the mono downmix");
     }
 
@@ -546,13 +545,33 @@ mod tests {
 
         for _ in 0..64 {
             push_sine(&mut tap, 1_000.0, 2_048);
-            analyzer.tick(48_000);
+            analyzer.tick(48_000, FRAME_MS);
         }
         // coasting from 0 dB to the floor at tau 250 ms takes ~45 frames plus the empty one
-        let mut frames: Vec<_> = (0..160).filter_map(|_| analyzer.tick(48_000)).collect();
+        let mut frames: Vec<_> = (0..160)
+            .filter_map(|_| analyzer.tick(48_000, FRAME_MS))
+            .collect();
         assert!(frames.len() >= 40, "only {} frames", frames.len());
         let (pre, post, _) = frames.pop().unwrap();
         assert!(pre.is_empty() && post.is_empty());
-        assert!(analyzer.tick(48_000).is_none());
+        assert!(analyzer.tick(48_000, FRAME_MS).is_none());
+    }
+
+    #[test]
+    fn parked_ticks_decay_at_the_same_wall_clock_rate() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+        let mut analyzer = Analyzer::new(consumer);
+
+        for _ in 0..64 {
+            push_sine(&mut tap, 1_000.0, 2_048);
+            analyzer.tick(48_000, FRAME_MS);
+        }
+        // parked ticks run ~7.5x longer, so the same decay floors in ~7.5x fewer of them
+        let mut frames: Vec<_> = (0..30)
+            .filter_map(|_| analyzer.tick(48_000, PARKED_FRAME_MS))
+            .collect();
+        let (pre, post, _) = frames.pop().unwrap();
+        assert!(pre.is_empty() && post.is_empty());
     }
 }

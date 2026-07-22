@@ -5,14 +5,15 @@ use std::{
 };
 
 use gpui::*;
+use tracing::error;
 
 use crate::{
     playback::dsp::equalizer::{Biquad, MAX_GAIN_DB, band_response_db, omega},
     settings::equalizer::{EqBandSettings, EqualizerSettings, MAX_EQ_BANDS},
     ui::{
         equalizer::mapping::{
-            CURVE_MAX_DB, CURVE_MIN_DB, DB_WINDOW, db_to_y, db_to_y_unclamped, format_hz,
-            freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq, y_to_db,
+            CURVE_MAX_DB, CURVE_MIN_DB, DB_WINDOW, MAX_FREQ, MIN_FREQ, db_to_y, db_to_y_unclamped,
+            format_hz, freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq, y_to_db,
         },
         theme::Theme,
     },
@@ -49,6 +50,7 @@ struct DragState {
     start: Point<Pixels>,
     start_frequency: f64,
     start_gain_db: f64,
+    shift: bool,
     was_selected: bool,
     moved: bool,
 }
@@ -218,7 +220,10 @@ fn readout_pill(
 ) -> (ShapedLine, Bounds<Pixels>) {
     let line = shape_label(window, text, color);
     let width = line.width + px(12.0);
-    let x = (dot.x - width / 2.0).clamp(plot.origin.x, plot.origin.x + plot.size.width - width);
+    // min/max instead of clamp, an inverted range pins to the edge rather than panicking
+    let x = (dot.x - width / 2.0)
+        .min(plot.origin.x + plot.size.width - width)
+        .max(plot.origin.x);
     let y = (dot.y - px(30.0)).max(plot.origin.y);
     (line, Bounds::new(point(x, y), size(width, px(20.0))))
 }
@@ -480,10 +485,9 @@ impl Element for EqGraph {
         for freq in LABEL_FREQS {
             let line = shape_label(window, format_hz(freq as f64).into(), label_color);
             let x = plot.origin.x + px(freq_to_x(freq, plot_width)) - line.width / 2.0;
-            let x = x.clamp(
-                plot.origin.x + px(4.0),
-                plot.origin.x + plot.size.width - line.width - px(4.0),
-            );
+            let x = x
+                .min(plot.origin.x + plot.size.width - line.width - px(4.0))
+                .max(plot.origin.x + px(4.0));
             labels.push((line, point(x, plot.origin.y + plot.size.height - px(16.0))));
         }
         for db in (-30..=30).step_by(6) {
@@ -494,10 +498,9 @@ impl Element for EqGraph {
             };
             let line = shape_label(window, text, label_color);
             let y = plot.origin.y + px(db_to_y(db as f32, plot_height)) - px(14.0);
-            let y = y.clamp(
-                plot.origin.y + px(2.0),
-                plot.origin.y + plot.size.height - px(16.0),
-            );
+            let y = y
+                .min(plot.origin.y + plot.size.height - px(16.0))
+                .max(plot.origin.y + px(2.0));
             labels.push((line, point(plot.origin.x + px(6.0), y)));
         }
 
@@ -667,8 +670,9 @@ impl Element for EqGraph {
 
         // labels sit on top of the spectrum and curve so they stay readable
         for (line, origin) in &prepaint.labels {
-            line.paint(*origin, px(12.0), TextAlign::Left, None, window, cx)
-                .unwrap();
+            if let Err(err) = line.paint(*origin, px(12.0), TextAlign::Left, None, window, cx) {
+                error!("Failed to paint equalizer label: {:?}", err);
+            }
         }
 
         if let Some(drag) = prepaint.drag
@@ -761,15 +765,16 @@ impl Element for EqGraph {
                 elevated_border,
                 BorderStyle::Solid,
             ));
-            line.paint(
+            if let Err(err) = line.paint(
                 point(pill.origin.x + px(6.0), pill.origin.y + px(4.0)),
                 px(12.0),
                 TextAlign::Left,
                 None,
                 window,
                 cx,
-            )
-            .unwrap();
+            ) {
+                error!("Failed to paint equalizer readout: {:?}", err);
+            }
         }
         if prepaint.flash.is_some() {
             window.request_animation_frame();
@@ -826,6 +831,7 @@ impl Element for EqGraph {
                                 start: position,
                                 start_frequency: frequency,
                                 start_gain_db: gain_db,
+                                shift: ev.modifiers.shift,
                                 was_selected: false,
                                 moved: false,
                             });
@@ -868,6 +874,7 @@ impl Element for EqGraph {
                                             start: ev.position,
                                             start_frequency: band.frequency,
                                             start_gain_db: band.gain_db,
+                                            shift: ev.modifiers.shift,
                                             was_selected: selected == Some(index),
                                             moved: false,
                                         });
@@ -930,6 +937,7 @@ impl Element for EqGraph {
                 let config = config.clone();
                 let hitbox = hitbox.clone();
                 let on_band_change = on_band_change.clone();
+                let on_drag_active = on_drag_active.clone();
                 window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
@@ -941,10 +949,14 @@ impl Element for EqGraph {
                             return;
                         };
                         let Some(band) = config.bands.get(drag.index) else {
+                            // the band vanished mid-drag, still release the view's drag latch
                             state.borrow_mut().drag = None;
+                            if let Some(drag_active) = &on_drag_active {
+                                (drag_active.borrow_mut())(false, cx);
+                            }
                             return;
                         };
-                        let scale = if ev.modifiers.shift { 0.1 } else { 1.0 };
+                        let scale = if drag.shift { 0.1 } else { 1.0 };
                         let width: f32 = plot.size.width.into();
                         let dx: f32 = (ev.position.x - drag.start.x).into();
                         let dy: f32 = (ev.position.y - drag.start.y).into();
@@ -952,7 +964,14 @@ impl Element for EqGraph {
                             drag.moved = true;
                             state.borrow_mut().drag = Some(drag);
                         }
-                        let start_x = freq_to_x(drag.start_frequency as f32, width);
+                        if !drag.moved {
+                            return;
+                        }
+                        // the start frequency can sit off-axis after an arrow-key nudge, map it
+                        // unclamped so the delta stays relative to the real spot
+                        let start_x = ((drag.start_frequency as f32).log10() - MIN_FREQ.log10())
+                            / (MAX_FREQ.log10() - MIN_FREQ.log10())
+                            * width;
                         let frequency = x_to_freq(start_x + dx * scale, width) as f64;
                         let gain_db = if band.kind.has_gain() {
                             let height: f32 = plot.size.height.into();
@@ -963,6 +982,15 @@ impl Element for EqGraph {
                         } else {
                             band.gain_db
                         };
+                        // a shift toggle would rescale the whole accumulated delta, so rebase
+                        // the drag origin onto the current value and position
+                        if ev.modifiers.shift != drag.shift {
+                            drag.shift = ev.modifiers.shift;
+                            drag.start = ev.position;
+                            drag.start_frequency = frequency;
+                            drag.start_gain_db = gain_db;
+                            state.borrow_mut().drag = Some(drag);
+                        }
                         (on_change.borrow_mut())(drag.index, frequency, gain_db, cx);
                         return;
                     }
@@ -983,7 +1011,7 @@ impl Element for EqGraph {
                 let state = state.clone();
                 let on_drag_active = on_drag_active.clone();
                 let on_select = on_select.clone();
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
@@ -993,9 +1021,11 @@ impl Element for EqGraph {
                     if let Some(drag_active) = &on_drag_active {
                         (drag_active.borrow_mut())(false, cx);
                     }
-                    // a click that never moved off the selected dot dismisses it
+                    // a click that never moved off the selected dot dismisses it, but a
+                    // double-click's second mouseup must not, it reopens the editor
                     if !drag.moved
                         && drag.was_selected
+                        && ev.click_count <= 1
                         && let Some(select) = &on_select
                     {
                         (select.borrow_mut())(None, cx);

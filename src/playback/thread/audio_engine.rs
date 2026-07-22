@@ -297,6 +297,7 @@ impl AudioEngine {
                             }
                             self.sync_eq_format();
                         }
+                        self.eq.reset();
                         self.pending_reset = false;
                     }
 
@@ -466,7 +467,9 @@ impl AudioEngine {
                 .events_tx
                 .send(PlaybackEvent::SampleRateChanged(format.sample_rate));
         }
-        self.eq.set_sample_rate(f64::from(format.sample_rate));
+        if format.sample_rate > 0 {
+            self.eq.set_sample_rate(f64::from(format.sample_rate));
+        }
         self.eq
             .set_channel_count(format.channels.to_layout().count().max(1));
     }

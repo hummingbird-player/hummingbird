@@ -260,14 +260,13 @@ impl SettingsWindow {
         section: SettingsSectionKind,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let item = sidebar_item(section.id())
+        sidebar_item(section.id())
             .icon(section.icon())
             .child(section.label())
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.switch_section(section, cx);
             }))
-            .when(self.active.kind() == section, |this| this.active());
-        item
+            .when(self.active.kind() == section, |this| this.active())
     }
 }
 

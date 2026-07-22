@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::playback::dsp::equalizer::{MAX_FREQUENCY, MAX_GAIN_DB, MAX_Q, MIN_FREQUENCY, MIN_Q};
 
 /// Maximum number of equalizer bands.
 pub const MAX_EQ_BANDS: usize = 16;
@@ -57,10 +59,104 @@ impl Default for EqBandSettings {
 }
 
 /// Parametric equalizer settings. Wire format to the DSP and the UI's working state.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct EqualizerSettings {
     /// Global bypass.
     pub enabled: bool,
     pub bands: Vec<EqBandSettings>,
+}
+
+impl EqualizerSettings {
+    pub fn sanitize(&mut self) {
+        for band in &mut self.bands {
+            band.frequency = clamp_or(band.frequency, MIN_FREQUENCY, MAX_FREQUENCY, MIN_FREQUENCY);
+            band.gain_db = clamp_or(band.gain_db, -MAX_GAIN_DB, MAX_GAIN_DB, 0.0);
+            band.q = clamp_or(band.q, MIN_Q, MAX_Q, 1.0);
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EqualizerSettings {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Default, Deserialize)]
+        #[serde(default)]
+        struct Raw {
+            enabled: bool,
+            bands: Vec<EqBandSettings>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let mut settings = Self {
+            enabled: raw.enabled,
+            bands: raw.bands,
+        };
+        // hand-edited files can carry out-of-range values
+        settings.sanitize();
+        Ok(settings)
+    }
+}
+
+fn clamp_or(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_clamps_into_dsp_ranges() {
+        let mut config = EqualizerSettings {
+            enabled: true,
+            bands: vec![EqBandSettings {
+                frequency: -5.0,
+                gain_db: 90.0,
+                q: -1.0,
+                ..Default::default()
+            }],
+        };
+        config.sanitize();
+        let band = &config.bands[0];
+        assert_eq!(band.frequency, MIN_FREQUENCY);
+        assert_eq!(band.gain_db, MAX_GAIN_DB);
+        assert_eq!(band.q, MIN_Q);
+    }
+
+    #[test]
+    fn sanitize_repairs_non_finite_values() {
+        let mut config = EqualizerSettings {
+            enabled: true,
+            bands: vec![EqBandSettings {
+                frequency: f64::NAN,
+                gain_db: f64::INFINITY,
+                q: f64::NEG_INFINITY,
+                ..Default::default()
+            }],
+        };
+        config.sanitize();
+        let band = &config.bands[0];
+        assert_eq!(band.frequency, MIN_FREQUENCY);
+        assert_eq!(band.gain_db, 0.0);
+        assert_eq!(band.q, 1.0);
+    }
+
+    #[test]
+    fn deserialize_sanitizes_bands() {
+        let config: EqualizerSettings =
+            serde_json::from_str(r#"{"enabled":true,"bands":[{"frequency":-5.0,"q":-1.0}]}"#)
+                .unwrap();
+        let band = &config.bands[0];
+        assert_eq!(band.frequency, MIN_FREQUENCY);
+        assert_eq!(band.q, MIN_Q);
+    }
+
+    #[test]
+    fn deserialize_defaults_missing_fields() {
+        let config: EqualizerSettings = serde_json::from_str("{}").unwrap();
+        assert!(!config.enabled);
+        assert!(config.bands.is_empty());
+    }
 }

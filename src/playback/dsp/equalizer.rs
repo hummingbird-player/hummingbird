@@ -18,9 +18,20 @@ const SMOOTHING_TAU_SECONDS: f64 = 0.030;
 const CROSSFADE_FRAMES: usize = SUB_BLOCK_FRAMES;
 const DENORMAL_THRESHOLD: f64 = 1e-30;
 
+#[inline]
+fn sanitize(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback
+    }
+}
+
 /// Clamp into the range where the cookbook formulas stay stable and accurate.
 pub fn clamp_frequency(frequency: f64, sample_rate: f64) -> f64 {
-    frequency.clamp(MIN_FREQUENCY, MAX_FREQUENCY.min(0.45 * sample_rate))
+    // 0.45 × rate can dip below MIN_FREQUENCY at tiny rates, never clamp against min > max
+    let max = MAX_FREQUENCY.min(0.45 * sample_rate).max(MIN_FREQUENCY);
+    sanitize(frequency, MIN_FREQUENCY, max, MIN_FREQUENCY)
 }
 
 #[inline]
@@ -52,8 +63,8 @@ impl Biquad {
     /// RBJ cookbook coefficients for one band.
     pub fn new(kind: EqBandKind, sample_rate: f64, frequency: f64, gain_db: f64, q: f64) -> Self {
         let frequency = clamp_frequency(frequency, sample_rate);
-        let q = q.clamp(MIN_Q, MAX_Q);
-        let gain_db = gain_db.clamp(-MAX_GAIN_DB, MAX_GAIN_DB);
+        let q = sanitize(q, MIN_Q, MAX_Q, 1.0);
+        let gain_db = sanitize(gain_db, -MAX_GAIN_DB, MAX_GAIN_DB, 0.0);
 
         let omega0 = omega(frequency, sample_rate);
         let (sin, cos) = omega0.sin_cos();
@@ -174,11 +185,11 @@ struct SmoothedParams {
 }
 
 impl SmoothedParams {
-    fn from_band(band: &EqBandSettings, sample_rate: f64) -> Self {
+    fn from_band(band: &EqBandSettings) -> Self {
         Self {
-            frequency: clamp_frequency(band.frequency, sample_rate),
-            gain_db: band.gain_db.clamp(-MAX_GAIN_DB, MAX_GAIN_DB),
-            q: band.q.clamp(MIN_Q, MAX_Q),
+            frequency: sanitize(band.frequency, MIN_FREQUENCY, MAX_FREQUENCY, MIN_FREQUENCY),
+            gain_db: sanitize(band.gain_db, -MAX_GAIN_DB, MAX_GAIN_DB, 0.0),
+            q: sanitize(band.q, MIN_Q, MAX_Q, 1.0),
         }
     }
 }
@@ -195,7 +206,7 @@ struct BandRuntime {
 
 impl BandRuntime {
     fn at_target(band: &EqBandSettings, sample_rate: f64) -> Self {
-        let params = SmoothedParams::from_band(band, sample_rate);
+        let params = SmoothedParams::from_band(band);
         Self {
             kind: band.kind,
             enabled: band.enabled,
@@ -215,7 +226,7 @@ impl BandRuntime {
     /// Fresh bells start at 0 dB and smooth up to their target gain, so adding one mid-playback
     /// needs no crossfade.
     fn bell_ramp_in(band: &EqBandSettings, sample_rate: f64) -> Self {
-        let target = SmoothedParams::from_band(band, sample_rate);
+        let target = SmoothedParams::from_band(band);
         let current = SmoothedParams {
             gain_db: 0.0,
             ..target
@@ -236,9 +247,9 @@ impl BandRuntime {
         }
     }
 
-    fn retarget(&mut self, band: &EqBandSettings, sample_rate: f64) {
+    fn retarget(&mut self, band: &EqBandSettings) {
         self.enabled = band.enabled;
-        self.target = SmoothedParams::from_band(band, sample_rate);
+        self.target = SmoothedParams::from_band(band);
         self.moving = !converged(self.current.frequency, self.target.frequency)
             || !converged(self.current.gain_db, self.target.gain_db)
             || !converged(self.current.q, self.target.q);
@@ -342,7 +353,7 @@ impl EqualizerProcessor {
             match self.bands.get(i) {
                 Some(existing) if existing.kind == band.kind => {
                     let mut runtime = *existing;
-                    runtime.retarget(band, self.sample_rate);
+                    runtime.retarget(band);
                     new_bands.push(runtime);
                     new_states.push(if band.enabled {
                         states
@@ -1059,6 +1070,47 @@ mod tests {
         let mut block = noise_planar(1, 256);
         proc.process(&mut block, 256);
         assert_finite_and_bounded(&block, 1e3);
+    }
+
+    /// A band above 0.45 × the old rate keeps its requested frequency and is re-anchored against
+    /// the new rate, not left at the old clamp.
+    #[test]
+    fn sample_rate_change_restores_rate_clamped_frequency() {
+        let mut proc = EqualizerProcessor::new(44_100.0, 1);
+        proc.set_config(&config(
+            true,
+            &[band(EqBandKind::Bell, 25_000.0, 12.0, 1.0)],
+        ));
+        // settle the ramp-in smoother onto the target
+        let mut block = noise_planar(1, 16_384);
+        proc.process(&mut block, 16_384);
+
+        proc.set_sample_rate(96_000.0);
+        assert_eq!(
+            proc.bands[0].coeffs,
+            Biquad::new(EqBandKind::Bell, 96_000.0, 25_000.0, 12.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn non_finite_params_fall_back_safely() {
+        let nan = f64::NAN;
+        let coeffs = Biquad::new(EqBandKind::Bell, FS, nan, nan, nan);
+        for c in [coeffs.b0, coeffs.b1, coeffs.b2, coeffs.a1, coeffs.a2] {
+            assert!(c.is_finite());
+        }
+
+        let mut proc = EqualizerProcessor::new(FS, 1);
+        proc.set_config(&config(true, &[band(EqBandKind::Bell, nan, nan, nan)]));
+        let mut block = noise_planar(1, 1_024);
+        proc.process(&mut block, 1_024);
+        assert_finite_and_bounded(&block, 1e3);
+    }
+
+    #[test]
+    fn clamp_frequency_handles_tiny_sample_rates() {
+        assert_eq!(clamp_frequency(1_000.0, 10.0), MIN_FREQUENCY);
+        assert_eq!(clamp_frequency(1_000.0, f64::NAN), 1_000.0);
     }
 
     #[test]

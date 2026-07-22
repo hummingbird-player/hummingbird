@@ -63,10 +63,11 @@ impl SpectrumTap {
             return;
         }
         // per-channel peak, a hard-panned clip must not hide inside the mono downmix
-        let block = planes.iter().map(Vec::len).min().unwrap_or(0);
+        // scan the whole block, the ring may have dropped the clipped part
+        let block = frames.min(planes.iter().map(Vec::len).min().unwrap_or(0));
         let mut peak = 0.0f32;
         for plane in planes {
-            for &sample in &plane[block - written..block] {
+            for &sample in &plane[..block] {
                 peak = peak.max(sample.abs() as f32);
             }
         }
@@ -176,6 +177,21 @@ mod tests {
         tap.push_post(&[vec![0.5; 64], vec![0.0; 64]], 64, true);
         let peak = f32::from_bits(consumer.post_peak.load(Ordering::Relaxed));
         assert_eq!(peak, 0.5);
+    }
+
+    #[test]
+    fn post_peak_scans_frames_dropped_by_the_ring() {
+        let (mut tap, consumer) = spectrum_tap();
+        consumer.viewers.fetch_add(1, Ordering::Relaxed);
+
+        // leave fewer free slots than the next block holds
+        tap.push_post(&[vec![0.0; TAP_CAPACITY - 64]], TAP_CAPACITY - 64, false);
+
+        let mut block = vec![0.0; 256];
+        block[0] = 2.0;
+        tap.push_post(&[block], 256, true);
+        let peak = f32::from_bits(consumer.post_peak.load(Ordering::Relaxed));
+        assert_eq!(peak, 2.0);
     }
 
     #[test]

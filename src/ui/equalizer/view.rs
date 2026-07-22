@@ -62,8 +62,12 @@ pub struct EqualizerView {
     spectrum_viewers: Option<Arc<AtomicUsize>>,
     /// First click on the header's reset button only arms it, the second clears the bands.
     reset_armed: bool,
+    /// Drops the arm if the confirming second click never comes.
+    reset_disarm_task: Option<Task<()>>,
     clip_latched: bool,
     save_task: Option<Task<()>>,
+    /// Reload held back while a drag owns the state, applied when the drag ends.
+    pending_reload: Option<EqualizerSettings>,
     focus_handle: FocusHandle,
     /// Set when a selection change should pull keyboard focus to this view.
     focus_pending: bool,
@@ -75,14 +79,17 @@ impl EqualizerView {
             let settings = cx.global::<SettingsGlobal>().model.clone();
             let mut config = settings.read(cx).playback.equalizer.clone();
             config.bands.truncate(MAX_EQ_BANDS);
+            config.sanitize();
 
-            // hot-reloads and external edits sync in, unless a drag owns the state
+            // hot-reloads and external edits sync in, held back while a drag owns the state
             cx.observe(&settings, |this: &mut Self, settings, cx| {
-                if this.dragging {
-                    return;
-                }
                 let mut config = settings.read(cx).playback.equalizer.clone();
                 config.bands.truncate(MAX_EQ_BANDS);
+                config.sanitize();
+                if this.dragging {
+                    this.pending_reload = Some(config);
+                    return;
+                }
                 if config != this.config {
                     this.config = config;
                     if this.selected.is_some_and(|i| i >= this.config.bands.len()) {
@@ -99,7 +106,10 @@ impl EqualizerView {
                 if let Some(viewers) = &this.spectrum_viewers {
                     viewers.fetch_sub(1, Ordering::Relaxed);
                 }
-                if this.settings.read(cx).playback.equalizer == this.config {
+                // compare like-for-like, the working copy is capped at MAX_EQ_BANDS
+                let mut stored = this.settings.read(cx).playback.equalizer.clone();
+                stored.bands.truncate(MAX_EQ_BANDS);
+                if this.save_task.is_none() && stored == this.config {
                     return;
                 }
                 let config = this.config.clone();
@@ -153,8 +163,10 @@ impl EqualizerView {
                 spectrum,
                 spectrum_viewers,
                 reset_armed: false,
+                reset_disarm_task: None,
                 clip_latched: false,
                 save_task: None,
+                pending_reload: None,
                 focus_handle: cx.focus_handle(),
                 focus_pending: false,
             }
@@ -186,10 +198,20 @@ impl EqualizerView {
     pub fn request_reset(&mut self, cx: &mut Context<Self>) {
         if self.reset_armed {
             self.reset_armed = false;
+            self.reset_disarm_task = None;
             self.selected = None;
             self.mutate(cx, |config| config.bands.clear());
         } else {
             self.reset_armed = true;
+            // a stray second click long after arming must not clear the bands
+            self.reset_disarm_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                this.update(cx, |this, cx| {
+                    this.reset_armed = false;
+                    cx.notify();
+                })
+                .ok();
+            }));
             cx.notify();
         }
     }
@@ -198,28 +220,37 @@ impl EqualizerView {
         self.reset_armed
     }
 
-    /// Single funnel for edits: apply, push live to the DSP, arm the save debounce.
+    /// Single funnel for edits: apply, then push the result everywhere.
     pub fn mutate(&mut self, cx: &mut Context<Self>, update: impl FnOnce(&mut EqualizerSettings)) {
         update(&mut self.config);
         self.config.bands.truncate(MAX_EQ_BANDS);
+        self.push_config(cx);
+    }
 
+    /// Push the working copy to the DSP and the settings model, debounce only the disk write.
+    fn push_config(&mut self, cx: &mut Context<Self>) {
         if cx.has_global::<PlaybackInterface>() {
             cx.global::<PlaybackInterface>()
                 .set_equalizer(self.config.clone());
         }
 
-        // persist on the trailing edge so rapid edits collapse into one write
+        // the model always tracks the latest edit so a mid-debounce save or reload stays
+        // current, the equality guard in the observer keeps this notify from looping back
+        let config = self.config.clone();
+        self.settings.update(cx, |settings, cx| {
+            settings.playback.equalizer = config;
+            cx.notify();
+        });
+
+        // persist on the trailing edge so rapid edits collapse into one write, the closure saves
+        // whatever the model holds when it fires
         self.save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(500))
                 .await;
             this.update(cx, |this, cx| {
-                let config = this.config.clone();
-                this.settings.update(cx, |settings, cx| {
-                    settings.playback.equalizer = config;
-                    save_settings(cx, settings);
-                    cx.notify();
-                });
+                this.settings
+                    .update(cx, |settings, cx| save_settings(cx, settings));
             })
             .ok();
         }));
@@ -399,11 +430,21 @@ impl Render for EqualizerView {
             .on_drag_active({
                 let view = view.clone();
                 move |active, cx| {
-                    view.update(cx, |this, _| {
+                    view.update(cx, |this, cx| {
                         this.dragging = active;
                         if !active {
                             // re-anchor the popover onto the dot's resting spot
                             this.popover_anchor = None;
+                            // land a reload that was held back while the drag owned the state
+                            if let Some(config) = this.pending_reload.take()
+                                && config != this.config
+                            {
+                                this.config = config;
+                                if this.selected.is_some_and(|i| i >= this.config.bands.len()) {
+                                    this.selected = None;
+                                }
+                                this.push_config(cx);
+                            }
                         }
                     });
                 }

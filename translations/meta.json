@@ -469,55 +469,55 @@
   },
   "EQ_BAND_DISABLED": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:201",
+    "definedIn": "src/ui/equalizer/band_editor.rs:212",
     "plural": false,
     "description": null
   },
   "EQ_BAND_ENABLED": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:199",
+    "definedIn": "src/ui/equalizer/band_editor.rs:210",
     "plural": false,
     "description": null
   },
   "EQ_BAND_FREQ": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:135",
+    "definedIn": "src/ui/equalizer/band_editor.rs:141",
     "plural": false,
     "description": null
   },
   "EQ_BAND_GAIN": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:145",
+    "definedIn": "src/ui/equalizer/band_editor.rs:154",
     "plural": false,
     "description": null
   },
   "EQ_BAND_NUMBER": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:228",
+    "definedIn": "src/ui/equalizer/band_editor.rs:239",
     "plural": false,
     "description": null
   },
   "EQ_BAND_Q": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:164",
+    "definedIn": "src/ui/equalizer/band_editor.rs:174",
     "plural": false,
     "description": null
   },
   "EQ_BAND_REMOVE": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:214",
+    "definedIn": "src/ui/equalizer/band_editor.rs:225",
     "plural": false,
     "description": null
   },
   "EQ_CLIP": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:455",
+    "definedIn": "src/ui/equalizer/view.rs:496",
     "plural": false,
     "description": null
   },
   "EQ_CLIP_TOOLTIP": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:446",
+    "definedIn": "src/ui/equalizer/view.rs:487",
     "plural": false,
     "description": null
   },
@@ -527,7 +527,7 @@
     "plural": false,
     "description": null
   },
-  "EQ_ENABLED": {
+  "EQ_ENABLE": {
     "context": "equalizer.rs",
     "definedIn": "src/ui/settings/equalizer.rs:64",
     "plural": false,
@@ -535,31 +535,31 @@
   },
   "EQ_FILTER_BAND_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:117",
+    "definedIn": "src/ui/equalizer/band_editor.rs:123",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_BELL": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:103",
+    "definedIn": "src/ui/equalizer/band_editor.rs:109",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_HIGH_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:112",
+    "definedIn": "src/ui/equalizer/band_editor.rs:118",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_LOW_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:107",
+    "definedIn": "src/ui/equalizer/band_editor.rs:113",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_NOTCH": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:122",
+    "definedIn": "src/ui/equalizer/band_editor.rs:128",
     "plural": false,
     "description": null
   },
