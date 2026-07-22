@@ -64,6 +64,10 @@ fn get_available_languages() -> Vec<LanguageOption> {
             display_name: "日本語".into(),
         },
         LanguageOption {
+            code: "zh-CN",
+            display_name: "简体中文".into(),
+        },
+        LanguageOption {
             code: "sk",
             display_name: "Slovenčina".into(),
         },

@@ -541,133 +541,133 @@
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:343",
+    "definedIn": "src/ui/settings/interface.rs:347",
     "plural": false,
     "description": null
   },
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:346",
+    "definedIn": "src/ui/settings/interface.rs:350",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:246",
+    "definedIn": "src/ui/settings/interface.rs:250",
     "plural": false,
     "description": null
   },
   "INTERFACE_FULL_WIDTH_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:249",
+    "definedIn": "src/ui/settings/interface.rs:253",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:293",
+    "definedIn": "src/ui/settings/interface.rs:297",
     "plural": false,
     "description": null
   },
   "INTERFACE_GRID_MIN_ITEM_WIDTH_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:296",
+    "definedIn": "src/ui/settings/interface.rs:300",
     "plural": false,
     "description": null
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:385",
+    "definedIn": "src/ui/settings/interface.rs:389",
     "plural": false,
     "description": null
   },
   "INTERFACE_QUEUE_SELECT_ON_CLICK_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:388",
+    "definedIn": "src/ui/settings/interface.rs:392",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:322",
+    "definedIn": "src/ui/settings/interface.rs:326",
     "plural": false,
     "description": null
   },
   "INTERFACE_REDUCED_MOTION_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:325",
+    "definedIn": "src/ui/settings/interface.rs:329",
     "plural": false,
     "description": null
   },
   "INTERFACE_SLIM_SCROLLBARS": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:364",
+    "definedIn": "src/ui/settings/interface.rs:368",
     "plural": false,
     "description": null
   },
   "INTERFACE_SLIM_SCROLLBARS_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:367",
+    "definedIn": "src/ui/settings/interface.rs:371",
     "plural": false,
     "description": null
   },
   "INTERFACE_STARTUP_LIBRARY_VIEW": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:234",
+    "definedIn": "src/ui/settings/interface.rs:238",
     "plural": false,
     "description": null
   },
   "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:237",
+    "definedIn": "src/ui/settings/interface.rs:241",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:409",
+    "definedIn": "src/ui/settings/interface.rs:413",
     "plural": false,
     "description": null
   },
   "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:414",
+    "definedIn": "src/ui/settings/interface.rs:418",
     "plural": false,
     "description": null
   },
   "INTERFACE_THEME": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:209",
+    "definedIn": "src/ui/settings/interface.rs:213",
     "plural": false,
     "description": null
   },
   "INTERFACE_THEME_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:211",
+    "definedIn": "src/ui/settings/interface.rs:215",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:272",
+    "definedIn": "src/ui/settings/interface.rs:276",
     "plural": false,
     "description": null
   },
   "INTERFACE_TWO_COLUMN_LIBRARY_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:275",
+    "definedIn": "src/ui/settings/interface.rs:279",
     "plural": false,
     "description": null
   },
   "LANGUAGE": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:199",
+    "definedIn": "src/ui/settings/interface.rs:203",
     "plural": false,
     "description": null
   },
   "LANGUAGE_SUBTEXT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:201",
+    "definedIn": "src/ui/settings/interface.rs:205",
     "plural": false,
     "description": null
   },
@@ -757,7 +757,7 @@
   },
   "OPEN_THEMES_FOLDER": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:221",
+    "definedIn": "src/ui/settings/interface.rs:225",
     "plural": false,
     "description": null
   },
@@ -1555,7 +1555,7 @@
   },
   "THEME_DEFAULT": {
     "context": "interface.rs",
-    "definedIn": "src/ui/settings/interface.rs:165",
+    "definedIn": "src/ui/settings/interface.rs:169",
     "plural": false,
     "description": null
   },
