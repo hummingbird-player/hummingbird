@@ -17,6 +17,8 @@ const SMOOTHING_TAU_SECONDS: f64 = 0.030;
 /// Structural changes crossfade over one sub-block.
 const CROSSFADE_FRAMES: usize = SUB_BLOCK_FRAMES;
 const DENORMAL_THRESHOLD: f64 = 1e-30;
+/// Log-spaced samples of the composite response when searching for its peak.
+const COMP_GRID_POINTS: usize = 512;
 
 #[inline]
 fn sanitize(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
@@ -177,6 +179,29 @@ pub fn config_response_db(config: &EqualizerSettings, sample_rate: f64, at_frequ
         .sum()
 }
 
+/// Peak of the summed responses in dB, sampled over a log grid plus each band's center so narrow
+/// bells between grid points are still caught. Never negative - a cut-only curve needs no headroom.
+fn peak_response_db(biquads: &[Biquad], centers: &[f64], sample_rate: f64) -> f64 {
+    if biquads.is_empty() {
+        return 0.0;
+    }
+    let response = |frequency: f64| -> f64 {
+        let w = omega(frequency, sample_rate);
+        biquads.iter().map(|biquad| biquad.magnitude_db(w)).sum()
+    };
+    let max = MAX_FREQUENCY.min(0.45 * sample_rate).max(MIN_FREQUENCY);
+    let ratio = max / MIN_FREQUENCY;
+    let mut peak = 0.0f64;
+    for i in 0..COMP_GRID_POINTS {
+        let frequency = MIN_FREQUENCY * ratio.powf(i as f64 / (COMP_GRID_POINTS - 1) as f64);
+        peak = peak.max(response(frequency));
+    }
+    for &center in centers {
+        peak = peak.max(response(center));
+    }
+    peak
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SmoothedParams {
     frequency: f64,
@@ -280,10 +305,53 @@ impl BandRuntime {
     }
 }
 
+/// Volume compensation gain, one-pole smoothed toward the target like the band params.
+#[derive(Debug, Clone, Copy, Default)]
+struct CompGain {
+    current_db: f64,
+    target_db: f64,
+    moving: bool,
+}
+
+impl CompGain {
+    fn snap(&mut self, target_db: f64) {
+        self.current_db = target_db;
+        self.target_db = target_db;
+        self.moving = false;
+    }
+
+    fn retarget(&mut self, target_db: f64) {
+        self.target_db = target_db;
+        self.moving = !converged(self.current_db, target_db);
+    }
+
+    fn advance(&mut self, coeff: f64) {
+        if !self.moving {
+            return;
+        }
+        self.current_db += (self.target_db - self.current_db) * coeff;
+        if converged(self.current_db, self.target_db) {
+            self.current_db = self.target_db;
+            self.moving = false;
+        }
+    }
+
+    /// Exactly 1.0 once settled at 0 dB, so the streaming path can skip the multiply.
+    fn linear(&self) -> f64 {
+        if self.current_db == 0.0 {
+            1.0
+        } else {
+            10f64.powf(self.current_db / 20.0)
+        }
+    }
+}
+
 /// Snapshot of the outgoing configuration, faded out linearly over one window.
 struct Crossfade {
     bands: Vec<Biquad>,
     states: Vec<Vec<BiquadState>>,
+    /// Compensation gain the outgoing configuration was playing at.
+    gain: f64,
     remaining: usize,
 }
 
@@ -294,6 +362,8 @@ pub struct EqualizerProcessor {
     bands: Vec<BandRuntime>,
     states: Vec<Vec<BiquadState>>, // [band][channel]
     enabled: bool,
+    compensate: bool,
+    comp: CompGain,
     smoothing_coeff: f64,
     crossfade: Option<Crossfade>,
     scratch: Vec<Vec<f64>>, // [channel][SUB_BLOCK_FRAMES] crossfade buffer
@@ -307,6 +377,8 @@ impl EqualizerProcessor {
             bands: Vec::new(),
             states: Vec::new(),
             enabled: false,
+            compensate: false,
+            comp: CompGain::default(),
             smoothing_coeff: smoothing_coeff(sample_rate),
             crossfade: None,
             scratch: vec![vec![0.0; SUB_BLOCK_FRAMES]; channels],
@@ -376,8 +448,39 @@ impl EqualizerProcessor {
         }
 
         self.enabled = config.enabled;
+        self.compensate = config.volume_compensation;
         self.bands = new_bands;
         self.states = new_states;
+
+        // a crossfade or silence masks the level jump, and the incoming configuration must
+        // arrive fully compensated rather than settle audibly after the fade
+        let target = self.compensation_target();
+        if self.crossfade.is_some() || !was_audible {
+            self.comp.snap(target);
+        } else {
+            self.comp.retarget(target);
+        }
+    }
+
+    /// Compensation for the current band targets, so an in-flight ramp lands on the right level.
+    fn compensation_target(&self) -> f64 {
+        if !self.compensate {
+            return 0.0;
+        }
+        let mut biquads = Vec::new();
+        let mut centers = Vec::new();
+        for band in self.bands.iter().filter(|band| band.enabled) {
+            let params = band.target;
+            biquads.push(Biquad::new(
+                band.kind,
+                self.sample_rate,
+                params.frequency,
+                params.gain_db,
+                params.q,
+            ));
+            centers.push(clamp_frequency(params.frequency, self.sample_rate));
+        }
+        -peak_response_db(&biquads, &centers, self.sample_rate)
     }
 
     fn begin_crossfade(&mut self, was_audible: bool) {
@@ -397,6 +500,7 @@ impl EqualizerProcessor {
         self.crossfade = Some(Crossfade {
             bands,
             states,
+            gain: if was_audible { self.comp.linear() } else { 1.0 },
             remaining: CROSSFADE_FRAMES,
         });
     }
@@ -413,6 +517,7 @@ impl EqualizerProcessor {
         let channels = self.channels.min(planar.len());
         let bands = &mut self.bands;
         let states = &mut self.states;
+        let comp = &mut self.comp;
         let crossfade = &mut self.crossfade;
         let scratch = &mut self.scratch;
 
@@ -428,6 +533,9 @@ impl EqualizerProcessor {
             for band in bands.iter_mut() {
                 band.advance(smoothing_coeff, sample_rate);
             }
+            let gain_start = comp.linear();
+            comp.advance(smoothing_coeff);
+            let gain_end = comp.linear();
 
             // outgoing configuration on a copy of the dry input
             if let Some(xf) = crossfade.as_mut() {
@@ -442,6 +550,13 @@ impl EqualizerProcessor {
                         }
                     }
                 }
+                if xf.gain != 1.0 {
+                    for channel in scratch.iter_mut().take(channels) {
+                        for sample in &mut channel[..n] {
+                            *sample *= xf.gain;
+                        }
+                    }
+                }
             }
 
             if enabled {
@@ -453,6 +568,16 @@ impl EqualizerProcessor {
                         let state = &mut states[i][ch];
                         for sample in &mut planar[ch][offset..offset + n] {
                             *sample = band.coeffs.process(*sample, state);
+                        }
+                    }
+                }
+                // interpolated per sample - a per-block step would zipper, the biquads get away
+                // with block-rate updates only because their state carries across the boundary
+                if gain_start != 1.0 || gain_end != 1.0 {
+                    let step = (gain_end - gain_start) / n as f64;
+                    for channel in planar.iter_mut().take(channels) {
+                        for (j, sample) in channel[offset..offset + n].iter_mut().enumerate() {
+                            *sample *= gain_start + step * (j + 1) as f64;
                         }
                     }
                 }
@@ -513,6 +638,8 @@ impl EqualizerProcessor {
                 band.current.q,
             );
         }
+        // Nyquist clamping shifts responses, and the hard reset already masks the jump
+        self.comp.snap(self.compensation_target());
         self.reset();
     }
 
@@ -550,7 +677,22 @@ mod tests {
         EqualizerSettings {
             enabled,
             bands: bands.to_vec(),
+            ..Default::default()
         }
+    }
+
+    fn comp_config(enabled: bool, bands: &[EqBandSettings]) -> EqualizerSettings {
+        EqualizerSettings {
+            volume_compensation: true,
+            ..config(enabled, bands)
+        }
+    }
+
+    /// Compensation target for a band set, read back through the processor.
+    fn comp_target(bands: &[EqBandSettings], sample_rate: f64) -> f64 {
+        let mut proc = EqualizerProcessor::new(sample_rate, 1);
+        proc.set_config(&comp_config(true, bands));
+        proc.comp.target_db
     }
 
     fn rand_range(min: f64, max: f64) -> f64 {
@@ -938,6 +1080,9 @@ mod tests {
             if rand::random::<f64>() < 0.03 {
                 current.enabled = !current.enabled;
             }
+            if rand::random::<f64>() < 0.05 {
+                current.volume_compensation = !current.volume_compensation;
+            }
             current.bands = bands;
 
             proc.set_config(&current);
@@ -1154,6 +1299,141 @@ mod tests {
         assert_eq!(
             config_response_db(&config(false, &cfg.bands), FS, 1_000.0),
             0.0
+        );
+    }
+
+    #[test]
+    fn compensation_is_zero_for_flat_configs() {
+        assert_eq!(comp_target(&[], FS), 0.0);
+        assert_eq!(
+            comp_target(&[band(EqBandKind::Bell, 1_000.0, 0.0, 1.0)], FS),
+            0.0
+        );
+    }
+
+    #[test]
+    fn compensation_matches_single_bell_gain() {
+        let target = comp_target(&[band(EqBandKind::Bell, 1_000.0, 6.0, 1.0)], FS);
+        assert!((target + 6.0).abs() < 0.05, "{target}");
+    }
+
+    #[test]
+    fn compensation_stacks_overlapping_boosts() {
+        let bell = band(EqBandKind::Bell, 1_000.0, 6.0, 1.0);
+        let target = comp_target(&[bell, bell], FS);
+        assert!((target + 12.0).abs() < 0.05, "{target}");
+    }
+
+    /// The passes boost through resonance alone, `gain_db` never enters their coefficients, so a
+    /// max-band-gain heuristic would see 0 dB here.
+    #[test]
+    fn compensation_catches_resonance_without_band_gain() {
+        let target = comp_target(&[band(EqBandKind::HighPass, 1_000.0, 0.0, 4.0)], FS);
+        assert!((-13.0..-11.5).contains(&target), "{target}");
+    }
+
+    #[test]
+    fn compensation_ignores_disabled_bands_and_cuts() {
+        let mut off = band(EqBandKind::Bell, 1_000.0, 24.0, 1.0);
+        off.enabled = false;
+        let bands = [off, band(EqBandKind::Bell, 500.0, -12.0, 1.0)];
+        assert_eq!(comp_target(&bands, FS), 0.0);
+    }
+
+    #[test]
+    fn compensation_is_off_by_default() {
+        let mut proc = EqualizerProcessor::new(FS, 1);
+        proc.set_config(&config(true, &[band(EqBandKind::Bell, 1_000.0, 12.0, 1.0)]));
+        assert_eq!(proc.comp.target_db, 0.0);
+    }
+
+    /// A compensated boost nets out to unity at its own center frequency.
+    #[test]
+    fn compensation_restores_unity_at_boost_center() {
+        const N: usize = 32_768;
+        let frequency = test_frequency(683, FS);
+        let mut proc = EqualizerProcessor::new(FS, 1);
+        proc.set_config(&comp_config(
+            true,
+            &[band(EqBandKind::Bell, frequency, 12.0, 1.0)],
+        ));
+
+        let w = omega(frequency, FS);
+        let mut block = vec![(0..2 * N).map(|i| (w * i as f64).sin()).collect::<Vec<_>>()];
+        proc.process(&mut block, 2 * N);
+
+        // second half only, the ramp-in has settled by then
+        let (mut sin_acc, mut cos_acc) = (0.0, 0.0);
+        for (i, &sample) in block[0].iter().enumerate().skip(N) {
+            sin_acc += sample * (w * i as f64).sin();
+            cos_acc += sample * (w * i as f64).cos();
+        }
+        let amplitude = 2.0 / N as f64 * (sin_acc.powi(2) + cos_acc.powi(2)).sqrt();
+        let net_db = 20.0 * amplitude.log10();
+        assert!(net_db.abs() < 0.1, "{net_db}");
+    }
+
+    #[test]
+    fn compensation_toggles_during_playback_stay_click_free() {
+        let bell = band(EqBandKind::Bell, 1_000.0, 24.0, 1.0);
+        let mut proc = EqualizerProcessor::new(FS, 1);
+        let input = sine(1_000.0, FS, 256 * 32);
+        let mut previous = input[0];
+        for i in 0..32 {
+            let mut cfg = config(true, std::slice::from_ref(&bell));
+            cfg.volume_compensation = i % 2 == 0;
+            proc.set_config(&cfg);
+            let mut block = vec![input[i * 256..(i + 1) * 256].to_vec()];
+            proc.process(&mut block, 256);
+            for &sample in &block[0] {
+                assert!(sample.is_finite());
+                assert!(
+                    (sample - previous).abs() < 3.0,
+                    "click at block {i}: {previous} -> {sample}"
+                );
+                previous = sample;
+            }
+        }
+    }
+
+    #[test]
+    fn compensation_with_flat_curve_is_bit_exact() {
+        let input = noise_planar(2, 1_000);
+
+        // zero-gain bell, compensation settled at exactly 0 dB
+        let mut proc = EqualizerProcessor::new(FS, 2);
+        proc.set_config(&comp_config(
+            true,
+            &[band(EqBandKind::Bell, 1_000.0, 0.0, 1.0)],
+        ));
+        let mut output = input.clone();
+        proc.process(&mut output, 1_000);
+        assert_eq!(input, output);
+
+        // bypassed with compensation on
+        let mut proc = EqualizerProcessor::new(FS, 2);
+        proc.set_config(&comp_config(
+            false,
+            &[band(EqBandKind::Bell, 1_000.0, 24.0, 1.0)],
+        ));
+        let mut output = input.clone();
+        proc.process(&mut output, 1_000);
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn sample_rate_change_reanchors_compensation() {
+        let mut proc = EqualizerProcessor::new(FS, 1);
+        proc.set_config(&comp_config(
+            true,
+            &[band(EqBandKind::Bell, 1_000.0, 6.0, 1.0)],
+        ));
+        proc.set_sample_rate(96_000.0);
+        assert!(!proc.comp.moving);
+        assert!(
+            (proc.comp.target_db + 6.0).abs() < 0.05,
+            "{}",
+            proc.comp.target_db
         );
     }
 }

@@ -1058,6 +1058,7 @@ mod tests {
                 q: 1.0,
                 enabled: true,
             }],
+            ..Default::default()
         }
     }
 

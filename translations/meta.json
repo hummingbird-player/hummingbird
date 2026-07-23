@@ -511,25 +511,25 @@
   },
   "EQ_CLIP": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:496",
+    "definedIn": "src/ui/equalizer/view.rs:504",
     "plural": false,
     "description": null
   },
   "EQ_CLIP_TOOLTIP": {
     "context": "view.rs",
-    "definedIn": "src/ui/equalizer/view.rs:487",
+    "definedIn": "src/ui/equalizer/view.rs:495",
     "plural": false,
     "description": null
   },
   "EQ_DISABLE": {
     "context": "equalizer.rs",
-    "definedIn": "src/ui/settings/equalizer.rs:62",
+    "definedIn": "src/ui/settings/equalizer.rs:92",
     "plural": false,
     "description": null
   },
   "EQ_ENABLE": {
     "context": "equalizer.rs",
-    "definedIn": "src/ui/settings/equalizer.rs:64",
+    "definedIn": "src/ui/settings/equalizer.rs:94",
     "plural": false,
     "description": null
   },
@@ -565,19 +565,31 @@
   },
   "EQ_GRAPH_HINT": {
     "context": "equalizer.rs",
-    "definedIn": "src/ui/settings/equalizer.rs:44",
+    "definedIn": "src/ui/settings/equalizer.rs:48",
     "plural": false,
     "description": null
   },
   "EQ_RESET": {
     "context": "equalizer.rs",
-    "definedIn": "src/ui/settings/equalizer.rs:85",
+    "definedIn": "src/ui/settings/equalizer.rs:115",
     "plural": false,
     "description": null
   },
   "EQ_RESET_CONFIRM": {
     "context": "equalizer.rs",
-    "definedIn": "src/ui/settings/equalizer.rs:83",
+    "definedIn": "src/ui/settings/equalizer.rs:113",
+    "plural": false,
+    "description": null
+  },
+  "EQ_VOLUME_COMPENSATION": {
+    "context": "equalizer.rs",
+    "definedIn": "src/ui/settings/equalizer.rs:68",
+    "plural": false,
+    "description": null
+  },
+  "EQ_VOLUME_COMPENSATION_TOOLTIP": {
+    "context": "equalizer.rs",
+    "definedIn": "src/ui/settings/equalizer.rs:61",
     "plural": false,
     "description": null
   },

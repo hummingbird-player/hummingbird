@@ -195,6 +195,14 @@ impl EqualizerView {
         self.mutate(cx, |config| config.enabled = enabled);
     }
 
+    pub fn volume_compensation(&self) -> bool {
+        self.config.volume_compensation
+    }
+
+    pub fn set_volume_compensation(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.mutate(cx, |config| config.volume_compensation = on);
+    }
+
     pub fn request_reset(&mut self, cx: &mut Context<Self>) {
         if self.reset_armed {
             self.reset_armed = false;

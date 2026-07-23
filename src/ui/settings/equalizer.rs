@@ -1,12 +1,15 @@
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::ui::{
     components::{
         button::{ButtonIntent, ButtonStyle, button},
+        checkbox::checkbox,
         icons::{POWER, icon},
+        label::label,
         section_header::section_header,
         tooltip::build_tooltip,
     },
@@ -32,6 +35,7 @@ impl Render for EqualizerSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = self.view.read(cx).enabled();
         let reset_armed = self.view.read(cx).reset_armed();
+        let volume_compensation = self.view.read(cx).volume_compensation();
 
         div()
             .size_full()
@@ -50,6 +54,32 @@ impl Render for EqualizerSettings {
                             .flex()
                             .items_center()
                             .gap(px(8.0))
+                            .child(
+                                div()
+                                    .id("eq-volume-comp-tip")
+                                    .tooltip(build_tooltip(tr!(
+                                        "EQ_VOLUME_COMPENSATION_TOOLTIP",
+                                        "Automatically lowers the output level to offset band \
+                                        boosts and prevent clipping."
+                                    )))
+                                    .child(
+                                        label(
+                                            "eq-volume-comp",
+                                            tr!("EQ_VOLUME_COMPENSATION", "Compensate"),
+                                        )
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            let on = !this.view.read(cx).volume_compensation();
+                                            this.view.update(cx, |view, cx| {
+                                                view.set_volume_compensation(on, cx)
+                                            });
+                                        }))
+                                        .child(checkbox(
+                                            "eq-volume-comp-check",
+                                            volume_compensation,
+                                        )),
+                                    ),
+                            )
                             .child(
                                 button()
                                     .id("eq-enabled")

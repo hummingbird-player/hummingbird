@@ -63,6 +63,8 @@ impl Default for EqBandSettings {
 pub struct EqualizerSettings {
     /// Global bypass.
     pub enabled: bool,
+    /// Attenuate the output by the curve's peak boost so band gains cannot clip.
+    pub volume_compensation: bool,
     pub bands: Vec<EqBandSettings>,
 }
 
@@ -82,11 +84,13 @@ impl<'de> Deserialize<'de> for EqualizerSettings {
         #[serde(default)]
         struct Raw {
             enabled: bool,
+            volume_compensation: bool,
             bands: Vec<EqBandSettings>,
         }
         let raw = Raw::deserialize(deserializer)?;
         let mut settings = Self {
             enabled: raw.enabled,
+            volume_compensation: raw.volume_compensation,
             bands: raw.bands,
         };
         // hand-edited files can carry out-of-range values
@@ -117,6 +121,7 @@ mod tests {
                 q: -1.0,
                 ..Default::default()
             }],
+            ..Default::default()
         };
         config.sanitize();
         let band = &config.bands[0];
@@ -135,6 +140,7 @@ mod tests {
                 q: f64::NEG_INFINITY,
                 ..Default::default()
             }],
+            ..Default::default()
         };
         config.sanitize();
         let band = &config.bands[0];
@@ -157,6 +163,18 @@ mod tests {
     fn deserialize_defaults_missing_fields() {
         let config: EqualizerSettings = serde_json::from_str("{}").unwrap();
         assert!(!config.enabled);
+        assert!(!config.volume_compensation);
         assert!(config.bands.is_empty());
+    }
+
+    #[test]
+    fn volume_compensation_round_trips() {
+        let config = EqualizerSettings {
+            volume_compensation: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: EqualizerSettings = serde_json::from_str(&json).unwrap();
+        assert!(parsed.volume_compensation);
     }
 }
