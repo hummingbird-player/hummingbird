@@ -1,8 +1,10 @@
 pub mod corrupt_settings_dialog;
 mod equalizer;
 mod interface;
+#[cfg(feature = "proprietary-services")]
 pub mod lastfm;
 mod library;
+#[cfg(feature = "libre-services")]
 pub mod listenbrainz;
 mod playback;
 mod services;

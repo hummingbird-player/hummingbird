@@ -13,8 +13,10 @@ use gpui::*;
 use gpui_platform::current_platform;
 use prelude::FluentBuilder;
 use sqlx::SqlitePool;
-use tracing::{debug, warn};
+use tracing::debug;
 
+#[cfg(feature = "proprietary-services")]
+use crate::services::mmb::lastfm;
 use crate::{
     library::{
         db::create_pool,
@@ -26,10 +28,7 @@ use crate::{
         session_storage::PlaybackSessionStorageWorker, thread::PlaybackThread,
     },
     power::PowerManager,
-    services::{
-        controllers::{init_pbc_task, register_pbc_event_handlers},
-        mmb::lastfm,
-    },
+    services::controllers::{init_pbc_task, register_pbc_event_handlers},
     settings::{
         SettingsGlobal, setup_settings,
         storage::{Storage, StorageData},
@@ -355,12 +354,15 @@ pub fn run() -> anyhow::Result<()> {
             tracing::error!(?error, "fatal: unable to create database pool");
         })?;
 
+    #[cfg(feature = "proprietary-services")]
     if !lastfm::is_available() {
-        warn!(
+        tracing::warn!(
             "Last.fm authentication disabled. \
             Set `LASTFM_API_KEY` and `LASTFM_API_SECRET` to allow connecting to Last.fm."
         );
-        warn!("These can additionally be set at compile time to bake them into the binary.");
+        tracing::warn!(
+            "These can additionally be set at compile time to bake them into the binary."
+        );
     }
 
     let application = Application::with_platform(current_platform(false))

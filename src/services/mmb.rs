@@ -1,5 +1,7 @@
 pub mod discord;
+#[cfg(feature = "proprietary-services")]
 pub mod lastfm;
+#[cfg(feature = "libre-services")]
 pub mod listenbrainz;
 
 use std::{path::PathBuf, sync::Arc};

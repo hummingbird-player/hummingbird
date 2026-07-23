@@ -2,11 +2,7 @@ use cntp_i18n::tr;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    services::mmb::{
-        discord::DiscordRpcStatus,
-        lastfm::{LastFMState, is_available},
-        listenbrainz::ListenBrainzState,
-    },
+    services::mmb::discord::DiscordRpcStatus,
     settings::{Settings, SettingsGlobal, save_settings},
     ui::{
         components::{
@@ -17,17 +13,25 @@ use crate::{
             tooltip::build_tooltip,
         },
         models::Models,
-        settings::{
-            SettingsSectionKind, lastfm as lastfm_ui, listenbrainz as listenbrainz_ui,
-            open_settings_window_with_section,
-        },
+        settings::{SettingsSectionKind, open_settings_window_with_section},
         theme::Theme,
     },
+};
+#[cfg(feature = "proprietary-services")]
+use crate::{
+    services::mmb::lastfm::{LastFMState, is_available},
+    ui::settings::lastfm as lastfm_ui,
+};
+#[cfg(feature = "libre-services")]
+use crate::{
+    services::mmb::listenbrainz::ListenBrainzState, ui::settings::listenbrainz as listenbrainz_ui,
 };
 
 pub struct ServicesIndicator {
     settings: Entity<Settings>,
+    #[cfg(feature = "proprietary-services")]
     lastfm: Entity<LastFMState>,
+    #[cfg(feature = "libre-services")]
     listenbrainz: Entity<ListenBrainzState>,
     discord_rpc: Entity<DiscordRpcStatus>,
     show_popover: bool,
@@ -37,18 +41,29 @@ impl ServicesIndicator {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
-            let lastfm = cx.global::<Models>().lastfm.clone();
-            let listenbrainz = cx.global::<Models>().listenbrainz.clone();
             let discord_rpc = cx.global::<Models>().discord_rpc.clone();
 
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-            cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
-            cx.observe(&listenbrainz, |_, _, cx| cx.notify()).detach();
             cx.observe(&discord_rpc, |_, _, cx| cx.notify()).detach();
+
+            #[cfg(feature = "proprietary-services")]
+            let lastfm = {
+                let lastfm = cx.global::<Models>().lastfm.clone();
+                cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
+                lastfm
+            };
+            #[cfg(feature = "libre-services")]
+            let listenbrainz = {
+                let listenbrainz = cx.global::<Models>().listenbrainz.clone();
+                cx.observe(&listenbrainz, |_, _, cx| cx.notify()).detach();
+                listenbrainz
+            };
 
             Self {
                 settings,
+                #[cfg(feature = "proprietary-services")]
                 lastfm,
+                #[cfg(feature = "libre-services")]
                 listenbrainz,
                 discord_rpc,
                 show_popover: false,
@@ -64,7 +79,9 @@ impl ServicesIndicator {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ServiceKind {
+    #[cfg(feature = "proprietary-services")]
     LastFm,
+    #[cfg(feature = "libre-services")]
     ListenBrainz,
     DiscordRpc,
 }
@@ -72,7 +89,9 @@ enum ServiceKind {
 impl ServiceKind {
     fn name(self) -> SharedString {
         match self {
+            #[cfg(feature = "proprietary-services")]
             Self::LastFm => lastfm_ui::title(),
+            #[cfg(feature = "libre-services")]
             Self::ListenBrainz => listenbrainz_ui::title(),
             Self::DiscordRpc => tr!("SERVICES_DISCORD_RPC_TITLE").into(),
         }
@@ -80,7 +99,9 @@ impl ServiceKind {
 
     fn row_id(self) -> &'static str {
         match self {
+            #[cfg(feature = "proprietary-services")]
             Self::LastFm => "services-toggle-lastfm",
+            #[cfg(feature = "libre-services")]
             Self::ListenBrainz => "services-toggle-listenbrainz",
             Self::DiscordRpc => "services-toggle-discord",
         }
@@ -88,7 +109,9 @@ impl ServiceKind {
 
     fn button_id(self) -> &'static str {
         match self {
+            #[cfg(feature = "proprietary-services")]
             Self::LastFm => "services-toggle-lastfm-btn",
+            #[cfg(feature = "libre-services")]
             Self::ListenBrainz => "services-toggle-listenbrainz-btn",
             Self::DiscordRpc => "services-toggle-discord-btn",
         }
@@ -99,6 +122,7 @@ impl ServiceKind {
 pub(super) enum ServiceStatus {
     Connected,
     Disconnected,
+    #[cfg(feature = "proprietary-services")]
     PendingSignIn,
 }
 
@@ -118,13 +142,14 @@ struct ServiceEntry {
 
 fn collect_services(
     settings: &Settings,
-    lastfm_state: &LastFMState,
-    listenbrainz_state: &ListenBrainzState,
+    #[cfg(feature = "proprietary-services")] lastfm_state: &LastFMState,
+    #[cfg(feature = "libre-services")] listenbrainz_state: &ListenBrainzState,
     discord_rpc: &DiscordRpcStatus,
-    lastfm_available: bool,
+    #[cfg(feature = "proprietary-services")] lastfm_available: bool,
 ) -> Vec<ServiceEntry> {
     let mut services = Vec::new();
 
+    #[cfg(feature = "proprietary-services")]
     if lastfm_available {
         let lastfm_entry = match lastfm_state {
             LastFMState::Connected(_) => Some((ServiceStatus::Connected, None)),
@@ -142,6 +167,7 @@ fn collect_services(
         }
     }
 
+    #[cfg(feature = "libre-services")]
     if matches!(listenbrainz_state, ListenBrainzState::Connected(_)) {
         services.push(ServiceEntry {
             kind: ServiceKind::ListenBrainz,
@@ -193,13 +219,15 @@ fn toggle_service(
     kind: ServiceKind,
     enabled: bool,
     settings: Entity<Settings>,
-    lastfm: Entity<LastFMState>,
-    listenbrainz: Entity<ListenBrainzState>,
+    #[cfg(feature = "proprietary-services")] lastfm: Entity<LastFMState>,
+    #[cfg(feature = "libre-services")] listenbrainz: Entity<ListenBrainzState>,
 ) {
     match kind {
+        #[cfg(feature = "proprietary-services")]
         ServiceKind::LastFm => {
             lastfm_ui::toggle_lastfm(cx, enabled, settings, lastfm);
         }
+        #[cfg(feature = "libre-services")]
         ServiceKind::ListenBrainz => {
             listenbrainz_ui::toggle_listenbrainz(cx, enabled, settings, listenbrainz);
         }
@@ -215,14 +243,19 @@ fn toggle_service(
 
 impl Render for ServicesIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "proprietary-services")]
         let lastfm = self.lastfm.read(cx).clone();
+        #[cfg(feature = "libre-services")]
         let listenbrainz = self.listenbrainz.read(cx).clone();
         let discord_rpc = self.discord_rpc.read(cx).clone();
         let services = collect_services(
             self.settings.read(cx),
+            #[cfg(feature = "proprietary-services")]
             &lastfm,
+            #[cfg(feature = "libre-services")]
             &listenbrainz,
             &discord_rpc,
+            #[cfg(feature = "proprietary-services")]
             is_available(),
         );
         let indicator = indicator_icon(&services);
@@ -267,7 +300,9 @@ impl Render for ServicesIndicator {
                     let theme = cx.global::<Theme>().clone();
                     for entry in &services {
                         let settings = self.settings.clone();
+                        #[cfg(feature = "proprietary-services")]
                         let lastfm = self.lastfm.clone();
+                        #[cfg(feature = "libre-services")]
                         let listenbrainz = self.listenbrainz.clone();
                         let status = status_dot(entry);
                         let kind = entry.kind;
@@ -300,7 +335,9 @@ impl Render for ServicesIndicator {
                                     kind,
                                     enabled,
                                     settings.clone(),
+                                    #[cfg(feature = "proprietary-services")]
                                     lastfm.clone(),
+                                    #[cfg(feature = "libre-services")]
                                     listenbrainz.clone(),
                                 );
                             })
@@ -354,7 +391,7 @@ impl Render for ServicesIndicator {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "proprietary-services", feature = "libre-services"))]
 mod tests {
     use crate::{
         services::mmb::{

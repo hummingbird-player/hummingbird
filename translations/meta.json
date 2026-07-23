@@ -463,7 +463,7 @@
   },
   "EQUALIZER": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:161",
+    "definedIn": "src/ui/settings.rs:163",
     "plural": false,
     "description": null
   },
@@ -673,7 +673,7 @@
   },
   "INTERFACE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:158",
+    "definedIn": "src/ui/settings.rs:160",
     "plural": false,
     "description": null
   },
@@ -817,7 +817,7 @@
   },
   "LIBRARY": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:159",
+    "definedIn": "src/ui/settings.rs:161",
     "plural": false,
     "description": null
   },
@@ -925,7 +925,7 @@
   },
   "PLAYBACK": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:160",
+    "definedIn": "src/ui/settings.rs:162",
     "plural": false,
     "description": null
   },
@@ -1351,19 +1351,19 @@
   },
   "SERVICES": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:162",
+    "definedIn": "src/ui/settings.rs:164",
     "plural": false,
     "description": null
   },
   "SERVICES_DISCORD_RPC_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:165",
+    "definedIn": "src/ui/settings/services.rs:196",
     "plural": false,
     "description": null
   },
   "SERVICES_DISCORD_RPC_TITLE": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:162",
+    "definedIn": "src/ui/settings/services.rs:193",
     "plural": false,
     "description": null
   },
@@ -1399,13 +1399,13 @@
   },
   "SERVICES_LASTFM_ENABLED": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:105",
+    "definedIn": "src/ui/settings/services.rs:133",
     "plural": false,
     "description": null
   },
   "SERVICES_LASTFM_ENABLED_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:108",
+    "definedIn": "src/ui/settings/services.rs:136",
     "plural": false,
     "description": null
   },
@@ -1435,13 +1435,13 @@
   },
   "SERVICES_LISTENBRAINZ_ENABLED": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:138",
+    "definedIn": "src/ui/settings/services.rs:168",
     "plural": false,
     "description": null
   },
   "SERVICES_LISTENBRAINZ_ENABLED_SUBTEXT": {
     "context": "services.rs",
-    "definedIn": "src/ui/settings/services.rs:141",
+    "definedIn": "src/ui/settings/services.rs:171",
     "plural": false,
     "description": null
   },
@@ -1459,13 +1459,13 @@
   },
   "SERVICES_NO_ACTIVE": {
     "context": "services.rs",
-    "definedIn": "src/ui/header/services.rs:260",
+    "definedIn": "src/ui/header/services.rs:293",
     "plural": false,
     "description": null
   },
   "SETTINGS": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:83",
+    "definedIn": "src/ui/settings.rs:85",
     "plural": false,
     "description": null
   },
@@ -1771,7 +1771,7 @@
   },
   "UPDATE": {
     "context": "settings.rs",
-    "definedIn": "src/ui/settings.rs:164",
+    "definedIn": "src/ui/settings.rs:166",
     "plural": false,
     "description": null
   },

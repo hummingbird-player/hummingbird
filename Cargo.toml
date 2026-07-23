@@ -10,7 +10,11 @@ categories = ["multimedia::audio"]
 [features]
 runtime_shaders = ["gpui_platform/runtime_shaders"]
 console = ["dep:console-subscriber", "tokio/tracing"]
-update = ["dep:semver", "dep:minisign-verify", "dep:winreg"]
+update = ["dep:semver", "dep:minisign-verify", "dep:winreg", "online"]
+online = ["dep:zed-reqwest"]
+libre-services = ["online"]
+proprietary-services = ["online"]
+default = ["libre-services", "proprietary-services"]
 
 [dependencies]
 anyhow = "1"
@@ -73,7 +77,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 url = "2.5"
 urlencoding = "2"
-zed-reqwest = { version = "0.12.15-zed", default-features = false, features = [
+zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = true, features = [
     "json",
     "macos-system-configuration",
     # this was native-roots, but this caused intermittent issues on Windows

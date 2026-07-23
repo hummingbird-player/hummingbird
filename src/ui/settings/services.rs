@@ -1,26 +1,34 @@
 use cntp_i18n::tr;
+#[cfg(feature = "libre-services")]
+use gpui::StyleRefinement;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
-    Window, div, px,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
 };
 
+#[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+use crate::ui::{models::Models, theme::Theme};
+#[cfg(feature = "proprietary-services")]
 use crate::{
-    services::mmb::{lastfm, lastfm::LastFMState, listenbrainz::ListenBrainzState},
+    services::mmb::lastfm::{self, LastFMState},
+    ui::settings::lastfm as lastfm_ui,
+};
+#[cfg(feature = "libre-services")]
+use crate::{
+    services::mmb::listenbrainz::ListenBrainzState,
+    ui::{components::textbox::Textbox, settings::listenbrainz as listenbrainz_ui},
+};
+use crate::{
     settings::{Settings, SettingsGlobal, save_settings},
-    ui::{
-        components::{
-            checkbox::checkbox, label::label, section_header::section_header, textbox::Textbox,
-        },
-        models::Models,
-        settings::{lastfm as lastfm_ui, listenbrainz as listenbrainz_ui},
-        theme::Theme,
-    },
+    ui::components::{checkbox::checkbox, label::label, section_header::section_header},
 };
 
 pub struct ServicesSettings {
     settings: Entity<Settings>,
+    #[cfg(feature = "proprietary-services")]
     lastfm: Entity<LastFMState>,
+    #[cfg(feature = "libre-services")]
     listenbrainz: Entity<ListenBrainzState>,
+    #[cfg(feature = "libre-services")]
     listenbrainz_token: Entity<Textbox>,
 }
 
@@ -28,38 +36,51 @@ impl ServicesSettings {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
+            #[cfg(feature = "proprietary-services")]
             let lastfm = cx.global::<Models>().lastfm.clone();
-            let listenbrainz = cx.global::<Models>().listenbrainz.clone();
-            let submit_listenbrainz = listenbrainz.clone();
-            let listenbrainz_token =
-                Textbox::new_with_value_submit(cx, StyleRefinement::default(), move |token, cx| {
-                    listenbrainz_ui::connect_listenbrainz_token(
-                        cx,
-                        submit_listenbrainz.clone(),
-                        token,
-                    );
-                });
+            #[cfg(feature = "libre-services")]
+            let (listenbrainz, listenbrainz_token) = {
+                let listenbrainz = cx.global::<Models>().listenbrainz.clone();
+                let submit_listenbrainz = listenbrainz.clone();
+                let listenbrainz_token = Textbox::new_with_value_submit(
+                    cx,
+                    StyleRefinement::default(),
+                    move |token, cx| {
+                        listenbrainz_ui::connect_listenbrainz_token(
+                            cx,
+                            submit_listenbrainz.clone(),
+                            token,
+                        );
+                    },
+                );
+
+                let token_for_reset = listenbrainz_token.clone();
+                cx.observe(&listenbrainz, move |_, listenbrainz, cx| {
+                    if matches!(
+                        listenbrainz.read(cx),
+                        ListenBrainzState::Connected(_)
+                            | ListenBrainzState::Disconnected { error: None }
+                    ) {
+                        token_for_reset.update(cx, |this, cx| this.reset(cx));
+                    }
+                    cx.notify();
+                })
+                .detach();
+
+                (listenbrainz, listenbrainz_token)
+            };
 
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            #[cfg(feature = "proprietary-services")]
             cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
-
-            let token_for_reset = listenbrainz_token.clone();
-            cx.observe(&listenbrainz, move |_, listenbrainz, cx| {
-                if matches!(
-                    listenbrainz.read(cx),
-                    ListenBrainzState::Connected(_)
-                        | ListenBrainzState::Disconnected { error: None }
-                ) {
-                    token_for_reset.update(cx, |this, cx| this.reset(cx));
-                }
-                cx.notify();
-            })
-            .detach();
 
             Self {
                 settings,
+                #[cfg(feature = "proprietary-services")]
                 lastfm,
+                #[cfg(feature = "libre-services")]
                 listenbrainz,
+                #[cfg(feature = "libre-services")]
                 listenbrainz_token,
             }
         })
@@ -82,15 +103,22 @@ impl ServicesSettings {
 impl Render for ServicesSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let services = self.settings.read(cx).services.clone();
+        #[cfg(feature = "proprietary-services")]
         let lastfm = self.lastfm.read(cx).clone();
+        #[cfg(feature = "libre-services")]
         let listenbrainz = self.listenbrainz.read(cx).clone();
 
+        #[cfg_attr(
+            not(any(feature = "libre-services", feature = "proprietary-services")),
+            allow(unused_mut)
+        )]
         let mut body = div()
             .flex()
             .flex_col()
             .gap(px(12.0))
             .child(section_header(tr!("SERVICES")));
 
+        #[cfg(feature = "proprietary-services")]
         if lastfm::is_available() {
             body = body.child(lastfm_ui::render_settings_row(
                 &lastfm,
@@ -124,36 +152,39 @@ impl Render for ServicesSettings {
             }
         }
 
-        body = body.child(listenbrainz_ui::render_settings_row(
-            &listenbrainz,
-            self.listenbrainz.clone(),
-            self.listenbrainz_token.clone(),
-            cx.global::<Theme>().text_secondary,
-        ));
+        #[cfg(feature = "libre-services")]
+        {
+            body = body.child(listenbrainz_ui::render_settings_row(
+                &listenbrainz,
+                self.listenbrainz.clone(),
+                self.listenbrainz_token.clone(),
+                cx.global::<Theme>().text_secondary,
+            ));
 
-        if matches!(listenbrainz, ListenBrainzState::Connected(_)) {
-            body = body.child(
-                label(
-                    "services-listenbrainz-enabled",
-                    tr!("SERVICES_LISTENBRAINZ_ENABLED", "Scrobble to ListenBrainz"),
-                )
-                .subtext(tr!(
-                    "SERVICES_LISTENBRAINZ_ENABLED_SUBTEXT",
-                    "Turn off to pause scrobbling without signing out."
-                ))
-                .cursor_pointer()
-                .w_full()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let enabled = this.settings.read(cx).services.listenbrainz_enabled;
-                    let settings = this.settings.clone();
-                    let listenbrainz = this.listenbrainz.clone();
-                    listenbrainz_ui::toggle_listenbrainz(cx, enabled, settings, listenbrainz);
-                }))
-                .child(checkbox(
-                    "services-listenbrainz-enabled-check",
-                    services.listenbrainz_enabled,
-                )),
-            );
+            if matches!(listenbrainz, ListenBrainzState::Connected(_)) {
+                body = body.child(
+                    label(
+                        "services-listenbrainz-enabled",
+                        tr!("SERVICES_LISTENBRAINZ_ENABLED", "Scrobble to ListenBrainz"),
+                    )
+                    .subtext(tr!(
+                        "SERVICES_LISTENBRAINZ_ENABLED_SUBTEXT",
+                        "Turn off to pause scrobbling without signing out."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let enabled = this.settings.read(cx).services.listenbrainz_enabled;
+                        let settings = this.settings.clone();
+                        let listenbrainz = this.listenbrainz.clone();
+                        listenbrainz_ui::toggle_listenbrainz(cx, enabled, settings, listenbrainz);
+                    }))
+                    .child(checkbox(
+                        "services-listenbrainz-enabled-check",
+                        services.listenbrainz_enabled,
+                    )),
+                );
+            }
         }
 
         body.child(

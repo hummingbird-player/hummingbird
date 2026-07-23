@@ -28,6 +28,21 @@ Some members of the community have provided a Nix flake. We try to keep it fairl
 ## Environment
 If you wish to use last.fm support with your build, you'll have to set `LASTFM_API_KEY` and `LASTFM_API_SECRET` in either your environment variables or in your `.env` file. If you don't set these variables, Hummingbird will still build, but last.fm support will be disabled, and you'll get a warning in the logs.
 
+## Offline Builds/Libre-only Services
+Some users may wish to prevent Hummingbird from accessing the internet, or prevent it from accessing proprietary online services (like last.fm). Hummingbird's online services can be disabled using cargo features.
+
+To disable all online services, use the `--no-default-features` flag when building:
+
+```sh
+cargo build --release --no-default-features
+```
+
+To enable only libre services, use the `--features libre-services` flag (with `--no-default-features`) when building:
+
+```sh
+cargo build --release --features libre-services --no-default-features
+```
+
 ## Building
 ```sh
 git clone https://codeberg.org/hummingbird/hummingbird
