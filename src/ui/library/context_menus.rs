@@ -149,7 +149,12 @@ pub fn play_from_track_listing(
             .iter()
             .filter(|row| Path::new(&row.location).exists())
             .map(|row| {
-                QueueItemData::new(cx, row.location.clone().into(), Some(row.track_id), Some(row.album_id))
+                QueueItemData::new(
+                    cx,
+                    row.location.clone().into(),
+                    Some(row.track_id),
+                    Some(row.album_id),
+                )
             })
             .collect()
     } else if let Some(album_id) = track.album_id {

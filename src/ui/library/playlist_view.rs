@@ -977,7 +977,12 @@ pub fn find_playlist_tracks(cx: &mut App, playlist_id: i64) -> Vec<QueueItemData
     playlist_tracks
         .iter()
         .map(|row| {
-            QueueItemData::new(cx, row.location.clone().into(), Some(row.track_id), Some(row.album_id))
+            QueueItemData::new(
+                cx,
+                row.location.clone().into(),
+                Some(row.track_id),
+                Some(row.album_id),
+            )
         })
         .collect()
 }
