@@ -19,6 +19,7 @@ design standard.
 - Playlists
 - Lyrics
 - Discord RPC
+- Graphical parametric equalizer
 
 ## Planned Features
 - WASM Extension support:
@@ -26,10 +27,18 @@ design standard.
   - Scrobble services
   - Metadata services
   - Cloud storage services
-- Improved library management
-- Parametric equalizer
-- Cloud storage support
+- Improved library management:
+  - Filtering
+  - Tags
+  - More advanced playlist management
+  - Statistics
+  - Star rating
+- Cloud storage support:
+  - Jellyfin
+  - OpenSubsonic
+  - WebDAV
 - Full keyboard navigation
+- Sleep timer
 
 # Usage
 
