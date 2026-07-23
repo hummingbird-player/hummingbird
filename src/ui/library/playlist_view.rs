@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{self, LibraryAccess, PlaylistTrackSortMethod},
+        db::{self, LibraryAccess, PlaylistTrackRow, PlaylistTrackSortMethod},
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
@@ -177,7 +177,7 @@ impl Render for PlaylistTrackItem {
 
 pub struct PlaylistView {
     playlist: Arc<Playlist>,
-    playlist_track_ids: Arc<Vec<(i64, i64, i64)>>,
+    playlist_track_ids: Arc<Vec<PlaylistTrackRow>>,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
     render_counter: Entity<usize>,
     focus_handle: FocusHandle,
@@ -409,14 +409,14 @@ impl PlaylistView {
                 return None;
             }
             if target_index < playlist_track_ids.len() {
-                let target_item_id = playlist_track_ids[target_index].0;
+                let target_item_id = playlist_track_ids[target_index].playlist_item_id;
                 let target_item = cx.get_playlist_item(target_item_id).ok()?;
                 Some(match position {
                     DropPosition::Before => target_item.position,
                     DropPosition::After => target_item.position + 1,
                 })
             } else {
-                let last_item_id = playlist_track_ids.last()?.0;
+                let last_item_id = playlist_track_ids.last()?.playlist_item_id;
                 let last_item = cx.get_playlist_item(last_item_id).ok()?;
                 Some(last_item.position + 1)
             }
@@ -651,25 +651,21 @@ impl Render for PlaylistView {
                                                 false,
                                                 false,
                                                 move |cx| {
-                                                    let playlist_track_ids = cx
+                                                    let playlist_tracks = cx
                                                         .get_playlist_tracks_sorted(
                                                             playlist_id,
                                                             current_sort,
                                                         )
                                                         .unwrap_or_default();
-                                                    let track_files = cx
-                                                        .get_playlist_track_files(playlist_id)
-                                                        .unwrap_or_default();
 
-                                                    playlist_track_ids
+                                                     playlist_tracks
                                                         .iter()
-                                                        .zip(track_files.iter())
-                                                        .map(|((_, track_id, album_id), path)| {
+                                                        .map(|row| {
                                                             QueueItemData::new(
                                                                 cx,
-                                                                path.into(),
-                                                                Some(*track_id),
-                                                                Some(*album_id),
+                                                                row.location.clone().into(),
+                                                                Some(row.track_id),
+                                                                Some(row.album_id),
                                                             )
                                                         })
                                                         .collect()
@@ -677,7 +673,6 @@ impl Render for PlaylistView {
                                             ))
                                             .child(
                                                 div()
-                                                    .ml_auto()
                                                     .flex()
                                                     .gap(px(12.0))
                                                     .items_stretch()
@@ -841,16 +836,16 @@ impl Render for PlaylistView {
                                             drag_data,
                                             cx,
                                             |from_idx, to_idx, cx| {
-                                                let item_id = playlist_track_ids[from_idx].0;
+                                                let item_id = playlist_track_ids[from_idx].playlist_item_id;
 
                                                 let new_position = if to_idx < playlist_track_ids.len() {
-                                                    let target_item_id = playlist_track_ids[to_idx].0;
+                                                    let target_item_id = playlist_track_ids[to_idx].playlist_item_id;
                                                     let target_item =
                                                         cx.get_playlist_item(target_item_id).unwrap();
                                                     target_item.position
                                                 } else {
                                                     let last_item_id =
-                                                        playlist_track_ids[playlist_track_ids.len() - 1].0;
+                                                        playlist_track_ids[playlist_track_ids.len() - 1].playlist_item_id;
                                                     let last_item =
                                                         cx.get_playlist_item(last_item_id).unwrap();
                                                     last_item.position + 1
@@ -913,8 +908,8 @@ impl Render for PlaylistView {
 
                                             let drag_drop_manager = drag_drop_manager.clone();
                                             let list_id = list_id.clone();
-                                            let playlist_item_id = item.0;
-                                            let track_id = item.1;
+                                            let playlist_item_id = item.playlist_item_id;
+                                            let track_id = item.track_id;
 
                                             div().h(px(PLAYLIST_ITEM_HEIGHT)).child(
                                                 create_or_retrieve_view(
@@ -977,14 +972,17 @@ impl Render for PlaylistView {
 }
 
 pub fn find_playlist_tracks(cx: &mut App, playlist_id: i64) -> Vec<QueueItemData> {
-    let playlist_track_ids = cx.get_playlist_tracks(playlist_id).unwrap_or_default();
-    let track_files = cx.get_playlist_track_files(playlist_id).unwrap_or_default();
+    let playlist_tracks = cx.get_playlist_tracks(playlist_id).unwrap_or_default();
 
-    playlist_track_ids
+    playlist_tracks
         .iter()
-        .zip(track_files.iter())
-        .map(|((_, track_id, album_id), path)| {
-            QueueItemData::new(cx, path.into(), Some(*track_id), Some(*album_id))
+        .map(|row| {
+            QueueItemData::new(
+                cx,
+                row.location.clone().into(),
+                Some(row.track_id),
+                Some(row.album_id),
+            )
         })
         .collect()
 }

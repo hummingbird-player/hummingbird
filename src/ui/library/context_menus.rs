@@ -141,18 +141,20 @@ pub fn play_from_track_listing(
             .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
             .collect()
     } else if let Some(playlist_id) = playlist_id {
-        let ids = cx
+        let tracks = cx
             .get_playlist_tracks(playlist_id)
             .expect("failed to retrieve playlist track info");
-        let paths = cx
-            .get_playlist_track_files(playlist_id)
-            .expect("failed to retrieve playlist track paths");
 
-        ids.iter()
-            .zip(paths.iter())
-            .filter(|(_, path)| Path::new(path).exists())
-            .map(|((_, track_id, album_id), path)| {
-                QueueItemData::new(cx, path.into(), Some(*track_id), Some(*album_id))
+        tracks
+            .iter()
+            .filter(|row| Path::new(&row.location).exists())
+            .map(|row| {
+                QueueItemData::new(
+                    cx,
+                    row.location.clone().into(),
+                    Some(row.track_id),
+                    Some(row.album_id),
+                )
             })
             .collect()
     } else if let Some(album_id) = track.album_id {
