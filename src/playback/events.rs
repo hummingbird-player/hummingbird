@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{media::metadata::Metadata, settings::playback::PlaybackSettings};
+use crate::{
+    media::metadata::Metadata,
+    settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
+};
 
 use super::{queue::QueueItemData, thread::PlaybackState};
 use std::path::PathBuf;
@@ -89,6 +92,9 @@ pub enum PlaybackCommand {
     Undo,
     /// Informs the playback thread that the playback settings have changed.
     SettingsChanged(PlaybackSettings),
+    /// Requests that the playback thread apply new equalizer settings live. Unlike
+    /// `SettingsChanged`, nothing is persisted.
+    SetEqualizer(EqualizerSettings),
     /// Informs the playback thread whether the app window is currently focused.
     SetPositionBroadcastActive(bool),
     /// Requests that the playback thread replace the current queue with the specified queue.
@@ -129,4 +135,6 @@ pub enum PlaybackEvent {
     VolumeChanged(f64),
     /// Indicates that stop-after-current has been set or cleared.
     StopAfterCurrentChanged(bool),
+    /// Indicates that the output stream's sample rate has changed.
+    SampleRateChanged(u32),
 }

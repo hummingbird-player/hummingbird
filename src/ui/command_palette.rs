@@ -20,6 +20,7 @@ tr_noop!("ACTION_QUIT", "Quit");
 tr_noop!("ACTION_ABOUT", "About");
 tr_noop!("ACTION_SEARCH", "Search");
 tr_noop!("ACTION_SETTINGS", "Settings");
+tr_noop!("ACTION_OPEN_EQUALIZER", "Open Equalizer");
 tr_noop!("ACTION_CHECK_FOR_UPDATES", "Check for Updates");
 tr_noop!("ACTION_OPEN_LOG", "Open Log");
 tr_noop!(

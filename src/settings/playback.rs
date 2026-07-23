@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::equalizer::EqualizerSettings;
 use super::replaygain::ReplayGainSettings;
 
 fn default_keep_current_on_queue_clear() -> bool {
@@ -48,6 +49,10 @@ pub struct PlaybackSettings {
     #[serde(default)]
     pub replaygain: ReplayGainSettings,
 
+    /// Parametric equalizer settings.
+    #[serde(default)]
+    pub equalizer: EqualizerSettings,
+
     /// Whether to prevent the system screensaver and sleep while playing.
     #[serde(default)]
     pub prevent_idle: bool,
@@ -67,6 +72,7 @@ impl Default for PlaybackSettings {
             prev_track_jump_first: false,
             keep_current_on_queue_clear: true,
             replaygain: ReplayGainSettings::default(),
+            equalizer: EqualizerSettings::default(),
             prevent_idle: false,
             consume: false,
         }

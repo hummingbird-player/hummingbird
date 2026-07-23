@@ -1,5 +1,6 @@
 // Paths to icons from Tabler Icons, for use with icon.rs
 // See assets/icons/LICENSE
+// The filter-* icons are original works, see assets/icons/LICENSE-hummingbird-icons
 
 pub const ADJUSTMENTS: &str = "!bundled:icons/adjustments.svg";
 pub const ARROW_LEFT: &str = "!bundled:icons/arrow-left.svg";
@@ -63,3 +64,9 @@ pub const FOLDER_OPEN: &str = "!bundled:icons/folder-open.svg";
 pub const FILE: &str = "!bundled:icons/file.svg";
 pub const CHEVRON_RIGHT: &str = "!bundled:icons/chevron-right.svg";
 pub const REFRESH: &str = "!bundled:icons/refresh.svg";
+pub const FILTER_BELL: &str = "!bundled:icons/filter-bell.svg";
+pub const FILTER_LOW_PASS: &str = "!bundled:icons/filter-low-pass.svg";
+pub const FILTER_HIGH_PASS: &str = "!bundled:icons/filter-high-pass.svg";
+pub const FILTER_BAND_PASS: &str = "!bundled:icons/filter-band-pass.svg";
+pub const FILTER_NOTCH: &str = "!bundled:icons/filter-notch.svg";
+pub const ACCESS_POINT: &str = "!bundled:icons/access-point.svg";

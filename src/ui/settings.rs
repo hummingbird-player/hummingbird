@@ -1,4 +1,5 @@
 pub mod corrupt_settings_dialog;
+mod equalizer;
 mod interface;
 pub mod lastfm;
 mod library;
@@ -20,15 +21,15 @@ use crate::{
     settings::{SettingsGlobal, storage::DEFAULT_SIDEBAR_WIDTH},
     ui::{
         components::{
-            icons::{ADJUSTMENTS, BOOKS, PLAY, WORLD},
+            icons::{ACCESS_POINT, ADJUSTMENTS, BOOKS, PLAY, WORLD},
             scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
             window_header::header,
         },
         settings::{
-            interface::InterfaceSettings, library::LibrarySettings, playback::PlaybackSettings,
-            services::ServicesSettings,
+            equalizer::EqualizerSettings, interface::InterfaceSettings, library::LibrarySettings,
+            playback::PlaybackSettings, services::ServicesSettings,
         },
         theme::Theme,
     },
@@ -121,6 +122,7 @@ pub enum SettingsSectionKind {
     Interface,
     Library,
     Playback,
+    Equalizer,
     Services,
     #[cfg(feature = "update")]
     Update,
@@ -132,6 +134,7 @@ impl SettingsSectionKind {
             Self::Interface => "interface",
             Self::Library => "library",
             Self::Playback => "playback",
+            Self::Equalizer => "equalizer",
             Self::Services => "services",
             #[cfg(feature = "update")]
             Self::Update => "update",
@@ -143,7 +146,8 @@ impl SettingsSectionKind {
             Self::Interface => WORLD,
             Self::Library => BOOKS,
             Self::Playback => PLAY,
-            Self::Services => ADJUSTMENTS,
+            Self::Equalizer => ADJUSTMENTS,
+            Self::Services => ACCESS_POINT,
             #[cfg(feature = "update")]
             Self::Update => super::components::icons::UPDATE,
         }
@@ -154,10 +158,16 @@ impl SettingsSectionKind {
             Self::Interface => tr!("INTERFACE", "Interface").into(),
             Self::Library => tr!("LIBRARY", "Library").into(),
             Self::Playback => tr!("PLAYBACK", "Playback").into(),
+            Self::Equalizer => tr!("EQUALIZER", "Equalizer").into(),
             Self::Services => tr!("SERVICES", "Services").into(),
             #[cfg(feature = "update")]
             Self::Update => tr!("UPDATE", "Update").into(),
         }
+    }
+
+    // sections that fill the content area vertically instead of scrolling
+    fn fills_height(self) -> bool {
+        matches!(self, Self::Equalizer)
     }
 }
 
@@ -166,6 +176,7 @@ enum SettingsSection {
     Interface(Entity<InterfaceSettings>),
     Library(Entity<LibrarySettings>),
     Playback(Entity<PlaybackSettings>),
+    Equalizer(Entity<EqualizerSettings>),
     Services(Entity<ServicesSettings>),
     #[cfg(feature = "update")]
     Update(Entity<UpdateSettings>),
@@ -177,6 +188,7 @@ impl SettingsSection {
             SettingsSectionKind::Interface => Self::Interface(InterfaceSettings::new(cx)),
             SettingsSectionKind::Library => Self::Library(LibrarySettings::new(cx)),
             SettingsSectionKind::Playback => Self::Playback(PlaybackSettings::new(cx)),
+            SettingsSectionKind::Equalizer => Self::Equalizer(EqualizerSettings::new(cx)),
             SettingsSectionKind::Services => Self::Services(ServicesSettings::new(cx)),
             #[cfg(feature = "update")]
             SettingsSectionKind::Update => Self::Update(UpdateSettings::new(cx)),
@@ -188,6 +200,7 @@ impl SettingsSection {
             Self::Interface(_) => SettingsSectionKind::Interface,
             Self::Library(_) => SettingsSectionKind::Library,
             Self::Playback(_) => SettingsSectionKind::Playback,
+            Self::Equalizer(_) => SettingsSectionKind::Equalizer,
             Self::Services(_) => SettingsSectionKind::Services,
             #[cfg(feature = "update")]
             Self::Update(_) => SettingsSectionKind::Update,
@@ -199,6 +212,7 @@ impl SettingsSection {
             Self::Interface(interface) => interface.clone().into_any_element(),
             Self::Library(library) => library.clone().into_any_element(),
             Self::Playback(playback) => playback.clone().into_any_element(),
+            Self::Equalizer(equalizer) => equalizer.clone().into_any_element(),
             Self::Services(services) => services.clone().into_any_element(),
             #[cfg(feature = "update")]
             Self::Update(update) => update.clone().into_any_element(),
@@ -283,6 +297,33 @@ impl Render for SettingsWindow {
         };
 
         let content = active.element();
+        let fills_height = active.kind().fills_height();
+        let body = if fills_height {
+            div()
+                .size_full()
+                .overflow_hidden()
+                .child(content)
+                .into_any_element()
+        } else {
+            div()
+                .id("settings-content-scroll")
+                .w_full()
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .flex_shrink()
+                .overflow_x_hidden()
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(16.0))
+                        .when(scrollbar_always_visible, |div| {
+                            // 16px padding + 10px buffer
+                            div.pr(px(26.0))
+                        })
+                        .child(content),
+                )
+                .into_any_element()
+        };
         let sidebar = sidebar()
             .width(DEFAULT_SIDEBAR_WIDTH)
             .h_full()
@@ -299,6 +340,7 @@ impl Render for SettingsWindow {
             .child(self.render_section_item(SettingsSectionKind::Interface, cx))
             .child(self.render_section_item(SettingsSectionKind::Library, cx))
             .child(self.render_section_item(SettingsSectionKind::Playback, cx))
+            .child(self.render_section_item(SettingsSectionKind::Equalizer, cx))
             .child(self.render_section_item(SettingsSectionKind::Services, cx));
 
         #[cfg(feature = "update")]
@@ -328,30 +370,14 @@ impl Render for SettingsWindow {
                                 .flex_shrink()
                                 .min_h(px(0.0))
                                 .overflow_hidden()
-                                .child(
-                                    div()
-                                        .id("settings-content-scroll")
-                                        .w_full()
-                                        .overflow_y_scroll()
-                                        .track_scroll(&scroll_handle)
-                                        .flex_shrink()
-                                        .overflow_x_hidden()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .p(px(16.0))
-                                                .when(scrollbar_always_visible, |div| {
-                                                    // 16px padding + 10px buffer
-                                                    div.pr(px(26.0))
-                                                })
-                                                .child(content),
-                                        ),
-                                )
-                                .child(floating_scrollbar(
-                                    "settings-scrollbar",
-                                    scroll_handle,
-                                    RightPad::Pad,
-                                )),
+                                .child(body)
+                                .when(!fills_height, |this| {
+                                    this.child(floating_scrollbar(
+                                        "settings-scrollbar",
+                                        scroll_handle,
+                                        RightPad::Pad,
+                                    ))
+                                }),
                         ),
                 ),
         )

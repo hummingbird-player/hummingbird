@@ -3557,6 +3557,7 @@ dependencies = [
  "postcard",
  "rand 0.10.1",
  "raw-window-handle",
+ "realfft",
  "regex",
  "rtrb",
  "rubato",

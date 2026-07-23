@@ -6,6 +6,7 @@ use super::styling::AdditionalStyleUtil;
 
 #[derive(Clone, Copy)]
 pub enum ButtonSize {
+    Small,
     Regular,
     Large,
 }
@@ -64,6 +65,12 @@ impl ButtonSize {
         T: Styled,
     {
         match self {
+            ButtonSize::Small => dest
+                .px(px(6.0))
+                .py(px(4.0))
+                .text_xs()
+                .gap(px(6.0))
+                .line_height(px(12.0)),
             ButtonSize::Regular => dest
                 .px(px(10.0))
                 .py(px(8.0))
@@ -86,6 +93,7 @@ impl ButtonSize {
         T: Styled,
     {
         match self {
+            ButtonSize::Small => dest,
             ButtonSize::Regular => dest,
             ButtonSize::Large => dest,
         }

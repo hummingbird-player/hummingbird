@@ -138,6 +138,18 @@ A `theme.json` for the default theme is provided here.
   "slider_foreground": "#688CF0",
   "slider_background": "#38374E",
 
+  "eq_grid_line": "#202233",
+  "eq_grid_line_zero": "#2B2F44",
+  "eq_curve": "#688CF0",
+  "eq_curve_fill": "#688CF02E",
+  "eq_band_curve": "#93ACF2",
+  "eq_dot": "#A0A1AD",
+  "eq_dot_selected": "#5774E7",
+  "eq_dot_disabled": "#5F5F71",
+  "eq_spectrum_pre": "#A0A1AD1A",
+  "eq_spectrum_post": "#688CF024",
+  "eq_spectrum_edge": "#688CF099",
+
   "elevated_background": "#161820",
   "elevated_border_color": "#23253B",
 

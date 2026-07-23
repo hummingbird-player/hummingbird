@@ -135,6 +135,8 @@ pub struct PlaybackInfo {
     pub stop_after_current: Entity<bool>,
     pub volume: Entity<f64>,
     pub prev_volume: Entity<f64>,
+    /// Output stream rate in Hz, 0 until the first stream exists.
+    pub sample_rate: Entity<u32>,
 }
 
 impl Global for PlaybackInfo {}
@@ -553,6 +555,7 @@ pub fn build_models(
     let stop_after_current: Entity<bool> = cx.new(|_| false);
     let volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
+    let sample_rate: Entity<u32> = cx.new(|_| 0);
 
     cx.set_global(PlaybackInfo {
         position,
@@ -564,6 +567,7 @@ pub fn build_models(
         stop_after_current,
         volume,
         prev_volume,
+        sample_rate,
     });
 }
 

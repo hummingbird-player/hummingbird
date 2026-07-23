@@ -7,6 +7,7 @@ pub mod drag_drop;
 pub mod dropdown;
 pub mod icons;
 pub mod input;
+pub mod knob;
 pub mod label;
 pub mod labeled_slider;
 pub mod managed_image;

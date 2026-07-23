@@ -16,14 +16,17 @@ use crate::{
             MenuBuilder, MenuPlatform, MenusBuilder, menu_item, menu_separator,
         },
         library::playlist_view,
-        settings::open_settings_window,
+        settings::{SettingsSectionKind, open_settings_window, open_settings_window_with_section},
         troubleshooting::{CopyTroubleshootingInfo, OpenLog, copy_troubleshooting_info, open_log},
     },
 };
 
 use super::models::{Models, PlaybackInfo};
 
-actions!(hummingbird, [Quit, About, CloseWindow, Search, Settings]);
+actions!(
+    hummingbird,
+    [Quit, About, CloseWindow, Search, Settings, OpenEqualizer]
+);
 actions!(hummingbird, [OpenThemeFolder]);
 #[cfg(feature = "update")]
 actions!(hummingbird, [CheckForUpdates]);
@@ -50,6 +53,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(about);
     cx.on_action(force_scan);
     cx.on_action(open_settings);
+    cx.on_action(open_equalizer);
     #[cfg(feature = "update")]
     cx.on_action(check_for_updates);
     cx.on_action(discord);
@@ -342,6 +346,10 @@ fn test_toast(_: &TestToast, _cx: &mut App) {
 
 fn open_settings(_: &Settings, cx: &mut App) {
     open_settings_window(cx);
+}
+
+fn open_equalizer(_: &OpenEqualizer, cx: &mut App) {
+    open_settings_window_with_section(cx, SettingsSectionKind::Equalizer);
 }
 
 #[cfg(feature = "update")]

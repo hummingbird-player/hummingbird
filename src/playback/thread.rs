@@ -18,8 +18,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     media::errors::PlaybackStartError,
-    playback::{events::RepeatState, session_storage::PlaybackSessionData},
+    playback::{
+        dsp::spectrum::spectrum_tap, events::RepeatState, session_storage::PlaybackSessionData,
+    },
     settings::{
+        equalizer::EqualizerSettings,
         playback::PlaybackSettings,
         replaygain::{ReplayGainAutoHint, calculate_gain},
     },
@@ -111,6 +114,8 @@ impl PlaybackThread {
     ) -> PlaybackInterface {
         let (commands_tx, commands_rx) = unbounded_channel();
         let (events_tx, events_rx) = unbounded_channel();
+        let engine_events_tx = events_tx.clone();
+        let (tap, tap_consumer) = spectrum_tap();
 
         std::thread::Builder::new()
             .name("playback".to_string())
@@ -125,7 +130,7 @@ impl PlaybackThread {
                     last_timestamp: u64::MAX,
                     last_broadcast_timestamp: u64::MAX,
                     position_broadcast_active: true,
-                    engine: AudioEngine::new(),
+                    engine: AudioEngine::new(engine_events_tx, tap),
                     queue: queue_manager,
                     initial_volume: last_volume,
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
@@ -139,7 +144,7 @@ impl PlaybackThread {
             })
             .expect("unable to spawn thread");
 
-        PlaybackInterface::new(commands_tx, events_rx)
+        PlaybackInterface::new(commands_tx, events_rx, tap_consumer)
     }
 
     /// Initialize engine and run the main loop.
@@ -148,6 +153,8 @@ impl PlaybackThread {
         if let Err(e) = self.engine.initialize() {
             error!("Failed to initialize audio engine: {:?}", e);
         }
+
+        self.engine.set_equalizer(&self.playback_settings.equalizer);
 
         self.set_volume(self.initial_volume);
         self.send_event(PlaybackEvent::RepeatChanged(self.queue.repeat_state()));
@@ -234,6 +241,7 @@ impl PlaybackThread {
                 PlaybackCommand::MoveItems { indices, to } => self.move_items(indices, to),
                 PlaybackCommand::Undo => self.undo(),
                 PlaybackCommand::SettingsChanged(settings) => self.settings_changed(settings),
+                PlaybackCommand::SetEqualizer(settings) => self.set_equalizer(settings),
                 PlaybackCommand::SetPositionBroadcastActive(active) => {
                     self.set_position_broadcast_active(active)
                 }
@@ -1021,6 +1029,12 @@ impl PlaybackThread {
         self.playback_settings = settings;
         self.send_event(PlaybackEvent::RepeatChanged(self.queue.repeat_state()));
         self.reapply_replaygain();
+    }
+
+    /// Applies new equalizer settings live. Persistence happens separately through save_settings.
+    fn set_equalizer(&mut self, settings: EqualizerSettings) {
+        self.engine.set_equalizer(&settings);
+        self.playback_settings.equalizer = settings;
     }
 
     fn set_position_broadcast_active(&mut self, active: bool) {

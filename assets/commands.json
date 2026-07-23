@@ -25,6 +25,12 @@
       "action": "hummingbird::Settings"
     },
     {
+      "id": "hummingbird::open_equalizer",
+      "category": "Hummingbird",
+      "name_key": "ACTION_OPEN_EQUALIZER",
+      "action": "hummingbird::OpenEqualizer"
+    },
+    {
       "id": "hummingbird::check_for_updates",
       "category": "Hummingbird",
       "name_key": "ACTION_CHECK_FOR_UPDATES",

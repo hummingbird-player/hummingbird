@@ -1,3 +1,4 @@
+pub mod equalizer;
 pub mod interface;
 pub mod playback;
 pub mod replaygain;
@@ -227,6 +228,12 @@ fn apply_settings_outcome(
 
     let next_health = match outcome {
         SettingsLoadOutcome::Loaded(settings) => {
+            // deliver external edits to the playback thread, save_settings pushes on its own and
+            // its reload diff is empty
+            if current.playback != settings.playback && cx.has_global::<PlaybackInterface>() {
+                cx.global::<PlaybackInterface>()
+                    .update_settings(settings.playback.clone());
+            }
             *current = settings;
             cx.notify();
             SettingsHealth::Ok

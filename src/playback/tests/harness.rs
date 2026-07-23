@@ -4,7 +4,15 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use crate::playback::thread::audio_engine::{AudioEngine, EngineCycleResult};
+use tokio::sync::mpsc::unbounded_channel;
+
+use crate::{
+    playback::{
+        dsp::spectrum::spectrum_tap,
+        thread::audio_engine::{AudioEngine, EngineCycleResult},
+    },
+    test_support::register_test_media_providers,
+};
 
 pub fn engine_lock() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
@@ -41,9 +49,9 @@ pub fn configure_device_death(frames: usize) {
 
 /// Initialize a new audio engine that is playing `path` on the dummy device.
 pub fn engine_playing(path: &Path) -> AudioEngine {
-    crate::test_support::register_test_media_providers();
+    register_test_media_providers();
 
-    let mut engine = AudioEngine::new();
+    let mut engine = AudioEngine::new(unbounded_channel().0, spectrum_tap().0);
     engine.initialize().expect("engine initialization failed");
     engine.set_volume(1.0).expect("failed to set volume");
     engine

@@ -9,6 +9,7 @@ pub mod components;
 mod constants;
 mod controls;
 pub mod data;
+mod equalizer;
 mod global_actions;
 mod header;
 mod keymap;

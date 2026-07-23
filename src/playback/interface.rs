@@ -6,9 +6,9 @@ use gpui::App;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    playback::events::RepeatState,
+    playback::{dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
     power::PowerManager,
-    settings::playback::PlaybackSettings,
+    settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
     ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
 };
 
@@ -32,6 +32,7 @@ use super::{
 pub struct PlaybackInterface {
     cmd_tx: UnboundedSender<PlaybackCommand>,
     events_rx: Option<UnboundedReceiver<PlaybackEvent>>,
+    spectrum_tap: Option<SpectrumTapConsumer>,
 }
 
 impl gpui::Global for PlaybackInterface {}
@@ -40,11 +41,18 @@ impl PlaybackInterface {
     pub fn new(
         cmd_tx: UnboundedSender<PlaybackCommand>,
         events_rx: UnboundedReceiver<PlaybackEvent>,
+        spectrum_tap: SpectrumTapConsumer,
     ) -> Self {
         Self {
             cmd_tx,
             events_rx: Some(events_rx),
+            spectrum_tap: Some(spectrum_tap),
         }
+    }
+
+    /// Consumer half of the spectrum taps, taken once when the spectrum analyzer starts.
+    pub fn take_spectrum_tap(&mut self) -> Option<SpectrumTapConsumer> {
+        self.spectrum_tap.take()
     }
 
     pub fn play(&self) {
@@ -168,6 +176,12 @@ impl PlaybackInterface {
     pub fn update_settings(&self, settings: PlaybackSettings) {
         self.cmd_tx
             .send(PlaybackCommand::SettingsChanged(settings))
+            .unwrap();
+    }
+
+    pub fn set_equalizer(&self, settings: EqualizerSettings) {
+        self.cmd_tx
+            .send(PlaybackCommand::SetEqualizer(settings))
             .unwrap();
     }
 
@@ -327,6 +341,14 @@ impl PlaybackInterface {
                             playback_info.stop_after_current.update(cx, |m, cx| {
                                 *m = v;
                                 cx.notify();
+                            })
+                        }
+                        PlaybackEvent::SampleRateChanged(rate) => {
+                            playback_info.sample_rate.update(cx, |m, cx| {
+                                if *m != rate {
+                                    *m = rate;
+                                    cx.notify();
+                                }
                             })
                         }
                     }
