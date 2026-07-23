@@ -516,28 +516,22 @@ pub async fn get_playlist(pool: &SqlitePool, playlist_id: i64) -> sqlx::Result<A
     Ok(Arc::new(playlist))
 }
 
-pub async fn get_playlist_track_files(
-    pool: &SqlitePool,
-    playlist_id: i64,
-) -> sqlx::Result<Arc<Vec<String>>> {
-    let query = include_str!("../../queries/playlist/get_track_files.sql");
-
-    let track_files: Vec<(String,)> = sqlx::query_as(query)
-        .bind(playlist_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(Arc::new(track_files.into_iter().map(|v| v.0).collect()))
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PlaylistTrackRow {
+    #[sqlx(rename = "id")]
+    pub playlist_item_id: i64,
+    pub track_id: i64,
+    pub album_id: i64,
+    pub location: String,
 }
 
-/// Returns (playlist_item_id, track_id, album_id)
 pub async fn get_playlist_tracks(
     pool: &SqlitePool,
     playlist_id: i64,
-) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>> {
     let query = include_str!("../../queries/playlist/get_track_listing.sql");
 
-    let tracks: Vec<(i64, i64, i64)> = sqlx::query_as(query)
+    let tracks: Vec<PlaylistTrackRow> = sqlx::query_as(query)
         .bind(playlist_id)
         .fetch_all(pool)
         .await?;
@@ -549,7 +543,7 @@ pub async fn get_playlist_tracks_sorted(
     pool: &SqlitePool,
     playlist_id: i64,
     sort_method: PlaylistTrackSortMethod,
-) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>> {
     let query = match sort_method {
         PlaylistTrackSortMethod::Custom => {
             return get_playlist_tracks(pool, playlist_id).await;
@@ -586,7 +580,7 @@ pub async fn get_playlist_tracks_sorted(
         }
     };
 
-    let tracks: Vec<(i64, i64, i64)> = sqlx::query_as(query)
+    let tracks: Vec<PlaylistTrackRow> = sqlx::query_as(query)
         .bind(playlist_id)
         .fetch_all(pool)
         .await?;
@@ -819,13 +813,12 @@ pub trait LibraryAccess {
     fn rename_playlist(&self, playlist_id: i64, name: &str) -> sqlx::Result<()>;
     fn get_all_playlists(&self) -> sqlx::Result<Arc<Vec<Playlist>>>;
     fn get_playlist(&self, playlist_id: i64) -> sqlx::Result<Arc<Playlist>>;
-    fn get_playlist_track_files(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<String>>>;
-    fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
+    fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>>;
     fn get_playlist_tracks_sorted(
         &self,
         playlist_id: i64,
         sort_method: PlaylistTrackSortMethod,
-    ) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>>;
+    ) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>>;
     fn move_playlist_item(&self, item_id: i64, new_position: i64) -> sqlx::Result<()>;
     fn reorder_playlist(&self, playlist_id: i64, new_position: i64) -> sqlx::Result<()>;
     fn get_playlist_item(&self, item_id: i64) -> sqlx::Result<PlaylistItem>;
@@ -937,12 +930,7 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(get_playlist(&pool.0, playlist_id))
     }
 
-    fn get_playlist_track_files(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<String>>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(get_playlist_track_files(&pool.0, playlist_id))
-    }
-
-    fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+    fn get_playlist_tracks(&self, playlist_id: i64) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_playlist_tracks(&pool.0, playlist_id))
     }
@@ -951,7 +939,7 @@ impl LibraryAccess for App {
         &self,
         playlist_id: i64,
         sort_method: PlaylistTrackSortMethod,
-    ) -> sqlx::Result<Arc<Vec<(i64, i64, i64)>>> {
+    ) -> sqlx::Result<Arc<Vec<PlaylistTrackRow>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_playlist_tracks_sorted(
             &pool.0,
