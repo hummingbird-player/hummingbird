@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use tracing::debug;
 
@@ -24,7 +24,10 @@ pub async fn create_pool(path: impl AsRef<Path>) -> sqlx::Result<SqlitePool> {
         .synchronous(SqliteSynchronous::Normal)
         .journal_mode(SqliteJournalMode::Wal)
         .create_if_missing(true);
-    let pool = SqlitePool::connect_with(options).await?;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(3)
+        .connect_with(options)
+        .await?;
 
     let migrations = sqlx::migrate!("./migrations")
         .set_ignore_missing(true)
