@@ -10,6 +10,11 @@ use crate::{
     media::pipeline::ChannelConsumers,
 };
 
+#[cfg(not(feature = "heap-profileable"))]
+const DEFAULT_DEVICE_PROVIDER: &str = "cpal";
+#[cfg(feature = "heap-profileable")]
+const DEFAULT_DEVICE_PROVIDER: &str = "dummy";
+
 // magic numbers for piecewise volume % to float scale function
 pub const LN_50: f64 = 3.91202300543_f64;
 pub const LINEAR_SCALING_COEFFICIENT: f64 = 0.295751527165_f64;
@@ -102,8 +107,8 @@ impl DeviceController {
 
     /// Initialize the device provider based on the environment or platform defaults.
     pub fn initialize_provider(&mut self) {
-        let requested_device_provider =
-            std::env::var("DEVICE_PROVIDER").unwrap_or_else(|_| "cpal".to_string());
+        let requested_device_provider = std::env::var("DEVICE_PROVIDER")
+            .unwrap_or_else(|_| DEFAULT_DEVICE_PROVIDER.to_string());
 
         self.initialize_provider_by_name(&requested_device_provider);
     }

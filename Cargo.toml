@@ -10,6 +10,9 @@ categories = ["multimedia::audio"]
 [features]
 runtime_shaders = ["gpui_platform/runtime_shaders"]
 console = ["dep:console-subscriber", "tokio/tracing"]
+# Use the system allocator so Heaptrack can observe Rust allocations, and avoid loading PipeWire
+# concurrently with the GPU driver during startup.
+heap-profileable = []
 update = ["dep:semver", "dep:minisign-verify", "dep:winreg", "online"]
 online = ["dep:zed-reqwest"]
 libre-services = ["online"]
@@ -45,6 +48,7 @@ intx = "0.1"
 itertools = "0.15"
 lofty = "0.25"
 md5 = "0.8"
+mimalloc = { version = "0.1", features = ["no_thp"] }
 minisign-verify = { version = "0.2", optional = true }
 moka = { version = "0.12", features = ["sync"] }
 notify = "8"

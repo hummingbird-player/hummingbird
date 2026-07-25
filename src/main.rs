@@ -44,6 +44,10 @@ const VERSION_STRING: &str = env!("HUMMINGBIRD_VERSION_STRING");
 static ALLOC_GUARD: test_support::alloc_guard::CountingAllocator =
     test_support::alloc_guard::CountingAllocator;
 
+#[cfg(all(not(test), not(feature = "heap-profileable")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
