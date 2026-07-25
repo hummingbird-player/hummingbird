@@ -110,12 +110,6 @@ where
         Self::available_columns()
     }
 
-    /// Returns a boolean indicating whether or not a given column should be displayed using a
-    /// monospaced font.
-    ///
-    /// This should be true for columns that contain mostly numbers, like a date or time.
-    fn column_monospace(column: C) -> bool;
-
     /// Retrieves a unique element id for the row. This is different from the row id, as it is
     /// used to identify the row in GPUI.
     fn get_element_id(&self) -> impl Into<ElementId>;

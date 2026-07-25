@@ -349,13 +349,13 @@
   },
   "COLUMN_ALBUM": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:324",
+    "definedIn": "src/library/types/table.rs:320",
     "plural": false,
     "description": null
   },
   "COLUMN_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:555",
+    "definedIn": "src/library/types/table.rs:547",
     "plural": false,
     "description": null
   },
@@ -391,13 +391,13 @@
   },
   "COLUMN_LENGTH": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:327",
+    "definedIn": "src/library/types/table.rs:323",
     "plural": false,
     "description": null
   },
   "COLUMN_NAME": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:554",
+    "definedIn": "src/library/types/table.rs:546",
     "plural": false,
     "description": null
   },
@@ -409,7 +409,7 @@
   },
   "COLUMN_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:556",
+    "definedIn": "src/library/types/table.rs:548",
     "plural": false,
     "description": null
   },
@@ -1669,13 +1669,13 @@
   },
   "TABLE_ARTISTS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:570",
+    "definedIn": "src/library/types/table.rs:562",
     "plural": false,
     "description": null
   },
   "TABLE_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:341",
+    "definedIn": "src/library/types/table.rs:337",
     "plural": false,
     "description": null
   },
@@ -1741,7 +1741,7 @@
   },
   "TRACK_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:322",
+    "definedIn": "src/library/types/table.rs:318",
     "plural": false,
     "description": null
   },

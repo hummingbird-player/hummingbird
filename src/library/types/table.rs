@@ -207,10 +207,6 @@ impl TableData<AlbumColumn> for Album {
         true
     }
 
-    fn column_monospace(_column: AlbumColumn) -> bool {
-        false
-    }
-
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {
         ("album", self.id as u32)
     }
@@ -467,10 +463,6 @@ impl TableData<TrackColumn> for Track {
         true
     }
 
-    fn column_monospace(_column: TrackColumn) -> bool {
-        false
-    }
-
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {
         ("track", self.id as u32)
     }
@@ -626,10 +618,6 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
     }
 
     fn has_images() -> bool {
-        false
-    }
-
-    fn column_monospace(_column: ArtistColumn) -> bool {
         false
     }
 

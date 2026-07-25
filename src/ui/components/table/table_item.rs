@@ -198,7 +198,6 @@ where
                     .expect("data references column outside of viewed table");
                 let is_last = i == column_count - 1;
                 let base_width = *col.1;
-                let monospace = T::column_monospace(*col.0);
                 row = row.child(
                     div()
                         .when(!is_last, |this| this.w(px(base_width)))
@@ -207,7 +206,6 @@ where
                         .px(px(12.0))
                         .py(px(6.0))
                         .when(!T::has_images() && i == 0, |div| div.pl(px(17.0)))
-                        .when(monospace, |div| div.font_family("Roboto Mono"))
                         .text_sm()
                         .flex_shrink_0()
                         .overflow_hidden()
