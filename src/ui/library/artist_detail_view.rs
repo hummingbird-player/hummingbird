@@ -733,7 +733,7 @@ impl Render for ArtistDetailView {
                                             "artist-albums-grid",
                                             album_count,
                                             None,
-                                            move |idx, _, cx| {
+                                            move |idx, item_width, _, cx| {
                                                 prune_views(
                                                     &grid_views_model,
                                                     &grid_render_counter,
@@ -760,6 +760,10 @@ impl Render for ArtistDetailView {
                                                     },
                                                     cx,
                                                 );
+
+                                                view.update(cx, |item, cx| {
+                                                    item.set_image_target(item_width, cx);
+                                                });
 
                                                 div()
                                                     .image_cache(hummingbird_cache(

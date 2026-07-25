@@ -369,6 +369,7 @@ impl Render for InfoSection {
                                                         ),
                                                         key.clone(),
                                                     )
+                                                    .target_logical_px(256.0)
                                                     .w(px(256.0))
                                                     .h(px(256.0))
                                                     .rounded(px(10.0))

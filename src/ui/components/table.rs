@@ -67,7 +67,6 @@ where
     render_counter: Entity<usize>,
 
     grid_views: Entity<FxHashMap<usize, Entity<grid_item::GridItem<T, C>>>>,
-    grid_render_counter: Entity<usize>,
     view_mode: Entity<TableViewMode>,
     grid_scroll_handle: UniformListScrollHandle,
 
@@ -111,7 +110,6 @@ where
             let render_counter = cx.new(|_| 0);
 
             let grid_views = cx.new(|_| FxHashMap::default());
-            let grid_render_counter = cx.new(|_| 0);
             let initial_view_mode = match initial_settings.map(|s| s.view_mode) {
                 Some(TableViewModeSetting::Grid) => TableViewMode::Grid,
                 _ => TableViewMode::List,
@@ -152,7 +150,6 @@ where
                 this.views = cx.new(|_| FxHashMap::default());
                 this.render_counter = cx.new(|_| 0);
                 this.grid_views = cx.new(|_| FxHashMap::default());
-                this.grid_render_counter = cx.new(|_| 0);
                 this.items = items;
 
                 cx.notify();
@@ -163,7 +160,6 @@ where
                 this.views = cx.new(|_| FxHashMap::default());
                 this.render_counter = cx.new(|_| 0);
                 this.grid_views = cx.new(|_| FxHashMap::default());
-                this.grid_render_counter = cx.new(|_| 0);
 
                 let settings = this.get_settings(cx);
                 let table_settings_model = cx.global::<Models>().table_settings.clone();
@@ -194,7 +190,6 @@ where
                     this.views = cx.new(|_| FxHashMap::default());
                     this.render_counter = cx.new(|_| 0);
                     this.grid_views = cx.new(|_| FxHashMap::default());
-                    this.grid_render_counter = cx.new(|_| 0);
                     this.items = items;
 
                     cx.notify();
@@ -209,7 +204,6 @@ where
                 views,
                 render_counter,
                 grid_views,
-                grid_render_counter,
                 view_mode,
                 grid_scroll_handle,
                 items,
@@ -239,6 +233,12 @@ where
     }
 
     pub fn set_view_mode(&mut self, view_mode: TableViewMode, cx: &mut App) {
+        if view_mode == TableViewMode::List && self.get_view_mode(cx) == TableViewMode::Grid {
+            // Grid items own keyed image state. Drop them when leaving the grid instead of
+            // retaining the last viewport until the table itself is destroyed.
+            self.grid_views.update(cx, |views, _| views.clear());
+        }
+
         self.view_mode.update(cx, |mode, cx| {
             *mode = view_mode;
             cx.notify();
@@ -443,7 +443,7 @@ where
         let render_counter = self.render_counter.clone();
 
         let grid_views_model = self.grid_views.clone();
-        let grid_render_counter = self.grid_render_counter.clone();
+        let grid_views_to_prune = self.grid_views.clone();
         let view_mode = *self.view_mode.read(cx);
         let grid_scroll_handle = self.grid_scroll_handle.clone();
         let grid_min_item_width = {
@@ -686,9 +686,7 @@ where
                             "grid-list",
                             items_len,
                             grid_scroll_handle.clone(),
-                            move |idx, _, cx| {
-                                prune_views(&grid_views_model, &grid_render_counter, idx, cx);
-
+                            move |idx, item_width, _, cx| {
                                 let item_id = items[idx].clone();
 
                                 let view = create_or_retrieve_view(
@@ -707,6 +705,10 @@ where
                                     cx,
                                 );
 
+                                view.update(cx, |item, cx| {
+                                    item.set_image_target(item_width, cx);
+                                });
+
                                 div()
                                     .image_cache(hummingbird_cache(
                                         (T::get_table_name(), idx + 1),
@@ -719,6 +721,11 @@ where
                         )
                         .min_item_width(px(grid_min_item_width))
                         .gap(px(gap))
+                        .on_visible_range(move |range, _, cx| {
+                            grid_views_to_prune.update(cx, |views, _| {
+                                views.retain(|idx, _| range.contains(idx));
+                            });
+                        })
                         .py(px(grid_padding)),
                     )
                     .child(floating_scrollbar("grid-scrollbar", grid_scroll_handle).right(px(4.0)))

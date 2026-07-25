@@ -30,6 +30,7 @@ where
     secondary_text: Option<SharedString>,
     on_select: Option<OnSelectHandler<T, C>>,
     is_available: bool,
+    image_target: Option<Pixels>,
 }
 
 impl<T, C> GridItem<T, C>
@@ -62,7 +63,15 @@ where
             secondary_text,
             on_select,
             is_available,
+            image_target: None,
         }))
+    }
+
+    pub fn set_image_target(&mut self, target: Pixels, cx: &mut Context<Self>) {
+        if self.image_target != Some(target) {
+            self.image_target = Some(target);
+            cx.notify();
+        }
     }
 }
 
@@ -148,15 +157,17 @@ where
             .bg(theme.album_art_background)
             .overflow_hidden();
 
-        if let Some(image) = self.image_key.clone() {
-            img_container = img_container.child(
-                managed_image((self.id.clone(), "grid_image"), image)
-                    .w_full()
-                    .h_full()
-                    .aspect_square()
-                    .rounded(px(6.0))
-                    .object_fit(ObjectFit::Fill),
-            );
+        if let Some(key) = self.image_key.clone() {
+            let mut image = managed_image((self.id.clone(), "grid_image"), key)
+                .w_full()
+                .h_full()
+                .aspect_square()
+                .rounded(px(6.0))
+                .object_fit(ObjectFit::Fill);
+            if let Some(target) = self.image_target {
+                image = image.target_logical_px(target.into());
+            }
+            img_container = img_container.child(image);
         }
 
         let content = container

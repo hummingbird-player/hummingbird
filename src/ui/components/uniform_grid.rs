@@ -5,13 +5,14 @@ use gpui::{
     relative, size,
 };
 use smallvec::SmallVec;
-use std::{cmp, rc::Rc};
+use std::{cmp, ops::Range, rc::Rc};
 
 const DEFAULT_MIN_ITEM_WIDTH: f32 = 192.0;
 const DEFAULT_ITEM_EXTRA_HEIGHT: f32 = 50.0;
 const DEFAULT_OVERSCAN_ROWS: usize = 1;
 
-type RenderItemCallback = Rc<dyn Fn(usize, &mut Window, &mut App) -> AnyElement>;
+type RenderItemCallback = Rc<dyn Fn(usize, Pixels, &mut Window, &mut App) -> AnyElement>;
+type VisibleRangeCallback = Rc<dyn Fn(Range<usize>, &mut Window, &mut App)>;
 
 pub struct UniformGrid {
     item_count: usize,
@@ -25,6 +26,7 @@ pub struct UniformGrid {
     auto_height: bool,
     interactivity: Interactivity,
     render_item: RenderItemCallback,
+    visible_range: Option<VisibleRangeCallback>,
 }
 
 pub struct UniformGridFrameState {
@@ -45,7 +47,7 @@ impl UniformGrid {
         id: impl Into<ElementId>,
         item_count: usize,
         scroll_handle: Option<UniformListScrollHandle>,
-        render_item: impl Fn(usize, &mut Window, &mut App) -> AnyElement + 'static,
+        render_item: impl Fn(usize, Pixels, &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         let mut interactivity = Interactivity::new();
         interactivity.element_id = Some(id.into());
@@ -63,6 +65,7 @@ impl UniformGrid {
             auto_height: false,
             interactivity,
             render_item: Rc::new(render_item),
+            visible_range: None,
         };
 
         if let Some(ref handle) = this.scroll_handle {
@@ -95,6 +98,14 @@ impl UniformGrid {
     pub fn auto_height(mut self) -> Self {
         self.auto_height = true;
         self.interactivity.base_style.overflow.y = None;
+        self
+    }
+
+    pub fn on_visible_range(
+        mut self,
+        callback: impl Fn(Range<usize>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.visible_range = Some(Rc::new(callback));
         self
     }
 
@@ -244,6 +255,7 @@ impl Element for UniformGrid {
         let gap = self.gap.max(px(0.0));
         let top_padding = self.top_padding.max(px(0.0));
         let render_item = self.render_item.clone();
+        let visible_range = self.visible_range.clone();
         let content_size = self.content_size_for(bounds);
         let scroll_handle = self.scroll_handle.clone();
         let metrics_for_bounds = self.compute_metrics(bounds.size.width);
@@ -269,10 +281,16 @@ impl Element for UniformGrid {
                 }
 
                 if metrics.row_count == 0 || metrics.row_stride <= px(0.0) {
+                    if let Some(callback) = &visible_range {
+                        callback(0..0, window, cx);
+                    }
                     return hitbox;
                 }
 
                 if auto_height {
+                    if let Some(callback) = &visible_range {
+                        callback(0..item_count, window, cx);
+                    }
                     let mask_bounds = Bounds {
                         origin: bounds.origin,
                         size: size(bounds.size.width, content_size.height),
@@ -295,7 +313,7 @@ impl Element for UniformGrid {
                                     row_y,
                                 );
 
-                                let mut item = (render_item)(idx, window, cx);
+                                let mut item = (render_item)(idx, metrics.item_width, window, cx);
                                 let available_space = size(
                                     AvailableSpace::Definite(metrics.item_width),
                                     AvailableSpace::Definite(metrics.item_height),
@@ -337,6 +355,12 @@ impl Element for UniformGrid {
 
                 let start_row = first_visible_row.saturating_sub(overscan_rows);
                 let end_row = cmp::min(last_visible_row + overscan_rows, metrics.row_count);
+                let first_item = start_row * metrics.columns;
+                let end_item = cmp::min(end_row * metrics.columns, item_count);
+
+                if let Some(callback) = &visible_range {
+                    callback(first_item..end_item, window, cx);
+                }
 
                 let content_mask = ContentMask { bounds };
                 window.with_content_mask(Some(content_mask), |window| {
@@ -359,7 +383,7 @@ impl Element for UniformGrid {
                                 row_y,
                             );
 
-                            let mut item = (render_item)(idx, window, cx);
+                            let mut item = (render_item)(idx, metrics.item_width, window, cx);
                             let available_space = size(
                                 AvailableSpace::Definite(metrics.item_width),
                                 AvailableSpace::Definite(metrics.item_height),
@@ -407,7 +431,7 @@ pub fn uniform_grid(
     id: impl Into<ElementId>,
     item_count: usize,
     scroll_handle: impl Into<Option<UniformListScrollHandle>>,
-    render_item: impl Fn(usize, &mut Window, &mut App) -> AnyElement + 'static,
+    render_item: impl Fn(usize, Pixels, &mut Window, &mut App) -> AnyElement + 'static,
 ) -> UniformGrid {
     UniformGrid::new(id, item_count, scroll_handle.into(), render_item)
 }

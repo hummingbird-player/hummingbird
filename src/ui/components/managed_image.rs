@@ -1,15 +1,17 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 
 use gpui::{
-    App, Bounds, Corners, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    LayoutId, ObjectFit, Pixels, Refineable, RenderImage, Style, StyleRefinement, Styled, Window,
+    App, Bounds, Context, Corners, Element, ElementId, GlobalElementId, InspectorElementId,
+    IntoElement, LayoutId, ObjectFit, Pixels, Refineable, RenderImage, Style, StyleRefinement,
+    Styled, Window,
 };
 use image::{Frame, imageops};
 use smallvec::SmallVec;
 use sqlx::SqlitePool;
+use tokio::{sync::Semaphore, task::AbortHandle};
 use tracing::error;
 
 use crate::{
@@ -21,19 +23,70 @@ use crate::{
     util::rgb_to_bgr,
 };
 
-fn decode_rgba_to_render_image(mut image: image::RgbaImage) -> anyhow::Result<Arc<RenderImage>> {
+const SIZE_BUCKETS: [u32; 7] = [128, 192, 256, 384, 512, 768, 1024];
+const MAX_CONCURRENT_IMAGE_DECODES: usize = 4;
+
+// A full-art decode can temporarily hold the encoded image, a 1024px RGBA image, and the
+// resized output. Keep scrolling from starting enough of these at once to inflate the heap.
+static IMAGE_DECODE_PERMITS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_IMAGE_DECODES)));
+
+async fn run_blocking_with_permit<T, F>(
+    permits: Arc<Semaphore>,
+    task: F,
+) -> Result<T, tokio::task::JoinError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let permit = permits
+        .acquire_owned()
+        .await
+        .expect("image decode semaphore unexpectedly closed");
+    crate::RUNTIME
+        .spawn_blocking(move || {
+            // The async JoinHandle can be aborted, but spawn_blocking itself cannot. Owning the
+            // permit here keeps cancellation from bypassing the hard concurrency limit.
+            let _permit = permit;
+            task()
+        })
+        .await
+}
+
+// smallest bucket at or above the target, none means decode at native size
+fn size_bucket(physical_px: f32) -> Option<u32> {
+    SIZE_BUCKETS
+        .into_iter()
+        .find(|&bucket| physical_px <= bucket as f32)
+}
+
+fn decode_rgba_to_render_image(
+    mut image: image::RgbaImage,
+    max_px: Option<u32>,
+) -> anyhow::Result<Arc<RenderImage>> {
+    if let Some(max_px) = max_px {
+        let (width, height) = image.dimensions();
+        let largest = width.max(height);
+        if largest > max_px {
+            let scale = max_px as f32 / largest as f32;
+            let w = ((width as f32 * scale).round() as u32).max(1);
+            let h = ((height as f32 * scale).round() as u32).max(1);
+            image = imageops::resize(&image, w, h, imageops::FilterType::Triangle);
+        }
+    }
+
     rgb_to_bgr(&mut image);
     let mut frames: SmallVec<[_; 1]> = SmallVec::new();
     frames.push(Frame::new(image));
     Ok(Arc::new(RenderImage::new(frames)))
 }
 
-fn decode_to_render_image(data: &[u8]) -> anyhow::Result<Arc<RenderImage>> {
+fn decode_to_render_image(data: &[u8], max_px: Option<u32>) -> anyhow::Result<Arc<RenderImage>> {
     let image = image::load_from_memory(data)?.to_rgba8();
-    decode_rgba_to_render_image(image)
+    decode_rgba_to_render_image(image, max_px)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ManagedImageKey {
     Album(i64),
     Track(i64),
@@ -45,12 +98,14 @@ impl ManagedImageKey {
         &self,
         pool: SqlitePool,
         thumb: bool,
+        max_px: Option<u32>,
     ) -> anyhow::Result<Option<Arc<RenderImage>>> {
         match self {
             ManagedImageKey::TrackFile(path) => {
                 let path = path.clone();
-                crate::RUNTIME
-                    .spawn_blocking(move || -> anyhow::Result<Option<Arc<RenderImage>>> {
+                run_blocking_with_permit(
+                    Arc::clone(&IMAGE_DECODE_PERMITS),
+                    move || -> anyhow::Result<Option<Arc<RenderImage>>> {
                         let Some(mut stream) =
                             try_open_media(&path, MediaProviderFeatures::PROVIDES_METADATA)?
                         else {
@@ -71,9 +126,10 @@ impl ManagedImageKey {
                             image = imageops::thumbnail(&image, 72, 72);
                         }
 
-                        Ok(Some(decode_rgba_to_render_image(image)?))
-                    })
-                    .await?
+                        Ok(Some(decode_rgba_to_render_image(image, max_px)?))
+                    },
+                )
+                .await?
             }
             ManagedImageKey::Album(id) | ManagedImageKey::Track(id) => {
                 let query = match (self, thumb) {
@@ -104,8 +160,10 @@ impl ManagedImageKey {
                     return Ok(None);
                 }
 
-                let image = crate::RUNTIME
-                    .spawn_blocking(move || decode_to_render_image(&image_encoded).map(Some))
+                let image =
+                    run_blocking_with_permit(Arc::clone(&IMAGE_DECODE_PERMITS), move || {
+                        decode_to_render_image(&image_encoded, max_px).map(Some)
+                    })
                     .await??;
 
                 Ok(image)
@@ -117,8 +175,86 @@ impl ManagedImageKey {
 type ImageBridge = Arc<OnceLock<Option<Arc<RenderImage>>>>;
 
 struct ManagedImageState {
+    key: ManagedImageKey,
+    thumb: bool,
+    bucket: Option<u32>,
     image: Option<Arc<RenderImage>>,
     bridge: Option<ImageBridge>,
+    retrieval: Option<AbortHandle>,
+}
+
+impl ManagedImageState {
+    fn start_retrieval(
+        &mut self,
+        cx: &mut Context<Self>,
+        key: ManagedImageKey,
+        thumb: bool,
+        bucket: Option<u32>,
+    ) {
+        if let Some(retrieval) = self.retrieval.take() {
+            retrieval.abort();
+        }
+
+        self.key = key.clone();
+        self.thumb = thumb;
+        self.bucket = bucket;
+
+        let pool = cx.global::<Pool>().0.clone();
+        let bridge: ImageBridge = Arc::new(OnceLock::new());
+        self.bridge = Some(bridge.clone());
+        let task_bridge = bridge.clone();
+
+        let handle = crate::RUNTIME.spawn(async move {
+            let result = key.retrieve(pool, thumb, bucket).await;
+            let image = match &result {
+                Ok(img) => img.clone(),
+                Err(_) => None,
+            };
+            task_bridge.set(image).ok();
+            result
+        });
+        self.retrieval = Some(handle.abort_handle());
+
+        cx.spawn(async move |this, cx| {
+            let result = match handle.await {
+                Ok(result) => result,
+                Err(e) if e.is_cancelled() => return,
+                Err(e) => {
+                    error!("Image decode task failed: {:?}", e);
+                    return;
+                }
+            };
+
+            match result {
+                Ok(Some(image)) => {
+                    this.update(cx, |this, cx| {
+                        // a newer fetch wins if this one was superseded
+                        let current = this
+                            .bridge
+                            .as_ref()
+                            .is_some_and(|b| Arc::ptr_eq(b, &bridge));
+                        if current {
+                            let old_image = this.image.replace(image.clone());
+                            this.bridge = None;
+                            this.retrieval = None;
+                            if let Some(old_image) =
+                                old_image.filter(|old| !Arc::ptr_eq(old, &image))
+                            {
+                                drop_image_from_app(cx, old_image);
+                            }
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    error!("Failed to retrieve image: {:?}", e);
+                }
+            }
+        })
+        .detach();
+    }
 }
 
 pub enum ImageReady {
@@ -133,6 +269,7 @@ pub struct ManagedImage {
     style: StyleRefinement,
     object_fit: ObjectFit,
     thumb: bool,
+    target_logical_px: Option<f32>,
 }
 
 impl ManagedImage {
@@ -143,6 +280,11 @@ impl ManagedImage {
 
     pub fn thumb(mut self) -> Self {
         self.thumb = true;
+        self
+    }
+
+    pub fn target_logical_px(mut self, target: f32) -> Self {
+        self.target_logical_px = Some(target);
         self
     }
 }
@@ -182,52 +324,44 @@ impl Element for ManagedImage {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let key = self.key.clone();
         let thumb = self.thumb;
+        let bucket = self
+            .target_logical_px
+            .and_then(|target| size_bucket(target * window.scale_factor()));
+
         let entity = window.use_keyed_state("state", cx, move |_window, cx| {
-            let pool = cx.global::<Pool>().0.clone();
-            let bridge: ImageBridge = Arc::new(OnceLock::new());
-            let bridge_clone = bridge.clone();
-
-            let handle = crate::RUNTIME.spawn(async move {
-                let result = key.retrieve(pool, thumb).await;
-                let image = match &result {
-                    Ok(img) => img.clone(),
-                    Err(_) => None,
-                };
-                bridge_clone.set(image).ok();
-                result
-            });
-
-            cx.spawn(async move |this, cx| {
-                let result = handle.await.unwrap();
-                match result {
-                    Ok(Some(image)) => {
-                        this.update(cx, |this: &mut ManagedImageState, cx| {
-                            this.image = Some(image);
-                            this.bridge = None;
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        error!("Failed to retrieve image: {:?}", e);
-                    }
-                }
-            })
-            .detach();
+            let mut state = ManagedImageState {
+                key: key.clone(),
+                thumb,
+                bucket,
+                image: None,
+                bridge: None,
+                retrieval: None,
+            };
+            state.start_retrieval(cx, key, thumb, bucket);
 
             cx.on_release(|this: &mut ManagedImageState, cx| {
-                if let Some(image) = this.image.clone() {
+                if let Some(retrieval) = this.retrieval.take() {
+                    retrieval.abort();
+                }
+                if let Some(image) = this.image.take() {
                     drop_image_from_app(cx, image);
                 }
             })
             .detach();
 
-            ManagedImageState {
-                image: None,
-                bridge: Some(bridge),
-            }
+            state
         });
+
+        // refetch when the key or decode size no longer matches the stored fetch
+        let stale = {
+            let state = entity.read(cx);
+            state.key != self.key || state.thumb != self.thumb || state.bucket != bucket
+        };
+        if stale {
+            entity.update(cx, |this, cx| {
+                this.start_retrieval(cx, self.key.clone(), self.thumb, bucket);
+            });
+        }
 
         let (image, bridge) = {
             let state = entity.read(cx);
@@ -310,5 +444,49 @@ pub fn managed_image(id: impl Into<ElementId>, key: ManagedImageKey) -> ManagedI
         style: StyleRefinement::default(),
         object_fit: ObjectFit::Cover,
         thumb: false,
+        target_logical_px: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
+
+    use tokio::sync::Semaphore;
+
+    use super::run_blocking_with_permit;
+
+    #[test]
+    fn aborting_waiter_does_not_release_running_decode_permit() {
+        let permits = Arc::new(Semaphore::new(1));
+        let (first_started_tx, first_started_rx) = mpsc::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+
+        let first = crate::RUNTIME.spawn(run_blocking_with_permit(permits.clone(), move || {
+            first_started_tx.send(()).unwrap();
+            release_first_rx.recv().unwrap();
+        }));
+        first_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first blocking task did not start");
+        first.abort();
+
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        crate::RUNTIME.spawn(run_blocking_with_permit(permits, move || {
+            second_started_tx.send(()).unwrap();
+        }));
+
+        assert!(
+            second_started_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err()
+        );
+        release_first_tx.send(()).unwrap();
+        second_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second task did not start after the first decode finished");
     }
 }
