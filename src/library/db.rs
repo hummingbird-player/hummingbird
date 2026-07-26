@@ -572,6 +572,17 @@ pub async fn list_artists_search(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, St
     Ok(artists)
 }
 
+/// Lists track paths grouped by album ID for availability checks. Returns (album_id, path).
+pub async fn list_album_track_paths(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, String)>> {
+    let query = include_str!("../../queries/library/list_album_track_paths.sql");
+
+    let paths = sqlx::query_as::<_, (i64, String)>(query)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(paths)
+}
+
 pub async fn add_playlist_item(
     pool: &SqlitePool,
     playlist_id: i64,
@@ -948,11 +959,6 @@ pub trait LibraryAccess {
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
-    #[allow(clippy::type_complexity)]
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>>;
-    #[allow(clippy::type_complexity)]
-    fn list_tracks_search(&self) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>>;
-    fn list_artists_search(&self) -> sqlx::Result<Vec<(i64, String)>>;
     fn create_playlist(&self, name: &str) -> sqlx::Result<i64>;
     fn delete_playlist(&self, playlist_id: i64) -> sqlx::Result<()>;
     fn rename_playlist(&self, playlist_id: i64, name: &str) -> sqlx::Result<()>;
@@ -1032,23 +1038,6 @@ impl LibraryAccess for App {
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_track_by_path(&pool.0, path))
-    }
-
-    /// Lists all albums for searching. Returns (id, title, artist display override, artist names).
-    #[allow(clippy::type_complexity)]
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_albums_search(&pool.0))
-    }
-
-    fn list_tracks_search(&self) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_tracks_search(&pool.0))
-    }
-
-    fn list_artists_search(&self) -> sqlx::Result<Vec<(i64, String)>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_artists_search(&pool.0))
     }
 
     fn create_playlist(&self, name: &str) -> sqlx::Result<i64> {
