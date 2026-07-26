@@ -4,13 +4,14 @@ use std::{
 };
 
 use async_trait::async_trait;
-use base64::{Engine, prelude::BASE64_STANDARD};
 use mpris_server::{
     LoopStatus, PlaybackRate, PlaybackStatus, PlayerInterface, Property, RootInterface, Server,
     Signal, Time, Volume,
 };
 use raw_window_handle::RawWindowHandle;
 use tokio::sync::RwLock;
+use tracing::warn;
+use url::Url;
 use zbus::fdo;
 
 use crate::{
@@ -19,11 +20,23 @@ use crate::{
     services::controllers::{ControllerBridge, InitPlaybackController, PlaybackController},
 };
 
+const MPRIS_ART_PREFIX: &str = "hummingbird-mpris-art-";
+
+fn mpris_art_owner_pid(name: &str) -> Option<u32> {
+    let suffix = name.strip_prefix(MPRIS_ART_PREFIX)?;
+    let (pid, counter) = suffix.split_once('-')?;
+    counter.strip_suffix(".jpg")?.parse::<u64>().ok()?;
+    pid.parse().ok()
+}
+
+fn mpris_art_url(path: &Path) -> Option<String> {
+    Url::from_file_path(path).ok().map(|url| url.to_string())
+}
+
 pub struct MprisControllerData {
     last_mdata: Option<Metadata>,
     last_file: Option<PathBuf>,
-    // last_album_art: Box<[u8]>, // TODO: we're supposed to put this in a file somewhere
-    last_album_art: Option<String>,
+    last_album_art: Option<PathBuf>,
     last_playback_state: Option<PlaybackState>,
     last_repeat_state: Option<RepeatState>,
     last_position: Option<u64>,
@@ -68,7 +81,11 @@ impl MprisControllerServer {
             mpris_data.set_track_number(metadata.track_current.map(|v| v as i32));
             mpris_data.set_disc_number(metadata.disc_current.map(|v| v as i32));
             mpris_data.set_length(data.last_duration.map(|v| Time::from_secs(v as i64)));
-            mpris_data.set_art_url(data.last_album_art.clone());
+            mpris_data.set_art_url(
+                data.last_album_art
+                    .as_ref()
+                    .and_then(|path| mpris_art_url(path)),
+            );
             mpris_data.set_lyrics(metadata.lyrics.clone());
 
             Ok(mpris_data)
@@ -321,6 +338,7 @@ impl PlayerInterface for MprisControllerServer {
 pub struct MprisController {
     data: Arc<RwLock<MprisControllerData>>,
     server: Server<MprisControllerServer>,
+    art_counter: u64,
 }
 
 impl InitPlaybackController for MprisController {
@@ -348,7 +366,50 @@ impl InitPlaybackController for MprisController {
 
         let server = crate::RUNTIME.block_on(Server::new("org.mailliw.hummingbird", server))?;
 
-        Ok(Box::new(MprisController { data, server }))
+        crate::RUNTIME.spawn(async {
+            let temp_dir = std::env::temp_dir();
+
+            // Without procfs there is no safe way to distinguish abandoned files from artwork
+            // owned by another running Hummingbird process.
+            if tokio::fs::metadata("/proc/self").await.is_err() {
+                return;
+            }
+
+            let mut entries = match tokio::fs::read_dir(&temp_dir).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    warn!("failed to read temp directory for MPRIS art cleanup: {err:?}");
+                    return;
+                }
+            };
+
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                let Some(owner_pid) = mpris_art_owner_pid(name) else {
+                    continue;
+                };
+
+                if owner_pid == std::process::id() {
+                    continue;
+                }
+
+                let owner_proc = format!("/proc/{owner_pid}");
+                if let Err(err) = tokio::fs::metadata(owner_proc).await
+                    && err.kind() == std::io::ErrorKind::NotFound
+                {
+                    let _ = tokio::fs::remove_file(entry.path()).await;
+                }
+            }
+        });
+
+        Ok(Box::new(MprisController {
+            data,
+            server,
+            art_counter: 0,
+        }))
     }
 }
 
@@ -414,13 +475,29 @@ impl PlaybackController for MprisController {
     }
 
     async fn album_art_changed(&mut self, album_art: &[u8]) -> anyhow::Result<()> {
+        self.art_counter += 1;
+        let path = std::env::temp_dir().join(format!(
+            "{MPRIS_ART_PREFIX}{}-{}.jpg",
+            std::process::id(),
+            self.art_counter
+        ));
+
         let mut data = self.data.write().await;
+        let old_art = data.last_album_art.take();
 
-        let b64 = BASE64_STANDARD.encode(album_art);
-        let url = format!("data:image/jpeg;base64,{}", b64);
-
-        data.last_album_art = Some(url);
+        match tokio::fs::write(&path, album_art).await {
+            Ok(()) => data.last_album_art = Some(path),
+            Err(err) => warn!(
+                "failed to write MPRIS album art to {}: {err:?}",
+                path.display()
+            ),
+        }
         drop(data);
+
+        // clients read the previous file asynchronously, only remove it once new art is in place
+        if let Some(old_art) = old_art {
+            let _ = tokio::fs::remove_file(old_art).await;
+        }
 
         self.server
             .properties_changed([Property::Metadata(
@@ -482,8 +559,12 @@ impl PlaybackController for MprisController {
         data.last_position = None;
         data.last_duration = None;
         data.last_mdata = None;
-        data.last_album_art = None;
+        let old_art = data.last_album_art.take();
         drop(data);
+
+        if let Some(old_art) = old_art {
+            let _ = tokio::fs::remove_file(old_art).await;
+        }
 
         self.server
             .properties_changed([
@@ -496,5 +577,41 @@ impl PlaybackController for MprisController {
             .await?;
 
         Ok(())
+    }
+}
+
+impl Drop for MprisController {
+    fn drop(&mut self) {
+        if let Ok(mut data) = self.data.try_write()
+            && let Some(old_art) = data.last_album_art.take()
+        {
+            let _ = std::fs::remove_file(old_art);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{mpris_art_owner_pid, mpris_art_url};
+
+    #[test]
+    fn parses_only_owned_mpris_art_files() {
+        assert_eq!(
+            mpris_art_owner_pid("hummingbird-mpris-art-123-4.jpg"),
+            Some(123)
+        );
+        assert_eq!(mpris_art_owner_pid("hummingbird-mpris-art-123.jpg"), None);
+        assert_eq!(mpris_art_owner_pid("hummingbird-mpris-art-123-x.jpg"), None);
+        assert_eq!(mpris_art_owner_pid("unrelated-123-4.jpg"), None);
+    }
+
+    #[test]
+    fn album_art_file_url_is_encoded() {
+        assert_eq!(
+            mpris_art_url(Path::new("/tmp/hummingbird album art.jpg")).as_deref(),
+            Some("file:///tmp/hummingbird%20album%20art.jpg")
+        );
     }
 }
