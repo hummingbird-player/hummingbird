@@ -15,6 +15,10 @@ use crate::{
 
 const UNDO_STACK_CAPACITY: usize = 30;
 
+/// Maximum number of queue items a change may modify before it is considered large. Only the
+/// newest large change is kept in the undo stack.
+const LARGE_CHANGE_THRESHOLD: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reshuffled {
     Reshuffled,
@@ -113,6 +117,8 @@ pub enum JumpResult {
 
 #[derive(Debug, Clone)]
 /// Type storing the inverse of various queue mutations, for undoing queue changes.
+/// Only the newest large change (over `LARGE_CHANGE_THRESHOLD` items) is kept on the stack, older
+/// large changes and the history before them are dropped when a new one is pushed.
 pub enum UndoAction {
     /// The queue was replaced with a new set of items. Contains the old queue state.
     Replaced {
@@ -171,6 +177,25 @@ pub enum UndoResult {
     OkNoCurrent { shuffle: bool },
     /// No action to undo.
     None,
+}
+
+impl UndoAction {
+    /// The number of queue items this change modified.
+    fn item_count(&self) -> usize {
+        match self {
+            UndoAction::Replaced { old_queue, .. } => old_queue.len(),
+            UndoAction::Unshuffled { shuffled_queue, .. } => shuffled_queue.len(),
+            UndoAction::Removed { queue_items, .. } => queue_items.len(),
+            UndoAction::Inserted { queue_indices, .. } => queue_indices.len(),
+            UndoAction::MovedMany { items, .. } => items.len(),
+            UndoAction::Moved { .. } => 1,
+            UndoAction::Shuffled => 0,
+        }
+    }
+
+    fn is_large(&self) -> bool {
+        self.item_count() > LARGE_CHANGE_THRESHOLD
+    }
 }
 
 /// Manages the playback queue state.
@@ -250,6 +275,12 @@ impl QueueManager {
     }
 
     fn push_undo_action(&mut self, action: UndoAction) {
+        if action.is_large()
+            && let Some(pos) = self.undo_stack.iter().rposition(UndoAction::is_large)
+        {
+            self.undo_stack.drain(..=pos);
+        }
+
         if self.undo_stack.len() >= UNDO_STACK_CAPACITY {
             self.undo_stack.pop_front();
         }
@@ -1282,9 +1313,10 @@ mod tests {
     use std::sync::{Arc, RwLock};
 
     use serde_json::json;
+    use smallvec::SmallVec;
     use tokio::sync::watch;
 
-    use super::{DequeueManyResult, MoveItemsResult, QueueManager, UndoResult};
+    use super::{DequeueManyResult, MoveItemsResult, QueueManager, UndoAction, UndoResult};
     use crate::{
         playback::{queue::QueueItemData, session_storage::PlaybackSessionData},
         settings::playback::PlaybackSettings,
@@ -1305,6 +1337,10 @@ mod tests {
             "path": format!("/tmp/hummingbird-undo-{id}.flac"),
         }))
         .expect("valid queue item")
+    }
+
+    fn items(count: usize, start_id: i64) -> Vec<QueueItemData> {
+        (0..count).map(|i| item(start_id + i as i64)).collect()
     }
 
     fn manager_with_queue(items: Vec<QueueItemData>) -> QueueManager {
@@ -1482,6 +1518,79 @@ mod tests {
 
         assert!(matches!(manager.undo_last_action(), UndoResult::None));
         assert_eq!(snapshot(&manager), after_first_insert);
+    }
+
+    #[test]
+    fn large_change_evicts_previous_large_and_history_before_it() {
+        use super::LARGE_CHANGE_THRESHOLD;
+
+        let large_size = LARGE_CHANGE_THRESHOLD + 1;
+        let mut manager = manager_with_queue(items(large_size, 0));
+        manager.undo_stack.clear();
+
+        manager.replace_queue(items(large_size, 100_000));
+        manager.insert_item(0, item(200_000));
+        manager.replace_queue(items(large_size, 300_000));
+
+        assert_eq!(manager.undo_stack.len(), 2);
+        assert!(matches!(manager.undo_stack[0], UndoAction::Inserted { .. }));
+        assert!(matches!(manager.undo_stack[1], UndoAction::Replaced { .. }));
+    }
+
+    #[test]
+    fn undo_of_retained_large_change_still_works() {
+        use super::LARGE_CHANGE_THRESHOLD;
+
+        let large_size = LARGE_CHANGE_THRESHOLD + 1;
+        let mut manager = manager_with_queue(items(large_size, 0));
+        manager.undo_stack.clear();
+
+        manager.replace_queue(items(large_size, 100_000));
+        manager.insert_item(0, item(200_000));
+
+        let before = snapshot(&manager);
+
+        manager.replace_queue(items(large_size, 300_000));
+
+        assert_undo_round_trip(&mut manager, before);
+        assert!(!matches!(manager.undo_last_action(), UndoResult::None));
+        assert!(matches!(manager.undo_last_action(), UndoResult::None));
+    }
+
+    #[test]
+    fn large_change_threshold_boundary() {
+        use super::LARGE_CHANGE_THRESHOLD;
+
+        let inserted_at = UndoAction::Inserted {
+            queue_indices: (0..LARGE_CHANGE_THRESHOLD).collect(),
+            original_queue_indices: SmallVec::new(),
+            previous_queue_next: 0,
+            previous_shuffle: false,
+        };
+        let inserted_over = UndoAction::Inserted {
+            queue_indices: (0..=LARGE_CHANGE_THRESHOLD).collect(),
+            original_queue_indices: SmallVec::new(),
+            previous_queue_next: 0,
+            previous_shuffle: false,
+        };
+        let replaced_at = UndoAction::Replaced {
+            old_queue: items(LARGE_CHANGE_THRESHOLD, 0),
+            old_original_queue: Vec::new(),
+            previous_queue_next: 0,
+            previous_shuffle: false,
+        };
+        let replaced_over = UndoAction::Replaced {
+            old_queue: items(LARGE_CHANGE_THRESHOLD + 1, 0),
+            old_original_queue: Vec::new(),
+            previous_queue_next: 0,
+            previous_shuffle: false,
+        };
+
+        assert!(!inserted_at.is_large());
+        assert!(inserted_over.is_large());
+        assert!(!replaced_at.is_large());
+        assert!(replaced_over.is_large());
+        assert!(!UndoAction::Shuffled.is_large());
     }
 
     #[test]
