@@ -24,7 +24,7 @@ use crate::{
     ui::{
         components::{
             icons::{ACCESS_POINT, ADJUSTMENTS, BOOKS, PLAY, WORLD},
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
             sidebar::{sidebar, sidebar_item},
             window_chrome::window_chrome,
             window_header::header,
@@ -295,7 +295,7 @@ impl Render for SettingsWindow {
             // we want to always draw padding to prevent a noticeable jitter.
             settings.model.read(cx).interface.always_show_scrollbars
                 && (scroll_handle.total_content_height() <= 0.0
-                    || scroll_handle.should_draw_scrollbar())
+                    || scroll_handle.should_draw_vertical_scrollbar())
         };
 
         let content = active.element();
@@ -374,11 +374,10 @@ impl Render for SettingsWindow {
                                 .overflow_hidden()
                                 .child(body)
                                 .when(!fills_height, |this| {
-                                    this.child(floating_scrollbar(
-                                        "settings-scrollbar",
-                                        scroll_handle,
-                                        RightPad::Pad,
-                                    ))
+                                    this.child(
+                                        floating_scrollbar("settings-scrollbar", scroll_handle)
+                                            .right(px(4.0)),
+                                    )
                                 }),
                         ),
                 ),

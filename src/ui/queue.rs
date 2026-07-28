@@ -17,7 +17,7 @@ use crate::{
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
             tooltip::build_tooltip,
         },
         library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
@@ -240,7 +240,7 @@ impl Render for QueueItem {
                 let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
 
                 settings.model.read(cx).interface.always_show_scrollbars
-                    && scroll_handle.should_draw_scrollbar()
+                    && scroll_handle.should_draw_vertical_scrollbar()
             };
             let is_current = self.current == self.idx;
             let image_key = album_id.map(ManagedImageKey::Album).or_else(|| {
@@ -1091,11 +1091,7 @@ impl Render for Queue {
                         .flex_col()
                         .track_scroll(&scroll_handle),
                     )
-                    .child(floating_scrollbar(
-                        "queue_scrollbar",
-                        scroll_handle,
-                        RightPad::Pad,
-                    )),
+                    .child(floating_scrollbar("queue_scrollbar", scroll_handle).right(px(4.0))),
             )
     }
 }

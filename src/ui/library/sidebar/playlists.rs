@@ -29,7 +29,7 @@ use crate::{
             icons::{CROSS, FILE_EXPORT, PENCIL, PLAY, PLAYLIST, PLUS, SHUFFLE, STAR},
             menu::{menu, menu_item, menu_separator},
             popover::{PopoverPosition, popover},
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
             sidebar::sidebar_item,
             textbox::Textbox,
         },
@@ -771,11 +771,7 @@ impl Render for PlaylistList {
             .relative()
             .child(main)
             .when(!collapsed, |this| {
-                this.child(floating_scrollbar(
-                    "playlist_list_scrollbar",
-                    scroll_handle,
-                    RightPad::None,
-                ))
+                this.child(floating_scrollbar("playlist_list_scrollbar", scroll_handle))
             })
     }
 }

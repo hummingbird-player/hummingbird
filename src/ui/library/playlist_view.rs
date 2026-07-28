@@ -32,7 +32,7 @@ use crate::{
             dropdown::dropdown,
             icons::{PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
             playback_controls::playback_controls,
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
@@ -965,7 +965,10 @@ impl Render for PlaylistView {
                                 .flex_col()
                                 .track_scroll(&scroll_handle),
                             )
-                            .child(floating_scrollbar("playlist", scroll_handle, RightPad::Pad)),
+                            .child(
+                                floating_scrollbar("playlist", scroll_handle)
+                                    .right(px(4.0)),
+                            ),
                     ),
             )
     }

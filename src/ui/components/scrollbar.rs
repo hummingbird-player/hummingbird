@@ -69,13 +69,33 @@ impl ScrollableHandle {
         }
     }
 
+    pub fn total_content_width(&self) -> f32 {
+        match self {
+            ScrollableHandle::Regular(h) => (h.bounds().size.width + h.max_offset().x).into(),
+            ScrollableHandle::UniformList { handle, .. } => {
+                let handle = &handle.0.borrow().base_handle;
+
+                (handle.bounds().size.width + handle.max_offset().x).into()
+            }
+        }
+    }
+
     /// Returns true if the scrollbar should be visible given current content/viewport sizes.
     /// This checks if content height exceeds viewport height.
-    pub fn should_draw_scrollbar(&self) -> bool {
+    pub fn should_draw_vertical_scrollbar(&self) -> bool {
         let viewport_height: f32 = self.bounds().size.height.into();
         let total_content_height = self.total_content_height();
         let max_offset = self.max_offset().y;
         viewport_height > 0.0 && total_content_height > viewport_height && max_offset > px(0.0)
+    }
+
+    /// Returns true if the scrollbar should be visible given current content/viewport sizes.
+    /// This checks if content width exceeds viewport width.
+    pub fn should_draw_horizontal_scrollbar(&self) -> bool {
+        let viewport_width: f32 = self.bounds().size.width.into();
+        let total_content_width = self.total_content_width();
+        let max_offset = self.max_offset().x;
+        viewport_width > 0.0 && total_content_width > viewport_width && max_offset > px(0.0)
     }
 }
 
@@ -94,7 +114,7 @@ impl From<UniformListScrollHandle> for ScrollableHandle {
 #[derive(Default)]
 struct ScrollbarState {
     dragging: bool,
-    drag_start_y: Pixels,
+    drag_start_position: Pixels,
     drag_start_scroll_position: Pixels,
     last_scroll_offset: Pixels,
     last_interaction_time: Option<Instant>,
@@ -102,6 +122,12 @@ struct ScrollbarState {
 }
 
 type InteractionHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollbarAxis {
+    Vertical,
+    Horizontal,
+}
 
 pub struct Scrollbar {
     id: Option<ElementId>,
@@ -112,6 +138,7 @@ pub struct Scrollbar {
     // assigned as variable in case we want this to be different later
     hide_delay: Duration,
     fade_duration: Duration,
+    axis: ScrollbarAxis,
 }
 
 impl Scrollbar {
@@ -132,6 +159,11 @@ impl Scrollbar {
 
     pub fn slim(mut self, slim: bool) -> Self {
         self.slim = slim;
+        self
+    }
+
+    pub fn axis(mut self, axis: ScrollbarAxis) -> Self {
+        self.axis = axis;
         self
     }
 }
@@ -220,10 +252,18 @@ impl Element for Scrollbar {
             return;
         };
 
+        let axis = self.axis;
+
         // current offset is negative
-        let raw_offset = handle.offset().y;
+        let raw_offset = match axis {
+            ScrollbarAxis::Vertical => handle.offset().y,
+            ScrollbarAxis::Horizontal => handle.offset().x,
+        };
         let scroll_position = -raw_offset;
-        let handle_max_offset = handle.max_offset().y;
+        let handle_max_offset = match axis {
+            ScrollbarAxis::Vertical => handle.max_offset().y,
+            ScrollbarAxis::Horizontal => handle.max_offset().x,
+        };
 
         let max_offset = if handle_max_offset > px(0.0) {
             handle_max_offset
@@ -232,7 +272,11 @@ impl Element for Scrollbar {
         };
 
         // dont show if there's nothing to scroll
-        if !handle.should_draw_scrollbar() {
+        let should_draw = match axis {
+            ScrollbarAxis::Vertical => handle.should_draw_vertical_scrollbar(),
+            ScrollbarAxis::Horizontal => handle.should_draw_horizontal_scrollbar(),
+        };
+        if !should_draw {
             return;
         }
 
@@ -245,11 +289,25 @@ impl Element for Scrollbar {
         let inner_bounds = bounds.extend(pixel_edges);
 
         // calculate thumb position
-        let viewport_height: f32 = handle.bounds().size.height.into();
-        let total_content_height = handle.total_content_height();
-        let thumb_ratio = viewport_height / total_content_height;
-        let min_thumb_height = px(20.0);
-        let thumb_height = (inner_bounds.size.height * thumb_ratio).max(min_thumb_height);
+        let viewport_size: f32 = match axis {
+            ScrollbarAxis::Vertical => handle.bounds().size.height.into(),
+            ScrollbarAxis::Horizontal => handle.bounds().size.width.into(),
+        };
+        let total_content_size = match axis {
+            ScrollbarAxis::Vertical => handle.total_content_height(),
+            ScrollbarAxis::Horizontal => handle.total_content_width(),
+        };
+        let thumb_ratio = viewport_size / total_content_size;
+        let min_thumb_length = px(20.0);
+        let primary_axis_size = match axis {
+            ScrollbarAxis::Vertical => inner_bounds.size.height,
+            ScrollbarAxis::Horizontal => inner_bounds.size.width,
+        };
+        let cross_axis_size = match axis {
+            ScrollbarAxis::Vertical => inner_bounds.size.width,
+            ScrollbarAxis::Horizontal => inner_bounds.size.height,
+        };
+        let thumb_length = (primary_axis_size * thumb_ratio).max(min_thumb_length);
 
         let scroll_ratio = if max_offset > px(0.0) {
             (scroll_position / max_offset).clamp(0.0, 1.0)
@@ -257,17 +315,32 @@ impl Element for Scrollbar {
             0.0
         };
 
-        let available_track = inner_bounds.size.height - thumb_height;
-        let thumb_y = inner_bounds.origin.y + available_track * scroll_ratio;
+        let available_track = primary_axis_size - thumb_length;
+        let thumb_axis_position = match axis {
+            ScrollbarAxis::Vertical => inner_bounds.origin.y + available_track * scroll_ratio,
+            ScrollbarAxis::Horizontal => inner_bounds.origin.x + available_track * scroll_ratio,
+        };
 
-        let thumb_bounds = Bounds {
-            origin: gpui::Point {
-                x: inner_bounds.origin.x,
-                y: thumb_y,
+        let thumb_bounds = match axis {
+            ScrollbarAxis::Vertical => Bounds {
+                origin: gpui::Point {
+                    x: inner_bounds.origin.x,
+                    y: thumb_axis_position,
+                },
+                size: gpui::Size {
+                    width: inner_bounds.size.width,
+                    height: thumb_length,
+                },
             },
-            size: gpui::Size {
-                width: inner_bounds.size.width,
-                height: thumb_height,
+            ScrollbarAxis::Horizontal => Bounds {
+                origin: gpui::Point {
+                    x: thumb_axis_position,
+                    y: inner_bounds.origin.y,
+                },
+                size: gpui::Size {
+                    width: thumb_length,
+                    height: inner_bounds.size.height,
+                },
             },
         };
 
@@ -306,10 +379,9 @@ impl Element for Scrollbar {
                 let scroll_handle_scroll = handle.clone();
 
                 let inner_bounds_down = inner_bounds;
-                let inner_bounds_move = inner_bounds;
                 let thumb_bounds_down = thumb_bounds;
-                let thumb_height_down = thumb_height;
-                let thumb_height_move = thumb_height;
+                let thumb_length_down = thumb_length;
+                let thumb_length_move = thumb_length;
                 let max_offset_down = max_offset;
                 let max_offset_move = max_offset;
                 let max_offset_scroll = max_offset;
@@ -374,40 +446,72 @@ impl Element for Scrollbar {
                     let bg_color = background.opacity(opacity);
                     let thumb_color = foreground.opacity(opacity);
                     let expanded = is_dragging || currently_hovered;
-                    let thin_width = px(4.0);
-                    let visual_width = if !slim || expanded || inner_bounds.size.width < thin_width
-                    {
-                        inner_bounds.size.width
-                    } else {
-                        thin_width
+                    let thin_cross_axis = px(4.0);
+                    let visual_cross_axis_size =
+                        if !slim || expanded || cross_axis_size < thin_cross_axis {
+                            cross_axis_size
+                        } else {
+                            thin_cross_axis
+                        };
+                    let visual_cross_axis_position = match axis {
+                        ScrollbarAxis::Vertical => {
+                            inner_bounds.origin.x + cross_axis_size - visual_cross_axis_size
+                        }
+                        ScrollbarAxis::Horizontal => {
+                            inner_bounds.origin.y + cross_axis_size - visual_cross_axis_size
+                        }
                     };
-                    let visual_x = inner_bounds.origin.x + inner_bounds.size.width - visual_width;
-                    let visual_track_bounds = Bounds {
-                        origin: gpui::Point {
-                            x: visual_x,
-                            y: inner_bounds.origin.y,
+                    let visual_track_bounds = match axis {
+                        ScrollbarAxis::Vertical => Bounds {
+                            origin: gpui::Point {
+                                x: visual_cross_axis_position,
+                                y: inner_bounds.origin.y,
+                            },
+                            size: gpui::Size {
+                                width: visual_cross_axis_size,
+                                height: primary_axis_size,
+                            },
                         },
-                        size: gpui::Size {
-                            width: visual_width,
-                            height: inner_bounds.size.height,
+                        ScrollbarAxis::Horizontal => Bounds {
+                            origin: gpui::Point {
+                                x: inner_bounds.origin.x,
+                                y: visual_cross_axis_position,
+                            },
+                            size: gpui::Size {
+                                width: primary_axis_size,
+                                height: visual_cross_axis_size,
+                            },
                         },
                     };
-                    let visual_thumb_bounds = Bounds {
-                        origin: gpui::Point {
-                            x: visual_x,
-                            y: thumb_bounds.origin.y,
+                    let visual_thumb_bounds = match axis {
+                        ScrollbarAxis::Vertical => Bounds {
+                            origin: gpui::Point {
+                                x: visual_cross_axis_position,
+                                y: thumb_bounds.origin.y,
+                            },
+                            size: gpui::Size {
+                                width: visual_cross_axis_size,
+                                height: thumb_bounds.size.height,
+                            },
                         },
-                        size: gpui::Size {
-                            width: visual_width,
-                            height: thumb_bounds.size.height,
+                        ScrollbarAxis::Horizontal => Bounds {
+                            origin: gpui::Point {
+                                x: thumb_bounds.origin.x,
+                                y: visual_cross_axis_position,
+                            },
+                            size: gpui::Size {
+                                width: thumb_bounds.size.width,
+                                height: visual_cross_axis_size,
+                            },
                         },
                     };
+
                     let corners = if !slim {
                         corners.to_pixels(window.rem_size())
                     } else {
                         let corners = corners.to_pixels(window.rem_size());
-                        let full_width = inner_bounds.size.width.max(px(1.0));
-                        let radius_ratio = visual_width / full_width;
+                        let full_cross_axis = cross_axis_size.max(px(1.0));
+                        let radius_ratio = visual_cross_axis_size / full_cross_axis;
 
                         Corners {
                             top_left: corners.top_left * radius_ratio,
@@ -468,18 +572,34 @@ impl Element for Scrollbar {
 
                     if hitbox_scroll.is_hovered(window) {
                         let delta = ev.delta.pixel_delta(window.line_height());
+                        let axis_delta = match axis {
+                            ScrollbarAxis::Vertical => delta.y,
+                            ScrollbarAxis::Horizontal if delta.x != px(0.0) => delta.x,
+                            ScrollbarAxis::Horizontal => delta.y,
+                        };
                         let current_offset = scroll_handle_scroll.offset();
-                        let new_offset_y =
-                            (current_offset.y + delta.y).clamp(-max_offset_scroll, px(0.0));
+                        let current_axis_offset = match axis {
+                            ScrollbarAxis::Vertical => current_offset.y,
+                            ScrollbarAxis::Horizontal => current_offset.x,
+                        };
+                        let new_axis_offset =
+                            (current_axis_offset + axis_delta).clamp(-max_offset_scroll, px(0.0));
 
                         let mut state = state_for_scroll.borrow_mut();
                         state.last_interaction_time = Some(Instant::now());
 
-                        if (new_offset_y - current_offset.y).abs() > px(0.1) {
-                            scroll_handle_scroll.set_offset(gpui::Point {
-                                x: current_offset.x,
-                                y: new_offset_y,
-                            });
+                        if (new_axis_offset - current_axis_offset).abs() > px(0.1) {
+                            let new_offset = match axis {
+                                ScrollbarAxis::Vertical => gpui::Point {
+                                    x: current_offset.x,
+                                    y: new_axis_offset,
+                                },
+                                ScrollbarAxis::Horizontal => gpui::Point {
+                                    x: new_axis_offset,
+                                    y: current_offset.y,
+                                },
+                            };
+                            scroll_handle_scroll.set_offset(new_offset);
                             window.prevent_default();
                             cx.stop_propagation();
                         }
@@ -506,38 +626,71 @@ impl Element for Scrollbar {
                         handler(window, cx);
                     }
 
-                    let expanded_thumb_bounds = Bounds {
-                        origin: gpui::Point {
-                            x: thumb_bounds_down.origin.x - px(4.0),
-                            y: thumb_bounds_down.origin.y,
+                    let expanded_thumb_bounds = match axis {
+                        ScrollbarAxis::Vertical => Bounds {
+                            origin: gpui::Point {
+                                x: thumb_bounds_down.origin.x - px(4.0),
+                                y: thumb_bounds_down.origin.y,
+                            },
+                            size: gpui::Size {
+                                width: thumb_bounds_down.size.width + px(8.0),
+                                height: thumb_bounds_down.size.height,
+                            },
                         },
-                        size: gpui::Size {
-                            width: thumb_bounds_down.size.width + px(8.0),
-                            height: thumb_bounds_down.size.height,
+                        ScrollbarAxis::Horizontal => Bounds {
+                            origin: gpui::Point {
+                                x: thumb_bounds_down.origin.x,
+                                y: thumb_bounds_down.origin.y - px(4.0),
+                            },
+                            size: gpui::Size {
+                                width: thumb_bounds_down.size.width,
+                                height: thumb_bounds_down.size.height + px(8.0),
+                            },
                         },
                     };
-
+                    let pointer_axis_position = match axis {
+                        ScrollbarAxis::Vertical => ev.position.y,
+                        ScrollbarAxis::Horizontal => ev.position.x,
+                    };
                     if expanded_thumb_bounds.contains(&ev.position) {
-                        let current_scroll_position = -scroll_handle_down.offset().y;
+                        let current_offset = scroll_handle_down.offset();
+                        let current_scroll_position = match axis {
+                            ScrollbarAxis::Vertical => -current_offset.y,
+                            ScrollbarAxis::Horizontal => -current_offset.x,
+                        };
                         state.dragging = true;
-                        state.drag_start_y = ev.position.y;
+                        state.drag_start_position = pointer_axis_position;
                         state.drag_start_scroll_position = current_scroll_position;
                     } else {
-                        let click_y = ev.position.y - inner_bounds_down.origin.y;
-                        let available_track = inner_bounds_down.size.height - thumb_height_down;
+                        let track_origin = match axis {
+                            ScrollbarAxis::Vertical => inner_bounds_down.origin.y,
+                            ScrollbarAxis::Horizontal => inner_bounds_down.origin.x,
+                        };
+                        let click_axis_position = pointer_axis_position - track_origin;
+                        let available_track = primary_axis_size - thumb_length_down;
 
                         if available_track > px(0.0) {
-                            let target_thumb_top = click_y - thumb_height_down / 2.0;
-                            let scroll_ratio = (target_thumb_top / available_track).clamp(0.0, 1.0);
+                            let target_thumb_start = click_axis_position - thumb_length_down / 2.0;
+                            let scroll_ratio =
+                                (target_thumb_start / available_track).clamp(0.0, 1.0);
                             let positive_scroll_position = max_offset_down * scroll_ratio;
 
-                            scroll_handle_down.set_offset(gpui::Point {
-                                x: px(0.0),
-                                y: -positive_scroll_position,
-                            });
+                            let current_offset = scroll_handle_down.offset();
+                            let new_offset = match axis {
+                                ScrollbarAxis::Vertical => gpui::Point {
+                                    x: current_offset.x,
+                                    y: -positive_scroll_position,
+                                },
+                                ScrollbarAxis::Horizontal => gpui::Point {
+                                    x: -positive_scroll_position,
+                                    y: current_offset.y,
+                                },
+                            };
+
+                            scroll_handle_down.set_offset(new_offset);
 
                             state.dragging = true;
-                            state.drag_start_y = ev.position.y;
+                            state.drag_start_position = pointer_axis_position;
                             state.drag_start_scroll_position = positive_scroll_position;
 
                             window.refresh();
@@ -561,19 +714,31 @@ impl Element for Scrollbar {
                         handler(window, _cx);
                     }
 
-                    let delta_y = ev.position.y - state.drag_start_y;
-                    let available_track = inner_bounds_move.size.height - thumb_height_move;
+                    let pointer_axis_position = match axis {
+                        ScrollbarAxis::Vertical => ev.position.y,
+                        ScrollbarAxis::Horizontal => ev.position.x,
+                    };
+                    let drag_delta = pointer_axis_position - state.drag_start_position;
+                    let available_track = primary_axis_size - thumb_length_move;
 
                     if available_track > px(0.0) {
                         let scroll_per_pixel = max_offset_move / available_track;
                         let new_positive_scroll = (state.drag_start_scroll_position
-                            + delta_y * scroll_per_pixel)
+                            + drag_delta * scroll_per_pixel)
                             .clamp(px(0.0), max_offset_move);
 
-                        scroll_handle_move.set_offset(gpui::Point {
-                            x: px(0.0),
-                            y: -new_positive_scroll,
-                        });
+                        let current_offset = scroll_handle_move.offset();
+                        let new_offset = match axis {
+                            ScrollbarAxis::Vertical => gpui::Point {
+                                x: current_offset.x,
+                                y: -new_positive_scroll,
+                            },
+                            ScrollbarAxis::Horizontal => gpui::Point {
+                                x: -new_positive_scroll,
+                                y: current_offset.y,
+                            },
+                        };
+                        scroll_handle_move.set_offset(new_offset);
                         window.refresh();
                     }
                 });
@@ -609,20 +774,16 @@ pub fn scrollbar() -> Scrollbar {
         slim: false,
         hide_delay: Duration::from_millis(800),
         fade_duration: Duration::from_millis(200),
+        axis: ScrollbarAxis::Vertical,
     }
-}
-
-#[derive(PartialEq, Eq)]
-pub enum RightPad {
-    None,
-    Pad,
 }
 
 #[derive(IntoElement)]
 pub struct FloatingScrollbar {
     id: ElementId,
     handle: ScrollableHandle,
-    right_pad: RightPad,
+    axis: ScrollbarAxis,
+    inset: Edges<Pixels>,
     on_interaction: Option<InteractionHandler>,
 }
 
@@ -631,35 +792,76 @@ impl FloatingScrollbar {
         self.on_interaction = Some(Rc::new(handler));
         self
     }
+
+    pub fn top(mut self, inset: Pixels) -> Self {
+        self.inset.top = inset;
+        self
+    }
+
+    pub fn bottom(mut self, inset: Pixels) -> Self {
+        self.inset.bottom = inset;
+        self
+    }
+
+    pub fn right(mut self, inset: Pixels) -> Self {
+        self.inset.right = inset;
+        self
+    }
+
+    pub fn left(mut self, inset: Pixels) -> Self {
+        self.inset.left = inset;
+        self
+    }
+
+    pub fn axis(mut self, axis: ScrollbarAxis) -> Self {
+        self.axis = axis;
+        self
+    }
 }
 
 impl RenderOnce for FloatingScrollbar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let mut sb = scrollbar().id(self.id).scroll_handle(self.handle);
+        let mut sb = scrollbar()
+            .id(self.id)
+            .scroll_handle(self.handle)
+            .axis(self.axis);
         if let Some(handler) = self.on_interaction {
             sb = sb.on_interaction(move |window, cx| handler(window, cx));
         }
 
-        div()
-            .absolute()
-            .top_0()
-            .right(if self.right_pad == RightPad::Pad {
-                px(4.0)
-            } else {
-                px(0.0)
-            })
-            .bottom_0()
-            .my(px(4.0))
-            .occlude()
-            .child(
-                sb.slim(true)
-                    .w(px(10.0))
-                    .h_full()
-                    .bg(theme.scrollbar_background)
-                    .text_color(theme.scrollbar_foreground)
-                    .rounded(px(5.0)),
-            )
+        match self.axis {
+            ScrollbarAxis::Vertical => div()
+                .absolute()
+                .top(self.inset.top)
+                .right(self.inset.right)
+                .bottom(self.inset.bottom)
+                .my(px(4.0))
+                .occlude()
+                .child(
+                    sb.slim(true)
+                        .w(px(10.0))
+                        .h_full()
+                        .bg(theme.scrollbar_background)
+                        .text_color(theme.scrollbar_foreground)
+                        .rounded(px(5.0)),
+                ),
+            ScrollbarAxis::Horizontal => div()
+                .absolute()
+                .left(self.inset.left)
+                .right(self.inset.right)
+                .bottom(self.inset.bottom)
+                .mx(px(4.0))
+                .occlude()
+                .child(
+                    sb.slim(true)
+                        .h(px(10.0))
+                        .w_full()
+                        .bg(theme.scrollbar_background)
+                        .text_color(theme.scrollbar_foreground)
+                        .rounded(px(5.0)),
+                ),
+        }
     }
 }
 
@@ -668,12 +870,12 @@ impl RenderOnce for FloatingScrollbar {
 pub fn floating_scrollbar(
     id: impl Into<ElementId>,
     handle: impl Into<ScrollableHandle>,
-    right_pad: RightPad,
 ) -> FloatingScrollbar {
     FloatingScrollbar {
         id: id.into(),
         handle: handle.into(),
-        right_pad,
         on_interaction: None,
+        axis: ScrollbarAxis::Vertical,
+        inset: Edges::default(),
     }
 }

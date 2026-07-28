@@ -19,7 +19,7 @@ use crate::{
             dropdown::dropdown,
             icons::{SORT_ASCENDING, SORT_DESCENDING, icon},
             playback_controls::playback_controls,
-            scrollbar::{RightPad, floating_scrollbar},
+            scrollbar::floating_scrollbar,
             table::{
                 grid_item::GridItem,
                 table_data::{GridContext, TABLE_MAX_WIDTH},
@@ -574,11 +574,9 @@ impl Render for ArtistDetailView {
                                 )
                             }),
                     )
-                    .child(floating_scrollbar(
-                        "artist_detail_scrollbar",
-                        scroll_handle,
-                        RightPad::Pad,
-                    )),
+                    .child(
+                        floating_scrollbar("artist_detail_scrollbar", scroll_handle).right(px(4.0)),
+                    ),
             )
     }
 }

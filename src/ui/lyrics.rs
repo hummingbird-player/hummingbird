@@ -9,7 +9,7 @@ use crate::{
     ui::{
         components::{
             icons::{MICROPHONE, icon},
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
         },
         models::{CurrentTrack, Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
@@ -270,8 +270,8 @@ impl Render for Lyrics {
                     floating_scrollbar(
                         "lyrics-scrollbar",
                         ScrollableHandle::Regular(scroll_handle),
-                        RightPad::Pad,
                     )
+                    .right(px(4.0))
                     .on_interaction(move |_, cx| {
                         if let Some(lyrics) = lyrics.upgrade() {
                             lyrics.update(cx, |this, cx| {
@@ -305,11 +305,13 @@ impl Render for Lyrics {
                         .text_color(normal)
                         .child(SharedString::from(text)),
                 )
-                .child(floating_scrollbar(
-                    "lyrics-plain-scrollbar",
-                    ScrollableHandle::Regular(scroll_handle),
-                    RightPad::Pad,
-                ))
+                .child(
+                    floating_scrollbar(
+                        "lyrics-plain-scrollbar",
+                        ScrollableHandle::Regular(scroll_handle),
+                    )
+                    .right(px(4.0)),
+                )
                 .into_any_element()
         };
 

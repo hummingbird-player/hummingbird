@@ -21,7 +21,7 @@ use crate::{
             icons::{DOTS_VERTICAL, STAR, STAR_FILLED, icon},
             playback_controls::playback_controls,
             popover::{PopoverPosition, popover},
-            scrollbar::{RightPad, ScrollableHandle, floating_scrollbar},
+            scrollbar::{ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
@@ -608,10 +608,6 @@ impl Render for ReleaseView {
                         |this| this.child(self.render_footer(&theme)),
                     ),
             )
-            .child(floating_scrollbar(
-                "release_scrollbar",
-                scroll_handle,
-                RightPad::Pad,
-            ))
+            .child(floating_scrollbar("release_scrollbar", scroll_handle).right(px(4.0)))
     }
 }
