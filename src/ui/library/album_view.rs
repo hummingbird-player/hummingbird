@@ -57,7 +57,9 @@ impl AlbumView {
             cx.observe(&state, move |_: &mut AlbumView, e, cx| {
                 let value = e.read(cx);
                 match value {
-                    ScanEvent::ScanCompleteIdle => {
+                    ScanEvent::ScanCompleteIdle
+                    | ScanEvent::ScanCompleteWatching
+                    | ScanEvent::TargetedRescanComplete => {
                         table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
                     }
                     ScanEvent::ScanProgress { current, .. } if current % 100 == 0 => {

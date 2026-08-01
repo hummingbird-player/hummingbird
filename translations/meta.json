@@ -1183,7 +1183,7 @@
   },
   "SCAN": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:313",
+    "definedIn": "src/ui/settings/library.rs:338",
     "plural": false,
     "description": null
   },
@@ -1285,13 +1285,13 @@
   },
   "SCANNING_RESCAN_REQUIRED": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:304",
+    "definedIn": "src/ui/settings/library.rs:329",
     "plural": false,
     "description": null
   },
   "SCANNING_RESCAN_REQUIRED_TITLE": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:307",
+    "definedIn": "src/ui/settings/library.rs:332",
     "plural": false,
     "description": null
   },
@@ -1303,13 +1303,13 @@
   },
   "SCANNING_SLOW_DISK": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:282",
+    "definedIn": "src/ui/settings/library.rs:307",
     "plural": false,
     "description": null
   },
   "SCANNING_SLOW_DISK_SUBTEXT": {
     "context": "library.rs",
-    "definedIn": "src/ui/settings/library.rs:285",
+    "definedIn": "src/ui/settings/library.rs:310",
     "plural": false,
     "description": null
   },
@@ -1319,21 +1319,45 @@
     "plural": false,
     "description": null
   },
-  "SCAN_COMPLETE_WATCHING": {
-    "context": "header.rs",
-    "definedIn": "src/ui/header.rs:162",
+  "SCANNING_WATCH_CHANGES": {
+    "context": "library.rs",
+    "definedIn": "src/ui/settings/library.rs:282",
+    "plural": false,
+    "description": null
+  },
+  "SCANNING_WATCH_CHANGES_SUBTEXT": {
+    "context": "library.rs",
+    "definedIn": "src/ui/settings/library.rs:285",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_DISCOVERING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:141",
+    "definedIn": "src/ui/header.rs:169",
     "plural": false,
     "description": null
   },
   "SCAN_PROGRESS_SCANNING": {
     "context": "header.rs",
-    "definedIn": "src/ui/header.rs:149",
+    "definedIn": "src/ui/header.rs:177",
+    "plural": false,
+    "description": null
+  },
+  "SCAN_WATCHING_TOOLTIP_BODY": {
+    "context": "header.rs",
+    "definedIn": "src/ui/header.rs:145",
+    "plural": false,
+    "description": null
+  },
+  "SCAN_WATCHING_TOOLTIP_DISABLE_HINT": {
+    "context": "header.rs",
+    "definedIn": "src/ui/header.rs:155",
+    "plural": false,
+    "description": null
+  },
+  "SCAN_WATCHING_TOOLTIP_HEADER": {
+    "context": "header.rs",
+    "definedIn": "src/ui/header.rs:142",
     "plural": false,
     "description": null
   },

@@ -4,6 +4,7 @@ mod discover;
 mod disk;
 mod fs_case;
 mod record;
+mod watch;
 
 use std::{
     sync::{
@@ -22,7 +23,10 @@ use tokio::{
     fs::try_exists,
     sync::{
         Mutex,
-        mpsc::{Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel},
+        mpsc::{
+            Receiver, Sender, UnboundedReceiver, UnboundedSender, WeakSender, channel,
+            unbounded_channel,
+        },
     },
     task::spawn_blocking,
 };
@@ -47,6 +51,8 @@ use crate::{
 
 /// Maximum number of items to accumulate before flushing a DB transaction.
 const BATCH_SIZE: usize = 50;
+/// How often unavailable or lost library roots are retried.
+const WATCH_RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ScanEvent {
@@ -74,7 +80,12 @@ enum ScanCommand {
     /// and is usually triggered by the scan version changing (see [SCAN_VERSION]).
     ForceScan,
     /// Rescan a specific set of files or directories without touching the rest of the library.
-    RescanPaths(Vec<Utf8PathBuf>),
+    /// `respect_record` skips unchanged files, `recursive` walks into subdirectories.
+    RescanPaths {
+        paths: Vec<Utf8PathBuf>,
+        respect_record: bool,
+        recursive: bool,
+    },
     ResolveMissingFolders(MissingFolderAction),
     UpdateSettings(ScanSettings),
     Stop,
@@ -86,7 +97,11 @@ enum ScanMode {
     /// Full library scan using the configured scan settings.
     Full { is_force: bool },
     /// Targeted rescan of a specific set of paths (files or directories).
-    Targeted { paths: Vec<Utf8PathBuf> },
+    Targeted {
+        paths: Vec<Utf8PathBuf>,
+        respect_record: bool,
+        recursive: bool,
+    },
 }
 
 impl ScanMode {
@@ -101,8 +116,11 @@ impl ScanMode {
         matches!(self, ScanMode::Full { is_force: true })
     }
 
-    fn completion_event(&self) -> ScanEvent {
-        if self.is_targeted() {
+    fn completion_event(&self, watching: bool) -> ScanEvent {
+        // stay watching between watcher-triggered rescans
+        if watching {
+            ScanEvent::ScanCompleteWatching
+        } else if self.is_targeted() {
             ScanEvent::TargetedRescanComplete
         } else {
             ScanEvent::ScanCompleteIdle
@@ -140,7 +158,11 @@ impl ScanInterface {
             return;
         }
         self.cmd_tx
-            .blocking_send(ScanCommand::RescanPaths(paths))
+            .blocking_send(ScanCommand::RescanPaths {
+                paths,
+                respect_record: false,
+                recursive: false,
+            })
             .expect("could not send rescan-paths command");
     }
 
@@ -204,6 +226,8 @@ async fn resolve_missing_folder_action(
     event_tx: &UnboundedSender<ScanEvent>,
     scan_settings: &mut ScanSettings,
     missing_paths: Vec<Utf8PathBuf>,
+    pending_start: &mut Option<bool>,
+    pending_rescan: &mut Option<PendingRescan>,
 ) -> MissingFolderAction {
     match scan_settings.missing_folder_policy {
         MissingFolderPolicy::KeepInLibrary => MissingFolderAction::KeepInLibrary,
@@ -229,9 +253,19 @@ async fn resolve_missing_folder_action(
                         }
                     }
                     Some(ScanCommand::Stop) => break MissingFolderAction::KeepInLibrary,
-                    Some(ScanCommand::Scan)
-                    | Some(ScanCommand::ForceScan)
-                    | Some(ScanCommand::RescanPaths(_)) => {}
+                    Some(ScanCommand::Scan) => {
+                        pending_start.get_or_insert(false);
+                    }
+                    Some(ScanCommand::ForceScan) => {
+                        *pending_start = Some(true);
+                    }
+                    Some(ScanCommand::RescanPaths {
+                        paths,
+                        respect_record,
+                        recursive,
+                    }) => {
+                        queue_pending_rescan(pending_rescan, paths, respect_record, recursive);
+                    }
                     None => break MissingFolderAction::KeepInLibrary,
                 }
             }
@@ -330,10 +364,164 @@ async fn record_decode_failure(
     apply_decode_failure(&mut sr.records, path, timestamp, class);
 }
 
+/// Re-install the watcher when the watch configuration changed - re-creating it for unrelated
+/// changes would drop queued events. Arming walks every root, so it runs on a blocking thread.
+/// Returns true when watching became active where it was not before.
+async fn rearm_watcher(
+    watcher: &mut Option<watch::LibraryWatcher>,
+    watcher_config: &mut Option<(bool, Vec<Utf8PathBuf>)>,
+    probe: &mut Option<WatchProbe>,
+    scan_settings: &ScanSettings,
+    cmd_tx: &WeakSender<ScanCommand>,
+) -> bool {
+    // a probe holds the watcher - re-arm once it returns
+    if probe.is_some() {
+        return false;
+    }
+
+    let unchanged = watcher_config.as_ref().is_some_and(|(enabled, paths)| {
+        *enabled == scan_settings.watch_for_changes && *paths == scan_settings.paths
+    });
+    if watcher.is_some() && unchanged {
+        return false;
+    }
+
+    let was_active = watcher.as_ref().is_some_and(|watcher| watcher.is_active());
+    let settings = scan_settings.clone();
+    let cmd_tx = cmd_tx.clone();
+    *watcher = spawn_blocking(move || watch::arm(&settings, &cmd_tx))
+        .await
+        .unwrap_or_default();
+    if watcher.is_some() {
+        *watcher_config = Some((scan_settings.watch_for_changes, scan_settings.paths.clone()));
+    } else {
+        // keep the config clear so a later retry re-arms
+        *watcher_config = None;
+    }
+    !was_active && watcher.as_ref().is_some_and(|watcher| watcher.is_active())
+}
+
+/// A root probe running on a blocking thread, carrying the watcher so a hung mount neither
+/// stalls the scanner task nor piles up further probes.
+type WatchProbe = tokio::task::JoinHandle<(watch::LibraryWatcher, bool)>;
+
+/// Start a root probe if none is running. Probing stats every root, which can block on an
+/// unresponsive mount.
+fn spawn_watch_probe(probe: &mut Option<WatchProbe>, watcher: &mut Option<watch::LibraryWatcher>) {
+    if probe.is_some() {
+        return;
+    }
+    let Some(mut w) = watcher.take() else {
+        return;
+    };
+    *probe = Some(spawn_blocking(move || {
+        let watched = w.watched_roots();
+        let unwatched = w.unwatched_roots();
+        let (lost, recoverable) = watch::probe_roots(&watched, &unwatched);
+        let recovered = w.apply_probe(lost, recoverable);
+        (w, recovered)
+    }));
+}
+
+/// Collect a finished probe. `Some(true)` means a watch was added or restored, so files that
+/// appeared while unwatched need a rescan.
+async fn poll_watch_probe(
+    probe: &mut Option<WatchProbe>,
+    watcher: &mut Option<watch::LibraryWatcher>,
+) -> Option<bool> {
+    if !probe.as_ref().is_some_and(|probe| probe.is_finished()) {
+        return None;
+    }
+    match probe.take()?.await {
+        Ok((w, recovered)) => {
+            *watcher = Some(w);
+            Some(recovered)
+        }
+        // the watcher went down with the probe - the next refresh re-arms
+        Err(e) => {
+            error!("Watcher probe failed: {:?}", e);
+            *watcher = None;
+            Some(false)
+        }
+    }
+}
+
+/// Re-arm on configuration changes and probe roots in the background. Returns whether
+/// recovered roots make a catch-up scan worthwhile and whether watching is active.
+async fn refresh_watcher(
+    watcher: &mut Option<watch::LibraryWatcher>,
+    watcher_config: &mut Option<(bool, Vec<Utf8PathBuf>)>,
+    probe: &mut Option<WatchProbe>,
+    scan_settings: &ScanSettings,
+    cmd_tx: &WeakSender<ScanCommand>,
+) -> (bool, bool) {
+    let recovered = poll_watch_probe(probe, watcher).await.unwrap_or(false);
+    let rearmed = rearm_watcher(watcher, watcher_config, probe, scan_settings, cmd_tx).await;
+    let watching = watcher.as_ref().is_some_and(|watcher| watcher.is_active());
+    spawn_watch_probe(probe, watcher);
+    (rearmed || recovered, watching)
+}
+
+/// A targeted rescan queued while the scanner was busy.
+struct PendingRescan {
+    paths: Vec<Utf8PathBuf>,
+    respect_record: bool,
+    recursive: bool,
+}
+
+fn queue_pending_rescan(
+    pending: &mut Option<PendingRescan>,
+    paths: Vec<Utf8PathBuf>,
+    respect_record: bool,
+    recursive: bool,
+) {
+    if paths.is_empty() {
+        return;
+    }
+
+    match pending {
+        Some(merged) => {
+            merged.paths.extend(paths);
+            // a rescan that ignores the record (album art changed) downgrades the whole batch
+            merged.respect_record &= respect_record;
+            merged.recursive |= recursive;
+        }
+        None => {
+            *pending = Some(PendingRescan {
+                paths,
+                respect_record,
+                recursive,
+            })
+        }
+    }
+}
+
+/// Tick the watcher retry timer, or park forever when watching is disabled.
+async fn watch_retry_tick(interval: &mut Option<tokio::time::Interval>) {
+    match interval {
+        Some(interval) => {
+            interval.tick().await;
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Sync the watcher retry timer with the current settings.
+fn set_watch_retry(interval: &mut Option<tokio::time::Interval>, watch_for_changes: bool) {
+    if watch_for_changes && interval.is_none() {
+        let mut retry = tokio::time::interval(WATCH_RETRY_INTERVAL);
+        retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        *interval = Some(retry);
+    } else if !watch_for_changes {
+        *interval = None;
+    }
+}
+
 async fn run_scanner(
     pool: SqlitePool,
     mut scan_settings: ScanSettings,
     mut command_rx: Receiver<ScanCommand>,
+    cmd_tx: WeakSender<ScanCommand>,
     event_tx: UnboundedSender<ScanEvent>,
 ) {
     let directory = paths::data_dir();
@@ -428,30 +616,121 @@ async fn run_scanner(
 
     let mut scan_record_slot = Some(scan_record_state);
     let mut pending_start: Option<bool> = None;
-    let mut pending_rescan: Option<Vec<Utf8PathBuf>> = None;
+    let mut initial_scan_requested = false;
+    let mut pending_rescan: Option<PendingRescan> = None;
+    let mut watcher: Option<watch::LibraryWatcher> = None;
+    let mut watcher_config: Option<(bool, Vec<Utf8PathBuf>)> = None;
+    let mut watch_probe: Option<WatchProbe> = None;
+    // armed lazily on the first scan command - earlier changes are covered by that scan anyway
+    let mut watcher_retry: Option<tokio::time::Interval> = None;
 
     loop {
         let mut scan_record = scan_record_slot
             .take()
             .expect("scan record should always be present between scan iterations");
-        let mut mode = if let Some(paths) = pending_rescan.take() {
-            ScanMode::Targeted { paths }
-        } else if let Some(force) = pending_start.take() {
+        // a queued full scan outranks targeted rescans - watcher activity must not starve it
+        let mut mode = if let Some(force) = pending_start.take() {
             ScanMode::Full { is_force: force }
+        } else if let Some(PendingRescan {
+            paths,
+            respect_record,
+            recursive,
+        }) = pending_rescan.take()
+        {
+            ScanMode::Targeted {
+                paths,
+                respect_record,
+                recursive,
+            }
         } else {
             loop {
-                match command_rx.recv().await {
-                    Some(ScanCommand::Scan) => break ScanMode::Full { is_force: false },
-                    Some(ScanCommand::ForceScan) => break ScanMode::Full { is_force: true },
-                    Some(ScanCommand::RescanPaths(paths)) => {
+                let command = tokio::select! {
+                    command = command_rx.recv() => command,
+                    _ = watch_retry_tick(&mut watcher_retry) => {
+                        let (recovered, _) = refresh_watcher(
+                            &mut watcher,
+                            &mut watcher_config,
+                            &mut watch_probe,
+                            &scan_settings,
+                            &cmd_tx,
+                        )
+                        .await;
+                        if recovered {
+                            break ScanMode::Full { is_force: false };
+                        }
+                        continue;
+                    }
+                };
+
+                match command {
+                    Some(ScanCommand::Scan) => {
+                        initial_scan_requested = true;
+                        rearm_watcher(
+                            &mut watcher,
+                            &mut watcher_config,
+                            &mut watch_probe,
+                            &scan_settings,
+                            &cmd_tx,
+                        )
+                        .await;
+                        set_watch_retry(&mut watcher_retry, scan_settings.watch_for_changes);
+                        break ScanMode::Full { is_force: false };
+                    }
+                    Some(ScanCommand::ForceScan) => {
+                        initial_scan_requested = true;
+                        rearm_watcher(
+                            &mut watcher,
+                            &mut watcher_config,
+                            &mut watch_probe,
+                            &scan_settings,
+                            &cmd_tx,
+                        )
+                        .await;
+                        set_watch_retry(&mut watcher_retry, scan_settings.watch_for_changes);
+                        break ScanMode::Full { is_force: true };
+                    }
+                    Some(ScanCommand::RescanPaths {
+                        paths,
+                        respect_record,
+                        recursive,
+                    }) => {
+                        // watcher events before the first scan are redundant - the startup
+                        // scan reads the current disk state anyway
+                        if !initial_scan_requested {
+                            continue;
+                        }
                         if paths.is_empty() {
                             continue;
                         }
-                        break ScanMode::Targeted { paths };
+                        break ScanMode::Targeted {
+                            paths,
+                            respect_record,
+                            recursive,
+                        };
                     }
                     Some(ScanCommand::ResolveMissingFolders(_)) => {}
                     Some(ScanCommand::UpdateSettings(s)) => {
                         scan_settings = s;
+                        if !initial_scan_requested {
+                            continue;
+                        }
+                        let rearmed = rearm_watcher(
+                            &mut watcher,
+                            &mut watcher_config,
+                            &mut watch_probe,
+                            &scan_settings,
+                            &cmd_tx,
+                        )
+                        .await;
+                        set_watch_retry(&mut watcher_retry, scan_settings.watch_for_changes);
+                        if !scan_settings.watch_for_changes {
+                            // drop an in-flight probe - its watcher would keep sending events
+                            watch_probe = None;
+                        }
+                        // a watcher that just became active catches up on unwatched changes
+                        if rearmed {
+                            break ScanMode::Full { is_force: false };
+                        }
                     }
                     Some(ScanCommand::Stop) => continue,
                     None => return, // channel closed, shut down
@@ -489,13 +768,28 @@ async fn run_scanner(
             let missing_action = if missing_paths.is_empty() {
                 MissingFolderAction::DeleteFromLibrary
             } else {
-                resolve_missing_folder_action(
+                let action = resolve_missing_folder_action(
                     &mut command_rx,
                     &event_tx,
                     &mut scan_settings,
                     missing_paths.clone(),
+                    &mut pending_start,
+                    &mut pending_rescan,
                 )
-                .await
+                .await;
+                // settings may have changed while waiting - re-arm
+                let (recovered, _) = refresh_watcher(
+                    &mut watcher,
+                    &mut watcher_config,
+                    &mut watch_probe,
+                    &scan_settings,
+                    &cmd_tx,
+                )
+                .await;
+                if recovered {
+                    pending_start.get_or_insert(false);
+                }
+                action
             };
 
             let excluded_missing_roots: &[_] =
@@ -531,7 +825,7 @@ async fn run_scanner(
             }
 
             available_paths
-        } else if let ScanMode::Targeted { paths } = &mode {
+        } else if let ScanMode::Targeted { paths, .. } = &mode {
             // always ignore missing roots for targeted rescans because we don't ask the user what
             // they want to do with it
             let missing_roots: Vec<Utf8PathBuf> = scan_settings
@@ -595,9 +889,18 @@ async fn run_scanner(
                     settings.paths = paths;
                     spawn_blocking(move || discover(settings, sr, path_tx, relocate_tx, cancel))
                 }
-                ScanMode::Targeted { paths } => {
+                ScanMode::Targeted {
+                    paths,
+                    respect_record,
+                    recursive,
+                } => {
                     let paths = paths.clone();
-                    spawn_blocking(move || rescan_discover(paths, path_tx, cancel))
+                    let recursive = *recursive;
+                    let record = respect_record.then(|| sr.clone());
+                    let relocate_tx = relocate_tx.clone();
+                    spawn_blocking(move || {
+                        rescan_discover(paths, record, recursive, path_tx, relocate_tx, cancel)
+                    })
                 }
             }
         };
@@ -774,18 +1077,53 @@ async fn run_scanner(
                         Some(ScanCommand::ForceScan) => {
                             pending_start = Some(true);
                         }
-                        Some(ScanCommand::RescanPaths(paths)) => {
-                            if !paths.is_empty() {
-                                pending_rescan
-                                    .get_or_insert_with(Vec::new)
-                                    .extend(paths);
-                            }
+                        Some(ScanCommand::RescanPaths {
+                            paths,
+                            respect_record,
+                            recursive,
+                        }) => {
+                            queue_pending_rescan(
+                                &mut pending_rescan,
+                                paths,
+                                respect_record,
+                                recursive,
+                            );
                         }
                         Some(ScanCommand::UpdateSettings(s)) => {
                             scan_settings = s;
+                            if rearm_watcher(
+                                &mut watcher,
+                                &mut watcher_config,
+                                &mut watch_probe,
+                                &scan_settings,
+                                &cmd_tx,
+                            )
+                            .await
+                            {
+                                pending_start.get_or_insert(false);
+                            }
+                            set_watch_retry(&mut watcher_retry, scan_settings.watch_for_changes);
+                            if !scan_settings.watch_for_changes {
+                                // drop an in-flight probe - its watcher would keep sending events
+                                watch_probe = None;
+                            }
                         }
                         Some(ScanCommand::ResolveMissingFolders(_)) => {}
                         None => return,
+                    }
+                }
+
+                _ = watch_retry_tick(&mut watcher_retry) => {
+                    let (recovered, _) = refresh_watcher(
+                        &mut watcher,
+                        &mut watcher_config,
+                        &mut watch_probe,
+                        &scan_settings,
+                        &cmd_tx,
+                    )
+                    .await;
+                    if recovered {
+                        pending_start.get_or_insert(false);
                     }
                 }
 
@@ -1084,7 +1422,19 @@ async fn run_scanner(
                     .into_inner(),
             );
 
-            let _ = event_tx.send(mode.completion_event());
+            let (recovered, watching) = refresh_watcher(
+                &mut watcher,
+                &mut watcher_config,
+                &mut watch_probe,
+                &scan_settings,
+                &cmd_tx,
+            )
+            .await;
+            if recovered {
+                pending_start.get_or_insert(false);
+            }
+
+            let _ = event_tx.send(mode.completion_event(watching));
             continue;
         }
 
@@ -1144,7 +1494,19 @@ async fn run_scanner(
             warn!("Failed to delete scan record checkpoint: {:?}", e);
         }
 
-        let _ = event_tx.send(mode.completion_event());
+        let (recovered, watching) = refresh_watcher(
+            &mut watcher,
+            &mut watcher_config,
+            &mut watch_probe,
+            &scan_settings,
+            &cmd_tx,
+        )
+        .await;
+        if recovered {
+            pending_start.get_or_insert(false);
+        }
+
+        let _ = event_tx.send(mode.completion_event(watching));
     }
 }
 
@@ -1152,7 +1514,13 @@ pub fn start_scanner(pool: SqlitePool, settings: ScanSettings) -> ScanInterface 
     let (cmd_tx, command_rx) = channel(10);
     let (event_tx, events_rx) = unbounded_channel();
 
-    crate::RUNTIME.spawn(run_scanner(pool, settings, command_rx, event_tx));
+    crate::RUNTIME.spawn(run_scanner(
+        pool,
+        settings,
+        command_rx,
+        cmd_tx.downgrade(),
+        event_tx,
+    ));
 
     ScanInterface::new(Some(events_rx), cmd_tx)
 }

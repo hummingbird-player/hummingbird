@@ -151,6 +151,22 @@ fn strip_verbatim(path: &str) -> Cow<'_, str> {
     }
 }
 
+/// Case-insensitive prefix test that avoids [fold_path], which stats `key` on Unix to find
+/// its volume. The key is lowercased wholesale like [fold_path] - a char-by-char fold would
+/// miss context-sensitive mappings such as the Greek final sigma. `folded_prefix` must be a
+/// [fold_path] output.
+pub fn starts_with_folded(key: &Utf8Path, folded_prefix: &Utf8Path) -> bool {
+    let key = strip_verbatim(key.as_str()).to_lowercase();
+    let mut key_chars = key.chars();
+    for expected in folded_prefix.as_str().chars() {
+        if key_chars.next() != Some(expected) {
+            return false;
+        }
+    }
+    // the prefix must end on a component boundary in the key
+    key_chars.next().is_none_or(|c| c == '/' || c == '\\')
+}
+
 /// Normalize a path into a comparison key: verbatim prefix stripped, and
 /// case-folded on case-insensitive volumes.
 pub fn fold_path(path: &Utf8Path) -> Utf8PathBuf {
@@ -249,6 +265,47 @@ mod tests {
         let a = dir.utf8_join("Track.flac");
         let b = dir.utf8_join("track.flac");
         assert_eq!(paths_equal(&a, &b), is_case_insensitive(&a));
+    }
+
+    #[test]
+    fn starts_with_folded_matches_on_component_boundaries_only() {
+        let prefix = Utf8Path::new("/music/artist");
+        assert!(starts_with_folded(
+            Utf8Path::new("/Music/Artist/album/track.flac"),
+            prefix
+        ));
+        assert!(starts_with_folded(Utf8Path::new("/music/artist"), prefix));
+        // mid-component matches don't count
+        assert!(!starts_with_folded(
+            Utf8Path::new("/Music/Artist2/track.flac"),
+            prefix
+        ));
+        assert!(!starts_with_folded(Utf8Path::new("/music"), prefix));
+    }
+
+    #[test]
+    fn starts_with_folded_folds_unicode_like_fold_path() {
+        // fold_path lowercases with Unicode rules - the prefix test must agree
+        let prefix = Utf8Path::new("/müsik/straße");
+        assert!(starts_with_folded(
+            Utf8Path::new("/MÜSIK/STRAßE/track.flac"),
+            prefix
+        ));
+        assert!(!starts_with_folded(
+            Utf8Path::new("/MUSIK/STRASSE/track.flac"),
+            prefix
+        ));
+    }
+
+    #[test]
+    fn starts_with_folded_folds_final_sigma_like_fold_path() {
+        // str::to_lowercase maps word-final Σ to ς, char::to_lowercase does not
+        let prefix = "/music/AΣ".to_lowercase();
+        assert_eq!(prefix, "/music/aς");
+        assert!(starts_with_folded(
+            Utf8Path::new("/music/AΣ/track.flac"),
+            Utf8Path::new(&prefix)
+        ));
     }
 
     #[test]

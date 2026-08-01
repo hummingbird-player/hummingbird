@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::*;
 
 use crate::ui::theme::Theme;
@@ -16,7 +18,6 @@ pub fn tooltip_container(theme: &Theme) -> Div {
         .px(px(8.0))
         .pt(px(4.0))
         .pb(px(5.0))
-        .max_w(px(260.0))
 }
 
 pub struct TooltipContent {
@@ -26,7 +27,9 @@ pub struct TooltipContent {
 impl Render for TooltipContent {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        tooltip_container(theme).child(self.text.clone())
+        tooltip_container(theme)
+            .max_w(px(260.0))
+            .child(self.text.clone())
     }
 }
 
@@ -37,4 +40,29 @@ pub fn build_tooltip(
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text: SharedString = text.into();
     move |_, cx| cx.new(|_| TooltipContent { text: text.clone() }).into()
+}
+
+type ComplexTooltipBuildFn = Rc<dyn Fn(&mut Window, &mut App) -> Div + 'static>;
+
+pub struct ComplexTooltipContent {
+    build_children: ComplexTooltipBuildFn,
+}
+
+impl Render for ComplexTooltipContent {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+        tooltip_container(theme).child((self.build_children)(window, cx))
+    }
+}
+
+pub fn build_complex_tooltip(
+    children: impl Fn(&mut Window, &mut App) -> Div + 'static,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let children: ComplexTooltipBuildFn = Rc::new(children);
+    move |_, cx| {
+        cx.new(|_| ComplexTooltipContent {
+            build_children: children.clone(),
+        })
+        .into()
+    }
 }

@@ -24,6 +24,12 @@ pub struct ScanSettings {
     pub missing_folder_policy: MissingFolderPolicy,
     #[serde(default)]
     pub slow_disk_mode: bool,
+    #[serde(default = "default_watch_for_changes")]
+    pub watch_for_changes: bool,
+}
+
+fn default_watch_for_changes() -> bool {
+    true
 }
 
 impl Default for ScanSettings {
@@ -32,6 +38,7 @@ impl Default for ScanSettings {
             paths: retrieve_default_paths(),
             missing_folder_policy: MissingFolderPolicy::default(),
             slow_disk_mode: false,
+            watch_for_changes: true,
         }
     }
 }

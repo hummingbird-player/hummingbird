@@ -70,7 +70,7 @@ symphonia-adapter-libopus = "0.3"
 symphonia-adapter-fdk-aac = "0.2"
 sysinfo = "0.39"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tokio-stream = { version = "0.1", features = ["io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -83,6 +83,7 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = tr
     # this was native-roots, but this caused intermittent issues on Windows
     "rustls-tls-webpki-roots",
 ] }
+notify-debouncer-full = "0.7.0"
 
 [patch.crates-io]
 gpui-unofficial = { path = "crates/gpui-unofficial-shim" }

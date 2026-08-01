@@ -9,6 +9,7 @@ pub const SHUFFLE: &str = "!bundled:icons/arrows-shuffle.svg";
 pub const CIRCLE_PLUS: &str = "!bundled:icons/circle-plus.svg";
 pub const FOLDER_CHECK: &str = "!bundled:icons/folder-check.svg";
 pub const FOLDER_SEARCH: &str = "!bundled:icons/folder-search.svg";
+pub const FOLDER_BOLT: &str = "!bundled:icons/folder-bolt.svg";
 pub const MAXIMIZE: &str = "!bundled:icons/maximize.svg";
 pub const MINIMIZE: &str = "!bundled:icons/minimize.svg";
 pub const MINUS: &str = "!bundled:icons/minus.svg";

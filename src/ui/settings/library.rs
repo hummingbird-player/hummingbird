@@ -278,6 +278,31 @@ impl Render for LibrarySettings {
             )
             .child(
                 label(
+                    "watch-for-changes",
+                    tr!("SCANNING_WATCH_CHANGES", "Watch for Changes"),
+                )
+                .subtext(tr!(
+                    "SCANNING_WATCH_CHANGES_SUBTEXT",
+                    "Automatically update your library when files change on disk."
+                ))
+                .w_full()
+                .child(checkbox(
+                    "watch-for-changes-checkbox",
+                    scanning.watch_for_changes,
+                ))
+                .on_click({
+                    let settings_c = self.settings.clone();
+                    move |_, _, cx| {
+                        settings_c.update(cx, |s, cx| {
+                            s.scanning.watch_for_changes = !s.scanning.watch_for_changes;
+                            save_settings(cx, s);
+                            cx.notify();
+                        });
+                    }
+                }),
+            )
+            .child(
+                label(
                     "slow-disk-mode",
                     tr!("SCANNING_SLOW_DISK", "Slow Disk Mode"),
                 )

@@ -9,8 +9,9 @@ use crate::{
     settings::{Settings, SettingsGlobal},
     ui::{
         components::{
-            icons::{FOLDER_SEARCH, icon},
+            icons::{FOLDER_BOLT, FOLDER_SEARCH, icon},
             menu_bar::MenuBar,
+            tooltip::build_complex_tooltip,
             window_header::header,
         },
         library::nav_buttons::nav_buttons,
@@ -103,18 +104,17 @@ impl Render for ScanStatus {
         let status = self.scan_model.read(cx);
 
         div()
+            .id("scan-status")
             .flex()
             .text_sm()
             .when(
                 !matches!(
                     status,
-                    ScanEvent::ScanCompleteIdle
-                        | ScanEvent::ScanCompleteWatching
-                        | ScanEvent::TargetedRescanComplete
+                    ScanEvent::ScanCompleteIdle | ScanEvent::TargetedRescanComplete
                 ),
                 |this| {
                     this.child(
-                        div().mr(px(8.0)).pt(px(4.5)).h_full().child(
+                        div().mr(px(8.0)).pt(px(5.0)).h_full().child(
                             icon(match status {
                                 ScanEvent::Cleaning
                                 | ScanEvent::PlaylistsUpdated(_)
@@ -122,6 +122,7 @@ impl Render for ScanStatus {
                                 | ScanEvent::WaitingForMissingFolderDecision { .. } => {
                                     FOLDER_SEARCH
                                 }
+                                ScanEvent::ScanCompleteWatching => FOLDER_BOLT,
                                 _ => unreachable!(),
                             })
                             .size(px(14.0)),
@@ -129,11 +130,38 @@ impl Render for ScanStatus {
                     )
                 },
             )
+            .tooltip(build_complex_tooltip(|_, cx| {
+                let theme = cx.global::<Theme>();
+                div()
+                    .max_w(px(350.))
+                    .text_color(theme.text)
+                    .child(
+                        div()
+                            .mb(px(2.0))
+                            .font_weight(FontWeight::BOLD)
+                            .child(tr!("SCAN_WATCHING_TOOLTIP_HEADER", "Watching for changes")),
+                    )
+                    .child(div().child(tr!(
+                        "SCAN_WATCHING_TOOLTIP_BODY",
+                        "Hummingbird is watching your files for updates and will automatically \
+                        update the library when changes are made."
+                    )))
+                    .child(
+                        div()
+                            .mt(px(2.0))
+                            .text_xs()
+                            .text_color(theme.text_secondary)
+                            .child(tr!(
+                                "SCAN_WATCHING_TOOLTIP_DISABLE_HINT",
+                                "You can disable this functionality in the library settings."
+                            )),
+                    )
+            }))
             .text_color(theme.text_secondary)
             .child(match status {
-                ScanEvent::ScanCompleteIdle | ScanEvent::TargetedRescanComplete => {
-                    SharedString::from("")
-                }
+                ScanEvent::ScanCompleteIdle
+                | ScanEvent::ScanCompleteWatching
+                | ScanEvent::TargetedRescanComplete => SharedString::from(""),
                 ScanEvent::ScanProgress { current, total } => {
                     if *total == u64::MAX {
                         // Total unknown (discovery still ongoing)
@@ -157,9 +185,6 @@ impl Render for ScanStatus {
                 ScanEvent::PlaylistsUpdated(_) => SharedString::from(""),
                 ScanEvent::WaitingForMissingFolderDecision { .. } => {
                     tr!("SCANNING_MISSING_DIALOG_TITLE").into()
-                }
-                ScanEvent::ScanCompleteWatching => {
-                    tr!("SCAN_COMPLETE_WATCHING", "Watching for updates").into()
                 }
             })
     }
