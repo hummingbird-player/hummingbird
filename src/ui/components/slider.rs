@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gpui::*;
 
@@ -13,6 +17,7 @@ pub struct Slider {
     pub(self) value: f32,
     pub(self) on_change: Option<Rc<RefCell<ClickHandler>>>,
     pub(self) on_double_click: Option<Rc<RefCell<DoubleClickHandler>>>,
+    pub(self) change_interval: Option<Duration>,
 }
 
 impl Slider {
@@ -33,6 +38,11 @@ impl Slider {
 
     pub fn on_double_click(mut self, func: impl FnMut(&mut Window, &mut App) + 'static) -> Self {
         self.on_double_click = Some(Rc::new(RefCell::new(func)));
+        self
+    }
+
+    pub fn change_interval(mut self, interval: Duration) -> Self {
+        self.change_interval = Some(interval);
         self
     }
 }
@@ -143,15 +153,18 @@ impl Element for Slider {
 
         if let Some(func) = self.on_change.as_ref() {
             let on_double_click = self.on_double_click.clone();
+            let change_interval = self.change_interval;
+            let min_interval = change_interval.unwrap_or(Duration::from_millis(1));
             window.with_optional_element_state(
                 id,
                 #[allow(clippy::type_complexity)]
-                move |v: Option<Option<Rc<RefCell<(bool, Instant)>>>>, cx| {
+                move |v: Option<Option<Rc<RefCell<(bool, Instant, f32)>>>>, cx| {
                     let drag_state = v
                         .flatten()
-                        .unwrap_or_else(|| Rc::new(RefCell::new((false, Instant::now()))));
+                        .unwrap_or_else(|| Rc::new(RefCell::new((false, Instant::now(), 0.0))));
                     let func = func.clone();
-                    let func_copy = func.clone();
+                    let func_move = func.clone();
+                    let func_release = func.clone();
 
                     let drag_state_1 = drag_state.clone();
                     let hitbox = hitbox.clone();
@@ -182,27 +195,39 @@ impl Element for Slider {
                         let mut state = drag_state_1.borrow_mut();
                         state.0 = true;
                         state.1 = Instant::now();
+                        state.2 = value;
                     });
 
                     let drag_state_2 = drag_state.clone();
 
                     cx.on_mouse_event(move |ev: &MouseMoveEvent, _, window, cx| {
                         let mut state = drag_state_2.borrow_mut();
-                        if state.0 && state.1.elapsed().as_millis() >= 1 {
-                            let relative = ev.position - bounds.origin;
-                            let relative_x: f32 = relative.x.into();
-                            let width: f32 = bounds.size.width.into();
-                            let value = (relative_x / width).clamp(0.0, 1.0);
+                        if !state.0 {
+                            return;
+                        }
 
-                            (func_copy.borrow_mut())(value, window, cx);
-                            state.1 = Instant::now();
+                        let relative = ev.position - bounds.origin;
+                        let relative_x: f32 = relative.x.into();
+                        let width: f32 = bounds.size.width.into();
+                        let value = (relative_x / width).clamp(0.0, 1.0);
+
+                        state.2 = value;
+
+                        let now = Instant::now();
+                        if now.duration_since(state.1) >= min_interval {
+                            (func_move.borrow_mut())(value, window, cx);
+                            state.1 = now;
                         }
                     });
 
                     let drag_state_3 = drag_state.clone();
+                    let flush_on_release = change_interval.is_some();
 
-                    cx.on_mouse_event(move |_ev: &MouseUpEvent, _, _window, _cx| {
+                    cx.on_mouse_event(move |_ev: &MouseUpEvent, _, window, cx| {
                         let mut state = drag_state_3.borrow_mut();
+                        if state.0 && flush_on_release {
+                            (func_release.borrow_mut())(state.2, window, cx);
+                        }
                         state.0 = false;
                     });
 
@@ -220,5 +245,6 @@ pub fn slider() -> Slider {
         value: 0.0,
         on_change: None,
         on_double_click: None,
+        change_interval: None,
     }
 }

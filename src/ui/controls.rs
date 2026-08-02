@@ -30,7 +30,7 @@ use crate::{
 use cntp_i18n::tr;
 use gpui::{InteractiveElement, *};
 use prelude::FluentBuilder;
-use std::{path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc, time::Duration};
 
 use self::replaygain::ReplayGainButton;
 use super::{
@@ -870,6 +870,7 @@ impl Render for Scrubber {
                     .h(px(6.0))
                     .rounded(px(3.0))
                     .id("scrubber-back")
+                    .change_interval(Duration::from_millis(33))
                     .value(if duration_ms > 0 {
                         position_ms as f32 / duration_ms as f32
                     } else {
