@@ -131,23 +131,19 @@ pub(crate) async fn recompute_album_artists(
     }
 
     if names.is_empty() {
-        if fallback.is_empty() {
-            // no claim parts at all: fall back to the album's display artist
-            let (override_,): (Option<String>,) = sqlx::query_as(include_str!(
-                "../../../queries/scan/get_album_display_override.sql"
-            ))
-            .bind(album_id)
-            .fetch_one(&mut *conn)
-            .await?;
-            let display = override_.filter(|d| !d.trim().is_empty());
-            let display = display.unwrap_or_else(|| UNKNOWN_ARTIST.to_string());
+        let (override_,): (Option<String>,) = sqlx::query_as(include_str!(
+            "../../../queries/scan/get_album_display_override.sql"
+        ))
+        .bind(album_id)
+        .fetch_one(&mut *conn)
+        .await?;
+        let display = override_.filter(|d| !d.trim().is_empty());
 
-            let sort = if display == UNKNOWN_ARTIST {
-                None
-            } else {
-                rows.iter().find_map(|(_, sort, _)| sort.clone())
-            };
+        if let Some(display) = display {
+            let sort = rows.iter().find_map(|(_, sort, _)| sort.clone());
             names.push((display, sort));
+        } else if fallback.is_empty() {
+            names.push((UNKNOWN_ARTIST.to_string(), None));
         } else {
             for part in fallback {
                 push_album_artist_name(&mut names, &part, None);
@@ -1486,6 +1482,58 @@ mod tests {
     #[tokio::test]
     async fn update_metadata_merges_aliases_by_sort_name() {
         assert_alias_merge("db-alias-test", true).await;
+    }
+
+    #[tokio::test]
+    async fn update_metadata_unclaimed_sort_key_falls_back_to_display_name() {
+        let (dir, pool) = create_test_pool("db-unclaimed-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut alias = track_metadata("Alias Album", "TR-i", "Track 1", 1);
+        alias.artists = Some("TR-i".to_string());
+        alias.artist_sort = Some("Rundgren, Todd".to_string());
+        alias.album_artist_keys = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &alias, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "TR-i");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_unclaimed_sort_key_alias_still_merges() {
+        let (dir, pool) = create_test_pool("db-unclaimed-alias-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut alias = track_metadata("Alias Album", "TR-i", "Track 1", 1);
+        alias.artists = Some("TR-i".to_string());
+        alias.artist_sort = Some("Rundgren, Todd".to_string());
+        alias.album_artist_keys = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &alias, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+
+        let mut canonical = track_metadata("Canonical Album", "Todd Rundgren", "Track 1", 1);
+        canonical.artists = Some("Todd Rundgren".to_string());
+        canonical.artist_sort = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &canonical, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name, sort): (String, String) =
+            sqlx::query_as("SELECT name, name_sortable FROM artist")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Todd Rundgren");
+        assert_eq!(sort, "Rundgren, Todd");
     }
 
     #[tokio::test]
