@@ -1,3 +1,4 @@
+pub(crate) mod artist_match;
 pub(crate) mod database;
 mod decode;
 mod discover;
@@ -34,8 +35,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     library::scan::{
+        artist_match::ArtistMatcher,
         database::{
-            AlbumCacheKey, AlbumPathCacheKey, TrackWriteOutcome, relocate_track, update_metadata,
+            AlbumCacheKey, AlbumPathCacheKey, TrackWriteOutcome, flush_album_artists,
+            relocate_track, sweep_orphan_artists, update_metadata,
         },
         decode::{FileInformation, ScanReadError, read_metadata_for_path},
         discover::{
@@ -514,6 +517,25 @@ fn set_watch_retry(interval: &mut Option<tokio::time::Interval>, watch_for_chang
         *interval = Some(retry);
     } else if !watch_for_changes {
         *interval = None;
+    }
+}
+
+/// Retry album artist recomputes that failed inside the writer loop, now that the batch state
+/// they depend on is committed. Reloads the matcher - a failed commit can leave stale ids.
+async fn retry_album_artists(
+    pool: &SqlitePool,
+    matcher: &mut ArtistMatcher,
+    pending: &mut FxHashSet<i64>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    matcher.clear();
+    let Ok(mut conn) = pool.acquire().await else {
+        return;
+    };
+    if let Err(e) = flush_album_artists(&mut conn, matcher, pending).await {
+        error!("Failed to recompute album artists after commit: {:?}", e);
     }
 }
 
@@ -1036,9 +1058,10 @@ async fn run_scanner(
         let mut no_album: u64 = 0;
         let mut decode_failures = DecodeFailureCounters::default();
         let mut force_encountered_albums: FxHashSet<i64> = FxHashSet::default();
-        let mut artist_cache: FxHashMap<String, i64> = FxHashMap::default();
+        let mut artist_matcher = ArtistMatcher::new();
         let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
         let mut album_path_cache: FxHashMap<AlbumPathCacheKey, Utf8PathBuf> = FxHashMap::default();
+        let mut pending_albums: FxHashSet<i64> = FxHashSet::default();
         let mut tx = Some(
             pool.begin()
                 .await
@@ -1157,6 +1180,7 @@ async fn run_scanner(
                 Some((old, new, ts)) = relocate_rx.recv(), if !cancelled => {
                     let result = relocate_track(
                         tx.as_mut().expect("scan transaction should be active"),
+                        &mut artist_matcher,
                         &old,
                         &new,
                     )
@@ -1180,7 +1204,20 @@ async fn run_scanner(
 
                 item = meta_rx.recv() => {
                     let Some((path, timestamp, (metadata, length, image))) = item else {
-                        if items_in_tx > 0 || !pending_relocations.is_empty() {
+                        if !pending_albums.is_empty()
+                            || items_in_tx > 0
+                            || !pending_relocations.is_empty()
+                        {
+                            if let Err(e) = flush_album_artists(
+                                tx.as_mut()
+                                    .expect("scan transaction should be active"),
+                                &mut artist_matcher,
+                                &mut pending_albums,
+                            )
+                            .await
+                            {
+                                error!("Failed to recompute album artists: {:?}", e);
+                            }
                             if let Err(e) = tx
                                 .take()
                                 .expect("scan transaction should be active")
@@ -1190,6 +1227,7 @@ async fn run_scanner(
                                 error!("Failed to commit final scan transaction: {:?}", e);
                                 pending_commit.clear();
                                 pending_relocations.clear();
+                                pending_albums.clear();
                             } else {
                                 let mut sr = scan_record_shared.lock().await;
                                 for (p, ts) in pending_commit.drain(..) {
@@ -1200,6 +1238,8 @@ async fn run_scanner(
                                     sr.records.entry(new).or_insert(ts);
                                 }
                             }
+                            retry_album_artists(&pool, &mut artist_matcher, &mut pending_albums)
+                                .await;
                         }
                         break;
                     };
@@ -1213,9 +1253,9 @@ async fn run_scanner(
                         &image,
                         mode.force_albums(),
                         &mut force_encountered_albums,
-                        &mut artist_cache,
                         &mut album_cache,
                         &mut album_path_cache,
+                        &mut pending_albums,
                     )
                     .await;
 
@@ -1242,6 +1282,15 @@ async fn run_scanner(
                     }
 
                     if items_in_tx >= BATCH_SIZE {
+                        if let Err(e) = flush_album_artists(
+                            tx.as_mut().expect("scan transaction should be active"),
+                            &mut artist_matcher,
+                            &mut pending_albums,
+                        )
+                        .await
+                        {
+                            error!("Failed to recompute album artists: {:?}", e);
+                        }
                         if let Err(e) = tx
                             .take()
                             .expect("scan transaction should be active")
@@ -1251,8 +1300,9 @@ async fn run_scanner(
                             error!("Failed to commit scan batch transaction: {:?}", e);
                             pending_commit.clear();
                             pending_relocations.clear();
+                            pending_albums.clear();
                             // when the commit fails, the caches are poisoned with invalid data
-                            artist_cache.clear();
+                            artist_matcher.clear();
                             album_cache.clear();
                             album_path_cache.clear();
                             // rolled-back force refreshes must be re-attempted, or affected
@@ -1352,6 +1402,7 @@ async fn run_scanner(
             }
             match relocate_track(
                 tx.as_mut().expect("scan transaction should be active"),
+                &mut artist_matcher,
                 &old,
                 &new,
             )
@@ -1376,7 +1427,16 @@ async fn run_scanner(
         let duration = time_end.duration_since(time_start);
 
         if cancelled {
-            if items_in_tx > 0 || !pending_relocations.is_empty() {
+            if !pending_albums.is_empty() || items_in_tx > 0 || !pending_relocations.is_empty() {
+                if let Err(e) = flush_album_artists(
+                    tx.as_mut().expect("scan transaction should be active"),
+                    &mut artist_matcher,
+                    &mut pending_albums,
+                )
+                .await
+                {
+                    error!("Failed to recompute album artists: {:?}", e);
+                }
                 if tx
                     .take()
                     .expect("scan transaction should be active")
@@ -1397,7 +1457,9 @@ async fn run_scanner(
                 } else {
                     pending_commit.clear();
                     pending_relocations.clear();
+                    pending_albums.clear();
                 }
+                retry_album_artists(&pool, &mut artist_matcher, &mut pending_albums).await;
             }
 
             info!(
@@ -1405,6 +1467,8 @@ async fn run_scanner(
                 scanned,
                 duration.as_secs_f32()
             );
+
+            sweep_orphan_artists(&pool).await;
 
             if let Some(handle) = checkpoint_handle.take() {
                 let _ = handle.await;
@@ -1456,6 +1520,10 @@ async fn run_scanner(
                 }
             }
         }
+
+        // artist rows recomputed away during the writer loop are only swept now - deleting them
+        // mid-scan would invalidate the artist matcher's cached ids
+        sweep_orphan_artists(&pool).await;
 
         info!(
             "Scan complete, {} files scanned in {} seconds, writing record. \

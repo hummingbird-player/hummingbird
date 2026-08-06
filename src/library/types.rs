@@ -193,7 +193,8 @@ pub struct Album {
     pub id: i64,
     pub title: DBString,
     pub title_sortable: DBString,
-    pub artist_id: i64,
+    /// Raw album artist tag, shown in place of the linked artists' names.
+    pub artist_display_override: Option<DBString>,
     #[sqlx(default)]
     pub release_date: Option<DBString>,
     #[sqlx(default)]

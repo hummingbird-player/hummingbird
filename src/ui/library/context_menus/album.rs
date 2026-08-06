@@ -15,8 +15,8 @@ use crate::{
 };
 
 use super::{
-    AlbumContextMenuContext, navigate_to_artist, play_album_next, play_album_now, queue_album,
-    rescan_album, shuffle_album,
+    AlbumContextMenuContext, navigate_to_album_artists, play_album_next, play_album_now,
+    queue_album, rescan_album, shuffle_album,
 };
 
 #[derive(IntoElement)]
@@ -96,8 +96,8 @@ impl RenderOnce for AlbumContextMenu {
                 "album_go_to_artist",
                 Some(USERS),
                 tr!("GO_TO_ARTIST"),
-                move |_, _, cx| {
-                    navigate_to_artist(cx, album_for_artist.artist_id);
+                move |ev, _, cx| {
+                    navigate_to_album_artists(cx, album_for_artist.id, ev.position());
                 },
             ))
         } else {

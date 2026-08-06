@@ -6,7 +6,8 @@ use std::{
 };
 
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, Global, Pixels, RenderImage, Size,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, Global, Pixels, Point, RenderImage,
+    SharedString, Size,
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,9 @@ pub enum SettingsHealth {
     Corrupt { path: PathBuf },
 }
 
+// Click position and artist choices for the artist picker overlay
+pub type ArtistPickerState = Option<(Point<Pixels>, Vec<(i64, SharedString)>)>;
+
 pub struct Models {
     pub metadata: Entity<Metadata>,
     pub albumart: Entity<Option<Arc<RenderImage>>>,
@@ -94,6 +98,7 @@ pub struct Models {
     pub listenbrainz: Entity<ListenBrainzState>,
     pub discord_rpc: Entity<DiscordRpcStatus>,
     pub switcher_model: Entity<NavigationHistory>,
+    pub artist_picker_model: Entity<ArtistPickerState>,
     pub show_about: Entity<bool>,
     pub playlist_tracker: Entity<PlaylistInfoTransfer>,
     pub sidebar_width: Entity<Pixels>,
@@ -475,6 +480,7 @@ pub fn build_models(
     );
 
     let switcher_model = cx.new(|_| NavigationHistory::new(startup_view));
+    let artist_picker_model = cx.new(|_| None);
 
     let sidebar_width: Entity<Pixels> = cx.new(|_| {
         if storage_data.sidebar_width > 0.0 {
@@ -548,6 +554,7 @@ pub fn build_models(
         listenbrainz,
         discord_rpc,
         switcher_model,
+        artist_picker_model,
         show_about,
         playlist_tracker,
         sidebar_width,

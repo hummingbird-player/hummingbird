@@ -59,8 +59,8 @@ impl RenderOnce for InfoSectionContextMenu {
                         "info_section_go_to_artist",
                         Some(USERS),
                         tr!("GO_TO_ARTIST"),
-                        move |_, _, cx| {
-                            navigate_to_track_artist(cx, &track_for_artist);
+                        move |ev, _, cx| {
+                            navigate_to_track_artist(cx, &track_for_artist, ev.position());
                         },
                     )
                     .disabled(!can_go_to_artist),

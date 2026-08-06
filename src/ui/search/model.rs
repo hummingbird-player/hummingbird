@@ -27,8 +27,14 @@ fn load_search_items(cx: &mut App) -> Vec<Arc<SearchPaletteItem>> {
     let albums = match cx.list_albums_search() {
         Ok(album_data) => album_data
             .into_iter()
-            .map(|(id, title, artist)| {
-                (id, title, artist, album_has_available_tracks(cx, id as i64))
+            .map(|(id, title, artist_override, artists)| {
+                (
+                    id,
+                    title,
+                    artist_override,
+                    artists,
+                    album_has_available_tracks(cx, id as i64),
+                )
             })
             .collect(),
         Err(e) => {
@@ -64,11 +70,16 @@ impl SearchModel {
             let weak_self = cx.weak_entity();
 
             let matcher: MatcherFunc = Box::new(|item, _| match item.as_ref() {
-                SearchPaletteItem::Album { title, artist, .. } => {
-                    Utf32String::from(format!("{} {}", title, artist))
-                }
+                SearchPaletteItem::Album {
+                    title,
+                    artist,
+                    artists,
+                    ..
+                } => Utf32String::from(format!("{} {} {}", title, artist, artists)),
                 SearchPaletteItem::Artist { name, .. } => Utf32String::from(name.as_str()),
-                SearchPaletteItem::Track { title, .. } => Utf32String::from(title.as_str()),
+                SearchPaletteItem::Track { title, artists, .. } => {
+                    Utf32String::from(format!("{} {}", title, artists))
+                }
             });
 
             let on_accept: OnAccept = Box::new(move |item, cx| {

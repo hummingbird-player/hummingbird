@@ -10,6 +10,8 @@ use tracing::{debug, error, info};
 
 use crate::{
     library::scan::{
+        artist_match::ArtistMatcher,
+        database::recompute_album_artists,
         fs_case::{fold_path, same_file},
         record::ScanRecord,
     },
@@ -166,6 +168,7 @@ async fn delete_tracks(
 
     info!("Cleaning up {} stale track(s)", to_delete.len());
 
+    let mut matcher = ArtistMatcher::new();
     for chunk in to_delete.chunks(CLEANUP_TX_CHUNK) {
         let mut tx = match pool.begin().await {
             Ok(tx) => tx,
@@ -176,9 +179,10 @@ async fn delete_tracks(
         };
 
         let mut deleted: Vec<&Utf8PathBuf> = Vec::with_capacity(chunk.len());
+        let mut affected_albums: FxHashSet<i64> = FxHashSet::default();
         for path in chunk {
             debug!("removing stale track: {:?}", path);
-            if cleanup_track(&mut tx, path, &mut updated_playlists).await {
+            if cleanup_track(&mut tx, path, &mut updated_playlists, &mut affected_albums).await {
                 deleted.push(path);
             }
         }
@@ -192,6 +196,25 @@ async fn delete_tracks(
         for path in deleted {
             scan_record.records.remove(path);
         }
+
+        // a surviving album may have lost its only artist link
+        if !affected_albums.is_empty() {
+            let mut conn = match pool.acquire().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    error!(
+                        "Could not acquire connection to recompute album artists: {:?}",
+                        e
+                    );
+                    continue;
+                }
+            };
+            for album_id in affected_albums {
+                if let Err(e) = recompute_album_artists(&mut conn, &mut matcher, album_id).await {
+                    error!("Failed to recompute album {album_id} artists: {:?}", e);
+                }
+            }
+        }
     }
 
     updated_playlists
@@ -201,7 +224,21 @@ async fn cleanup_track(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     path: &Utf8Path,
     updated_playlists: &mut FxHashSet<i64>,
+    affected_albums: &mut FxHashSet<i64>,
 ) -> bool {
+    let album = sqlx::query_as("SELECT album_id FROM track WHERE location = $1")
+        .bind(path.as_str())
+        .fetch_optional(&mut **tx)
+        .await;
+
+    let album = match album {
+        Ok(album) => album.map(|(id,)| id),
+        Err(e) => {
+            error!("Database error while reading track for cleanup: {:?}", e);
+            return false;
+        }
+    };
+
     let affected_playlists = sqlx::query_scalar::<_, i64>(include_str!(
         "../../../queries/scan/list_playlist_ids_for_track.sql"
     ))
@@ -230,6 +267,9 @@ async fn cleanup_track(
         return false;
     }
 
+    if let Some(album_id) = album {
+        affected_albums.insert(album_id);
+    }
     updated_playlists.extend(affected_playlists);
     true
 }

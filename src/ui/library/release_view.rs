@@ -26,9 +26,10 @@ use crate::{
             tooltip::build_tooltip,
         },
         library::{
-            ViewSwitchMessage,
             collection_summary::format_collection_summary,
-            context_menus::{AlbumContextMenuContext, album::AlbumContextMenu},
+            context_menus::{
+                AlbumContextMenuContext, album::AlbumContextMenu, navigate_to_album_artists,
+            },
             nav_buttons::detail_close_button,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
@@ -75,10 +76,7 @@ impl ReleaseView {
             let tracks = cx
                 .list_tracks_in_album(album_id)
                 .expect("Failed to retrieve tracks");
-            let artist_name = cx
-                .get_artist_name_by_id(album.artist_id)
-                .ok()
-                .map(|v| (*v).clone().into());
+            let artist_name = album.artist_display_override.clone();
 
             cx.on_release(|this: &mut Self, cx: &mut App| {
                 ImageSource::Resource(Resource::Embedded(this.img_path.clone())).remove_asset(cx);
@@ -219,13 +217,9 @@ impl ReleaseView {
                             .overflow_x_hidden()
                             .cursor_pointer()
                             .on_click({
-                                let artist_id = self.album.artist_id;
-                                move |_, _, cx| {
-                                    let model = cx.global::<Models>().switcher_model.clone();
-
-                                    model.update(cx, |_, cx| {
-                                        cx.emit(ViewSwitchMessage::Artist(artist_id));
-                                    })
+                                let album_id = self.album.id;
+                                move |ev, _, cx| {
+                                    navigate_to_album_artists(cx, album_id, ev.position());
                                 }
                             })
                             .when_some(self.artist_name.clone(), |this, artist| this.child(artist)),

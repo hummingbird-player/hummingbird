@@ -24,6 +24,7 @@ pub enum SearchPaletteItem {
         id: u32,
         title: String,
         artist: String,
+        artists: String,
         available: bool,
     },
     Artist {
@@ -44,7 +45,7 @@ impl SearchPaletteItem {
     }
 
     pub fn from_search_results(
-        albums: Vec<(u32, String, String, bool)>,
+        albums: Vec<(u32, String, Option<String>, String, bool)>,
         artists: Vec<(i64, String)>,
         tracks: Vec<(i64, String, String, Option<i64>)>,
     ) -> Vec<Arc<SearchPaletteItem>> {
@@ -54,11 +55,12 @@ impl SearchPaletteItem {
             items.push(Arc::new(SearchPaletteItem::Artist { id, name }));
         }
 
-        for (id, title, artist, available) in albums {
+        for (id, title, artist_override, artists, available) in albums {
             items.push(Arc::new(SearchPaletteItem::Album {
                 id,
                 title,
-                artist,
+                artist: artist_override.unwrap_or_else(|| artists.clone()),
+                artists,
                 available,
             }));
         }

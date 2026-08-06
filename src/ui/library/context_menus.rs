@@ -6,7 +6,7 @@ use std::{path::Path, rc::Rc, sync::Arc};
 
 use camino::Utf8PathBuf;
 use cntp_i18n::tr;
-use gpui::{AnyElement, App, AppContext, Entity, IntoElement, SharedString, Window};
+use gpui::{AnyElement, App, AppContext, Entity, IntoElement, Pixels, Point, SharedString, Window};
 
 use crate::{
     library::{
@@ -299,16 +299,12 @@ fn queue_track(cx: &mut App, track: &Track) {
     queue_item(cx, data);
 }
 
-pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track) {
+pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track, position: Point<Pixels>) {
     let Some(album_id) = track.album_id else {
         return;
     };
 
-    let Ok(artist_id) = cx.artist_id_for_album(album_id) else {
-        return;
-    };
-
-    navigate_to_artist(cx, artist_id);
+    navigate_to_album_artists(cx, album_id, position);
 }
 
 pub(crate) fn navigate_to_track_album(cx: &mut App, track: &Track) {
@@ -330,7 +326,31 @@ fn navigate_to_album(cx: &mut App, track: &Track, target_track_id: Option<i64>) 
     });
 }
 
-fn navigate_to_artist(cx: &mut App, artist_id: i64) {
+pub(crate) fn navigate_to_album_artists(cx: &mut App, album_id: i64, position: Point<Pixels>) {
+    let Ok(artists) = cx.artist_ids_for_album(album_id) else {
+        return;
+    };
+
+    match artists.as_slice() {
+        [] => {}
+        [(id, _)] => navigate_to_artist(cx, *id),
+        _ => {
+            let model = cx.global::<Models>().artist_picker_model.clone();
+            model.update(cx, |m, cx| {
+                *m = Some((
+                    position,
+                    artists
+                        .into_iter()
+                        .map(|(id, name)| (id, name.into()))
+                        .collect(),
+                ));
+                cx.notify();
+            });
+        }
+    }
+}
+
+pub(crate) fn navigate_to_artist(cx: &mut App, artist_id: i64) {
     let switcher = cx.global::<Models>().switcher_model.clone();
     switcher.update(cx, |_, cx| {
         cx.emit(ViewSwitchMessage::Artist(artist_id));

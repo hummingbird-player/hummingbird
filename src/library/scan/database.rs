@@ -1,62 +1,238 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use rustc_hash::{FxHashMap, FxHashSet};
-use sqlx::SqliteConnection;
-use tracing::{debug, warn};
+use sqlx::{SqliteConnection, SqlitePool};
+use tracing::{debug, error, warn};
 
 use crate::{
     library::{
-        scan::{decode::process_album_art, fs_case::paths_equal},
+        scan::{
+            artist_match::{ArtistMatcher, token_key},
+            decode::process_album_art,
+            fs_case::paths_equal,
+        },
         types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
     },
     media::metadata::Metadata,
 };
 
-async fn insert_artist(
-    conn: &mut SqliteConnection,
-    metadata: &Metadata,
-    artist_cache: &mut FxHashMap<String, i64>,
-) -> anyhow::Result<Option<i64>> {
-    let artist = metadata.album_artist.clone().or(metadata.artist.clone());
-
-    let Some(artist) = artist else {
-        return Ok(None);
+/// Whether the album artist sort tag claims a name, either literally or as Last, First. Names not
+/// claimed are featured artists and must not get album_artist rows.
+fn sort_mentions_artist(sort: &str, name: &str) -> bool {
+    let strip = |t: &str| {
+        t.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
     };
-
-    // Check in-memory cache first
-    if let Some(&cached_id) = artist_cache.get(&artist) {
-        return Ok(Some(cached_id));
-    }
-
-    let result: Result<(i64,), sqlx::Error> =
-        sqlx::query_as(include_str!("../../../queries/scan/create_artist.sql"))
-            .bind(&artist)
-            .bind(metadata.artist_sort.as_ref().unwrap_or(&artist))
-            .fetch_one(&mut *conn)
-            .await;
-
-    let id = match result {
-        Ok(v) => v.0,
-        Err(sqlx::Error::RowNotFound) => {
-            let result: Result<(i64,), sqlx::Error> =
-                sqlx::query_as(include_str!("../../../queries/scan/get_artist_id.sql"))
-                    .bind(&artist)
-                    .fetch_one(&mut *conn)
-                    .await;
-
-            match result {
-                Ok(v) => v.0,
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    artist_cache.insert(artist, id);
-    Ok(Some(id))
+    let sort_tokens: FxHashSet<String> = sort
+        .to_lowercase()
+        .split_whitespace()
+        .map(strip)
+        .filter(|t| !t.is_empty())
+        .collect();
+    name.to_lowercase()
+        .split_whitespace()
+        .map(strip)
+        .all(|token| !token.is_empty() && sort_tokens.contains(&token))
 }
 
-/// Album cache key: (title, mbid, artist_id).
-pub type AlbumCacheKey = (String, String, Option<i64>);
+/// Collect an album artist name once, paired with its sort key.
+fn push_album_artist_name(
+    names: &mut Vec<(String, Option<String>)>,
+    name: &str,
+    key: Option<String>,
+) {
+    if !names.iter().any(|(existing, _)| existing == name) {
+        names.push((name.to_string(), key));
+    }
+}
+
+/// Rebuild an album's artist links from its tracks' stored artist tags. Claim parts
+/// (`album_artist_keys`) decide which credited names become album artists, keyed by the matching
+/// part; with no claims the credits all link, and when nothing is claimed the album's display
+/// artist does. Derived from the track rows alone, so partial scans converge to the same result
+/// regardless of which files were (re)read.
+pub(crate) async fn recompute_album_artists(
+    conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
+    album_id: i64,
+) -> anyhow::Result<()> {
+    let rows: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(include_str!(
+        "../../../queries/scan/get_track_artists_for_album.sql"
+    ))
+    .bind(album_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    // an emptied album has no artists to link
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    // artist names to resolve, paired with the sort key they were claimed with
+    let mut names: Vec<(String, Option<String>)> = Vec::new();
+    // claim parts seen on any track, used as the fallback name list
+    let mut fallback: Vec<String> = Vec::new();
+
+    for (artists, sort, keys) in &rows {
+        let sort = sort.as_deref().filter(|s| !s.trim().is_empty());
+        let Some(artists) = artists else { continue };
+        let split: Vec<&str> = artists
+            .split(';')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .collect();
+        let parts: Vec<&str> = keys
+            .as_deref()
+            .map(|k| {
+                k.split(';')
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for part in &parts {
+            if !fallback.iter().any(|existing| existing == part) {
+                fallback.push((*part).to_string());
+            }
+        }
+
+        if parts.is_empty() {
+            // a lone artist always stands for the album and keeps its sort tag for alias merging,
+            // in a multi-artist tag only names claimed by the sort get linked
+            let inherited = if split.len() == 1 {
+                sort.map(str::to_string)
+            } else {
+                None
+            };
+            for name in &split {
+                if split.len() > 1
+                    && let Some(sort) = sort
+                    && !sort_mentions_artist(sort, name)
+                {
+                    continue;
+                }
+                push_album_artist_name(&mut names, name, inherited.clone());
+            }
+        } else {
+            // only names claimed by a part get linked, keyed by that part
+            for name in &split {
+                let Some(part) = parts.iter().find(|part| token_key(part) == token_key(name))
+                else {
+                    continue;
+                };
+                let key = if split.len() == 1 {
+                    sort.map(str::to_string)
+                } else {
+                    Some((*part).to_string())
+                };
+                push_album_artist_name(&mut names, name, key);
+            }
+        }
+    }
+
+    if names.is_empty() {
+        if fallback.is_empty() {
+            // no claim parts at all: fall back to the album's display artist
+            let (override_,): (Option<String>,) = sqlx::query_as(include_str!(
+                "../../../queries/scan/get_album_display_override.sql"
+            ))
+            .bind(album_id)
+            .fetch_one(&mut *conn)
+            .await?;
+            let display = override_.filter(|d| !d.trim().is_empty());
+            let display = display.unwrap_or_else(|| UNKNOWN_ARTIST.to_string());
+
+            let sort = if display == UNKNOWN_ARTIST {
+                None
+            } else {
+                rows.iter().find_map(|(_, sort, _)| sort.clone())
+            };
+            names.push((display, sort));
+        } else {
+            for part in fallback {
+                push_album_artist_name(&mut names, &part, None);
+            }
+        }
+    }
+
+    let existing: Vec<i64> = sqlx::query_scalar(include_str!(
+        "../../../queries/scan/list_album_artist_ids.sql"
+    ))
+    .bind(album_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut desired: Vec<i64> = Vec::new();
+    for (name, sort) in &names {
+        let artist_id = matcher.resolve(conn, name, sort.as_deref()).await?;
+        if !desired.contains(&artist_id) {
+            desired.push(artist_id);
+        }
+    }
+
+    for artist_id in &desired {
+        if !existing.contains(artist_id) {
+            sqlx::query(include_str!(
+                "../../../queries/scan/create_album_artist.sql"
+            ))
+            .bind(album_id)
+            .bind(artist_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    for artist_id in &existing {
+        if !desired.contains(artist_id) {
+            sqlx::query(include_str!(
+                "../../../queries/scan/delete_album_artist.sql"
+            ))
+            .bind(album_id)
+            .bind(artist_id)
+            .execute(&mut *conn)
+            .await?;
+            // the cleanup trigger can delete the artist row with its last link
+            matcher.evict(*artist_id);
+        }
+    }
+
+    sqlx::query(include_str!(
+        "../../../queries/scan/update_album_artist_sort.sql"
+    ))
+    .bind(album_id)
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
+}
+
+/// Recompute pending album artist links; failures stay pending so the caller can retry them
+/// once the batch is committed.
+pub async fn flush_album_artists(
+    conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
+    pending: &mut FxHashSet<i64>,
+) -> anyhow::Result<()> {
+    let albums: Vec<i64> = pending.drain().collect();
+    let mut failed = 0usize;
+    for album_id in albums {
+        if let Err(e) = recompute_album_artists(conn, matcher, album_id).await {
+            error!("Failed to recompute album {album_id} artists: {:?}", e);
+            failed += 1;
+            pending.insert(album_id);
+        }
+    }
+    if failed > 0 {
+        Err(anyhow::anyhow!("{failed} album(s) failed artist recompute"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Display name for albums with no artist information at all.
+const UNKNOWN_ARTIST: &str = "Unknown Artist";
+
+/// Album cache key: (title, mbid, artist_display_override).
+pub type AlbumCacheKey = (String, String, Option<String>);
 
 fn bind_release_date(metadata: &Metadata) -> (Option<String>, Option<i32>) {
     if let Some(date) = metadata.date {
@@ -80,10 +256,23 @@ fn bind_release_date(metadata: &Metadata) -> (Option<String>, Option<i32>) {
     (None, None)
 }
 
+/// Remove artists no longer linked to any album. Runs outside the metadata writer - artist rows
+/// must not vanish mid-scan while the artist matcher holds their ids.
+pub async fn sweep_orphan_artists(pool: &SqlitePool) {
+    if let Err(e) = sqlx::query(include_str!(
+        "../../../queries/scan/delete_orphan_artists.sql"
+    ))
+    .execute(pool)
+    .await
+    {
+        error!("Failed to sweep orphan artists: {:?}", e);
+    }
+}
+
 async fn insert_album(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
-    artist_id: Option<i64>,
+    display_override: Option<&str>,
     image: &Option<Box<[u8]>>,
     is_force: bool,
     force_encountered_albums: &mut FxHashSet<i64>,
@@ -98,7 +287,11 @@ async fn insert_album(
         .clone()
         .unwrap_or_else(|| "none".to_string());
 
-    let cache_key: AlbumCacheKey = (album.clone(), mbid.clone(), artist_id);
+    let cache_key: AlbumCacheKey = (
+        album.clone(),
+        mbid.clone(),
+        display_override.map(str::to_string),
+    );
 
     if !is_force
         && image.is_none()
@@ -111,7 +304,7 @@ async fn insert_album(
         sqlx::query_as(include_str!("../../../queries/scan/get_album_id.sql"))
             .bind(album)
             .bind(&mbid)
-            .bind(artist_id)
+            .bind(display_override)
             .fetch_one(&mut *conn)
             .await;
 
@@ -149,7 +342,13 @@ async fn insert_album(
                 sqlx::query_as(include_str!("../../../queries/scan/create_album.sql"))
                     .bind(album)
                     .bind(metadata.sort_album.as_ref().unwrap_or(album))
-                    .bind(artist_id)
+                    .bind(display_override)
+                    .bind(
+                        metadata
+                            .album_artist_sort
+                            .as_deref()
+                            .filter(|s| !s.trim().is_empty()),
+                    )
                     .bind(resized_image.as_deref())
                     .bind(thumb.as_deref())
                     .bind(release_date)
@@ -339,6 +538,9 @@ async fn insert_track(
             .bind(metadata.replaygain_album_gain)
             .bind(metadata.replaygain_album_peak)
             .bind(&metadata.disc_subtitle)
+            .bind(&metadata.artists)
+            .bind(&metadata.artist_sort)
+            .bind(&metadata.album_artist_keys)
             .fetch_one(&mut *conn)
             .await;
 
@@ -357,6 +559,7 @@ async fn insert_track(
 /// Returns the IDs of playlists whose items were repointed.
 pub async fn relocate_track(
     conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
     old: &Utf8Path,
     new: &Utf8Path,
 ) -> anyhow::Result<Vec<i64>> {
@@ -397,10 +600,21 @@ pub async fn relocate_track(
             .execute(&mut *conn)
             .await?;
 
+            let stale_album: Option<(i64,)> =
+                sqlx::query_as("SELECT album_id FROM track WHERE id = $1")
+                    .bind(stale_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+
             sqlx::query(include_str!("../../../queries/scan/delete_track.sql"))
                 .bind(old.as_str())
                 .execute(&mut *conn)
                 .await?;
+
+            // the merged-away row may have been the only one crediting an artist
+            if let Some((album_id,)) = stale_album {
+                recompute_album_artists(conn, matcher, album_id).await?;
+            }
         }
     } else {
         sqlx::query(include_str!("../../../queries/scan/relocate_track.sql"))
@@ -433,16 +647,21 @@ pub async fn update_metadata(
     image: &Option<Box<[u8]>>,
     is_force: bool,
     force_encountered_albums: &mut FxHashSet<i64>,
-    artist_cache: &mut FxHashMap<String, i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
+    pending_albums: &mut FxHashSet<i64>,
 ) -> anyhow::Result<TrackWriteOutcome> {
     debug!(
         "Adding/updating record for {:?} - {:?}",
         metadata.artist, metadata.name
     );
 
-    let artist_id = insert_artist(conn, metadata, artist_cache).await?;
+    let album_artist = metadata
+        .album_artist
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
+    let artist = metadata.artist.as_deref().filter(|s| !s.trim().is_empty());
+    let display_override = album_artist.or(artist);
 
     let album_image = if (metadata.track_current == Some(1)
         || metadata.track_current == Some(0)
@@ -459,13 +678,20 @@ pub async fn update_metadata(
     let album_id = insert_album(
         conn,
         metadata,
-        artist_id,
+        display_override,
         album_image,
         is_force,
         force_encountered_albums,
         album_cache,
     )
     .await?;
+
+    // a retag can move the track to another album, the old album needs a rebuild too
+    let previous_album: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT album_id FROM track WHERE location = $1")
+            .bind(path.as_str())
+            .fetch_optional(&mut *conn)
+            .await?;
 
     let outcome = insert_track(conn, metadata, album_id, path, length, album_path_cache).await?;
 
@@ -474,6 +700,16 @@ pub async fn update_metadata(
             upsert_lyrics(conn, track_id, lyrics).await?;
         } else {
             delete_lyrics(conn, track_id).await?;
+        }
+
+        // album artist links are rebuilt once per album per committed batch
+        if let Some(album_id) = album_id {
+            pending_albums.insert(album_id);
+        }
+        if let Some(Some(old_id)) = previous_album.map(|(id,)| id)
+            && Some(old_id) != album_id
+        {
+            pending_albums.insert(old_id);
         }
     }
 
@@ -670,7 +906,9 @@ mod tests {
             .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
-        let updated = relocate_track(&mut conn, &old, &new).await.unwrap();
+        let updated = relocate_track(&mut conn, &mut ArtistMatcher::new(), &old, &new)
+            .await
+            .unwrap();
         drop(conn);
 
         assert!(updated.is_empty());
@@ -719,9 +957,14 @@ mod tests {
             .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
-        let updated = relocate_track(&mut conn, &stale_path, &current_path)
-            .await
-            .unwrap();
+        let updated = relocate_track(
+            &mut conn,
+            &mut ArtistMatcher::new(),
+            &stale_path,
+            &current_path,
+        )
+        .await
+        .unwrap();
         drop(conn);
 
         assert_eq!(updated, vec![playlist_id]);
@@ -816,13 +1059,213 @@ mod tests {
         assert_eq!(sort_name.0, "Sorted Name");
     }
 
+    #[test]
+    fn sort_mentions_artist_matches_on_word_boundaries() {
+        assert!(sort_mentions_artist("Rundgren, Todd", "Todd Rundgren"));
+        assert!(sort_mentions_artist("REM", "R.E.M."));
+        assert!(sort_mentions_artist(
+            "Artist, Main & Guy, Featured",
+            "Featured Guy"
+        ));
+        assert!(!sort_mentions_artist("Santana, Carlos", "Ana"));
+        assert!(!sort_mentions_artist("Artist, Main", "Featured Guy"));
+    }
+
+    #[tokio::test]
+    async fn update_metadata_uses_album_artist_sort_tag() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album_artist_sort = Some("Sorted Album Artist".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        let sort: (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort.0, "Sorted Album Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_retag_applies_added_album_artist_sort() {
+        let (dir, pool) = create_test_pool("db-retag-add-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track1.flac");
+
+        let meta = track_metadata("Album", "Artist", "Track", 1);
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort, "Artist");
+
+        let mut retagged = track_metadata("Album", "Artist", "Track", 1);
+        retagged.album_artist_sort = Some("Sorted Album Artist".to_string());
+        force_write(&mut conn, &retagged, &path).await;
+
+        let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort, "Sorted Album Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_retag_falls_back_when_album_artist_sort_removed() {
+        let (dir, pool) = create_test_pool("db-retag-remove-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track1.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album_artist_sort = Some("Sorted Album Artist".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort, "Sorted Album Artist");
+
+        let retagged = track_metadata("Album", "Artist", "Track", 1);
+        force_write(&mut conn, &retagged, &path).await;
+
+        let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort, "Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_album_sort_follows_earliest_artist() {
+        let (dir, pool) = create_test_pool("db-earliest-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta1 = track_metadata("Album", "Zulu", "Track 1", 1);
+        meta1.artists = Some("Zulu".to_string());
+        meta1.album_artist = None;
+        insert_metadata(&mut conn, &meta1, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        let mut meta2 = track_metadata("Album", "Zulu", "Track 2", 2);
+        meta2.artists = Some("Alpha".to_string());
+        meta2.album_artist = None;
+        insert_metadata(&mut conn, &meta2, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort, "Alpha");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_links_unknown_artist_for_artist_less_album() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.artist = None;
+        meta.album_artist = None;
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Unknown Artist");
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+
+        let sort: (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sort.0, "Unknown Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_ignores_empty_artist_tags() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.artist = Some("".to_string());
+        meta.album_artist = Some("   ".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Unknown Artist");
+        let (override_,): (String,) = sqlx::query_as("SELECT artist_display_override FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(override_, "");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_artist_sort_alone_does_not_link_real_artist() {
+        let (dir, pool) = create_test_pool("db-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut tagged = track_metadata("Real Album", "The Beatles", "Track", 1);
+        tagged.artist_sort = Some("Beatles, The".to_string());
+        insert_metadata(&mut conn, &tagged, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        let mut bare = track_metadata("Mystery Album", "Artist", "Track", 1);
+        bare.artist = None;
+        bare.album_artist = None;
+        bare.artist_sort = Some("Beatles, The".to_string());
+        insert_metadata(&mut conn, &bare, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        let (name,): (String,) = sqlx::query_as(
+            "SELECT ar.name FROM album_artist aa
+             JOIN artist ar ON ar.id = aa.artist_id
+             JOIN album al ON al.id = aa.album_id
+             WHERE al.title = 'Mystery Album'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(name, "Unknown Artist");
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM album_artist aa
+             JOIN artist ar ON ar.id = aa.artist_id
+             WHERE ar.name = 'The Beatles'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
     /// The per-scan caches the scan writer threads through `update_metadata`.
     #[derive(Default)]
     struct WriteCaches {
         force_encountered: FxHashSet<i64>,
-        artists: FxHashMap<String, i64>,
         albums: FxHashMap<AlbumCacheKey, i64>,
         paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
+        pending_albums: FxHashSet<i64>,
     }
 
     /// Call `update_metadata` with shared caches, as the scan writer does within one scan.
@@ -840,12 +1283,34 @@ mod tests {
             &None,
             false,
             &mut caches.force_encountered,
-            &mut caches.artists,
             &mut caches.albums,
             &mut caches.paths,
+            &mut caches.pending_albums,
         )
         .await
         .unwrap()
+    }
+
+    /// Force-reprocess a file as a rescan does, then rebuild the album's artist links.
+    async fn force_write(conn: &mut SqliteConnection, meta: &Metadata, path: &Utf8Path) {
+        let mut pending_albums = FxHashSet::default();
+        update_metadata(
+            conn,
+            meta,
+            path,
+            100,
+            &None,
+            true,
+            &mut FxHashSet::default(),
+            &mut FxHashMap::default(),
+            &mut FxHashMap::default(),
+            &mut pending_albums,
+        )
+        .await
+        .unwrap();
+        flush_album_artists(conn, &mut ArtistMatcher::new(), &mut pending_albums)
+            .await
+            .unwrap();
     }
 
     /// Create a folder in the test dir and return the path of a (not yet written) track in it.
@@ -977,5 +1442,550 @@ mod tests {
 
         let outcome = write(&mut conn, &meta, &path, &mut WriteCaches::default()).await;
         assert_eq!(outcome, TrackWriteOutcome::SkippedNoAlbum);
+    }
+
+    /// Scan the alias and the canonical name in both orders, the same artist must result.
+    async fn assert_alias_merge(prefix: &str, alias_first: bool) {
+        let (dir, pool) = create_test_pool(prefix).await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut alias = track_metadata("Alias Album", "TR-i", "Track 1", 1);
+        alias.artist_sort = Some("Rundgren, Todd".to_string());
+        let mut canonical = track_metadata("Canonical Album", "Todd Rundgren", "Track 1", 1);
+        canonical.artist_sort = Some("Rundgren, Todd".to_string());
+
+        let (first, second) = if alias_first {
+            (&alias, &canonical)
+        } else {
+            (&canonical, &alias)
+        };
+        insert_metadata(&mut conn, first, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        insert_metadata(&mut conn, second, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Todd Rundgren");
+
+        let (display,): (String,) =
+            sqlx::query_as("SELECT artist_display_override FROM album WHERE title = 'Alias Album'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(display, "TR-i");
+
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_merges_aliases_by_sort_name() {
+        assert_alias_merge("db-alias-test", true).await;
+    }
+
+    #[tokio::test]
+    async fn update_metadata_alias_merge_is_order_independent() {
+        assert_alias_merge("db-alias-rev-test", false).await;
+    }
+
+    #[tokio::test]
+    async fn update_metadata_upgrades_artist_sort_on_name_adoption() {
+        let (dir, pool) = create_test_pool("db-sort-upgrade-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let meta = track_metadata("Album 1", "TR-i", "Track 1", 1);
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        let mut tagged = track_metadata("Album 2", "TR-i", "Track 1", 1);
+        tagged.artist_sort = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &tagged, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        let mut canonical = track_metadata("Album 3", "Todd Rundgren", "Track 1", 1);
+        canonical.artist_sort = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &canonical, &dir.utf8_join("track3.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name, sort): (String, String) =
+            sqlx::query_as("SELECT name, name_sortable FROM artist")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Todd Rundgren");
+        assert_eq!(sort, "Rundgren, Todd");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_links_multiple_artists_from_artists_tag() {
+        let (dir, pool) = create_test_pool("db-multi-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta = track_metadata("Album", "Mark Pritchard & Thom Yorke", "Track 1", 1);
+        meta.artists = Some("Thom Yorke; Mark Pritchard".to_string());
+        meta.album_artist = None;
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 2);
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+
+        for artist in ["Thom Yorke", "Mark Pritchard"] {
+            let (count,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM album al
+                 JOIN album_artist aa ON aa.album_id = al.id
+                 JOIN artist ar ON ar.id = aa.artist_id
+                 WHERE ar.name = $1",
+            )
+            .bind(artist)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 1, "missing album for {artist}");
+        }
+    }
+
+    #[tokio::test]
+    async fn update_metadata_splits_multi_artists_despite_combined_sort() {
+        let (dir, pool) = create_test_pool("db-combined-sort-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track1.flac");
+
+        let mut meta = track_metadata("Album", "Mark Pritchard & Thom Yorke", "Track 1", 1);
+        meta.artist_sort = Some("Pritchard, Mark & Yorke, Thom".to_string());
+        meta.album_artist = None;
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+
+        meta.artists = Some("Mark Pritchard; Thom Yorke".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+
+        sweep_orphan_artists(&pool).await;
+        assert_eq!(count_rows(&pool, "artist").await, 2);
+        for artist in ["Thom Yorke", "Mark Pritchard"] {
+            let (count,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM album_artist aa
+                 JOIN artist ar ON ar.id = aa.artist_id
+                 WHERE ar.name = $1",
+            )
+            .bind(artist)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 1, "missing album for {artist}");
+        }
+    }
+
+    #[tokio::test]
+    async fn update_metadata_recompute_removes_dropped_artists() {
+        let (dir, pool) = create_test_pool("db-recompute-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track1.flac");
+
+        let mut meta = track_metadata("Album", "Mark Pritchard & Thom Yorke", "Track 1", 1);
+        meta.artists = Some("Thom Yorke; Mark Pritchard".to_string());
+        meta.album_artist = None;
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+
+        meta.artists = Some("Thom Yorke".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+
+        sweep_orphan_artists(&pool).await;
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_retag_rebuilds_old_album_artists() {
+        let (dir, pool) = create_test_pool("db-retag-album-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path1 = dir.utf8_join("track1.flac");
+        let path2 = dir.utf8_join("track2.flac");
+
+        let mut meta1 = track_metadata("Album A", "Artist X", "Track 1", 1);
+        meta1.artists = Some("Artist X".to_string());
+        let mut meta2 = track_metadata("Album A", "Artist Y", "Track 2", 2);
+        meta2.artists = Some("Artist Y".to_string());
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+        insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+
+        meta1.album = Some("Album B".to_string());
+        insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+
+        let links: Vec<(String, String)> = sqlx::query_as(
+            "SELECT al.title, ar.name FROM album_artist aa
+             JOIN album al ON al.id = aa.album_id
+             JOIN artist ar ON ar.id = aa.artist_id
+             ORDER BY al.title",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            links,
+            [
+                ("Album A".to_string(), "Artist Y".to_string()),
+                ("Album B".to_string(), "Artist X".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn recompute_recreates_artist_deleted_with_its_last_link() {
+        let (dir, pool) = create_test_pool("db-evict-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        // one shared matcher, so the second recompute holds a cached id for Artist Y
+        let mut caches = WriteCaches::default();
+        let mut matcher = ArtistMatcher::new();
+
+        let mut meta = track_metadata("Album", "Artist X", "Track 1", 1);
+        meta.artists = Some("Artist X; Artist Y".to_string());
+        write(&mut conn, &meta, &path, &mut caches).await;
+        flush_album_artists(&mut conn, &mut matcher, &mut caches.pending_albums)
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool, "artist").await, 2);
+
+        meta.artists = Some("Artist X".to_string());
+        write(&mut conn, &meta, &path, &mut caches).await;
+        flush_album_artists(&mut conn, &mut matcher, &mut caches.pending_albums)
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+
+        let id = matcher.resolve(&mut conn, "Artist Y", None).await.unwrap();
+        let (stored,): (i64,) = sqlx::query_as("SELECT id FROM artist WHERE name = 'Artist Y'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(id, stored);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_excludes_featured_artists_from_album_links() {
+        let (dir, pool) = create_test_pool("db-featured-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track1.flac");
+
+        let mut meta = track_metadata("Album", "Main Artist", "Track 1", 1);
+        meta.artists = Some("Main Artist; Featured Guy".to_string());
+        meta.artist_sort = Some("Artist, Main".to_string());
+        meta.album_artist = None;
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+        let (name,): (String,) = sqlx::query_as(
+            "SELECT ar.name FROM album_artist aa JOIN artist ar ON ar.id = aa.artist_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(name, "Main Artist");
+
+        meta.artist_sort = Some("Artist, Main & Guy, Featured".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 2);
+
+        meta.artist_sort = Some("Artist, Main".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn list_albums_sorts_by_artist_sort_not_display() {
+        let (dir, pool) = create_test_pool("db-albumsort-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut zebra = track_metadata("Zebra Album", "Zebra Display", "Track 1", 1);
+        zebra.artist_sort = Some("Alpha Sort".to_string());
+        insert_metadata(&mut conn, &zebra, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        let mut alpha = track_metadata("Alpha Album", "Alpha Display", "Track 1", 1);
+        alpha.artist_sort = Some("Zulu Sort".to_string());
+        insert_metadata(&mut conn, &alpha, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        let ordered =
+            crate::library::db::list_albums(&pool, crate::library::db::AlbumSortMethod::ArtistAsc)
+                .await
+                .unwrap();
+        let titles: Vec<String> = ordered.into_iter().map(|(_, title)| title).collect();
+        assert_eq!(titles, ["Zebra Album", "Alpha Album"]);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_links_display_artist_without_artists_tag() {
+        let (dir, pool) = create_test_pool("db-single-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_track_cleans_album_junction_and_orphan_artist() {
+        let (dir, pool) = create_test_pool("db-cleanup-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let meta = track_metadata("Album", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM track")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "album").await, 0);
+        assert_eq!(count_rows(&pool, "album_artist").await, 0);
+
+        sweep_orphan_artists(&pool).await;
+        assert_eq!(count_rows(&pool, "artist").await, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_track_keeps_artist_with_other_albums() {
+        let (dir, pool) = create_test_pool("db-cleanup-keep-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let meta1 = track_metadata("Album 1", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta1, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        let meta2 = track_metadata("Album 2", "Artist", "Track 1", 1);
+        insert_metadata(&mut conn, &meta2, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM track WHERE location LIKE '%track1.flac'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "album").await, 1);
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn albums_search_includes_override_and_artist_names() {
+        let (dir, pool) = create_test_pool("db-search-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut alias = track_metadata("Album", "TR-i", "Track 1", 1);
+        alias.artist_sort = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &alias, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        let mut canonical = track_metadata("Other Album", "Todd Rundgren", "Track 1", 1);
+        canonical.artist_sort = Some("Rundgren, Todd".to_string());
+        insert_metadata(&mut conn, &canonical, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        let rows: Vec<(i64, String, Option<String>, String)> = sqlx::query_as(include_str!(
+            "../../../queries/library/find_albums_search.sql"
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let album = rows
+            .iter()
+            .find(|(_, title, _, _)| title == "Album")
+            .unwrap();
+        assert_eq!(album.2.as_deref(), Some("TR-i"));
+        assert_eq!(album.3, "Todd Rundgren");
+    }
+
+    /// The linked album artist names of the album with the given title, sorted for comparison.
+    async fn linked_artist_names(pool: &SqlitePool, album: &str) -> Vec<String> {
+        let mut names: Vec<String> = sqlx::query_scalar(
+            "SELECT ar.name FROM album_artist aa
+             JOIN artist ar ON ar.id = aa.artist_id
+             JOIN album al ON al.id = aa.album_id
+             WHERE al.title = $1",
+        )
+        .bind(album)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn update_metadata_links_all_null_separated_tpe1_artists() {
+        let (dir, pool) = create_test_pool("db-null-tpe1-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // lofty hands the scanner the display and matching forms of a null-separated TPE1
+        let mut meta = track_metadata("Album", "Artist 1, Artist 2", "Track 1", 1);
+        meta.album_artist = None;
+        meta.artists = Some("Artist 1; Artist 2".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            linked_artist_names(&pool, "Album").await,
+            vec!["Artist 1", "Artist 2"]
+        );
+        let (override_,): (String,) = sqlx::query_as("SELECT artist_display_override FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(override_, "Artist 1, Artist 2");
+        let (artist_names,): (String,) = sqlx::query_as("SELECT artist_names FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(artist_names, "Artist 1, Artist 2");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_single_tpe2_claims_one_of_multi_tpe1() {
+        let (dir, pool) = create_test_pool("db-claim-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // TPE2 = "Artist A" (single), TPE1 = "Artist A\0Artist B\0Artist C" -> only A is linked
+        let mut meta = track_metadata("Album", "Artist A, Artist B, Artist C", "Track 1", 1);
+        meta.album_artist = Some("Artist A".to_string());
+        meta.album_artist_keys = Some("Artist A".to_string());
+        meta.artists = Some("Artist A; Artist B; Artist C".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(linked_artist_names(&pool, "Album").await, vec!["Artist A"]);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_connector_album_artist_counts_as_one_artist() {
+        let (dir, pool) = create_test_pool("db-connector-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // TPE2 = "Artist A & Artist B" is one entity, the album falls back to it as one artist
+        let mut meta = track_metadata("Album", "Artist A, Artist B", "Track 1", 1);
+        meta.album_artist = Some("Artist A & Artist B".to_string());
+        meta.album_artist_keys = Some("Artist A & Artist B".to_string());
+        meta.artists = Some("Artist A; Artist B".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            linked_artist_names(&pool, "Album").await,
+            vec!["Artist A & Artist B"]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_metadata_keys_claimed_artists_by_album_artist_sort() {
+        let (dir, pool) = create_test_pool("db-keys-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut first = track_metadata("Other Album", "Pritchard, Mark", "Track 1", 1);
+        first.album_artist = None;
+        insert_metadata(&mut conn, &first, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        // TSO2 = "Pritchard, Mark & Yorke, Thom" claims and keys both TPE1 names
+        let mut meta = track_metadata("Album", "Mark Pritchard, Thom Yorke", "Track 1", 1);
+        meta.album_artist = Some("Mark Pritchard and Thom Yorke".to_string());
+        meta.album_artist_keys = Some("Pritchard, Mark; Yorke, Thom".to_string());
+        meta.artists = Some("Mark Pritchard; Thom Yorke".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(&pool, "artist").await, 2);
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, name_sortable FROM artist ORDER BY name_sortable")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("Pritchard, Mark".to_string(), "Pritchard, Mark".to_string()),
+                ("Thom Yorke".to_string(), "Yorke, Thom".to_string()),
+            ]
+        );
+        assert_eq!(
+            linked_artist_names(&pool, "Album").await,
+            vec!["Pritchard, Mark", "Thom Yorke"]
+        );
+        let (override_,): (String,) =
+            sqlx::query_as("SELECT artist_display_override FROM album WHERE title = 'Album'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(override_, "Mark Pritchard and Thom Yorke");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_mismatched_album_artist_falls_back_to_tpe2() {
+        let (dir, pool) = create_test_pool("db-mismatch-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // TPE1 = "Artist A", TPE2 = "Artist B": A is unclaimed, the album links B
+        let mut meta = track_metadata("Album", "Artist A", "Track 1", 1);
+        meta.album_artist = Some("Artist B".to_string());
+        meta.album_artist_keys = Some("Artist B".to_string());
+        meta.artists = Some("Artist A".to_string());
+        insert_metadata(&mut conn, &meta, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(linked_artist_names(&pool, "Album").await, vec!["Artist B"]);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_album_artist_links_union_across_tracks() {
+        let (dir, pool) = create_test_pool("db-union-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let mut meta1 = track_metadata("Album", "Artist A", "Track 1", 1);
+        meta1.album_artist = Some("Artist A".to_string());
+        meta1.album_artist_keys = Some("Artist A".to_string());
+        insert_metadata(&mut conn, &meta1, &dir.utf8_join("track1.flac"))
+            .await
+            .unwrap();
+        let mut meta2 = track_metadata("Album", "Artist B", "Track 2", 2);
+        meta2.album_artist = Some("Artist B".to_string());
+        meta2.album_artist_keys = Some("Artist B".to_string());
+        insert_metadata(&mut conn, &meta2, &dir.utf8_join("track2.flac"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            linked_artist_names(&pool, "Album").await,
+            vec!["Artist A", "Artist B"]
+        );
     }
 }

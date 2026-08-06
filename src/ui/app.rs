@@ -48,6 +48,7 @@ use crate::{
 use super::{
     about::about_dialog,
     arguments::parse_args_and_prepare,
+    artist_picker::ArtistPickerView,
     components::{
         modal::{self, ModalActive},
         window_chrome::window_chrome,
@@ -70,6 +71,7 @@ struct MainWindow {
     pub library: Entity<Library>,
     pub header: Entity<Header>,
     pub search: Entity<SearchView>,
+    pub artist_picker: Entity<ArtistPickerView>,
     pub show_queue: Entity<bool>,
     pub show_lyrics: Entity<bool>,
     pub show_about: Entity<bool>,
@@ -150,6 +152,7 @@ impl Render for MainWindow {
                     )
                     .child(self.header.clone())
                     .child(self.search.clone())
+                    .child(self.artist_picker.clone())
                     .child(self.palette.clone())
                     .when(show_about, |this| {
                         this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
@@ -300,6 +303,7 @@ fn build_main_window(
             library: Library::new(cx),
             header: Header::new(cx),
             search: SearchView::new(cx),
+            artist_picker: ArtistPickerView::new(cx),
             show_queue,
             show_lyrics,
             show_about,

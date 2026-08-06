@@ -2,7 +2,7 @@ SELECT
     id,
     title,
     title_sortable,
-    artist_id,
+    NULLIF(artist_display_override, '') AS artist_display_override,
     release_date,
     date_precision,
     created_at,

@@ -3,7 +3,6 @@ SELECT
     p.title_sortable
 FROM
     album p
-    JOIN artist a ON p.artist_id = a.id
 ORDER BY
-    a.name_sortable COLLATE NOCASE ASC,
+    p.artist_sort COLLATE NOCASE ASC,
     p.release_date ASC;

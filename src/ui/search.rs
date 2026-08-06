@@ -31,6 +31,9 @@ impl SearchView {
                     return;
                 }
 
+                // the artist picker would sit open underneath the modal
+                super::artist_picker::close(cx);
+
                 show_clone.update(cx, |m, cx| {
                     *m = true;
                     cx.notify();

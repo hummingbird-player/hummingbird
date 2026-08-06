@@ -20,7 +20,10 @@ use crate::{
             scrollbar::{ScrollableHandle, floating_scrollbar},
             tooltip::build_tooltip,
         },
-        library::{ViewSwitchMessage, add_to_playlist::AddToPlaylist},
+        library::{
+            ViewSwitchMessage, add_to_playlist::AddToPlaylist,
+            context_menus::navigate_to_album_artists,
+        },
     },
 };
 use cntp_i18n::{tr, trn};
@@ -585,18 +588,9 @@ impl Render for QueueItem {
                                     "go_to_artist",
                                     Some(USERS),
                                     tr!("GO_TO_ARTIST", "Go to artist"),
-                                    move |_, _, cx| {
+                                    move |ev, _, cx| {
                                         if let Some(album_id) = album_id {
-                                            let Ok(artist_id) = cx.artist_id_for_album(album_id)
-                                            else {
-                                                return;
-                                            };
-
-                                            let switcher =
-                                                cx.global::<Models>().switcher_model.clone();
-                                            switcher.update(cx, |_, cx| {
-                                                cx.emit(ViewSwitchMessage::Artist(artist_id));
-                                            })
+                                            navigate_to_album_artists(cx, album_id, ev.position());
                                         }
                                     },
                                 )

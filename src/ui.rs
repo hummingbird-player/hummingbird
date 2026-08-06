@@ -1,6 +1,7 @@
 mod about;
 pub mod app;
 mod arguments;
+mod artist_picker;
 mod assets;
 pub mod availability;
 mod caching;

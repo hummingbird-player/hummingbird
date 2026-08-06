@@ -694,10 +694,18 @@ impl Render for Library {
                 let parent = match current {
                     ViewSwitchMessage::Release(album_id, _) => {
                         if this.section == LibrarySection::Artists {
-                            // Go up to the album's artist.
-                            cx.artist_id_for_album(album_id)
-                                .ok()
-                                .map(ViewSwitchMessage::Artist)
+                            let artists = cx.artist_ids_for_album(album_id).ok();
+                            let parent_artist = match switcher.read(cx).previous() {
+                                Some(ViewSwitchMessage::Artist(id))
+                                    if artists.as_ref().is_some_and(|list| {
+                                        list.iter().any(|(aid, _)| *aid == id)
+                                    }) =>
+                                {
+                                    Some(id)
+                                }
+                                _ => artists.and_then(|list| list.first().map(|a| a.0)),
+                            };
+                            parent_artist.map(ViewSwitchMessage::Artist)
                         } else {
                             Some(ViewSwitchMessage::Albums)
                         }

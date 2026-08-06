@@ -165,13 +165,10 @@ impl TableData<AlbumColumn> for Album {
         Ok(cx.get_album_by_id(id.0 as i64, AlbumMethod::Metadata).ok())
     }
 
-    fn get_column(&self, cx: &mut App, column: AlbumColumn) -> Option<SharedString> {
+    fn get_column(&self, _cx: &mut App, column: AlbumColumn) -> Option<SharedString> {
         match column {
             AlbumColumn::Title => Some(self.title.0.clone()),
-            AlbumColumn::Artist => cx
-                .get_artist_name_by_id(self.artist_id)
-                .ok()
-                .map(|v| (*v).clone().into()),
+            AlbumColumn::Artist => self.artist_display_override.as_ref().map(|v| v.0.clone()),
             AlbumColumn::Date => {
                 format_album_release_date(self.release_date.as_ref(), self.date_precision)
             }
@@ -246,27 +243,24 @@ impl TableData<AlbumColumn> for Album {
         true
     }
 
-    fn get_grid_content(&self, cx: &mut App) -> Option<(SharedString, Option<SharedString>)> {
+    fn get_grid_content(&self, _cx: &mut App) -> Option<(SharedString, Option<SharedString>)> {
         let title = self.title.0.clone();
-        let artist = cx
-            .get_artist_name_by_id(self.artist_id)
-            .ok()
-            .map(|v| (*v).clone().into());
+        let artist = self.artist_display_override.as_ref().map(|v| v.0.clone());
         Some((title, artist))
     }
 
     fn get_grid_content_for(
         &self,
-        cx: &mut App,
+        _cx: &mut App,
         context: GridContext,
     ) -> Option<(SharedString, Option<SharedString>)> {
         let title = self.title.0.clone();
 
         let artist_part: Option<String> = match context {
-            GridContext::Table => cx
-                .get_artist_name_by_id(self.artist_id)
-                .ok()
-                .map(|v| (*v).to_string()),
+            GridContext::Table => self
+                .artist_display_override
+                .as_ref()
+                .map(|v| v.0.to_string()),
             GridContext::Standalone => None,
         };
 
@@ -424,9 +418,7 @@ impl TableData<TrackColumn> for Track {
                     cx.get_album_by_id(album_id, AlbumMethod::Metadata)
                         .ok()
                         .and_then(|album| {
-                            cx.get_artist_name_by_id(album.artist_id)
-                                .ok()
-                                .map(|v| (*v).clone().into())
+                            album.artist_display_override.as_ref().map(|v| v.0.clone())
                         })
                 } else {
                     None

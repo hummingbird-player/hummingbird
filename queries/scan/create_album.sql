@@ -1,9 +1,11 @@
-INSERT INTO album (title, title_sortable, artist_id, image, thumb, release_date, date_precision, label, catalog_number, isrc, mbid, vinyl_numbering)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    ON CONFLICT (title, artist_id, mbid) DO UPDATE SET
+INSERT INTO album (title, title_sortable, artist_display_override, artist_sort, artist_sort_tag, image, thumb, release_date, date_precision, label, catalog_number, isrc, mbid, vinyl_numbering)
+    VALUES ($1, $2, COALESCE($3, ''), $4, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ON CONFLICT (title, artist_display_override, mbid) DO UPDATE SET
         title = EXCLUDED.title,
         title_sortable = EXCLUDED.title_sortable,
-        artist_id = EXCLUDED.artist_id,
+        artist_display_override = EXCLUDED.artist_display_override,
+        artist_sort = COALESCE(EXCLUDED.artist_sort_tag, album.artist_sort),
+        artist_sort_tag = EXCLUDED.artist_sort_tag,
         image = EXCLUDED.image,
         thumb = EXCLUDED.thumb,
         release_date = EXCLUDED.release_date,
@@ -14,4 +16,3 @@ INSERT INTO album (title, title_sortable, artist_id, image, thumb, release_date,
         mbid = EXCLUDED.mbid,
         vinyl_numbering = vinyl_numbering OR EXCLUDED.vinyl_numbering
     RETURNING id;
-

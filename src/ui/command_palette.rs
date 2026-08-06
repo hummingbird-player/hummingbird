@@ -371,6 +371,9 @@ impl CommandPalette {
                     return;
                 }
 
+                // the artist picker would sit open underneath the palette
+                super::artist_picker::close(cx);
+
                 show_clone.update(cx, |show, cx| {
                     *show = true;
                     cx.notify();

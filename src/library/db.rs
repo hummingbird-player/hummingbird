@@ -34,27 +34,42 @@ pub async fn create_pool(path: impl AsRef<Path>) -> sqlx::Result<SqlitePool> {
         .run(&pool)
         .await;
 
-    if let Err(e) = migrations
-        && let sqlx::migrate::MigrateError::VersionMismatch(v) = e
-    {
-        match v {
-            20240730163128 | 20240730163151 | 20240730163200 | 20240817201809 | 20240817201912
-            | 20240917084650 | 20250424090924 | 20250512214434 | 20250512231103
-            | 20250825224757 | 20250825225240 | 20250825234341 | 20251022214837
-                if cfg!(target_os = "windows") =>
-            {
-                // it's likely this is because of a line-ending caused hash mismatch
-                // this is fixed but not on existing databases
-                let fix_query = include_str!("../../queries/windows_fix_checksums.sql");
-                sqlx::query(fix_query).execute(&pool).await?;
-
-                sqlx::migrate!("./migrations")
-                    .set_ignore_missing(true)
-                    .run(&pool)
-                    .await?;
+    if let Err(e) = migrations {
+        // old Windows databases can hit line-ending caused hash mismatches on these versions,
+        // rewrite their checksums and retry, any other migration failure is fatal
+        let recoverable = match &e {
+            sqlx::migrate::MigrateError::VersionMismatch(v) => {
+                cfg!(target_os = "windows")
+                    && matches!(
+                        v,
+                        20240730163128
+                            | 20240730163151
+                            | 20240730163200
+                            | 20240817201809
+                            | 20240817201912
+                            | 20240917084650
+                            | 20250424090924
+                            | 20250512214434
+                            | 20250512231103
+                            | 20250825224757
+                            | 20250825225240
+                            | 20250825234341
+                            | 20251022214837
+                    )
             }
-            _ => (),
+            _ => false,
+        };
+        if !recoverable {
+            return Err(e.into());
         }
+
+        let fix_query = include_str!("../../queries/windows_fix_checksums.sql");
+        sqlx::query(fix_query).execute(&pool).await?;
+
+        sqlx::migrate!("./migrations")
+            .set_ignore_missing(true)
+            .run(&pool)
+            .await?;
     }
 
     Ok(pool)
@@ -256,19 +271,6 @@ pub async fn get_album_by_id(
     Ok(album)
 }
 
-pub async fn get_artist_name_by_id(pool: &SqlitePool, artist_id: i64) -> sqlx::Result<Arc<String>> {
-    let query = include_str!("../../queries/library/find_artist_name_by_id.sql");
-
-    let artist_name: Arc<String> = Arc::new(
-        sqlx::query_scalar(query)
-            .bind(artist_id)
-            .fetch_one(pool)
-            .await?,
-    );
-
-    Ok(artist_name)
-}
-
 pub async fn get_artist_by_id(pool: &SqlitePool, artist_id: i64) -> sqlx::Result<Arc<Artist>> {
     let query = include_str!("../../queries/library/find_artist_by_id.sql");
 
@@ -412,12 +414,14 @@ pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<O
     Ok(track)
 }
 
-/// Lists all albums for searching. Returns a vector of tuples containing the id, name, and artist
-/// name.
-pub async fn list_albums_search(pool: &SqlitePool) -> sqlx::Result<Vec<(u32, String, String)>> {
+/// Lists all albums for searching. Returns (id, title, artist display override, artist names).
+#[allow(clippy::type_complexity)]
+pub async fn list_albums_search(
+    pool: &SqlitePool,
+) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>> {
     let query = include_str!("../../queries/library/find_albums_search.sql");
 
-    let albums = sqlx::query_as::<_, (u32, String, String)>(query)
+    let albums = sqlx::query_as::<_, (u32, String, Option<String>, String)>(query)
         .fetch_all(pool)
         .await?;
 
@@ -752,15 +756,19 @@ pub async fn remove_tracks_from_playlist(
     Ok(())
 }
 
-pub async fn artist_id_for_album(pool: &SqlitePool, album_id: i64) -> sqlx::Result<i64> {
-    let query = include_str!("../../queries/library/find_artist_id_for_album.sql");
+/// Lists all (id, name) artist pairs linked to an album.
+pub async fn artist_ids_for_album(
+    pool: &SqlitePool,
+    album_id: i64,
+) -> sqlx::Result<Vec<(i64, String)>> {
+    let query = include_str!("../../queries/library/find_artist_ids_for_album.sql");
 
-    let artist_id: i64 = sqlx::query_scalar(query)
+    let artists = sqlx::query_as::<_, (i64, String)>(query)
         .bind(album_id)
-        .fetch_one(pool)
+        .fetch_all(pool)
         .await?;
 
-    Ok(artist_id)
+    Ok(artists)
 }
 
 pub async fn get_all_tracks(pool: &SqlitePool) -> sqlx::Result<Vec<(String, i64, i64)>> {
@@ -800,11 +808,11 @@ pub trait LibraryAccess {
     ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>>;
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn get_album_by_id(&self, album_id: i64, method: AlbumMethod) -> sqlx::Result<Arc<Album>>;
-    fn get_artist_name_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<String>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, String)>>;
+    #[allow(clippy::type_complexity)]
+    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>>;
     #[allow(clippy::type_complexity)]
     fn list_tracks_search(&self) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>>;
     fn list_artists_search(&self) -> sqlx::Result<Vec<(i64, String)>>;
@@ -838,7 +846,7 @@ pub trait LibraryAccess {
         sort_method: LikedTrackSortMethod,
     ) -> sqlx::Result<Arc<Vec<Track>>>;
     fn get_all_tracks_by_artist(&self, artist_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
-    fn artist_id_for_album(&self, album_id: i64) -> sqlx::Result<i64>;
+    fn artist_ids_for_album(&self, album_id: i64) -> sqlx::Result<Vec<(i64, String)>>;
     fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>>;
     fn list_album_paths(&self, album_id: i64) -> sqlx::Result<Vec<String>>;
     fn lyrics_for_track(&self, track_id: i64) -> sqlx::Result<Option<String>>;
@@ -868,11 +876,6 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(get_album_by_id(&pool.0, album_id, method))
     }
 
-    fn get_artist_name_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<String>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(get_artist_name_by_id(&pool.0, artist_id))
-    }
-
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_artist_by_id(&pool.0, artist_id))
@@ -888,9 +891,9 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(get_track_by_path(&pool.0, path))
     }
 
-    /// Lists all albums for searching. Returns a vector of tuples containing the id, name, and artist
-    /// name.
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, String)>> {
+    /// Lists all albums for searching. Returns (id, title, artist display override, artist names).
+    #[allow(clippy::type_complexity)]
+    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_albums_search(&pool.0))
     }
@@ -1015,9 +1018,9 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(get_all_tracks_by_artist(&pool.0, artist_id))
     }
 
-    fn artist_id_for_album(&self, album_id: i64) -> sqlx::Result<i64> {
+    fn artist_ids_for_album(&self, album_id: i64) -> sqlx::Result<Vec<(i64, String)>> {
         let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(artist_id_for_album(&pool.0, album_id))
+        crate::RUNTIME.block_on(artist_ids_for_album(&pool.0, album_id))
     }
 
     fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>> {

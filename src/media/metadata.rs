@@ -24,6 +24,7 @@ pub fn parse_r128_gain_str(value: &str) -> Option<f64> {
 pub enum MetadataTag {
     Name(String),
     Artist(String),
+    Artists(String),
     AlbumArtist(String),
     OriginalArtist(String),
     Composer(String),
@@ -42,6 +43,7 @@ pub enum MetadataTag {
     Isrc(String),
     SortAlbum(String),
     ArtistSort(String),
+    AlbumArtistSort(String),
     MbidAlbum(String),
     Lyrics(String),
     ReplayGainTrackGain(String),
@@ -59,6 +61,7 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
     match tag {
         MetadataTag::Name(v) => metadata.name = Some(v),
         MetadataTag::Artist(v) => metadata.artist = Some(v),
+        MetadataTag::Artists(v) => metadata.artists = Some(v),
         MetadataTag::AlbumArtist(v) => metadata.album_artist = Some(v),
         MetadataTag::OriginalArtist(v) => metadata.original_artist = Some(v),
         MetadataTag::Composer(v) => metadata.composer = Some(v),
@@ -114,6 +117,7 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
         MetadataTag::Isrc(v) => metadata.isrc = Some(v),
         MetadataTag::SortAlbum(v) => metadata.sort_album = Some(v),
         MetadataTag::ArtistSort(v) => metadata.artist_sort = Some(v),
+        MetadataTag::AlbumArtistSort(v) => metadata.album_artist_sort = Some(v),
         MetadataTag::MbidAlbum(v) => metadata.mbid_album = Some(v),
         MetadataTag::Lyrics(v) => metadata.lyrics = Some(v),
         MetadataTag::ReplayGainTrackGain(v) => {
@@ -144,8 +148,13 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
 pub struct Metadata {
     pub name: Option<String>,
     pub artist: Option<String>,
+    pub artists: Option<String>,
     pub album_artist: Option<String>,
+    /// Semicolon-joined album artist claim parts: TSO2 split on "&" when every part claims a
+    /// credited track artist, else the raw TPE2 values.
+    pub album_artist_keys: Option<String>,
     pub artist_sort: Option<String>,
+    pub album_artist_sort: Option<String>,
     pub original_artist: Option<String>,
     pub composer: Option<String>,
     pub album: Option<String>,

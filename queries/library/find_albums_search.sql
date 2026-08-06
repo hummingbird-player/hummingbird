@@ -1,6 +1,10 @@
 SELECT
     p.id,
     p.title,
-    a.name
+    NULLIF(p.artist_display_override, '') AS artist_display_override,
+    IFNULL(GROUP_CONCAT(a.name, ' '), '') AS artists
 FROM
-    album p JOIN artist a ON p.artist_id = a.id;
+    album p
+    LEFT JOIN album_artist aa ON aa.album_id = p.id
+    LEFT JOIN artist a ON a.id = aa.artist_id
+GROUP BY p.id;

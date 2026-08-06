@@ -160,8 +160,8 @@ impl QueueItemData {
 
                     if let Some(artist_name) = track.artist_names.clone() {
                         m.as_mut().unwrap().artist_name = Some(artist_name.0);
-                    } else if let Ok(artist_name) = cx.get_artist_name_by_id(album.artist_id) {
-                        m.as_mut().unwrap().artist_name = Some((*artist_name).clone().into());
+                    } else if let Some(artist_name) = album.artist_display_override.clone() {
+                        m.as_mut().unwrap().artist_name = Some(artist_name.0);
                     }
                 }
 

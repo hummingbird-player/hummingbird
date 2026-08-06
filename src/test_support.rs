@@ -12,7 +12,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::{
-    library::{db, scan::database::update_metadata},
+    library::{
+        db,
+        scan::{
+            artist_match::ArtistMatcher,
+            database::{flush_album_artists, update_metadata},
+        },
+    },
     media::{
         builtin::{lofty, symphonia},
         lookup_table,
@@ -155,6 +161,8 @@ pub(crate) async fn insert_metadata(
     metadata: &Metadata,
     path: &Utf8Path,
 ) -> anyhow::Result<()> {
+    let mut matcher = ArtistMatcher::new();
+    let mut pending_albums = FxHashSet::default();
     update_metadata(
         conn,
         metadata,
@@ -165,9 +173,10 @@ pub(crate) async fn insert_metadata(
         &mut FxHashSet::default(),
         &mut FxHashMap::default(),
         &mut FxHashMap::default(),
-        &mut FxHashMap::default(),
+        &mut pending_albums,
     )
     .await?;
+    flush_album_artists(conn, &mut matcher, &mut pending_albums).await?;
     Ok(())
 }
 
