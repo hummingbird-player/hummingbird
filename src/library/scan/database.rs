@@ -46,6 +46,32 @@ fn push_album_artist_name(
     }
 }
 
+/// Whether the display artist is a credited track artist rather than a distinct album artist
+/// like a compilation's "Various Artists".
+fn display_is_credited(rows: &[TrackArtistRow], display: &str) -> bool {
+    let display_lower = display.to_lowercase();
+    rows.iter().any(|row| {
+        row.artist_names
+            .as_deref()
+            .is_some_and(|name| name.trim().to_lowercase() == display_lower)
+            || row.artists.as_deref().is_some_and(|artists| {
+                artists
+                    .split(';')
+                    .map(str::trim)
+                    .any(|name| name.to_lowercase() == display_lower)
+            })
+    })
+}
+
+/// Per-track artist tag data.
+#[derive(sqlx::FromRow)]
+struct TrackArtistRow {
+    artists: Option<String>,
+    artist_sort: Option<String>,
+    album_artist_keys: Option<String>,
+    artist_names: Option<String>,
+}
+
 /// Rebuild an album's artist links from its tracks' stored artist tags. Claim parts
 /// (`album_artist_keys`) decide which credited names become album artists, keyed by the matching
 /// part; with no claims the credits all link, and when nothing is claimed the album's display
@@ -56,7 +82,7 @@ pub(crate) async fn recompute_album_artists(
     matcher: &mut ArtistMatcher,
     album_id: i64,
 ) -> anyhow::Result<()> {
-    let rows: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(include_str!(
+    let rows: Vec<TrackArtistRow> = sqlx::query_as(include_str!(
         "../../../queries/scan/get_track_artists_for_album.sql"
     ))
     .bind(album_id)
@@ -73,15 +99,18 @@ pub(crate) async fn recompute_album_artists(
     // claim parts seen on any track, used as the fallback name list
     let mut fallback: Vec<String> = Vec::new();
 
-    for (artists, sort, keys) in &rows {
-        let sort = sort.as_deref().filter(|s| !s.trim().is_empty());
-        let Some(artists) = artists else { continue };
+    for row in &rows {
+        let sort = row.artist_sort.as_deref().filter(|s| !s.trim().is_empty());
+        let Some(artists) = row.artists.as_deref() else {
+            continue;
+        };
         let split: Vec<&str> = artists
             .split(';')
             .map(str::trim)
             .filter(|n| !n.is_empty())
             .collect();
-        let parts: Vec<&str> = keys
+        let parts: Vec<&str> = row
+            .album_artist_keys
             .as_deref()
             .map(|k| {
                 k.split(';')
@@ -140,7 +169,11 @@ pub(crate) async fn recompute_album_artists(
         let display = override_.filter(|d| !d.trim().is_empty());
 
         if let Some(display) = display {
-            let sort = rows.iter().find_map(|(_, sort, _)| sort.clone());
+            let sort = if display_is_credited(&rows, &display) {
+                rows.iter().find_map(|row| row.artist_sort.clone())
+            } else {
+                None
+            };
             names.push((display, sort));
         } else if fallback.is_empty() {
             names.push((UNKNOWN_ARTIST.to_string(), None));
@@ -1127,6 +1160,12 @@ mod tests {
             .unwrap();
         assert_eq!(sort, "Sorted Album Artist");
 
+        let (name_sort,): (String,) = sqlx::query_as("SELECT name_sortable FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name_sort, "Artist");
+
         let retagged = track_metadata("Album", "Artist", "Track", 1);
         force_write(&mut conn, &retagged, &path).await;
 
@@ -1135,6 +1174,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sort, "Artist");
+
+        let (name_sort,): (String,) = sqlx::query_as("SELECT name_sortable FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name_sort, "Artist");
     }
 
     #[tokio::test]
