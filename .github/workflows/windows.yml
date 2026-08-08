@@ -53,7 +53,7 @@ jobs:
       - name: Copy binary to IS expected folder
         shell: pwsh
         run: |
-          mkdir -p -Force target/bundle/${{ env.TARGET_TRIPLE }}/release-distro
+          mkdir -Force -p target/bundle/${{ env.TARGET_TRIPLE }}/release-distro
           cp -Force target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe
       - name: Build installer
         run: |
