@@ -51,14 +51,16 @@ jobs:
         run: |
           cargo cntp-bundle --no-open --verbose
       - name: Copy binary to IS expected folder
+        shell: pwsh
         run: |
-          mkdir -p target/bundle/${{ env.TARGET_TRIPLE }}/release-distro
-          cp target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe
+          mkdir -p -Force target/bundle/${{ env.TARGET_TRIPLE }}/release-distro
+          cp -Force target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe
       - name: Build installer
         run: |
           iscc.exe /Q package\inno\Hummingbird_${{ env.ARCH }}.iss
       - name: Move binary
-        run: mv target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird-${{ env.ARCH }}.exe
+        shell: pwsh
+        run: mv -Force target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release\Hummingbird-${{ env.ARCH }}.exe
       - name: Write minisign private key
         shell: pwsh
         env:
