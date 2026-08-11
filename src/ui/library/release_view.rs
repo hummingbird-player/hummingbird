@@ -28,7 +28,8 @@ use crate::{
         library::{
             collection_summary::format_collection_summary,
             context_menus::{
-                AlbumContextMenuContext, album::AlbumContextMenu, navigate_to_album_artists,
+                AlbumContextMenuContext, add_album_to_playlist_state, album::AlbumContextMenu,
+                navigate_to_album_artists,
             },
             nav_buttons::detail_close_button,
             track_listing::{ArtistNameVisibility, TrackListing},
@@ -157,6 +158,7 @@ impl ReleaseView {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_header(
         &self,
         theme: &Theme,
@@ -164,6 +166,7 @@ impl ReleaseView {
         current_track_in_album: bool,
         is_playing: bool,
         show_close_button: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -273,7 +276,7 @@ impl ReleaseView {
                                     },
                                 )
                                 .show_add_to_queue(false)
-                                .trailing(self.render_menu_button(cx)),
+                                .trailing(self.render_menu_button(window, cx)),
                             )
                             .child(self.render_like_button(theme)),
                     ),
@@ -319,10 +322,12 @@ impl ReleaseView {
         cx.notify();
     }
 
-    fn render_menu_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_menu_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_open = self.menu_open;
 
-        div()
+        let (show_add_to, add_to) =
+            add_album_to_playlist_state("album-menu-state", self.album.id, window, cx);
+        let menu_btn = div()
             .relative()
             .flex()
             .child(
@@ -365,11 +370,14 @@ impl ReleaseView {
                                 .on_click(move |_, _, cx| close(cx))
                                 .child(AlbumContextMenu::new(
                                     album,
+                                    show_add_to,
                                     AlbumContextMenuContext::default(),
                                 )),
                         ),
                 )
-            })
+            });
+
+        div().child(menu_btn).child(add_to).into_any_element()
     }
 
     fn render_footer(&self, theme: &Theme) -> impl IntoElement {
@@ -592,6 +600,7 @@ impl Render for ReleaseView {
                         current_track_in_album,
                         is_playing,
                         two_column,
+                        window,
                         cx,
                     ))
                     .children(self.track_listing.track_elements())

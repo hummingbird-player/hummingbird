@@ -418,10 +418,10 @@ pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<O
 #[allow(clippy::type_complexity)]
 pub async fn list_albums_search(
     pool: &SqlitePool,
-) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>> {
+) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>> {
     let query = include_str!("../../queries/library/find_albums_search.sql");
 
-    let albums = sqlx::query_as::<_, (u32, String, Option<String>, String)>(query)
+    let albums = sqlx::query_as::<_, (i64, String, Option<String>, String)>(query)
         .fetch_all(pool)
         .await?;
 
@@ -812,7 +812,7 @@ pub trait LibraryAccess {
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
     #[allow(clippy::type_complexity)]
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>>;
+    fn list_albums_search(&self) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>>;
     #[allow(clippy::type_complexity)]
     fn list_tracks_search(&self) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>>;
     fn list_artists_search(&self) -> sqlx::Result<Vec<(i64, String)>>;
@@ -893,7 +893,7 @@ impl LibraryAccess for App {
 
     /// Lists all albums for searching. Returns (id, title, artist display override, artist names).
     #[allow(clippy::type_complexity)]
-    fn list_albums_search(&self) -> sqlx::Result<Vec<(u32, String, Option<String>, String)>> {
+    fn list_albums_search(&self) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_albums_search(&pool.0))
     }

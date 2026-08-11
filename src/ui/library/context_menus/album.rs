@@ -1,14 +1,14 @@
 use std::rc::Rc;
 
 use cntp_i18n::tr;
-use gpui::{IntoElement, RenderOnce, Window};
+use gpui::{Entity, IntoElement, RenderOnce, Window};
 
 use crate::{
     library::types::Album,
     ui::{
         availability::album_has_available_tracks,
         components::{
-            icons::{PLAY, PLUS, SHUFFLE, USERS},
+            icons::{PLAY, PLAYLIST_ADD, PLUS, SHUFFLE, USERS},
             menu::{menu, menu_item, menu_separator},
         },
     },
@@ -23,11 +23,20 @@ use super::{
 pub struct AlbumContextMenu {
     album: Rc<Album>,
     context: AlbumContextMenuContext,
+    show_add_to: Entity<bool>,
 }
 
 impl AlbumContextMenu {
-    pub fn new(album: Rc<Album>, context: AlbumContextMenuContext) -> Self {
-        Self { album, context }
+    pub fn new(
+        album: Rc<Album>,
+        show_add_to: Entity<bool>,
+        context: AlbumContextMenuContext,
+    ) -> Self {
+        Self {
+            album,
+            show_add_to,
+            context,
+        }
     }
 }
 
@@ -39,6 +48,7 @@ impl RenderOnce for AlbumContextMenu {
         let album_for_queue = self.album.clone();
         let album_for_artist = self.album.clone();
         let album_for_rescan = self.album.clone();
+        let show_add_to = self.show_add_to;
         let show_go_to_artist = self.context.show_go_to_artist;
         let is_available = album_has_available_tracks(cx, album.id);
         let menu = menu()
@@ -81,6 +91,14 @@ impl RenderOnce for AlbumContextMenu {
                 )
                 .disabled(!is_available),
             )
+            .item(menu_item(
+                "album_add_to_playlist",
+                Some(PLAYLIST_ADD),
+                tr!("ADD_TO_PLAYLIST"),
+                move |_, _, cx| {
+                    show_add_to.write(cx, true);
+                },
+            ))
             .item(menu_separator())
             .item(menu_item(
                 "album_rescan",

@@ -33,7 +33,7 @@ fn load_search_items(cx: &mut App) -> Vec<Arc<SearchPaletteItem>> {
                     title,
                     artist_override,
                     artists,
-                    album_has_available_tracks(cx, id as i64),
+                    album_has_available_tracks(cx, id),
                 )
             })
             .collect(),
@@ -84,9 +84,7 @@ impl SearchModel {
 
             let on_accept: OnAccept = Box::new(move |item, cx| {
                 let event = match item.as_ref() {
-                    SearchPaletteItem::Album { id, .. } => {
-                        ViewSwitchMessage::Release(*id as i64, None)
-                    }
+                    SearchPaletteItem::Album { id, .. } => ViewSwitchMessage::Release(*id, None),
                     SearchPaletteItem::Artist { id, .. } => ViewSwitchMessage::Artist(*id),
                     SearchPaletteItem::Track { id, album_id, .. } => {
                         if let Some(album_id) = album_id {

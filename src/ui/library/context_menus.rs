@@ -79,6 +79,29 @@ pub(crate) fn add_to_playlist_state(
     (state.show.clone(), state.add_to.clone())
 }
 
+/// Creates or retrieves the `AddToPlaylist` keyed state for the given album,
+/// returning the show toggle and the playlist entity.
+pub(crate) fn add_album_to_playlist_state(
+    key: &'static str,
+    album_id: i64,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<bool>, Entity<AddToPlaylist>) {
+    let menu_state = window.use_keyed_state((key, album_id as usize), cx, |_, cx| {
+        let show = cx.new(|_| false);
+        let tracks = cx
+            .list_tracks_in_album(album_id)
+            .expect("Failed to retrieve tracks")
+            .iter()
+            .map(|track| track.id)
+            .collect::<Vec<i64>>();
+        let add_to = AddToPlaylist::new(cx, show.clone(), tracks);
+        AddToPlaylistState { show, add_to }
+    });
+    let state = menu_state.read(cx);
+    (state.show.clone(), state.add_to.clone())
+}
+
 pub fn track_menu_for_table(
     track: &Track,
     is_available: bool,
@@ -104,8 +127,18 @@ pub fn track_menu_for_table(
     (menu, Some(add_to.into_any_element()))
 }
 
-pub fn album_menu_for_table(album: &Album, context: &AlbumContextMenuContext) -> AnyElement {
-    AlbumContextMenu::new(Rc::new(album.clone()), *context).into_any_element()
+pub fn album_menu_for_table(
+    album: &Album,
+    context: &AlbumContextMenuContext,
+    window: &mut Window,
+    cx: &mut App,
+) -> (AnyElement, Option<AnyElement>) {
+    let (show_add_to, add_to) =
+        add_album_to_playlist_state("album-menu-state", album.id, window, cx);
+    let menu =
+        AlbumContextMenu::new(Rc::new(album.clone()), show_add_to, *context).into_any_element();
+
+    (menu, Some(add_to.into_any_element()))
 }
 
 pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {
