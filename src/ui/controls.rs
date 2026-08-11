@@ -460,6 +460,8 @@ fn update_current_track_state(
     cx: &App,
 ) {
     this.current_track_path = current_track.map(|track| track.get_path().clone());
+    this.track_name = None;
+    this.artist_name = None;
     this.current_library_track =
         current_track.and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
     this.can_navigate_to_album = this

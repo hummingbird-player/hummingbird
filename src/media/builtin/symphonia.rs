@@ -214,14 +214,19 @@ impl SymphoniaStream {
         self.last_image = None;
 
         let mut meta_queue = format.metadata();
-        if let Some(metadata) = meta_queue.skip_to_latest() {
+
+        // only update metadata if something useful was actually read
+        let found_metadata = if let Some(metadata) = meta_queue.skip_to_latest() {
             self.break_metadata(&metadata.media.tags);
             if !metadata.media.visuals.is_empty() {
                 self.last_image = Some(metadata.media.visuals[0].clone());
             }
-        }
+            !metadata.media.tags.is_empty() || !metadata.media.visuals.is_empty()
+        } else {
+            false
+        };
 
-        self.pending_metadata_update = true;
+        self.pending_metadata_update = found_metadata;
     }
 
     fn loop_seek_if_pending(&mut self) -> Result<(), PlaybackReadError> {
@@ -900,5 +905,22 @@ mod tests {
             map_probe_error(err),
             OpenError::Io(std::io::ErrorKind::PermissionDenied)
         );
+    }
+
+    fn open_fixture(name: &str) -> Box<dyn MediaStream> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/tests/audio-fixtures")
+            .join(name);
+        let file = std::fs::File::open(&path).unwrap();
+        SymphoniaProvider.open(file, path.extension()).unwrap()
+    }
+
+    #[test]
+    fn flagged_metadata_update_only_when_metadata_was_read() {
+        // Symphonia exposes no tags for WAV (its RIFF reader never attaches the metadata log),
+        // so opening one must not flag an update: publishing the empty metadata would wipe the
+        // better metadata the UI already has from the library or other providers
+        assert!(!open_fixture("fixture.wav").metadata_updated());
+        assert!(open_fixture("fixture.flac").metadata_updated());
     }
 }

@@ -5,16 +5,16 @@ use gpui::{App, Entity, Task};
 use tracing::{error, trace_span};
 
 use crate::{
-    media::{builtin::symphonia::SymphoniaProvider, metadata::Metadata, traits::MediaProvider},
+    media::{
+        lookup_table::try_open_media, metadata::Metadata, traits::MediaProviderFeatures,
+    },
     playback::queue::{DataSource, QueueItemUIData},
 };
 
 #[tracing::instrument(level = "trace")]
 fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
-    let file = std::fs::File::open(path)?;
-
-    // TODO: Switch to a different media provider based on the file
-    let mut stream = SymphoniaProvider.open(file, None)?;
+    let mut stream = try_open_media(path, MediaProviderFeatures::PROVIDES_METADATA)?
+        .ok_or_else(|| anyhow::anyhow!("no metadata provider for {}", path.display()))?;
     stream.start_playback()?;
 
     let Metadata {

@@ -865,13 +865,13 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1097",
+    "definedIn": "src/ui/controls.rs:1099",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1032",
+    "definedIn": "src/ui/controls.rs:1034",
     "plural": false,
     "description": null
   },
@@ -883,7 +883,7 @@
   },
   "NEXT_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:688",
+    "definedIn": "src/ui/controls.rs:690",
     "plural": false,
     "description": null
   },
@@ -1027,7 +1027,7 @@
   },
   "PREVIOUS_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:606",
+    "definedIn": "src/ui/controls.rs:608",
     "plural": false,
     "description": null
   },
@@ -1111,19 +1111,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:766",
+    "definedIn": "src/ui/controls.rs:768",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:756",
+    "definedIn": "src/ui/controls.rs:758",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:775",
+    "definedIn": "src/ui/controls.rs:777",
     "plural": false,
     "description": null
   },
@@ -1645,19 +1645,19 @@
   },
   "STOP_AFTER_CURRENT_TOOLTIP": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:653",
+    "definedIn": "src/ui/controls.rs:655",
     "plural": false,
     "description": null
   },
   "STOP_REPEATING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:734",
+    "definedIn": "src/ui/controls.rs:736",
     "plural": false,
     "description": null
   },
   "STOP_SHUFFLING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:576",
+    "definedIn": "src/ui/controls.rs:578",
     "plural": false,
     "description": null
   },
@@ -1783,7 +1783,7 @@
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1025",
+    "definedIn": "src/ui/controls.rs:1027",
     "plural": false,
     "description": null
   },

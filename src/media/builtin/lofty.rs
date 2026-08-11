@@ -282,6 +282,18 @@ fn finalize_album_artist_keys(metadata: &mut Metadata) {
     }
 }
 
+fn tags_by_priority(tags: &[Tag], has_id3v2: bool) -> Vec<&Tag> {
+    if !has_id3v2 {
+        return tags.iter().collect();
+    }
+
+    let is_text_tag = |tag: &&Tag| matches!(tag.tag_type(), TagType::RiffInfo | TagType::AiffText);
+    tags.iter()
+        .filter(|tag| is_text_tag(tag))
+        .chain(tags.iter().filter(|tag| !is_text_tag(tag)))
+        .collect()
+}
+
 fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
     let tagged_file = lofty::read_from(&mut file).map_err(|_| OpenError::UnsupportedFormat)?;
 
@@ -302,12 +314,8 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
         .flatten();
 
     let mut track_artists = TrackArtistNames::default();
-    for tag in tagged_file.tags() {
+    for tag in tags_by_priority(tagged_file.tags(), has_id3v2) {
         if has_better_tag && tag.tag_type() == TagType::Id3v1 {
-            continue;
-        }
-        // skip RIFF INFO/AIFF text when ID3v2 exists, so the same credit doesn't land twice
-        if has_id3v2 && matches!(tag.tag_type(), TagType::RiffInfo | TagType::AiffText) {
             continue;
         }
 
@@ -517,6 +525,32 @@ mod tests {
         assert_eq!(metadata.replaygain_track_peak, Some(0.987654));
         assert_eq!(metadata.replaygain_album_gain, Some(-4.56));
         assert_eq!(metadata.replaygain_album_peak, Some(0.876543));
+    }
+
+    #[test]
+    fn riff_info_only_fields_survive_alongside_id3v2() {
+        let mut riff = Tag::new(TagType::RiffInfo);
+        assert!(riff.insert_text(ItemKey::TrackTitle, "Avril 14th".to_string()));
+        assert!(riff.insert_text(ItemKey::RecordingDate, "2001-10-22".to_string()));
+
+        let mut id3 = Tag::new(TagType::Id3v2);
+        assert!(id3.insert_text(ItemKey::TrackTitle, "Avril 14th (ID3)".to_string()));
+
+        let tags = [riff, id3];
+        let ordered = tags_by_priority(&tags, true);
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].tag_type(), TagType::RiffInfo);
+
+        let mut metadata = Metadata::default();
+        let mut track_artists = TrackArtistNames::default();
+        for tag in ordered {
+            apply_tag_items(tag, false, &mut metadata, &mut track_artists);
+        }
+
+        // ID3v2 wins on shared fields, the INFO-only date still lands
+        assert_eq!(metadata.name.as_deref(), Some("Avril 14th (ID3)"));
+        let expected_date = Utc.with_ymd_and_hms(2001, 10, 22, 0, 0, 0).unwrap();
+        assert_eq!(metadata.date, Some(expected_date));
     }
 
     #[test]
