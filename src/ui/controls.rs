@@ -2,7 +2,10 @@ mod replaygain;
 
 use crate::{
     library::db::LibraryAccess,
-    playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
+    playback::{
+        events::RepeatState, interface::PlaybackInterface, queue::QueueItemUIData,
+        thread::PlaybackState,
+    },
     settings::SettingsGlobal,
     ui::{
         caching::hummingbird_cache,
@@ -138,6 +141,8 @@ pub struct InfoSection {
     can_navigate_to_artist: bool,
     image_element_key: u64,
     is_liked: Option<i64>,
+    queue_item_data: Option<Entity<Option<QueueItemUIData>>>,
+    queue_item_subscription: Option<Subscription>,
 }
 
 impl HasLikedState for InfoSection {
@@ -158,12 +163,67 @@ fn update_track_metadata(this: &mut InfoSection, metadata: &crate::media::metada
         .map(SharedString::from);
 }
 
+fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSection>) {
+    if let Some(subscription) = this.queue_item_subscription.take() {
+        subscription.detach();
+    }
+    this.queue_item_data = None;
+
+    let queue = cx.global::<Models>().queue.read(cx);
+    let position = queue.position;
+    let item = queue
+        .data
+        .read()
+        .expect("poisoned queue item data")
+        .get(position)
+        .cloned();
+
+    let Some(item) = item else { return };
+
+    if this
+        .current_track_path
+        .as_ref()
+        .is_none_or(|path| path != item.get_path())
+    {
+        return;
+    }
+
+    let data = item.get_data(cx);
+    this.queue_item_data = Some(data.clone());
+
+    let subscription = cx.observe(&data, |this: &mut InfoSection, data, cx| {
+        let data = data.read(cx).clone();
+        if let Some(data) = data {
+            if this.track_name.is_none() {
+                this.track_name = data.name;
+            }
+            if this.artist_name.is_none() {
+                this.artist_name = data.artist_name;
+            }
+            cx.notify();
+        }
+    });
+    this.queue_item_subscription = Some(subscription);
+
+    let data = data.read(cx).clone();
+    if let Some(data) = data {
+        if this.track_name.is_none() {
+            this.track_name = data.name;
+        }
+        if this.artist_name.is_none() {
+            this.artist_name = data.artist_name;
+        }
+        cx.notify();
+    }
+}
+
 impl InfoSection {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let metadata_model = cx.global::<Models>().metadata.clone();
             let playback_info = cx.global::<PlaybackInfo>().clone();
             let current_track_model = playback_info.current_track.clone();
+            let queue_model = cx.global::<Models>().queue.clone();
 
             cx.observe(&playback_info.playback_state, |_, _, cx| {
                 cx.notify();
@@ -176,11 +236,19 @@ impl InfoSection {
             })
             .detach();
 
+            // SongChanged is broadcast before QueuePositionChanged, so re-resolve once the queue
+            // position has caught up with a track switch
+            cx.observe(&queue_model, |this: &mut Self, _, cx| {
+                resolve_queue_item_metadata(this, cx);
+            })
+            .detach();
+
             cx.observe(
                 &current_track_model,
                 |this: &mut Self, current_track, cx| {
                     let current_track = current_track.read(cx).clone();
                     update_current_track_state(this, current_track.as_ref(), cx);
+                    resolve_queue_item_metadata(this, cx);
                     cx.notify();
                 },
             )
@@ -226,8 +294,11 @@ impl InfoSection {
                 can_navigate_to_artist,
                 image_element_key: 0,
                 is_liked,
+                queue_item_data: None,
+                queue_item_subscription: None,
             };
             update_track_metadata(&mut info_section, &initial_metadata);
+            resolve_queue_item_metadata(&mut info_section, cx);
 
             info_section
         })

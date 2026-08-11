@@ -5,9 +5,7 @@ use gpui::{App, Entity, Task};
 use tracing::{error, trace_span};
 
 use crate::{
-    media::{
-        lookup_table::try_open_media, metadata::Metadata, traits::MediaProviderFeatures,
-    },
+    media::{lookup_table::try_open_media, metadata::Metadata, traits::MediaProviderFeatures},
     playback::queue::{DataSource, QueueItemUIData},
 };
 
