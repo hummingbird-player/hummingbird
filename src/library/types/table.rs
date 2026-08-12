@@ -429,12 +429,12 @@ impl TableData<TrackColumn> for Track {
     }
 
     fn get_image_path(&self) -> Option<SharedString> {
-        self.album_id
-            .map(|album_id| format!("!db://album/{album_id}/thumb").into())
+        // every track has its own artwork association (shared with the album when identical)
+        Some(format!("!db://track/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        self.album_id.map(ManagedImageKey::Album)
+        Some(ManagedImageKey::Track(self.id))
     }
 
     fn has_images() -> bool {

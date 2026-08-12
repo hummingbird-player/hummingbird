@@ -228,6 +228,7 @@ impl Render for QueueItem {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = self.item.as_mut();
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
+        let track_id = data.as_ref().and_then(|item| item.get_db_id());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
         let theme = cx.global::<Theme>().clone();
         let show_add_to = self.show_add_to.clone();
@@ -246,7 +247,7 @@ impl Render for QueueItem {
                     && scroll_handle.should_draw_vertical_scrollbar()
             };
             let is_current = self.current == self.idx;
-            let image_key = album_id.map(ManagedImageKey::Album).or_else(|| {
+            let image_key = track_id.map(ManagedImageKey::Track).or_else(|| {
                 self.item
                     .as_ref()
                     .map(|i| ManagedImageKey::TrackFile(i.get_path().to_path_buf()))

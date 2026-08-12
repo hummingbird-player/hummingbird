@@ -1,15 +1,16 @@
 SELECT
-    id,
-    title,
-    title_sortable,
-    NULLIF(artist_display_override, '') AS artist_display_override,
-    release_date,
-    date_precision,
-    created_at,
-    thumb,
-    label,
-    catalog_number,
-    isrc,
-    vinyl_numbering
+    album.id,
+    album.title,
+    album.title_sortable,
+    NULLIF(album.artist_display_override, '') AS artist_display_override,
+    album.release_date,
+    album.date_precision,
+    album.created_at,
+    artwork.thumb,
+    album.label,
+    album.catalog_number,
+    album.isrc,
+    album.vinyl_numbering
 FROM album
-WHERE id = $1;
+LEFT JOIN artwork ON artwork.id = album.artwork_id
+WHERE album.id = $1;

@@ -5,16 +5,79 @@ use camino::{Utf8Path, Utf8PathBuf};
 use globwalk::GlobWalkerBuilder;
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
 use rustc_hash::FxHashMap;
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::media::{
     errors::OpenError, lookup_table::try_open_media, metadata::Metadata,
     traits::MediaProviderFeatures,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtSource {
+    Embedded,
+    /// Folder-level image next to the file, with rank (lower is better)
+    Folder(u8),
+}
+
+impl ArtSource {
+    /// The value stored in `scan_art.source`.
+    pub(crate) fn db_value(self) -> i64 {
+        match self {
+            ArtSource::Embedded => 0,
+            ArtSource::Folder(rank) => rank as i64,
+        }
+    }
+}
+
+/// Folder-art filename ranks, matching the `scan_art.source` values.
+const RANK_COVER: u8 = 1;
+const RANK_FOLDER: u8 = 2;
+const RANK_FRONT: u8 = 3;
+
+fn folder_art_rank(stem: &str) -> Option<u8> {
+    match stem.to_ascii_lowercase().as_str() {
+        "cover" => Some(RANK_COVER),
+        "folder" => Some(RANK_FOLDER),
+        "front" => Some(RANK_FRONT),
+        _ => None,
+    }
+}
+
+/// Art extracted from (or next to) a media file, with a content hash of the raw bytes.
+#[derive(Debug, Clone)]
+pub struct ScannedArt {
+    pub bytes: Arc<[u8]>,
+    pub hash: u64,
+    pub source: ArtSource,
+}
+
+impl ScannedArt {
+    fn embedded(bytes: Box<[u8]>) -> Self {
+        let hash = xxh3_64(&bytes);
+        ScannedArt {
+            bytes: Arc::from(bytes),
+            hash,
+            source: ArtSource::Embedded,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FileArt {
+    pub embedded: Option<ScannedArt>,
+    pub folder: Option<ScannedArt>,
+    /// True when the folder was checked for art (track 1/unknown, disc 1/unknown), even if none
+    /// was found.
+    pub representative: bool,
+}
+
 /// Information extracted from a media file during the metadata reading stage.
-/// Raw image bytes are passed through the pipeline; image processing (resize + thumbnail) only
-/// happens in `insert_album` when a new album is actually created.
-pub type FileInformation = (Metadata, u64, Option<Box<[u8]>>);
+/// Raw image bytes pass through the pipeline, and processing (resize + thumbnail) happens once
+/// per distinct image during scan-end artwork finalization.
+pub type FileInformation = (Metadata, u64, FileArt);
+
+/// Per-directory cache of the chosen folder art and its rank.
+pub type FolderArtCache = FxHashMap<Utf8PathBuf, Option<(Arc<[u8]>, u8)>>;
 
 /// Why a file failed to read during a scan. Drives the scan-record policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +110,7 @@ fn classify_open_error(e: &anyhow::Error) -> ScanReadError {
 }
 
 /// Read metadata, duration, and embedded image from a file using the global provider lookup table.
-/// Returns raw (unprocessed) image bytes.
+/// Returns raw (unprocessed) image bytes, hashed for the artwork consensus.
 fn scan_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
     let mut stream = try_open_media(
         path.as_std_path(),
@@ -76,39 +139,65 @@ fn scan_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
     let len = decoder.duration_ms().map_err(|_| ScanReadError::Corrupt)? / 1_000;
     decoder.close().map_err(|_| ScanReadError::Corrupt)?;
 
-    Ok((metadata, len, image))
+    let art = FileArt {
+        embedded: image.map(ScannedArt::embedded),
+        folder: None,
+        representative: false,
+    };
+    Ok((metadata, len, art))
 }
 
-/// Returns the first image (cover/front/folder.jpeg/png/jpg) in the track's containing folder.
-/// Results are cached per-directory in `art_cache` to avoid redundant glob walks when multiple
-/// tracks share the same folder.
-fn scan_path_for_album_art(
+#[cfg(test)]
+fn scan_path_for_album_art(path: &Utf8Path, art_cache: &mut FolderArtCache) -> Option<Arc<[u8]>> {
+    scan_path_for_album_art_ranked(path, art_cache).map(|(bytes, _)| bytes)
+}
+
+/// Returns the best-ranked folder art image (cover > folder > front) directly in `dir`, paired
+/// with its rank.
+pub(crate) fn find_folder_art(dir: &Utf8Path) -> Option<(Arc<[u8]>, u8)> {
+    let mut candidates: Vec<(u8, std::path::PathBuf)> =
+        GlobWalkerBuilder::from_patterns(dir, &["{folder,cover,front}.{jpg,jpeg,png}"])
+            .case_insensitive(true)
+            .max_depth(1)
+            .build()
+            .expect("Failed to build album art glob")
+            .filter_map(|e| e.ok())
+            .filter_map(|entry| {
+                let rank = entry
+                    .path()
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .and_then(folder_art_rank)?;
+                Some((rank, entry.path().to_path_buf()))
+            })
+            .collect();
+
+    candidates.sort();
+
+    for (rank, candidate) in candidates {
+        if let Ok(bytes) = std::fs::read(&candidate) {
+            return Some((Arc::from(bytes), rank));
+        }
+    }
+
+    None
+}
+
+/// Best-ranked folder art (cover > folder > front) in the track's containing folder, with its
+/// rank. Results are cached per-directory in `art_cache`.
+fn scan_path_for_album_art_ranked(
     path: &Utf8Path,
-    art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
-) -> Option<Arc<[u8]>> {
+    art_cache: &mut FolderArtCache,
+) -> Option<(Arc<[u8]>, u8)> {
     let parent = path.parent()?.to_path_buf();
 
     if let Some(cached) = art_cache.get(&parent) {
         return cached.clone();
     }
 
-    let glob = GlobWalkerBuilder::from_patterns(&parent, &["{folder,cover,front}.{jpg,jpeg,png}"])
-        .case_insensitive(true)
-        .max_depth(1)
-        .build()
-        .expect("Failed to build album art glob")
-        .filter_map(|e| e.ok());
-
-    for entry in glob {
-        if let Ok(bytes) = std::fs::read(entry.path()) {
-            let arc: Arc<[u8]> = Arc::from(bytes);
-            art_cache.insert(parent, Some(Arc::clone(&arc)));
-            return Some(arc);
-        }
-    }
-
-    art_cache.insert(parent, None);
-    None
+    let result = find_folder_art(&parent);
+    art_cache.insert(parent, result.clone());
+    result
 }
 
 fn resolve_lyrics(path: &Utf8Path, embedded_lyrics: Option<String>) -> Option<String> {
@@ -169,29 +258,31 @@ pub fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     Ok((resized, thumb_buf))
 }
 
-/// Read metadata from a file, resolve album art (embedded or from directory).
-///
-/// Each metadata reader thread maintains its own `art_cache` to avoid redundant directory scans
-/// for files in the same folder.
+/// Read metadata and art (embedded or folder-level) from a file. Each reader thread keeps its
+/// own `art_cache` to avoid repeated directory scans. Representative files check folder art
+/// even when they carry embedded art - the consensus ranks folder art above embedded.
 pub fn read_metadata_for_path(
     path: &Utf8Path,
-    art_cache: &mut FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>>,
+    art_cache: &mut FolderArtCache,
 ) -> Result<FileInformation, ScanReadError> {
-    let mut metadata = scan_path(path)?;
+    let (mut metadata, len, mut art) = scan_path(path)?;
 
-    // Only scan for directory-level album art when the DB writer will use it
-    // (track 1 or unknown, disc 1 or unknown; see database.rs insert_track guard).
-    if metadata.2.is_none()
-        && metadata.0.track_current.is_none_or(|t| t == 1 || t == 0)
-        && metadata.0.disc_current.is_none_or(|d| d == 1 || d == 0)
-        && let Some(art) = scan_path_for_album_art(path, art_cache)
-    {
-        metadata.2 = Some(art.to_vec().into_boxed_slice());
+    let is_representative = metadata.track_current.is_none_or(|t| t == 1 || t == 0)
+        && metadata.disc_current.is_none_or(|d| d == 1 || d == 0);
+    if is_representative {
+        art.representative = true;
+        if let Some((bytes, rank)) = scan_path_for_album_art_ranked(path, art_cache) {
+            art.folder = Some(ScannedArt {
+                hash: xxh3_64(&bytes),
+                bytes,
+                source: ArtSource::Folder(rank),
+            });
+        }
     }
 
-    metadata.0.lyrics = resolve_lyrics(path, metadata.0.lyrics.take());
+    metadata.lyrics = resolve_lyrics(path, metadata.lyrics.take());
 
-    Ok(metadata)
+    Ok((metadata, len, art))
 }
 
 #[cfg(test)]
@@ -255,6 +346,19 @@ mod tests {
         let mut cache = FxHashMap::default();
         let result = scan_path_for_album_art(&track, &mut cache);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn scan_path_for_album_art_prefers_cover_over_folder() {
+        let dir = TestDir::new("decode-art-rank-test");
+        fs::write(dir.join("folder.jpg"), b"folderbytes").unwrap();
+        fs::write(dir.join("cover.png"), b"coverbytes").unwrap();
+        let track = dir.utf8_join("track.flac");
+        fs::write(&track, b"").unwrap();
+
+        let mut cache = FxHashMap::default();
+        let result = scan_path_for_album_art(&track, &mut cache);
+        assert_eq!(result.as_deref(), Some(b"coverbytes".as_slice()));
     }
 
     #[test]

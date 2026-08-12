@@ -36,6 +36,7 @@ fn decode_to_render_image(data: &[u8]) -> anyhow::Result<Arc<RenderImage>> {
 #[derive(Clone)]
 pub enum ManagedImageKey {
     Album(i64),
+    Track(i64),
     TrackFile(PathBuf),
 }
 
@@ -74,15 +75,28 @@ impl ManagedImageKey {
                     })
                     .await?
             }
-            ManagedImageKey::Album(id) => {
-                let query = if thumb {
-                    include_str!("../../../queries/assets/find_album_thumb.sql")
-                } else {
-                    include_str!("../../../queries/assets/find_album_art.sql")
+            ManagedImageKey::Album(id) | ManagedImageKey::Track(id) => {
+                let query = match (self, thumb) {
+                    (ManagedImageKey::Album(_), true) => {
+                        include_str!("../../../queries/assets/find_album_thumb.sql")
+                    }
+                    (ManagedImageKey::Album(_), false) => {
+                        include_str!("../../../queries/assets/find_album_art.sql")
+                    }
+                    (ManagedImageKey::Track(_), true) => {
+                        include_str!("../../../queries/assets/find_track_thumb.sql")
+                    }
+                    (ManagedImageKey::Track(_), false) => {
+                        include_str!("../../../queries/assets/find_track_art.sql")
+                    }
+                    (ManagedImageKey::TrackFile(_), _) => unreachable!(),
                 };
-                let Some((image_encoded,)): Option<(Vec<u8>,)> =
+                let Some((image_encoded,)): Option<(Option<Vec<u8>>,)> =
                     sqlx::query_as(query).bind(id).fetch_optional(&pool).await?
                 else {
+                    return Ok(None);
+                };
+                let Some(image_encoded) = image_encoded else {
                     return Ok(None);
                 };
 

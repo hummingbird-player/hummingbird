@@ -317,9 +317,14 @@ impl Render for InfoSection {
         });
 
         let image_key = self
-            .current_track_path
+            .current_library_track
             .as_ref()
-            .map(|p| ManagedImageKey::TrackFile(p.clone()));
+            .map(|track| ManagedImageKey::Track(track.id))
+            .or_else(|| {
+                self.current_track_path
+                    .as_ref()
+                    .map(|p| ManagedImageKey::TrackFile(p.clone()))
+            });
         let image_element_key = self.image_element_key;
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);

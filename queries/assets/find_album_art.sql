@@ -1,1 +1,4 @@
-SELECT image FROM album WHERE id = $1;
+SELECT artwork.image
+FROM album
+LEFT JOIN artwork ON artwork.id = album.artwork_id
+WHERE album.id = $1;

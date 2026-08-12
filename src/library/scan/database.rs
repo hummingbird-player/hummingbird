@@ -7,7 +7,8 @@ use crate::{
     library::{
         scan::{
             artist_match::{ArtistMatcher, token_key},
-            decode::process_album_art,
+            artwork::get_or_create_artwork,
+            decode::{ArtSource, FileArt},
             fs_case::paths_equal,
         },
         types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
@@ -302,7 +303,6 @@ async fn insert_album(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
     display_override: Option<&str>,
-    image: &Option<Box<[u8]>>,
     is_force: bool,
     force_encountered_albums: &mut FxHashSet<i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
@@ -322,10 +322,7 @@ async fn insert_album(
         display_override.map(str::to_string),
     );
 
-    if !is_force
-        && image.is_none()
-        && let Some(&cached_id) = album_cache.get(&cache_key)
-    {
+    if !is_force && let Some(&cached_id) = album_cache.get(&cache_key) {
         return Ok(Some(cached_id));
     }
 
@@ -346,25 +343,11 @@ async fn insert_album(
     };
 
     match (result, should_force) {
-        (Ok(v), false) if image.is_none() => {
+        (Ok(v), false) => {
             album_cache.insert(cache_key, v.0);
             Ok(Some(v.0))
         }
         (Err(sqlx::Error::RowNotFound), _) | (Ok(_), _) => {
-            let (resized_image, thumb) = match image {
-                Some(image) => {
-                    match process_album_art(image) {
-                        Ok((resized, thumb)) => (Some(resized), Some(thumb)),
-                        Err(e) => {
-                            // if there is a decode error, just ignore it and pretend there is no image
-                            warn!("Failed to process album art: {:?}", e);
-                            (None, None)
-                        }
-                    }
-                }
-                None => (None, None),
-            };
-
             let (release_date, date_precision) = bind_release_date(metadata);
 
             let result: (i64,) =
@@ -378,8 +361,6 @@ async fn insert_album(
                             .as_deref()
                             .filter(|s| !s.trim().is_empty()),
                     )
-                    .bind(resized_image.as_deref())
-                    .bind(thumb.as_deref())
                     .bind(release_date)
                     .bind(date_precision)
                     .bind(&metadata.label)
@@ -496,6 +477,7 @@ async fn insert_track(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
     album_id: Option<i64>,
+    art_hash: Option<i64>,
     path: &Utf8Path,
     length: u64,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
@@ -570,6 +552,7 @@ async fn insert_track(
             .bind(&metadata.artists)
             .bind(&metadata.artist_sort)
             .bind(&metadata.album_artist_keys)
+            .bind(art_hash)
             .fetch_one(&mut *conn)
             .await;
 
@@ -667,18 +650,44 @@ pub async fn relocate_track(
     Ok(updated_playlists)
 }
 
+/// (album_id, hash, source) triples staged in `scan_art` during this scan.
+pub type StagedArtSet = FxHashSet<(i64, u64, i64)>;
+
+/// Artwork row ids by content hash, cached per scan. `None` marks processing failures.
+pub type ArtIdCache = FxHashMap<u64, Option<i64>>;
+
+/// Stage one art candidate for the scan-end consensus. Folder provenance beats embedded for
+/// identical bytes, so source 0 sticks only when no sighting was folder art.
+pub(crate) async fn stage_scan_art(
+    conn: &mut SqliteConnection,
+    album_id: i64,
+    hash: i64,
+    source: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(include_str!("../../../queries/scan/stage_scan_art.sql"))
+        .bind(album_id)
+        .bind(hash)
+        .bind(source)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn update_metadata(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
     path: &Utf8Path,
     length: u64,
-    image: &Option<Box<[u8]>>,
+    art: &FileArt,
     is_force: bool,
     force_encountered_albums: &mut FxHashSet<i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
     pending_albums: &mut FxHashSet<i64>,
+    staged_art: &mut StagedArtSet,
+    art_ids: &mut ArtIdCache,
+    examined_albums: &mut FxHashSet<i64>,
 ) -> anyhow::Result<TrackWriteOutcome> {
     debug!(
         "Adding/updating record for {:?} - {:?}",
@@ -692,23 +701,10 @@ pub async fn update_metadata(
     let artist = metadata.artist.as_deref().filter(|s| !s.trim().is_empty());
     let display_override = album_artist.or(artist);
 
-    let album_image = if (metadata.track_current == Some(1)
-        || metadata.track_current == Some(0)
-        || metadata.track_current.is_none())
-        && (metadata.disc_current == Some(1)
-            || metadata.disc_current.is_none()
-            || metadata.disc_current == Some(0))
-    {
-        image
-    } else {
-        &None
-    };
-
     let album_id = insert_album(
         conn,
         metadata,
         display_override,
-        album_image,
         is_force,
         force_encountered_albums,
         album_cache,
@@ -722,13 +718,77 @@ pub async fn update_metadata(
             .fetch_optional(&mut *conn)
             .await?;
 
-    let outcome = insert_track(conn, metadata, album_id, path, length, album_path_cache).await?;
+    let art_hash = art.embedded.as_ref().map(|embedded| embedded.hash as i64);
+    let outcome = insert_track(
+        conn,
+        metadata,
+        album_id,
+        art_hash,
+        path,
+        length,
+        album_path_cache,
+    )
+    .await?;
 
     if let TrackWriteOutcome::Written(track_id) = outcome {
         if let Some(lyrics) = &metadata.lyrics {
             upsert_lyrics(conn, track_id, lyrics).await?;
         } else {
             delete_lyrics(conn, track_id).await?;
+        }
+
+        // process new images immediately - the consensus only needs the staged triples
+        if let Some(album_id) = album_id {
+            // a representative read proves the folder was checked, even when no art was found
+            if art.representative {
+                examined_albums.insert(album_id);
+            }
+
+            let mut embedded_id: Option<i64> = None;
+            let mut folder_id: Option<(i64, i64)> = None;
+            for candidate in [&art.embedded, &art.folder].into_iter().flatten() {
+                let artwork_id = match art_ids.get(&candidate.hash) {
+                    Some(&cached) => cached,
+                    None => {
+                        let id = get_or_create_artwork(
+                            conn,
+                            candidate.hash as i64,
+                            Some(candidate.bytes.as_ref()),
+                        )
+                        .await;
+                        art_ids.insert(candidate.hash, id);
+                        id
+                    }
+                };
+                let source = candidate.source.db_value();
+                if staged_art.insert((album_id, candidate.hash, source)) {
+                    stage_scan_art(conn, album_id, candidate.hash as i64, source).await?;
+                }
+                match candidate.source {
+                    ArtSource::Embedded => embedded_id = artwork_id,
+                    ArtSource::Folder(_) => folder_id = artwork_id.map(|id| (id, source)),
+                }
+            }
+
+            // tracks point at their own art right away
+            if let Some(artwork_id) = embedded_id {
+                sqlx::query(include_str!("../../../queries/scan/update_track_art.sql"))
+                    .bind(artwork_id)
+                    .bind(track_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+
+            // provisional pick for albums with no art yet (folder art when present, else
+            // embedded)
+            if let Some((artwork_id, source)) = folder_id.or(embedded_id.map(|id| (id, 0))) {
+                sqlx::query(include_str!("../../../queries/scan/set_album_art.sql"))
+                    .bind(artwork_id)
+                    .bind(source)
+                    .bind(album_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
         }
 
         // album artist links are rebuilt once per album per committed batch
@@ -1307,6 +1367,9 @@ mod tests {
         albums: FxHashMap<AlbumCacheKey, i64>,
         paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
         pending_albums: FxHashSet<i64>,
+        staged_art: StagedArtSet,
+        art_ids: ArtIdCache,
+        examined_albums: FxHashSet<i64>,
     }
 
     /// Call `update_metadata` with shared caches, as the scan writer does within one scan.
@@ -1321,12 +1384,15 @@ mod tests {
             meta,
             path,
             100,
-            &None,
+            &FileArt::default(),
             false,
             &mut caches.force_encountered,
             &mut caches.albums,
             &mut caches.paths,
             &mut caches.pending_albums,
+            &mut caches.staged_art,
+            &mut caches.art_ids,
+            &mut caches.examined_albums,
         )
         .await
         .unwrap()
@@ -1340,12 +1406,15 @@ mod tests {
             meta,
             path,
             100,
-            &None,
+            &FileArt::default(),
             true,
             &mut FxHashSet::default(),
             &mut FxHashMap::default(),
             &mut FxHashMap::default(),
             &mut pending_albums,
+            &mut FxHashSet::default(),
+            &mut FxHashMap::default(),
+            &mut FxHashSet::default(),
         )
         .await
         .unwrap();

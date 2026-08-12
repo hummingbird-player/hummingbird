@@ -205,8 +205,6 @@ pub struct Album {
     pub image: Option<Box<[u8]>>,
     #[sqlx(default)]
     pub thumb: Option<Thumbnail>,
-    #[sqlx(default)]
-    pub image_mime: Option<DBString>,
     #[sqlx(skip)]
     pub tags: Option<Vec<String>>,
     #[sqlx(default)]

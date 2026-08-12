@@ -17,6 +17,7 @@ use crate::{
         scan::{
             artist_match::ArtistMatcher,
             database::{flush_album_artists, update_metadata},
+            decode::FileArt,
         },
     },
     media::{
@@ -168,12 +169,15 @@ pub(crate) async fn insert_metadata(
         metadata,
         path,
         100,
-        &None,
+        &FileArt::default(),
         false,
         &mut FxHashSet::default(),
         &mut FxHashMap::default(),
         &mut FxHashMap::default(),
         &mut pending_albums,
+        &mut FxHashSet::default(),
+        &mut FxHashMap::default(),
+        &mut FxHashSet::default(),
     )
     .await?;
     flush_album_artists(conn, &mut matcher, &mut pending_albums).await?;

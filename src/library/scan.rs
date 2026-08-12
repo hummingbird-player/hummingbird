@@ -1,6 +1,7 @@
 pub(crate) mod artist_match;
+pub(crate) mod artwork;
 pub(crate) mod database;
-mod decode;
+pub(crate) mod decode;
 mod discover;
 mod disk;
 mod fs_case;
@@ -36,11 +37,12 @@ use tracing::{error, info, warn};
 use crate::{
     library::scan::{
         artist_match::ArtistMatcher,
+        artwork::{clear_scan_art, examine_folder_art, finalize_scan_art},
         database::{
-            AlbumCacheKey, AlbumPathCacheKey, TrackWriteOutcome, flush_album_artists,
-            relocate_track, sweep_orphan_artists, update_metadata,
+            AlbumCacheKey, AlbumPathCacheKey, ArtIdCache, StagedArtSet, TrackWriteOutcome,
+            flush_album_artists, relocate_track, sweep_orphan_artists, update_metadata,
         },
-        decode::{FileInformation, ScanReadError, read_metadata_for_path},
+        decode::{FileInformation, FolderArtCache, ScanReadError, read_metadata_for_path},
         discover::{
             Relocation, cleanup_stale_tracks, discover, reconcile_rescan_paths, rescan_discover,
         },
@@ -285,7 +287,7 @@ fn run_metadata_reader(
     decode_fail_tx: Sender<(Utf8PathBuf, SystemTime, ScanReadError)>,
     cancel_flag: Arc<AtomicBool>,
 ) {
-    let mut art_cache: FxHashMap<Utf8PathBuf, Option<Arc<[u8]>>> = FxHashMap::default();
+    let mut art_cache: FolderArtCache = FxHashMap::default();
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
             break;
@@ -539,6 +541,59 @@ async fn retry_album_artists(
     }
 }
 
+/// Scan-end artwork consensus. Examines folder art for the scan's directories first, so
+/// folder-art changes apply even when no audio file in the folder was re-read.
+#[allow(clippy::too_many_arguments)]
+async fn finalize_artwork(
+    pool: &SqlitePool,
+    mode: &ScanMode,
+    scan_record: &Arc<Mutex<ScanRecord>>,
+    album_cache: &FxHashMap<AlbumCacheKey, i64>,
+    staged_art: &mut StagedArtSet,
+    art_ids: &mut ArtIdCache,
+    examined_albums: &mut FxHashSet<i64>,
+    tracks_deleted: bool,
+) {
+    let art_dirs: FxHashSet<Utf8PathBuf> = match mode {
+        ScanMode::Full { .. } => scan_record
+            .lock()
+            .await
+            .records
+            .keys()
+            .filter_map(|path| path.parent().map(Utf8Path::to_path_buf))
+            .collect(),
+        ScanMode::Targeted { paths, .. } => paths
+            .iter()
+            .map(|path| path.canonicalize_utf8().unwrap_or_else(|_| path.clone()))
+            .map(|path| {
+                if path.is_dir() {
+                    path
+                } else {
+                    path.parent().map(Utf8Path::to_path_buf).unwrap_or(path)
+                }
+            })
+            .collect(),
+    };
+
+    if let Err(e) = examine_folder_art(pool, &art_dirs, examined_albums, staged_art, art_ids).await
+    {
+        error!("Failed to examine folder art: {:?}", e);
+    }
+
+    let touched: FxHashSet<i64> = album_cache.values().copied().collect();
+    if let Err(e) = finalize_scan_art(
+        pool,
+        mode.force_albums(),
+        &touched,
+        examined_albums,
+        tracks_deleted,
+    )
+    .await
+    {
+        error!("Failed to finalize scan artwork: {:?}", e);
+    }
+}
+
 async fn run_scanner(
     pool: SqlitePool,
     mut scan_settings: ScanSettings,
@@ -779,6 +834,10 @@ async fn run_scanner(
 
         let time_start = std::time::Instant::now();
 
+        // stale-track cleanup may have deleted rows - finalization must sweep orphans even if
+        // the writer touched no albums
+        let mut tracks_deleted = false;
+
         let full_available_paths: Vec<Utf8PathBuf> = if let ScanMode::Full { is_force } = &mode {
             let (available_paths, missing_paths): (Vec<Utf8PathBuf>, Vec<Utf8PathBuf>) =
                 scan_settings
@@ -824,6 +883,7 @@ async fn run_scanner(
             let cleanup_start = std::time::Instant::now();
             let _ = event_tx.send(ScanEvent::Cleaning);
 
+            let records_before_cleanup = scan_record.records.len();
             let updated_playlists = cleanup_stale_tracks(
                 &pool,
                 &mut scan_record,
@@ -831,6 +891,7 @@ async fn run_scanner(
                 excluded_missing_roots,
             )
             .await;
+            tracks_deleted = scan_record.records.len() < records_before_cleanup;
             if !updated_playlists.is_empty() {
                 let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
                     updated_playlists.into_iter().collect(),
@@ -857,8 +918,10 @@ async fn run_scanner(
                 .cloned()
                 .collect();
 
+            let records_before_cleanup = scan_record.records.len();
             let updated_playlists =
                 reconcile_rescan_paths(&pool, &mut scan_record, paths, &missing_roots).await;
+            tracks_deleted = scan_record.records.len() < records_before_cleanup;
             if !updated_playlists.is_empty() {
                 let _ = event_tx.send(ScanEvent::PlaylistsUpdated(
                     updated_playlists.into_iter().collect(),
@@ -1062,6 +1125,14 @@ async fn run_scanner(
         let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
         let mut album_path_cache: FxHashMap<AlbumPathCacheKey, Utf8PathBuf> = FxHashMap::default();
         let mut pending_albums: FxHashSet<i64> = FxHashSet::default();
+        let mut staged_art: StagedArtSet = FxHashSet::default();
+        let mut art_ids: ArtIdCache = FxHashMap::default();
+        // albums whose folder was checked for folder art this scan (representative read or
+        // scan-end examination) - the consensus may dethrone their folder incumbents
+        let mut examined_albums: FxHashSet<i64> = FxHashSet::default();
+        // clear candidates staged by a previous (possibly crashed) scan
+        clear_scan_art(&pool).await;
+
         let mut tx = Some(
             pool.begin()
                 .await
@@ -1203,7 +1274,7 @@ async fn run_scanner(
                 }
 
                 item = meta_rx.recv() => {
-                    let Some((path, timestamp, (metadata, length, image))) = item else {
+                    let Some((path, timestamp, (metadata, length, art))) = item else {
                         if !pending_albums.is_empty()
                             || items_in_tx > 0
                             || !pending_relocations.is_empty()
@@ -1228,6 +1299,14 @@ async fn run_scanner(
                                 pending_commit.clear();
                                 pending_relocations.clear();
                                 pending_albums.clear();
+                                // the caches are poisoned with ids from the rolled-back batch -
+                                // finalize_artwork must not act on them
+                                artist_matcher.clear();
+                                album_cache.clear();
+                                album_path_cache.clear();
+                                force_encountered_albums.clear();
+                                staged_art.clear();
+                                art_ids.clear();
                             } else {
                                 let mut sr = scan_record_shared.lock().await;
                                 for (p, ts) in pending_commit.drain(..) {
@@ -1250,12 +1329,15 @@ async fn run_scanner(
                         &metadata,
                         &path,
                         length,
-                        &image,
+                        &art,
                         mode.force_albums(),
                         &mut force_encountered_albums,
                         &mut album_cache,
                         &mut album_path_cache,
                         &mut pending_albums,
+                        &mut staged_art,
+                        &mut art_ids,
+                        &mut examined_albums,
                     )
                     .await;
 
@@ -1308,6 +1390,10 @@ async fn run_scanner(
                             // rolled-back force refreshes must be re-attempted, or affected
                             // albums silently keep their pre-force metadata
                             force_encountered_albums.clear();
+                            // staged artwork rows were rolled back too, forget their ids so the
+                            // scan-end consensus re-creates them instead of referencing them
+                            staged_art.clear();
+                            art_ids.clear();
                         } else {
                             let mut ckpt = scan_checkpoint.lock().await;
                             for (p, ts) in &pending_commit {
@@ -1468,6 +1554,20 @@ async fn run_scanner(
                 duration.as_secs_f32()
             );
 
+            // finalize the partial scan's staged art, the track-table vote is correct for the
+            // committed state, and staged rows are cleared either way
+            finalize_artwork(
+                &pool,
+                &mode,
+                &scan_record_shared,
+                &album_cache,
+                &mut staged_art,
+                &mut art_ids,
+                &mut examined_albums,
+                tracks_deleted,
+            )
+            .await;
+
             sweep_orphan_artists(&pool).await;
 
             if let Some(handle) = checkpoint_handle.take() {
@@ -1520,6 +1620,18 @@ async fn run_scanner(
                 }
             }
         }
+
+        finalize_artwork(
+            &pool,
+            &mode,
+            &scan_record_shared,
+            &album_cache,
+            &mut staged_art,
+            &mut art_ids,
+            &mut examined_albums,
+            tracks_deleted,
+        )
+        .await;
 
         // artist rows recomputed away during the writer loop are only swept now - deleting them
         // mid-scan would invalidate the artist matcher's cached ids
