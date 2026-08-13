@@ -36,7 +36,7 @@ discord-rich-presence = "1"
 file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
-gpui = { package = "gpui-unofficial", path = "crates/gpui-unofficial-shim" }
+gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim" }
 gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 indexmap = { version = "2", features = ["serde"] }
@@ -87,7 +87,7 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = tr
 notify-debouncer-full = "0.7.0"
 
 [patch.crates-io]
-gpui-unofficial = { path = "crates/gpui-unofficial-shim" }
+gpui-unofficial = { git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim" }
 
 [build-dependencies]
 anyhow = "1"

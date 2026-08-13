@@ -3021,6 +3021,7 @@ dependencies = [
 [[package]]
 name = "gpui-unofficial"
 version = "0.231.2"
+source = "git+https://git.mailliw.org/hummingbird/gpui-unofficial-shim#74c47fc429f52fc3bf5277ad05e6dd2a58584ff8"
 dependencies = [
  "gpui",
 ]
