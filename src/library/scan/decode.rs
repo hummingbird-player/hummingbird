@@ -43,6 +43,29 @@ fn folder_art_rank(stem: &str) -> Option<u8> {
     }
 }
 
+/// Checks if the file is hidden on the system. The album art finder uses this to check if the
+/// artwork it's considering is hidden, because Windows *used* to generate Folder.jpg files
+/// automatically and *stopped doing this*, so now most long-lived Windows installs have a bunch
+/// of user-invisible files that need to be ignored because they're out of date.
+fn is_hidden_file(path: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+
+        const HIDDEN_OR_SYSTEM: u32 = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+        std::fs::metadata(path)
+            .map(|m| m.file_attributes() & HIDDEN_OR_SYSTEM != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        // stop the variable from being unused
+        let _ = path;
+        false
+    }
+}
+
 /// Art extracted from (or next to) a media file, with a content hash of the raw bytes.
 #[derive(Debug, Clone)]
 pub struct ScannedArt {
@@ -162,6 +185,7 @@ pub(crate) fn find_folder_art(dir: &Utf8Path) -> Option<(Arc<[u8]>, u8)> {
             .build()
             .expect("Failed to build album art glob")
             .filter_map(|e| e.ok())
+            .filter(|entry| !is_hidden_file(entry.path()))
             .filter_map(|entry| {
                 let rank = entry
                     .path()
