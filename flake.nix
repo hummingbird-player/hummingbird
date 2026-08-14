@@ -77,6 +77,13 @@
         apps = builtins.mapAttrs (_: pkg: {program = pkg + /bin/hummingbird;}) self'.packages;
         packages.default = craneLib.buildPackage (mkArgs (prev: {
           CARGO_PROFILE = "release-distro";
+          postPatch = ''
+            mkdir -p "$TMPDIR/nix-vendor"
+            cp -Lr "$cargoVendorDir" -T "$TMPDIR/nix-vendor"
+            sed -i "s|$cargoVendorDir|$TMPDIR/nix-vendor/|g" "$TMPDIR/nix-vendor/config.toml"
+            chmod -R +w "$TMPDIR/nix-vendor"
+            cargoVendorDir="$TMPDIR/nix-vendor"
+          '';
           nativeBuildInputs =
             prev.nativeBuildInputs
             ++ [
