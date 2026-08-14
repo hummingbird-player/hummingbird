@@ -158,7 +158,6 @@ fn create_stream_internal<T: CpalSample>(
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            data.iter_mut().for_each(|v| *v = T::muted());
             let read = read_available(&mut cons, data);
             if read < data.len() {
                 underruns.fetch_add(1, Ordering::Relaxed);
@@ -188,7 +187,8 @@ impl CpalDevice {
         let ring_buffer_frames = frames_for_duration(config.sample_rate, RING_BUFFER_TARGET);
         let buffer_size = ring_buffer_frames as usize * channels as usize;
         debug!(
-            "CPAL buffer size {buffer_size}, ring buffer {ring_buffer_frames} frames ({buffer_size} samples)",
+            "CPAL buffer size {buffer_size}, \
+            ring buffer {ring_buffer_frames} frames ({buffer_size} samples)",
         );
         info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));

@@ -61,6 +61,7 @@
                   plugins = [pkgs.alsa-plugins pkgs.pipewire];
                 })
                 pkgs.pipewire
+                pkgs.dbus
               ])
               (lib.optionals isDarwin [
                 pkgs.apple-sdk_15

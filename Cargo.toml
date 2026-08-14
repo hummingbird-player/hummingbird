@@ -28,7 +28,7 @@ chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 cntp_i18n = { version = "0.3", features = ["gpui"] }
 console-subscriber = { version = "0.5", optional = true }
-cpal = { git = "https://github.com/RustAudio/cpal", features = ["pipewire"] }
+cpal = { git = "https://github.com/RustAudio/cpal", features = ["pipewire", "realtime-dbus"] }
 dateparser = "0.3"
 derive_more = { version = "2", features = ["debug"] }
 directories = "6"
