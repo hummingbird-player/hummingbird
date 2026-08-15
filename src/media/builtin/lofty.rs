@@ -19,10 +19,18 @@ use crate::media::{
 };
 
 fn item_value_to_string(value: &ItemValue) -> Option<String> {
-    match value {
+    let value = match value {
         ItemValue::Text(s) | ItemValue::Locator(s) => Some(s.clone()),
         ItemValue::Binary(v) => String::from_utf8(v.clone()).ok(),
-    }
+    };
+
+    value.and_then(|v| {
+        if v.trim().is_empty() {
+            None
+        } else {
+            Some(v.trim().to_string())
+        }
+    })
 }
 
 fn item_value_to_bool(value: &ItemValue) -> Option<bool> {
@@ -980,5 +988,12 @@ mod tests {
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.album_artist, None);
         assert_eq!(metadata.album_artist_keys, None);
+    }
+
+    #[test]
+    fn blank_value_does_not_copy_through() {
+        let tag = tag_with_items(TagType::Id3v2, ItemKey::Label, &["   "]);
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(metadata.label, None);
     }
 }
