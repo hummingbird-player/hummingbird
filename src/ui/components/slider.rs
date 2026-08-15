@@ -5,6 +5,7 @@ use std::{
 };
 
 use gpui::*;
+use palette::IntoColor;
 
 use crate::ui::theme::Theme;
 
@@ -145,7 +146,10 @@ impl Element for Slider {
         window.paint_quad(quad(
             inner_bounds,
             corners.to_pixels(window.rem_size()),
-            self.style.text.color.unwrap_or(default_foreground.into()),
+            self.style
+                .text
+                .color
+                .unwrap_or(default_foreground.into_color()),
             borders.to_pixels(window.rem_size()),
             self.style.border_color.unwrap_or_default(),
             BorderStyle::Solid,

@@ -171,7 +171,7 @@ impl ReleaseView {
     ) -> impl IntoElement {
         div()
             .pt(px(52.0))
-            .flex_shrink()
+            .flex_shrink(1.0)
             .flex()
             .overflow_x_hidden()
             .px(px(18.0))
@@ -208,7 +208,7 @@ impl ReleaseView {
                 div()
                     .ml(px(18.0))
                     .mt_auto()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .flex()
                     .flex_col()
                     .w_full()
@@ -592,7 +592,7 @@ impl Render for ReleaseView {
                     .overflow_y_scroll()
                     .track_scroll(&scroll_handle)
                     .w_full()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .overflow_x_hidden()
                     .child(self.render_header(
                         &theme,

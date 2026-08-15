@@ -170,7 +170,7 @@ impl RenderOnce for SidebarItem {
             .when(!self.collapsed, |this| {
                 this.child(
                     self.children_div
-                        .flex_shrink()
+                        .flex_shrink(1.0)
                         .flex_col()
                         .flex()
                         .text_ellipsis()

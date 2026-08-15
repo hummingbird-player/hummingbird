@@ -463,12 +463,12 @@ impl Render for EqualizerView {
             .key_context("EqualizerView")
             .on_action(cx.listener(Self::dismiss))
             .on_key_down(cx.listener(Self::nudge))
-            .flex_grow()
+            .flex_grow(1.0)
             .min_h(px(0.0))
             .flex()
             .flex_col()
             .relative()
-            .child(graph.flex_grow().min_h(px(160.0)))
+            .child(graph.flex_grow(1.0).min_h(px(160.0)))
             .when(self.clip_latched, |this| {
                 let clip_bg = cx.global::<Theme>().status_error;
                 this.child(

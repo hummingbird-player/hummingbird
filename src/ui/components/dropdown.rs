@@ -90,8 +90,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .id(self.id)
             .child(
                 div()
-                    .flex_grow()
-                    .flex_shrink()
+                    .flex_grow(1.0)
+                    .flex_shrink(1.0)
                     .text_sm()
                     .line_height(px(14.0))
                     .text_color(theme.text)
@@ -271,7 +271,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                         )
                         .child(
                             div()
-                                .flex_grow()
+                                .flex_grow(1.0)
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .text_color(theme.text)

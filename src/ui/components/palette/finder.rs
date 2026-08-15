@@ -914,7 +914,7 @@ where
             })
             .child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .font_weight(FontWeight::BOLD)
                     .text_sm()
                     .overflow_hidden()
@@ -926,7 +926,7 @@ where
                     div()
                         .ml_auto()
                         .pl(px(8.0))
-                        .flex_shrink()
+                        .flex_shrink(1.0)
                         .overflow_hidden()
                         .text_ellipsis()
                         .text_sm()

@@ -9,11 +9,76 @@ use std::{
 use crate::settings::SettingsGlobal;
 use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
 use notify::{Event, RecursiveMode, Watcher};
-use serde::Deserialize;
+use serde::{
+    Deserialize, Deserializer,
+    de::{Error as SerdeError, IgnoredAny, MapAccess, Visitor},
+};
 use tracing::{error, info, warn};
 
-#[derive(Deserialize, Clone)]
-#[serde(default)]
+/// A color parsed from the CSS-style hex strings used in theme files.
+struct ColorHex(Rgba);
+
+impl<'de> Deserialize<'de> for ColorHex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ColorHexVisitor;
+
+        impl<'de> Visitor<'de> for ColorHexVisitor {
+            type Value = ColorHex;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a string in the format #rgb, #rgba, #rrggbb, or #rrggbbaa")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: SerdeError,
+            {
+                parse_hex_color(value).map(ColorHex).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(ColorHexVisitor)
+    }
+}
+
+fn parse_hex_color(value: &str) -> Result<Rgba, String> {
+    const EXPECTED: &str = "expected #rgb, #rgba, #rrggbb, or #rrggbbaa";
+
+    let Some(hex) = value.trim().strip_prefix('#') else {
+        return Err(format!("invalid hex color '{value}': {EXPECTED}"));
+    };
+
+    fn component(hex: &str, range: std::ops::Range<usize>, duplicate: bool) -> Result<f32, String> {
+        let digits = hex
+            .get(range)
+            .ok_or_else(|| format!("invalid hex color '{hex}'"))?;
+        let v = u8::from_str_radix(digits, 16).map_err(|_| format!("invalid hex color '{hex}'"))?;
+        Ok(if duplicate { (v << 4) | v } else { v } as f32 / 255.0)
+    }
+
+    let (r, g, b, a) = match hex.len() {
+        3 | 4 => (
+            component(hex, 0..1, true)?,
+            component(hex, 1..2, true)?,
+            component(hex, 2..3, true)?,
+            component(hex, 3..4, true).unwrap_or(1.0),
+        ),
+        6 | 8 => (
+            component(hex, 0..2, false)?,
+            component(hex, 2..4, false)?,
+            component(hex, 4..6, false)?,
+            component(hex, 6..8, false).unwrap_or(1.0),
+        ),
+        _ => return Err(format!("invalid hex color '{value}': {EXPECTED}")),
+    };
+
+    Ok(Rgba::new(r, g, b, a))
+}
+
+#[derive(Clone)]
 pub struct Theme {
     pub background_primary: Rgba,
     pub background_secondary: Rgba,
@@ -173,6 +238,379 @@ pub struct Theme {
     pub toast_error_border: Rgba,
     pub toast_error_text: Rgba,
     pub toast_error_track: Rgba,
+}
+
+impl<'de> Deserialize<'de> for Theme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ThemeVisitor;
+
+        impl<'de> Visitor<'de> for ThemeVisitor {
+            type Value = Theme;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a map of color names to hex strings")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut theme = Theme::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "background_primary" => {
+                            theme.background_primary = map.next_value::<ColorHex>()?.0
+                        }
+                        "background_secondary" => {
+                            theme.background_secondary = map.next_value::<ColorHex>()?.0
+                        }
+                        "background_tertiary" => {
+                            theme.background_tertiary = map.next_value::<ColorHex>()?.0
+                        }
+                        "border_color" => theme.border_color = map.next_value::<ColorHex>()?.0,
+                        "album_art_background" => {
+                            theme.album_art_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "text" => theme.text = map.next_value::<ColorHex>()?.0,
+                        "text_secondary" => theme.text_secondary = map.next_value::<ColorHex>()?.0,
+                        "text_disabled" => theme.text_disabled = map.next_value::<ColorHex>()?.0,
+                        "text_link" => theme.text_link = map.next_value::<ColorHex>()?.0,
+                        "nav_button_hover" => {
+                            theme.nav_button_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "nav_button_hover_border" => {
+                            theme.nav_button_hover_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "nav_button_active" => {
+                            theme.nav_button_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "nav_button_active_border" => {
+                            theme.nav_button_active_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "nav_button_pressed" => {
+                            theme.nav_button_pressed = map.next_value::<ColorHex>()?.0
+                        }
+                        "nav_button_pressed_border" => {
+                            theme.nav_button_pressed_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button" => {
+                            theme.playback_button = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button_hover" => {
+                            theme.playback_button_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button_active" => {
+                            theme.playback_button_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button_border" => {
+                            theme.playback_button_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button_toggled" => {
+                            theme.playback_button_toggled = map.next_value::<ColorHex>()?.0
+                        }
+                        "playback_button_repeat_one" => {
+                            theme.playback_button_repeat_one = map.next_value::<ColorHex>()?.0
+                        }
+                        "stop_after_current_indicator" => {
+                            theme.stop_after_current_indicator = map.next_value::<ColorHex>()?.0
+                        }
+                        "window_button" => theme.window_button = map.next_value::<ColorHex>()?.0,
+                        "window_button_hover" => {
+                            theme.window_button_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "window_button_active" => {
+                            theme.window_button_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "close_button" => theme.close_button = map.next_value::<ColorHex>()?.0,
+                        "close_button_hover" => {
+                            theme.close_button_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "close_button_active" => {
+                            theme.close_button_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "queue_item" => theme.queue_item = map.next_value::<ColorHex>()?.0,
+                        "queue_item_hover" => {
+                            theme.queue_item_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "queue_item_active" => {
+                            theme.queue_item_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "queue_item_current" => {
+                            theme.queue_item_current = map.next_value::<ColorHex>()?.0
+                        }
+                        "queue_item_selected" => {
+                            theme.queue_item_selected = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary" => theme.button_primary = map.next_value::<ColorHex>()?.0,
+                        "button_primary_border" => {
+                            theme.button_primary_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary_hover" => {
+                            theme.button_primary_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary_border_hover" => {
+                            theme.button_primary_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary_active" => {
+                            theme.button_primary_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary_border_active" => {
+                            theme.button_primary_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_primary_text" => {
+                            theme.button_primary_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary" => {
+                            theme.button_secondary = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_border" => {
+                            theme.button_secondary_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_hover" => {
+                            theme.button_secondary_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_border_hover" => {
+                            theme.button_secondary_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_active" => {
+                            theme.button_secondary_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_border_active" => {
+                            theme.button_secondary_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_secondary_text" => {
+                            theme.button_secondary_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning" => theme.button_warning = map.next_value::<ColorHex>()?.0,
+                        "button_warning_border" => {
+                            theme.button_warning_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning_hover" => {
+                            theme.button_warning_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning_border_hover" => {
+                            theme.button_warning_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning_active" => {
+                            theme.button_warning_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning_border_active" => {
+                            theme.button_warning_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_warning_text" => {
+                            theme.button_warning_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger" => theme.button_danger = map.next_value::<ColorHex>()?.0,
+                        "button_danger_border" => {
+                            theme.button_danger_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger_hover" => {
+                            theme.button_danger_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger_border_hover" => {
+                            theme.button_danger_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger_active" => {
+                            theme.button_danger_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger_border_active" => {
+                            theme.button_danger_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "button_danger_text" => {
+                            theme.button_danger_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "slider_foreground" => {
+                            theme.slider_foreground = map.next_value::<ColorHex>()?.0
+                        }
+                        "slider_background" => {
+                            theme.slider_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_grid_line" => theme.eq_grid_line = map.next_value::<ColorHex>()?.0,
+                        "eq_grid_line_zero" => {
+                            theme.eq_grid_line_zero = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_curve" => theme.eq_curve = map.next_value::<ColorHex>()?.0,
+                        "eq_curve_fill" => theme.eq_curve_fill = map.next_value::<ColorHex>()?.0,
+                        "eq_band_curve" => theme.eq_band_curve = map.next_value::<ColorHex>()?.0,
+                        "eq_dot" => theme.eq_dot = map.next_value::<ColorHex>()?.0,
+                        "eq_dot_selected" => {
+                            theme.eq_dot_selected = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_dot_disabled" => {
+                            theme.eq_dot_disabled = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_spectrum_pre" => {
+                            theme.eq_spectrum_pre = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_spectrum_post" => {
+                            theme.eq_spectrum_post = map.next_value::<ColorHex>()?.0
+                        }
+                        "eq_spectrum_edge" => {
+                            theme.eq_spectrum_edge = map.next_value::<ColorHex>()?.0
+                        }
+                        "elevated_background" => {
+                            theme.elevated_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "elevated_border_color" => {
+                            theme.elevated_border_color = map.next_value::<ColorHex>()?.0
+                        }
+                        "menu_item" => theme.menu_item = map.next_value::<ColorHex>()?.0,
+                        "menu_item_hover" => {
+                            theme.menu_item_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "menu_item_border_hover" => {
+                            theme.menu_item_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "menu_item_active" => {
+                            theme.menu_item_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "menu_item_border_active" => {
+                            theme.menu_item_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "modal_overlay_bg" => {
+                            theme.modal_overlay_bg = map.next_value::<ColorHex>()?.0
+                        }
+                        "text_input_selection" => {
+                            theme.text_input_selection = map.next_value::<ColorHex>()?.0
+                        }
+                        "caret_color" => theme.caret_color = map.next_value::<ColorHex>()?.0,
+                        "text_highlight_background" => {
+                            theme.text_highlight_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "palette_item_hover" => {
+                            theme.palette_item_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "palette_item_border_hover" => {
+                            theme.palette_item_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "palette_item_active" => {
+                            theme.palette_item_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "palette_item_border_active" => {
+                            theme.palette_item_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "scrollbar_background" => {
+                            theme.scrollbar_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "scrollbar_foreground" => {
+                            theme.scrollbar_foreground = map.next_value::<ColorHex>()?.0
+                        }
+                        "textbox_background" => {
+                            theme.textbox_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "textbox_border" => theme.textbox_border = map.next_value::<ColorHex>()?.0,
+                        "checkbox_background" => {
+                            theme.checkbox_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_background_hover" => {
+                            theme.checkbox_background_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_background_active" => {
+                            theme.checkbox_background_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_border" => {
+                            theme.checkbox_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_border_hover" => {
+                            theme.checkbox_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_border_active" => {
+                            theme.checkbox_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked" => {
+                            theme.checkbox_checked = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_bg" => {
+                            theme.checkbox_checked_bg = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_bg_hover" => {
+                            theme.checkbox_checked_bg_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_bg_active" => {
+                            theme.checkbox_checked_bg_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_border" => {
+                            theme.checkbox_checked_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_border_hover" => {
+                            theme.checkbox_checked_border_hover = map.next_value::<ColorHex>()?.0
+                        }
+                        "checkbox_checked_border_active" => {
+                            theme.checkbox_checked_border_active = map.next_value::<ColorHex>()?.0
+                        }
+                        "callout_background" => {
+                            theme.callout_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "callout_border" => theme.callout_border = map.next_value::<ColorHex>()?.0,
+                        "callout_text" => theme.callout_text = map.next_value::<ColorHex>()?.0,
+                        "liked_song" => theme.liked_song = map.next_value::<ColorHex>()?.0,
+                        "status_success" => theme.status_success = map.next_value::<ColorHex>()?.0,
+                        "status_error" => theme.status_error = map.next_value::<ColorHex>()?.0,
+                        "status_disabled" => {
+                            theme.status_disabled = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_info_background" => {
+                            theme.toast_info_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_info_border" => {
+                            theme.toast_info_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_info_text" => {
+                            theme.toast_info_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_info_track" => {
+                            theme.toast_info_track = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_warning_background" => {
+                            theme.toast_warning_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_warning_border" => {
+                            theme.toast_warning_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_warning_text" => {
+                            theme.toast_warning_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_warning_track" => {
+                            theme.toast_warning_track = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_success_background" => {
+                            theme.toast_success_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_success_border" => {
+                            theme.toast_success_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_success_text" => {
+                            theme.toast_success_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_success_track" => {
+                            theme.toast_success_track = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_error_background" => {
+                            theme.toast_error_background = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_error_border" => {
+                            theme.toast_error_border = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_error_text" => {
+                            theme.toast_error_text = map.next_value::<ColorHex>()?.0
+                        }
+                        "toast_error_track" => {
+                            theme.toast_error_track = map.next_value::<ColorHex>()?.0
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(theme)
+            }
+        }
+
+        deserializer.deserialize_map(ThemeVisitor)
+    }
 }
 
 impl Default for Theme {

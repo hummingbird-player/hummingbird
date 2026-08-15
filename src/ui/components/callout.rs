@@ -67,7 +67,7 @@ impl RenderOnce for Callout {
                     .flex_col()
                     .flex()
                     .w_full()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .pt(px(6.0))
                     .pl(px(12.0))
                     .pb(px(9.0))
@@ -76,7 +76,7 @@ impl RenderOnce for Callout {
                     .when_some(self.title, |this, title| {
                         this.child(
                             div()
-                                .flex_shrink()
+                                .flex_shrink(1.0)
                                 .overflow_hidden()
                                 .text_size(px(16.0))
                                 .font_weight(FontWeight::BOLD)
@@ -85,7 +85,7 @@ impl RenderOnce for Callout {
                     })
                     .child(
                         div()
-                            .flex_shrink()
+                            .flex_shrink(1.0)
                             .text_sm()
                             .overflow_hidden()
                             .child(self.caption),

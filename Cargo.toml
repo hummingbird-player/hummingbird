@@ -18,10 +18,10 @@ default = ["libre-services", "proprietary-services"]
 
 [dependencies]
 anyhow = "1"
-audioadapter-buffers = "3"
+audioadapter-buffers = "5"
 async-compression = { version = "0.4", features = ["zlib", "tokio"] }
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 bitflags = "2"
 camino = { version = "1", features = ["serde1"] }
 chrono = "0.4"
@@ -40,23 +40,24 @@ gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird
 gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 indexmap = { version = "2", features = ["serde"] }
-infer = "0.19"
+infer = "0.22"
 intx = "0.1"
 itertools = "0.15"
-lofty = "0.24"
+lofty = "0.25"
 md5 = "0.8"
 minisign-verify = { version = "0.2", optional = true }
 moka = { version = "0.12", features = ["sync"] }
 notify = "8"
 nucleo = "0.5"
 open = "5"
+palette = "0.7"
 postcard = { version = "1", features = ["use-std"] }
 rand = "0.10"
 raw-window-handle = "0.6"
 realfft = "3"
 regex = "1"
 rtrb = "0.3"
-rubato = "3"
+rubato = "5"
 rust-embed = "8"
 rustc-hash = "2"
 same-file = "1"

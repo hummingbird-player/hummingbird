@@ -196,7 +196,7 @@ where
                 row = row.child(
                     div()
                         .when(!is_last, |this| this.w(px(base_width)))
-                        .when(is_last, |this| this.flex_grow().min_w(px(base_width)))
+                        .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
                         .h(px(36.0))
                         .px(px(12.0))
                         .py(px(6.0))

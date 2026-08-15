@@ -455,7 +455,7 @@ impl Render for QueueItem {
                                             div()
                                                 .text_ellipsis()
                                                 .overflow_x_hidden()
-                                                .flex_shrink()
+                                                .flex_shrink(1.0)
                                                 .child(item.artist_name.clone().unwrap_or_else(
                                                     || tr!("UNKNOWN_ARTIST").into(),
                                                 )),

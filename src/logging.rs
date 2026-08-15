@@ -17,7 +17,7 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
-const DEFAULT_LOG_FILTER: &str = "info,symphonia=warn,zbus=warn";
+const DEFAULT_LOG_FILTER: &str = "info,symphonia=warn,zbus=warn,sum_tree=warn";
 const LOG_FILE_NAME: &str = "hummingbird.log";
 const MAX_LOG_FILE_SIZE: usize = 1024 * 1024;
 const MAX_LOG_FILES: usize = 4;

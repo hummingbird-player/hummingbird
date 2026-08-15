@@ -52,8 +52,8 @@ pub fn render_settings_row(
         div()
             .flex()
             .flex_col()
-            .flex_grow()
-            .flex_shrink()
+            .flex_grow(1.0)
+            .flex_shrink(1.0)
             .min_w(px(0.0))
             .overflow_hidden()
             .gap(px(2.0))
@@ -72,7 +72,7 @@ pub fn render_settings_row(
                 .my_auto()
                 .w(px(280.0))
                 .max_w(px(280.0))
-                .flex_shrink()
+                .flex_shrink(1.0)
                 .child(token_input),
         ),
         ListenBrainzState::Connected(_) => row.child(

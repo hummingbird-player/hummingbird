@@ -5,6 +5,7 @@ use gpui::{
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, SharedString, Styled, Window,
     anchored, div, point, prelude::FluentBuilder, px, size,
 };
+use palette::IntoColor;
 
 use super::scrollbar::ScrollableHandle;
 
@@ -240,11 +241,11 @@ pub struct DropIndicator {
 }
 
 impl DropIndicator {
-    pub fn with_state(show_before: bool, show_after: bool, color: impl Into<Hsla>) -> Self {
+    pub fn with_state(show_before: bool, show_after: bool, color: impl IntoColor<Hsla>) -> Self {
         Self {
             show_before,
             show_after,
-            color: color.into(),
+            color: color.into_color(),
         }
     }
 }

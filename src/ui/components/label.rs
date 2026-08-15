@@ -61,7 +61,7 @@ impl RenderOnce for Label {
                     .flex()
                     .overflow_hidden()
                     .w_full()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .flex_col()
                     .my_auto()
                     .child(div().overflow_hidden().child(self.text))

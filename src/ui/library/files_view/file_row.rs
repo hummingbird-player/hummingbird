@@ -441,7 +441,7 @@ impl Render for FileRowItem {
             )
             .child(
                 div()
-                    .flex_grow()
+                    .flex_grow(1.0)
                     .text_ellipsis()
                     .overflow_hidden()
                     .text_color(text_color)

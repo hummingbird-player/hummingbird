@@ -538,10 +538,10 @@ fn lerp(start: f32, end: f32, progress: f32) -> f32 {
 }
 
 fn lerp_color(start: Rgba, end: Rgba, progress: f32) -> Rgba {
-    Rgba {
-        r: lerp(start.r, end.r, progress),
-        g: lerp(start.g, end.g, progress),
-        b: lerp(start.b, end.b, progress),
-        a: lerp(start.a, end.a, progress),
-    }
+    Rgba::new(
+        lerp(start.red, end.red, progress),
+        lerp(start.green, end.green, progress),
+        lerp(start.blue, end.blue, progress),
+        lerp(start.alpha, end.alpha, progress),
+    )
 }

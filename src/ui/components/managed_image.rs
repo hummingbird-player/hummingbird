@@ -294,7 +294,9 @@ impl Element for ManagedImage {
             let mut corners = Corners::default();
             corners.refine(&self.style.corner_radii);
             let corner_radii = corners.to_pixels(window.rem_size());
-            if let Err(e) = window.paint_image(new_bounds, corner_radii, image, 0, false) {
+            if let Err(e) =
+                window.paint_image(new_bounds, new_bounds, corner_radii, image, 0, false)
+            {
                 error!("Failed to paint image: {:?}", e);
             }
         }

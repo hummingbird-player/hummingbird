@@ -209,7 +209,7 @@ fn render_toast(
                 .flex()
                 .flex_col()
                 .w_full()
-                .flex_shrink()
+                .flex_shrink(1.0)
                 .pt(px(8.0))
                 .pl(px(12.0))
                 .pb(px(9.0))
@@ -218,7 +218,7 @@ fn render_toast(
                 .overflow_hidden()
                 .child(
                     div()
-                        .flex_shrink()
+                        .flex_shrink(1.0)
                         .text_sm()
                         .overflow_hidden()
                         .child(toast.message.clone()),

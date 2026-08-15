@@ -143,7 +143,7 @@ impl Render for MainWindow {
                                     StyleRefinement::default()
                                         .w_full()
                                         .h_full()
-                                        .flex_shrink()
+                                        .flex_shrink(1.0)
                                         .max_w_full()
                                         .max_h_full(),
                                 ),

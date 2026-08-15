@@ -159,7 +159,6 @@ impl Resampler {
             orig_rate as usize,
             target_rate as usize,
             duration as usize,
-            2,
             channels as usize,
             FixedSync::Input,
         )

@@ -179,7 +179,7 @@ impl Render for LibrarySettings {
                     )
                     .child(
                         div()
-                            .flex_grow()
+                            .flex_grow(1.0)
                             .overflow_hidden()
                             .text_ellipsis()
                             .text_sm()

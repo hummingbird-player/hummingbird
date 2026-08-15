@@ -1,4 +1,5 @@
 use gpui::{IntoElement, RenderOnce, SharedString, StyleRefinement, Styled, Svg, svg};
+use palette::IntoColor;
 
 use crate::ui::theme::Theme;
 
@@ -18,7 +19,12 @@ impl RenderOnce for Icon {
     fn render(mut self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let theme = cx.global::<Theme>();
 
-        let color_ref = *self.svg.style().text.color.get_or_insert(theme.text.into());
+        let color_ref = *self
+            .svg
+            .style()
+            .text
+            .color
+            .get_or_insert(theme.text.into_color());
 
         self.svg.path(self.icon).text_color(color_ref)
     }

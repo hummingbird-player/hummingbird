@@ -910,7 +910,7 @@ impl Render for Scrubber {
             .pr(px(13.0))
             .border_x(px(1.0))
             .border_color(theme.border_color)
-            .flex_grow()
+            .flex_grow(1.0)
             .flex()
             .flex_col()
             .text_size(px(15.0))

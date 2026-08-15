@@ -62,6 +62,7 @@ fn measure_track_number_width(window: &mut Window, text: &SharedString) -> Pixel
         background_color: None,
         underline: None,
         strikethrough: None,
+        letter_spacing: None,
     };
 
     let line = window
@@ -322,7 +323,7 @@ impl Render for TrackItem {
                                             .text_color(theme.text_secondary)
                                             .text_ellipsis()
                                             .overflow_x_hidden()
-                                            .flex_shrink()
+                                            .flex_shrink(1.0)
                                             .ml(px(12.0))
                                             .when(show_artist_name, |this| {
                                                 this.when_some(

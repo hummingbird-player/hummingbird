@@ -5,6 +5,7 @@ use std::{
 };
 
 use gpui::*;
+use palette::IntoColor;
 use tracing::error;
 
 use crate::{
@@ -204,6 +205,7 @@ fn shape_label(window: &mut Window, text: SharedString, color: Hsla) -> ShapedLi
         background_color: None,
         underline: None,
         strikethrough: None,
+        letter_spacing: None,
     };
     window
         .text_system()
@@ -394,8 +396,8 @@ impl Element for EqGraph {
         let scale = window.scale_factor();
 
         let theme = cx.global::<Theme>();
-        let label_color = theme.text_secondary.into();
-        let text_color = theme.text.into();
+        let label_color = theme.text_secondary.into_color();
+        let text_color = theme.text.into_color();
 
         let config = &self.config;
         let selected = self.selected;
@@ -629,9 +631,9 @@ impl Element for EqGraph {
             }
             if !prepaint.spectrum_post.is_empty() {
                 // dimmed alongside the response curve while the EQ is bypassed
-                let mut edge_color: Hsla = spectrum_edge.into();
+                let mut edge_color: Hsla = spectrum_edge.into_color();
                 if !self.config.enabled {
-                    edge_color.a *= 0.4;
+                    edge_color.alpha *= 0.4;
                 }
                 let mut edge = PathBuilder::stroke(px(1.5));
                 spectrum_path(&mut edge, &prepaint.spectrum_post, plot);
@@ -657,9 +659,9 @@ impl Element for EqGraph {
                 window.paint_path(path, curve_fill);
             }
 
-            let mut stroke_color: Hsla = curve_color.into();
+            let mut stroke_color: Hsla = curve_color.into_color();
             if !self.config.enabled {
-                stroke_color.a *= 0.4;
+                stroke_color.alpha *= 0.4;
             }
             let mut stroke = PathBuilder::stroke(px(2.0));
             curve_path(&mut stroke, &prepaint.composite, plot, prepaint.scale);
@@ -740,8 +742,8 @@ impl Element for EqGraph {
             let frequency = x_to_freq((position.x - plot.origin.x).into(), plot_width);
             let db = composite_db(&self.config, self.sample_rate, frequency as f64) as f32;
             let y = plot.origin.y + px(db_to_y_unclamped(db, plot_height));
-            let mut ghost: Hsla = dot_selected.into();
-            ghost.a *= 0.6;
+            let mut ghost: Hsla = dot_selected.into_color();
+            ghost.alpha *= 0.6;
             window.paint_quad(quad(
                 Bounds::new(
                     point(position.x - px(DOT_RADIUS), y - px(DOT_RADIUS)),

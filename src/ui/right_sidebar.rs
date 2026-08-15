@@ -51,8 +51,6 @@ impl Render for RightSidebar {
 
         let queue =
             AnyView::from(self.queue.clone()).cached(StyleRefinement::default().size_full());
-        let lyrics =
-            AnyView::from(self.lyrics.clone()).cached(StyleRefinement::default().size_full());
 
         resizable("queue-resizable", queue_width, ResizeEdge::Left)
             .min_size(px(225.0))
@@ -76,26 +74,26 @@ impl Render for RightSidebar {
                     })
                     // Lyrics section: fixed height at bottom, resizable from its top edge.
                     .when(show_lyrics, |outer: Div| {
-                        outer
-                            .when(show_queue, |outer| {
-                                outer.child(
-                                    resizable(
-                                        "lyrics-resizable",
-                                        lyrics_height_entity.clone(),
-                                        ResizeEdge::Top,
-                                    )
-                                    .percent_mode()
-                                    .min_size(px(0.10))
-                                    .max_size(px(0.85))
-                                    .default_size(DEFAULT_LYRICS_FRACTION)
-                                    .flex_shrink_0()
-                                    .w_full()
-                                    .child(div().h_full().overflow_hidden().child(lyrics.clone())),
+                        let lyrics = AnyView::from(self.lyrics.clone())
+                            .cached(StyleRefinement::default().size_full());
+                        if show_queue {
+                            outer.child(
+                                resizable(
+                                    "lyrics-resizable",
+                                    lyrics_height_entity.clone(),
+                                    ResizeEdge::Top,
                                 )
-                            })
-                            .when(!show_queue, |outer| {
-                                outer.child(div().h_full().overflow_hidden().child(lyrics))
-                            })
+                                .percent_mode()
+                                .min_size(px(0.10))
+                                .max_size(px(0.85))
+                                .default_size(DEFAULT_LYRICS_FRACTION)
+                                .flex_shrink(1.0)
+                                .w_full()
+                                .child(div().h_full().overflow_hidden().child(lyrics)),
+                            )
+                        } else {
+                            outer.child(div().h_full().overflow_hidden().child(lyrics))
+                        }
                     }),
             )
     }

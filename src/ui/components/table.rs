@@ -508,7 +508,7 @@ where
                     .overflow_hidden()
                     .flex()
                     .when(!is_last, |this| this.w(px(base_width)))
-                    .when(is_last, |this| this.flex_grow().min_w(px(base_width)))
+                    .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
                     .h(px(TABLE_HEADER_HEIGHT))
                     .px(px(12.0))
                     .py(px(6.0))
@@ -520,7 +520,7 @@ where
                     .font_weight(FontWeight::BOLD)
                     .child(
                         div()
-                            .flex_shrink()
+                            .flex_shrink(1.0)
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(column_id.get_column_name()),
@@ -618,7 +618,7 @@ where
                         .relative()
                         .w_full()
                         .h_full()
-                        .flex_grow()
+                        .flex_grow(1.0)
                         .min_h(px(0.0))
                         .child({
                             let mut list =
@@ -740,7 +740,7 @@ where
                         .track_scroll(&list_horizontal_scroll_handle)
                         .flex()
                         .flex_col()
-                        .flex_grow()
+                        .flex_grow(1.0)
                         .min_h(px(0.0));
 
                     // GPUI otherwise maps a vertical wheel delta onto this viewport's only
