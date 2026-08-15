@@ -66,6 +66,7 @@ fn map_standard_tag(item: &TagItem) -> Option<MetadataTag> {
         ItemKey::TrackArtist => item_value_to_string(value).map(MetadataTag::Artist),
         ItemKey::TrackArtists => item_value_to_string(value).map(MetadataTag::Artists),
         ItemKey::AlbumArtist => item_value_to_string(value).map(MetadataTag::AlbumArtist),
+        ItemKey::AlbumArtists => item_value_to_string(value).map(MetadataTag::AlbumArtists),
         ItemKey::OriginalArtist => item_value_to_string(value).map(MetadataTag::OriginalArtist),
         ItemKey::Composer => item_value_to_string(value).map(MetadataTag::Composer),
         ItemKey::AlbumTitle => item_value_to_string(value).map(MetadataTag::Album),
@@ -156,33 +157,46 @@ fn split_artist_names(value: &str, split_slash: bool) -> Vec<String> {
         .collect()
 }
 
-/// Append a name to a joined list field, adding duplicates once (the same artist can appear in
-/// several tag systems).
+/// Append a name to a joined list field, adding duplicates once. A value can itself join several
+/// names with the same separator (a multi-artist tag like "A, B" written by several tag systems),
+/// so each of its parts is deduplicated separately against the parts already present.
 fn push_unique_name(field: &mut Option<String>, name: &str, separator: &str) {
-    let name = name.trim();
-    if name.is_empty() {
+    let parts: Vec<&str> = name
+        .split(separator)
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() {
         return;
     }
-    let already = field
+    let existing: Vec<&str> = field
         .as_deref()
-        .is_some_and(|existing| existing.split(separator).any(|item| item == name));
-    if already {
+        .map(|value| value.split(separator).collect())
+        .unwrap_or_default();
+    let missing: Vec<&str> = parts
+        .into_iter()
+        .filter(|part| !existing.contains(part))
+        .collect();
+    if missing.is_empty() {
         return;
     }
+    let missing = missing.join(separator);
     if let Some(existing) = field {
         existing.push_str(separator);
-        existing.push_str(name);
+        existing.push_str(&missing);
     } else {
-        *field = Some(name.to_string());
+        *field = Some(missing);
     }
 }
 
 /// Artist names collected while applying tags. `tpe1` mirrors the display field, `artists_tag`
-/// holds the individual credits of the ARTISTS tag.
+/// holds the individual credits of the ARTISTS tag, `album_artists_tag` the individual credits
+/// of the ALBUMARTISTS tag.
 #[derive(Default)]
-struct TrackArtistNames {
+struct ArtistNames {
     tpe1: Vec<String>,
     artists_tag: Vec<String>,
+    album_artists_tag: Vec<String>,
 }
 
 fn push_unique_vec(names: &mut Vec<String>, name: &str) {
@@ -195,7 +209,7 @@ fn apply_tag_items(
     tag: &Tag,
     split_artists: bool,
     metadata: &mut Metadata,
-    track_artists: &mut TrackArtistNames,
+    artist_names: &mut ArtistNames,
 ) {
     for item in tag.items() {
         let Some(meta_tag) = map_standard_tag(item) else {
@@ -206,7 +220,7 @@ fn apply_tag_items(
             // (AC/DC)
             MetadataTag::Artist(value) => {
                 push_unique_name(&mut metadata.artist, &value, ", ");
-                push_unique_vec(&mut track_artists.tpe1, value.trim());
+                push_unique_vec(&mut artist_names.tpe1, value.trim());
             }
             // display is ", "-joined; seeds the claim/keys list, TSO2 replaces the keys
             // afterwards (see `finalize_album_artist_keys`)
@@ -216,10 +230,16 @@ fn apply_tag_items(
                     push_unique_name(&mut metadata.album_artist_keys, &name, "; ");
                 }
             }
+            // the ALBUMARTISTS tag carries the individual album artist credits
+            MetadataTag::AlbumArtists(value) => {
+                for name in split_artist_names(&value, split_artists) {
+                    push_unique_vec(&mut artist_names.album_artists_tag, &name);
+                }
+            }
             // the ARTISTS tag carries the individual credits
             MetadataTag::Artists(value) => {
                 for name in split_artist_names(&value, split_artists) {
-                    push_unique_vec(&mut track_artists.artists_tag, &name);
+                    push_unique_vec(&mut artist_names.artists_tag, &name);
                 }
             }
             MetadataTag::AlbumArtistSort(value) => {
@@ -235,19 +255,30 @@ fn apply_tag_items(
 
 /// The matching list prefers the ARTISTS credits; TPE1, often a single joined credit, is the
 /// fallback. Called once all tags have been applied.
-fn finalize_track_artists(metadata: &mut Metadata, track_artists: TrackArtistNames) {
-    let names = if track_artists.artists_tag.is_empty() {
-        track_artists.tpe1
+fn finalize_track_artists(metadata: &mut Metadata, tpe1: Vec<String>, artists_tag: Vec<String>) {
+    let names = if artists_tag.is_empty() {
+        tpe1
     } else {
-        track_artists.artists_tag
+        artists_tag
     };
     metadata.artists = (!names.is_empty()).then(|| names.join("; "));
 }
 
-/// The claim/keys list is TSO2 split on "&" when every part claims a credited track artist,
-/// else the raw TPE2 values collected by `apply_tag_items`. Called once all tags have been
-/// applied.
-fn finalize_album_artist_keys(metadata: &mut Metadata) {
+/// The claim/keys list is the individual ALBUMARTISTS credits when present, TSO2 split on "&"
+/// when every part claims a credited track artist, else the raw TPE2 values collected by
+/// `apply_tag_items`. Called once all tags have been applied.
+fn finalize_album_artist_keys(metadata: &mut Metadata, album_artists: &[String]) {
+    if !album_artists.is_empty() {
+        metadata.album_artist_keys = Some(album_artists.join("; "));
+        // the individual credits also stand in for a missing joined display value
+        if metadata
+            .album_artist
+            .as_deref()
+            .is_none_or(|d| d.trim().is_empty())
+        {
+            metadata.album_artist = Some(album_artists.join(", "));
+        }
+    }
     if let Some(sort) = metadata
         .album_artist_sort
         .as_deref()
@@ -259,7 +290,8 @@ fn finalize_album_artist_keys(metadata: &mut Metadata) {
             .filter(|p| !p.is_empty())
             .collect();
         // a multi-part sort is only trusted when each part claims a track artist, a single
-        // artist's sort name can itself contain "&" (Simon & Garfunkel)
+        // artist's sort name can itself contain "&" (Simon & Garfunkel); a single-part sort is
+        // trusted only when no individual credits exist to contradict it
         let claimed = |part: &str| {
             metadata
                 .artists
@@ -269,7 +301,9 @@ fn finalize_album_artist_keys(metadata: &mut Metadata) {
                 .map(str::trim)
                 .any(|name| token_key(name) == token_key(part))
         };
-        if !parts.is_empty() && (parts.len() == 1 || parts.iter().all(|part| claimed(part))) {
+        let trusted = parts.len() > 1 && parts.iter().all(|part| claimed(part))
+            || parts.len() == 1 && album_artists.is_empty();
+        if !parts.is_empty() && trusted {
             metadata.album_artist_keys = Some(parts.join("; "));
         }
     }
@@ -313,7 +347,7 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
         .then(|| read_id3v2_version(&mut file, tagged_file.file_type()))
         .flatten();
 
-    let mut track_artists = TrackArtistNames::default();
+    let mut artist_names = ArtistNames::default();
     for tag in tags_by_priority(tagged_file.tags(), has_id3v2) {
         if has_better_tag && tag.tag_type() == TagType::Id3v1 {
             continue;
@@ -322,15 +356,15 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
         // see comment in `read_id3v2_version`
         let split_artists =
             tag.tag_type() == TagType::Id3v2 && id3v2_version == Some(Id3v2Version::V3);
-        apply_tag_items(tag, split_artists, &mut metadata, &mut track_artists);
+        apply_tag_items(tag, split_artists, &mut metadata, &mut artist_names);
 
         if image.is_none() {
             image = extract_cover(tag);
         }
     }
 
-    finalize_track_artists(&mut metadata, track_artists);
-    finalize_album_artist_keys(&mut metadata);
+    finalize_track_artists(&mut metadata, artist_names.tpe1, artist_names.artists_tag);
+    finalize_album_artist_keys(&mut metadata, &artist_names.album_artists_tag);
 
     let duration = tagged_file.properties().duration();
     let duration_ms = if duration.is_zero() {
@@ -542,9 +576,9 @@ mod tests {
         assert_eq!(ordered[0].tag_type(), TagType::RiffInfo);
 
         let mut metadata = Metadata::default();
-        let mut track_artists = TrackArtistNames::default();
+        let mut artist_names = ArtistNames::default();
         for tag in ordered {
-            apply_tag_items(tag, false, &mut metadata, &mut track_artists);
+            apply_tag_items(tag, false, &mut metadata, &mut artist_names);
         }
 
         // ID3v2 wins on shared fields, the INFO-only date still lands
@@ -622,10 +656,10 @@ mod tests {
 
     fn applied_metadata(tag: &Tag, split: bool) -> Metadata {
         let mut metadata = Metadata::default();
-        let mut track_artists = TrackArtistNames::default();
-        apply_tag_items(tag, split, &mut metadata, &mut track_artists);
-        finalize_track_artists(&mut metadata, track_artists);
-        finalize_album_artist_keys(&mut metadata);
+        let mut artist_names = ArtistNames::default();
+        apply_tag_items(tag, split, &mut metadata, &mut artist_names);
+        finalize_track_artists(&mut metadata, artist_names.tpe1, artist_names.artists_tag);
+        finalize_album_artist_keys(&mut metadata, &artist_names.album_artists_tag);
         metadata
     }
 
@@ -665,6 +699,168 @@ mod tests {
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Test Artist"));
         assert_eq!(metadata.artists.as_deref(), Some("Test Artist"));
+    }
+
+    #[test]
+    fn duplicate_joined_track_artist_values_feed_display_once() {
+        let tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::TrackArtist,
+            &["Tracy feat. 築山さえ", "Tracy feat. 築山さえ"],
+        );
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(metadata.artist.as_deref(), Some("Tracy feat. 築山さえ"));
+        assert_eq!(metadata.artists.as_deref(), Some("Tracy feat. 築山さえ"));
+    }
+
+    #[test]
+    fn duplicate_joined_album_artist_values_feed_display_and_keys_once() {
+        // beets makes files tagged with ALBUM ARTIST and ALBUMARTIST, which shows up twice so
+        // we need to make sure we are ignoring that
+        let tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::AlbumArtist,
+            &["Halozy, 556ミリメートル", "Halozy, 556ミリメートル"],
+        );
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(
+            metadata.album_artist.as_deref(),
+            Some("Halozy, 556ミリメートル")
+        );
+        assert_eq!(
+            metadata.album_artist_keys.as_deref(),
+            Some("Halozy, 556ミリメートル")
+        );
+    }
+
+    #[test]
+    fn joined_album_artist_value_dedupes_against_individual_names() {
+        // the joined value and the separately-listed names describe the same artists
+        let tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::AlbumArtist,
+            &["Halozy, 556ミリメートル", "Halozy", "556ミリメートル"],
+        );
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(
+            metadata.album_artist.as_deref(),
+            Some("Halozy, 556ミリメートル")
+        );
+    }
+
+    #[test]
+    fn album_artists_individual_credits_feed_claim_keys() {
+        // the joined ALBUM ARTIST value feeds the display, the individual ALBUMARTISTS credits
+        // are the claim parts, even when a joined sort tag is present
+        let mut tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::AlbumArtist,
+            &["Halozy, 556ミリメートル"],
+        );
+        for value in ["Halozy", "556ミリメートル"] {
+            assert!(tag.push(TagItem::new(
+                ItemKey::AlbumArtists,
+                ItemValue::Text(value.to_string())
+            )));
+        }
+        assert!(tag.push(TagItem::new(
+            ItemKey::AlbumArtistSortOrder,
+            ItemValue::Text("Halozy, 556 Millimetre".to_string())
+        )));
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(
+            metadata.album_artist.as_deref(),
+            Some("Halozy, 556ミリメートル")
+        );
+        assert_eq!(
+            metadata.album_artist_keys.as_deref(),
+            Some("Halozy; 556ミリメートル")
+        );
+    }
+
+    #[test]
+    fn album_artists_credits_alone_feed_display_and_keys() {
+        // without a joined ALBUM ARTIST value the individual credits stand in for both
+        let mut tag = Tag::new(TagType::VorbisComments);
+        for value in ["Halozy", "556ミリメートル"] {
+            assert!(tag.push(TagItem::new(
+                ItemKey::AlbumArtists,
+                ItemValue::Text(value.to_string())
+            )));
+        }
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(
+            metadata.album_artist.as_deref(),
+            Some("Halozy, 556ミリメートル")
+        );
+        assert_eq!(
+            metadata.album_artist_keys.as_deref(),
+            Some("Halozy; 556ミリメートル")
+        );
+    }
+
+    #[test]
+    fn fully_claimed_sort_replaces_individual_album_artist_credits() {
+        // an "&"-joined sort whose parts all claim a credited artist stays the best claim list
+        let mut tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::AlbumArtist,
+            &["Mark Pritchard and Thom Yorke"],
+        );
+        for value in ["Mark Pritchard", "Thom Yorke"] {
+            assert!(tag.push(TagItem::new(
+                ItemKey::AlbumArtists,
+                ItemValue::Text(value.to_string())
+            )));
+        }
+        for value in ["Pritchard, Mark", "Yorke, Thom"] {
+            assert!(tag.push(TagItem::new(
+                ItemKey::AlbumArtistSortOrder,
+                ItemValue::Text(value.to_string())
+            )));
+        }
+        let mut metadata = Metadata::default();
+        let mut artist_names = ArtistNames::default();
+        apply_tag_items(&tag, false, &mut metadata, &mut artist_names);
+        metadata.artists = Some("Mark Pritchard; Thom Yorke".to_string());
+        finalize_album_artist_keys(&mut metadata, &artist_names.album_artists_tag);
+        assert_eq!(
+            metadata.album_artist_keys.as_deref(),
+            Some("Pritchard, Mark; Yorke, Thom")
+        );
+    }
+
+    #[test]
+    fn duplicate_joined_album_artist_sort_values_feed_once() {
+        let tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::AlbumArtistSortOrder,
+            &["Halozy, 556 Millimetre", "Halozy, 556 Millimetre"],
+        );
+        let metadata = applied_metadata(&tag, false);
+        assert_eq!(
+            metadata.album_artist_sort.as_deref(),
+            Some("Halozy, 556 Millimetre")
+        );
+    }
+
+    #[test]
+    fn repeated_album_artist_item_with_existing_part_is_skipped() {
+        // a value already covered by an earlier part must not extend the display
+        let mut metadata = Metadata::default();
+        let mut artist_names = ArtistNames::default();
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.push(TagItem::new(
+            ItemKey::AlbumArtist,
+            ItemValue::Text("Band 1".to_string()),
+        ));
+        apply_tag_items(&tag, false, &mut metadata, &mut artist_names);
+        tag.push(TagItem::new(
+            ItemKey::AlbumArtist,
+            ItemValue::Text("Band 1, Band 2".to_string()),
+        ));
+        apply_tag_items(&tag, false, &mut metadata, &mut artist_names);
+        assert_eq!(metadata.album_artist.as_deref(), Some("Band 1, Band 2"));
     }
 
     #[test]
@@ -732,7 +928,7 @@ mod tests {
         let mut metadata = applied_metadata(&tag, false);
         metadata.artists = Some("Mark Pritchard; Thom Yorke".to_string());
         metadata.album_artist_sort = Some("Pritchard, Mark & Yorke, Thom".to_string());
-        finalize_album_artist_keys(&mut metadata);
+        finalize_album_artist_keys(&mut metadata, &[]);
         assert_eq!(
             metadata.album_artist_keys.as_deref(),
             Some("Pritchard, Mark; Yorke, Thom")
@@ -746,7 +942,7 @@ mod tests {
         let mut metadata = applied_metadata(&tag, false);
         metadata.artists = Some("Simon & Garfunkel".to_string());
         metadata.album_artist_sort = Some("Simon & Garfunkel".to_string());
-        finalize_album_artist_keys(&mut metadata);
+        finalize_album_artist_keys(&mut metadata, &[]);
         assert_eq!(
             metadata.album_artist_keys.as_deref(),
             Some("Simon & Garfunkel")

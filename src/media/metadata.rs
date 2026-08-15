@@ -26,6 +26,7 @@ pub enum MetadataTag {
     Artist(String),
     Artists(String),
     AlbumArtist(String),
+    AlbumArtists(String),
     OriginalArtist(String),
     Composer(String),
     Album(String),
@@ -63,6 +64,14 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
         MetadataTag::Artist(v) => metadata.artist = Some(v),
         MetadataTag::Artists(v) => metadata.artists = Some(v),
         MetadataTag::AlbumArtist(v) => metadata.album_artist = Some(v),
+        MetadataTag::AlbumArtists(v) => {
+            if let Some(keys) = &mut metadata.album_artist_keys {
+                keys.push_str("; ");
+                keys.push_str(&v);
+            } else {
+                metadata.album_artist_keys = Some(v);
+            }
+        }
         MetadataTag::OriginalArtist(v) => metadata.original_artist = Some(v),
         MetadataTag::Composer(v) => metadata.composer = Some(v),
         MetadataTag::Album(v) => metadata.album = Some(v),
@@ -151,7 +160,7 @@ pub struct Metadata {
     pub artists: Option<String>,
     pub album_artist: Option<String>,
     /// Semicolon-joined album artist claim parts: TSO2 split on "&" when every part claims a
-    /// credited track artist, else the raw TPE2 values.
+    /// credited track artist, the individual ALBUMARTISTS credits, else the raw TPE2 values.
     pub album_artist_keys: Option<String>,
     pub artist_sort: Option<String>,
     pub album_artist_sort: Option<String>,

@@ -172,7 +172,11 @@ pub(crate) async fn recompute_album_artists(
         .await?;
         let display = override_.filter(|d| !d.trim().is_empty());
 
-        if let Some(display) = display {
+        if fallback.len() > 1 {
+            for part in fallback {
+                push_album_artist_name(&mut names, &part, None);
+            }
+        } else if let Some(display) = display {
             let sort = if display_is_credited(&rows, &display) {
                 rows.iter().find_map(|row| row.artist_sort.clone())
             } else {
