@@ -50,13 +50,16 @@ pub struct ArtistDetailView {
     artist_name: Option<DBString>,
     album_ids: Vec<(u32, String)>,
     liked_track_items: Vec<Entity<TrackItem>>,
+    standalone_track_items: Vec<Entity<TrackItem>>,
     all_tracks: Arc<Vec<Track>>,
     liked_tracks: Arc<Vec<Track>>,
+    standalone_tracks: Arc<Vec<Track>>,
     scroll_handle: ScrollHandle,
     grid_views: Entity<FxHashMap<usize, Entity<GridItem<Album, AlbumColumn>>>>,
     grid_render_counter: Entity<usize>,
     nav_model: Entity<super::NavigationHistory>,
     liked_sort: LikedTrackSortMethod,
+    standalone_sort: LikedTrackSortMethod,
 }
 
 impl ArtistDetailView {
@@ -100,6 +103,31 @@ impl ArtistDetailView {
                 })
                 .collect();
 
+            let standalone_sort = LikedTrackSortMethod::ReleaseOrder;
+
+            let standalone_tracks = cx
+                .get_standalone_tracks_by_artist(artist_id, standalone_sort)
+                .unwrap_or_else(|_| Arc::new(Vec::new()));
+
+            let standalone_track_items: Vec<Entity<TrackItem>> = standalone_tracks
+                .iter()
+                .map(|track| {
+                    TrackItem::new(
+                        cx,
+                        track.clone(),
+                        false,
+                        ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
+                        TrackItemLeftField::Art,
+                        None,
+                        false,
+                        None,
+                        Some(standalone_tracks.clone()),
+                        false,
+                        false,
+                    )
+                })
+                .collect();
+
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
             cx.subscribe(&playlist_tracker, move |this: &mut Self, _, ev, cx| {
@@ -121,13 +149,16 @@ impl ArtistDetailView {
                 artist_name,
                 album_ids,
                 liked_track_items,
+                standalone_track_items,
                 all_tracks,
                 liked_tracks: liked_tracks.clone(),
+                standalone_tracks: standalone_tracks.clone(),
                 scroll_handle: ScrollHandle::new(),
                 grid_views,
                 grid_render_counter,
                 nav_model: nav_model.clone(),
                 liked_sort,
+                standalone_sort,
             }
         });
 
@@ -185,6 +216,65 @@ impl ArtistDetailView {
             .get_liked_tracks_by_artist(self.artist_id, self.liked_sort)
             .unwrap_or_else(|_| Arc::new(Vec::new()));
         self.set_liked_tracks(liked_tracks, cx);
+    }
+
+    fn update_standalone_sort(
+        &mut self,
+        sort_method: LikedTrackSortMethod,
+        cx: &mut Context<Self>,
+    ) {
+        let current_descending = Self::is_descending(self.standalone_sort);
+        let next_sort = Self::apply_direction(Self::base_sort(sort_method), current_descending);
+
+        if self.standalone_sort == next_sort {
+            return;
+        }
+
+        self.standalone_sort = next_sort;
+
+        let standalone_tracks = cx
+            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
+            .unwrap_or_else(|_| Arc::new(Vec::new()));
+
+        self.set_standalone_tracks(standalone_tracks, cx);
+    }
+
+    fn set_standalone_tracks(
+        &mut self,
+        standalone_tracks: Arc<Vec<Track>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.standalone_tracks = standalone_tracks;
+
+        self.standalone_track_items = self
+            .standalone_tracks
+            .iter()
+            .map(|track: &Track| {
+                TrackItem::new(
+                    cx,
+                    track.clone(),
+                    false,
+                    ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone()),
+                    TrackItemLeftField::Art,
+                    None,
+                    false,
+                    None,
+                    Some(self.standalone_tracks.clone()),
+                    false,
+                    false,
+                )
+            })
+            .collect();
+
+        cx.notify();
+    }
+
+    fn toggle_standalone_sort_order(&mut self, cx: &mut Context<Self>) {
+        self.standalone_sort = Self::toggled_sort(self.standalone_sort);
+        let standalone_tracks = cx
+            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
+            .unwrap_or_else(|_| Arc::new(Vec::new()));
+        self.set_standalone_tracks(standalone_tracks, cx);
     }
 
     fn base_sort(sort_method: LikedTrackSortMethod) -> LikedTrackSortMethod {
@@ -260,6 +350,7 @@ impl Render for ArtistDetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let entity = cx.entity();
+        let standalone_entity = entity.clone();
 
         let scroll_handle = self.scroll_handle.clone();
         let settings = cx
@@ -304,6 +395,18 @@ impl Render for ArtistDetailView {
                     .any(|track| current_track == track.location && is_track_available(track))
             });
         let has_available_liked_tracks = has_available_tracks(self.liked_tracks.as_ref());
+
+        let current_track_in_standalone = cx
+            .global::<PlaybackInfo>()
+            .current_track
+            .read(cx)
+            .clone()
+            .is_some_and(|current_track| {
+                self.standalone_tracks
+                    .iter()
+                    .any(|track| current_track == track.location && is_track_available(track))
+            });
+        let has_available_standalone_tracks = has_available_tracks(self.standalone_tracks.as_ref());
 
         let liked_track_header =
             if !self.liked_track_items.is_empty() {
@@ -374,7 +477,7 @@ impl Render for ArtistDetailView {
                                                         SORT_ASCENDING
                                                     })
                                                     .text_color(theme.text_secondary)
-                                                    .size(px(20.0)),
+                                                    .size(px(16.0)),
                                                 )
                                                 .tooltip(if Self::is_descending(self.liked_sort) {
                                                     build_tooltip(tr!(
@@ -418,6 +521,116 @@ impl Render for ArtistDetailView {
             } else {
                 None
             };
+
+        let standalone_track_header = if !self.standalone_track_items.is_empty() {
+            Some(
+                div()
+                    .border_t_1()
+                    .border_color(theme.border_color)
+                    .px(px(18.0))
+                    .pt(px(10.0))
+                    .pb(px(5.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(18.0))
+                            .my_auto()
+                            .child(tr!("TRACKS")),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_between()
+                            .pb(px(13.0))
+                            .child(playback_controls(
+                                "artist-standalone",
+                                has_available_standalone_tracks,
+                                current_track_in_standalone,
+                                is_playing,
+                                {
+                                    let standalone_tracks = self.standalone_tracks.clone();
+                                    move |cx| {
+                                        standalone_tracks
+                                            .iter()
+                                            .filter(|track| is_track_available(track))
+                                            .map(|track| {
+                                                QueueItemData::new(
+                                                    cx,
+                                                    track.location.clone(),
+                                                    Some(track.id),
+                                                    track.album_id,
+                                                )
+                                            })
+                                            .collect()
+                                    }
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(12.0))
+                                    .items_stretch()
+                                    .child(
+                                        button()
+                                            .id("artist-standalone-sort-direction-button")
+                                            .size(ButtonSize::Large)
+                                            .on_click(cx.listener(
+                                                |this: &mut ArtistDetailView, _, _, cx| {
+                                                    this.toggle_standalone_sort_order(cx);
+                                                },
+                                            ))
+                                            .child(
+                                                icon(
+                                                    if Self::is_descending(self.standalone_sort) {
+                                                        SORT_DESCENDING
+                                                    } else {
+                                                        SORT_ASCENDING
+                                                    },
+                                                )
+                                                .text_color(theme.text_secondary)
+                                                .size(px(16.0)),
+                                            )
+                                            .tooltip(
+                                                if Self::is_descending(self.standalone_sort) {
+                                                    build_tooltip(tr!("SORT_ASCENDING"))
+                                                } else {
+                                                    build_tooltip(tr!("SORT_DESCENDING"))
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        dropdown::<LikedTrackSortMethod>(
+                                            "artist-standalone-sort-dropdown",
+                                        )
+                                        .option(
+                                            LikedTrackSortMethod::RecentlyAdded,
+                                            tr!("SORT_RECENTLY_ADDED"),
+                                        )
+                                        .option(LikedTrackSortMethod::TitleAsc, tr!("SORT_TITLE"))
+                                        .option(
+                                            LikedTrackSortMethod::ReleaseOrder,
+                                            tr!("SORT_RELEASE_ORDER"),
+                                        )
+                                        .selected(Self::base_sort(self.standalone_sort))
+                                        .w(px(200.0))
+                                        .on_change(
+                                            move |sort_method, _, cx| {
+                                                standalone_entity.update(cx, |this, cx| {
+                                                    this.update_standalone_sort(*sort_method, cx);
+                                                });
+                                            },
+                                        ),
+                                    ),
+                            ),
+                    ),
+            )
+        } else {
+            None
+        };
 
         div()
             .flex()
@@ -568,6 +781,20 @@ impl Render for ArtistDetailView {
                                         .image_cache(retain_all("artist_liked_tracks_cache"))
                                         .children(
                                             self.liked_track_items
+                                                .iter()
+                                                .map(|item| div().h(px(40.0)).child(item.clone())),
+                                        ),
+                                )
+                            })
+                            .when_some(standalone_track_header, |this, header| {
+                                this.child(header).child(
+                                    div()
+                                        .w_full()
+                                        .border_t_1()
+                                        .border_color(theme.border_color)
+                                        .image_cache(retain_all("artist_standalone_tracks_cache"))
+                                        .children(
+                                            self.standalone_track_items
                                                 .iter()
                                                 .map(|item| div().h(px(40.0)).child(item.clone())),
                                         ),

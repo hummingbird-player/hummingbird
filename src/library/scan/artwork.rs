@@ -341,7 +341,7 @@ mod tests {
         artist_match::ArtistMatcher,
         database::{
             AlbumCacheKey, AlbumPathCacheKey, ArtIdCache, StagedArtSet, flush_album_artists,
-            update_metadata,
+            flush_track_artists, update_metadata,
         },
         decode::{ArtSource, FileArt, ScannedArt},
     };
@@ -826,7 +826,8 @@ mod tests {
         force_encountered: FxHashSet<i64>,
         albums: FxHashMap<AlbumCacheKey, i64>,
         paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
-        pending: FxHashSet<i64>,
+        pending_albums: FxHashSet<i64>,
+        pending_tracks: FxHashSet<i64>,
         staged_art: StagedArtSet,
         art_ids: ArtIdCache,
         examined: FxHashSet<i64>,
@@ -852,16 +853,28 @@ mod tests {
             &mut caches.force_encountered,
             &mut caches.albums,
             &mut caches.paths,
-            &mut caches.pending,
+            &mut caches.pending_albums,
+            &mut caches.pending_tracks,
             &mut caches.staged_art,
             &mut caches.art_ids,
             &mut caches.examined,
         )
         .await
         .unwrap();
-        flush_album_artists(&mut conn, &mut ArtistMatcher::new(), &mut caches.pending)
-            .await
-            .unwrap();
+        flush_album_artists(
+            &mut conn,
+            &mut ArtistMatcher::new(),
+            &mut caches.pending_albums,
+        )
+        .await
+        .unwrap();
+        flush_track_artists(
+            &mut conn,
+            &mut ArtistMatcher::new(),
+            &mut caches.pending_tracks,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

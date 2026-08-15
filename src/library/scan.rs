@@ -40,7 +40,8 @@ use crate::{
         artwork::{clear_scan_art, examine_folder_art, finalize_scan_art},
         database::{
             AlbumCacheKey, AlbumPathCacheKey, ArtIdCache, StagedArtSet, TrackWriteOutcome,
-            flush_album_artists, relocate_track, sweep_orphan_artists, update_metadata,
+            flush_album_artists, flush_track_artists, relocate_track, sweep_orphan_artists,
+            update_metadata,
         },
         decode::{FileInformation, FolderArtCache, ScanReadError, read_metadata_for_path},
         discover::{
@@ -522,22 +523,26 @@ fn set_watch_retry(interval: &mut Option<tokio::time::Interval>, watch_for_chang
     }
 }
 
-/// Retry album artist recomputes that failed inside the writer loop, now that the batch state
-/// they depend on is committed. Reloads the matcher - a failed commit can leave stale ids.
-async fn retry_album_artists(
+/// Retry album and track artist recomputes that failed inside the writer loop, now that the
+/// batch state they depend on is committed.
+async fn retry_artists(
     pool: &SqlitePool,
     matcher: &mut ArtistMatcher,
-    pending: &mut FxHashSet<i64>,
+    pending_albums: &mut FxHashSet<i64>,
+    pending_tracks: &mut FxHashSet<i64>,
 ) {
-    if pending.is_empty() {
+    if pending_albums.is_empty() && pending_tracks.is_empty() {
         return;
     }
     matcher.clear();
     let Ok(mut conn) = pool.acquire().await else {
         return;
     };
-    if let Err(e) = flush_album_artists(&mut conn, matcher, pending).await {
+    if let Err(e) = flush_album_artists(&mut conn, matcher, pending_albums).await {
         error!("Failed to recompute album artists after commit: {:?}", e);
+    }
+    if let Err(e) = flush_track_artists(&mut conn, matcher, pending_tracks).await {
+        error!("Failed to recompute track artists after commit: {:?}", e);
     }
 }
 
@@ -1118,13 +1123,13 @@ async fn run_scanner(
         // progress counter: every file that left the reader pipeline
         let mut processed: u64 = 0;
         let mut skipped_duplicate: u64 = 0;
-        let mut no_album: u64 = 0;
         let mut decode_failures = DecodeFailureCounters::default();
         let mut force_encountered_albums: FxHashSet<i64> = FxHashSet::default();
         let mut artist_matcher = ArtistMatcher::new();
         let mut album_cache: FxHashMap<AlbumCacheKey, i64> = FxHashMap::default();
         let mut album_path_cache: FxHashMap<AlbumPathCacheKey, Utf8PathBuf> = FxHashMap::default();
         let mut pending_albums: FxHashSet<i64> = FxHashSet::default();
+        let mut pending_tracks: FxHashSet<i64> = FxHashSet::default();
         let mut staged_art: StagedArtSet = FxHashSet::default();
         let mut art_ids: ArtIdCache = FxHashMap::default();
         // albums whose folder was checked for folder art this scan (representative read or
@@ -1276,6 +1281,7 @@ async fn run_scanner(
                 item = meta_rx.recv() => {
                     let Some((path, timestamp, (metadata, length, art))) = item else {
                         if !pending_albums.is_empty()
+                            || !pending_tracks.is_empty()
                             || items_in_tx > 0
                             || !pending_relocations.is_empty()
                         {
@@ -1289,6 +1295,16 @@ async fn run_scanner(
                             {
                                 error!("Failed to recompute album artists: {:?}", e);
                             }
+                            if let Err(e) = flush_track_artists(
+                                tx.as_mut()
+                                    .expect("scan transaction should be active"),
+                                &mut artist_matcher,
+                                &mut pending_tracks,
+                            )
+                            .await
+                            {
+                                error!("Failed to recompute track artists: {:?}", e);
+                            }
                             if let Err(e) = tx
                                 .take()
                                 .expect("scan transaction should be active")
@@ -1299,6 +1315,7 @@ async fn run_scanner(
                                 pending_commit.clear();
                                 pending_relocations.clear();
                                 pending_albums.clear();
+                                pending_tracks.clear();
                                 // the caches are poisoned with ids from the rolled-back batch -
                                 // finalize_artwork must not act on them
                                 artist_matcher.clear();
@@ -1317,8 +1334,13 @@ async fn run_scanner(
                                     sr.records.entry(new).or_insert(ts);
                                 }
                             }
-                            retry_album_artists(&pool, &mut artist_matcher, &mut pending_albums)
-                                .await;
+                            retry_artists(
+                                &pool,
+                                &mut artist_matcher,
+                                &mut pending_albums,
+                                &mut pending_tracks,
+                            )
+                            .await;
                         }
                         break;
                     };
@@ -1335,6 +1357,7 @@ async fn run_scanner(
                         &mut album_cache,
                         &mut album_path_cache,
                         &mut pending_albums,
+                        &mut pending_tracks,
                         &mut staged_art,
                         &mut art_ids,
                         &mut examined_albums,
@@ -1352,7 +1375,6 @@ async fn run_scanner(
                                 TrackWriteOutcome::SkippedDuplicateFolder => {
                                     skipped_duplicate += 1
                                 }
-                                TrackWriteOutcome::SkippedNoAlbum => no_album += 1,
                             }
                         }
                         Err(err) => {
@@ -1373,6 +1395,15 @@ async fn run_scanner(
                         {
                             error!("Failed to recompute album artists: {:?}", e);
                         }
+                        if let Err(e) = flush_track_artists(
+                            tx.as_mut().expect("scan transaction should be active"),
+                            &mut artist_matcher,
+                            &mut pending_tracks,
+                        )
+                        .await
+                        {
+                            error!("Failed to recompute track artists: {:?}", e);
+                        }
                         if let Err(e) = tx
                             .take()
                             .expect("scan transaction should be active")
@@ -1383,6 +1414,7 @@ async fn run_scanner(
                             pending_commit.clear();
                             pending_relocations.clear();
                             pending_albums.clear();
+                            pending_tracks.clear();
                             // when the commit fails, the caches are poisoned with invalid data
                             artist_matcher.clear();
                             album_cache.clear();
@@ -1513,7 +1545,11 @@ async fn run_scanner(
         let duration = time_end.duration_since(time_start);
 
         if cancelled {
-            if !pending_albums.is_empty() || items_in_tx > 0 || !pending_relocations.is_empty() {
+            if !pending_albums.is_empty()
+                || !pending_tracks.is_empty()
+                || items_in_tx > 0
+                || !pending_relocations.is_empty()
+            {
                 if let Err(e) = flush_album_artists(
                     tx.as_mut().expect("scan transaction should be active"),
                     &mut artist_matcher,
@@ -1522,6 +1558,15 @@ async fn run_scanner(
                 .await
                 {
                     error!("Failed to recompute album artists: {:?}", e);
+                }
+                if let Err(e) = flush_track_artists(
+                    tx.as_mut().expect("scan transaction should be active"),
+                    &mut artist_matcher,
+                    &mut pending_tracks,
+                )
+                .await
+                {
+                    error!("Failed to recompute track artists: {:?}", e);
                 }
                 if tx
                     .take()
@@ -1544,8 +1589,15 @@ async fn run_scanner(
                     pending_commit.clear();
                     pending_relocations.clear();
                     pending_albums.clear();
+                    pending_tracks.clear();
                 }
-                retry_album_artists(&pool, &mut artist_matcher, &mut pending_albums).await;
+                retry_artists(
+                    &pool,
+                    &mut artist_matcher,
+                    &mut pending_albums,
+                    &mut pending_tracks,
+                )
+                .await;
             }
 
             info!(
@@ -1639,11 +1691,10 @@ async fn run_scanner(
 
         info!(
             "Scan complete, {} files scanned in {} seconds, writing record. \
-             (skipped: {} duplicate-folder, {} no-album; unreadable: {} missing, {} transient, {} corrupt)",
+             (skipped: {} duplicate-folder; unreadable: {} missing, {} transient, {} corrupt)",
             scanned,
             duration.as_secs_f32(),
             skipped_duplicate,
-            no_album,
             decode_failures.missing,
             decode_failures.transient,
             decode_failures.corrupt,

@@ -1,5 +1,9 @@
-INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration, location, genres, artist_names, folder, rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, disc_subtitle, artists, artist_sort, album_artist_keys, art_hash)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration,
+                   location, genres, artist_names, folder, rg_track_gain, rg_track_peak,
+                   rg_album_gain, rg_album_peak, disc_subtitle, artists, artist_sort,
+                   album_artist_keys, art_hash, release_date, date_precision)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+            $19, $20, $21)
     ON CONFLICT (location) DO UPDATE SET
         title = EXCLUDED.title,
         title_sortable = EXCLUDED.title_sortable,
@@ -19,5 +23,7 @@ INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, d
         artists = EXCLUDED.artists,
         artist_sort = EXCLUDED.artist_sort,
         album_artist_keys = EXCLUDED.album_artist_keys,
-        art_hash = EXCLUDED.art_hash
+        art_hash = EXCLUDED.art_hash,
+        release_date = EXCLUDED.release_date,
+        date_precision = EXCLUDED.date_precision
     RETURNING id;

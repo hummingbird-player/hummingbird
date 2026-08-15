@@ -7,6 +7,7 @@ use crate::ui::theme::Theme;
 actions!(context, [CloseContextMenu]);
 
 type CloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 #[derive(IntoElement)]
 pub struct ContextMenu {
@@ -14,12 +15,21 @@ pub struct ContextMenu {
     pub(self) div: Div,
     pub(self) element: Option<AnyElement>,
     pub(self) menu: Option<Div>,
+    pub(self) menu_fn: Option<MenuBuilder>,
     pub(self) on_close: Option<CloseHandler>,
 }
 
 impl ContextMenu {
     pub fn with(mut self, element: impl IntoElement) -> Self {
         self.element = Some(element.into_any_element());
+        self
+    }
+
+    pub fn menu_on_open(
+        mut self,
+        builder: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.menu_fn = Some(Rc::new(builder));
         self
     }
 
@@ -60,9 +70,15 @@ impl RenderOnce for ContextMenu {
         let on_esc_close = self.on_close.clone();
         let focus_open = focus_handle.clone();
 
-        let theme = cx.global::<Theme>();
+        let theme = cx.global::<Theme>().clone();
 
-        let overlay = if let (Some(pos), Some(menu)) = (position, self.menu) {
+        let menu = match self.menu_fn {
+            Some(build) if position.is_some() => Some(div().child(build(window, cx))),
+            Some(_) => None,
+            None => self.menu,
+        };
+
+        let overlay = if let (Some(pos), Some(menu)) = (position, menu) {
             Some(
                 anchored().position(pos).child(deferred(
                     menu.occlude()
@@ -128,6 +144,7 @@ pub fn context(id: impl Into<ElementId>) -> ContextMenu {
         div: div(),
         element: None,
         menu: Some(div()),
+        menu_fn: None,
         on_close: None,
     }
 }

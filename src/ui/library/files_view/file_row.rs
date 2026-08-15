@@ -333,7 +333,7 @@ impl Render for FileRowItem {
                     is_liked,
                     TrackContextMenuContext {
                         show_go_to_album: track.album_id.is_some(),
-                        show_go_to_artist: track.album_id.is_some(),
+                        show_go_to_artist: true,
                         play_from_here: Some(play_from_here),
                     },
                     None,

@@ -96,9 +96,10 @@ impl TrackItem {
                 is_liked: cx
                     .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
                     .unwrap_or_default(),
-                album_art: track
-                    .album_id
-                    .map(|v| format!("!db://album/{v}/thumb").into()),
+                album_art: Some(match track.album_id {
+                    Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
+                    None => format!("!db://track/{}/thumb", track.id).into(),
+                }),
                 is_available: is_track_available(&track),
                 track,
                 is_start,

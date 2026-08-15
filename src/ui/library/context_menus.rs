@@ -333,11 +333,11 @@ fn queue_track(cx: &mut App, track: &Track) {
 }
 
 pub(crate) fn navigate_to_track_artist(cx: &mut App, track: &Track, position: Point<Pixels>) {
-    let Some(album_id) = track.album_id else {
+    let Ok(artists) = cx.artist_ids_for_track(track.id) else {
         return;
     };
 
-    navigate_to_album_artists(cx, album_id, position);
+    navigate_to_artists(cx, artists, position);
 }
 
 pub(crate) fn navigate_to_track_album(cx: &mut App, track: &Track) {
@@ -364,6 +364,14 @@ pub(crate) fn navigate_to_album_artists(cx: &mut App, album_id: i64, position: P
         return;
     };
 
+    navigate_to_artists(cx, artists, position);
+}
+
+pub(crate) fn navigate_to_artists(
+    cx: &mut App,
+    artists: Vec<(i64, String)>,
+    position: Point<Pixels>,
+) {
     match artists.as_slice() {
         [] => {}
         [(id, _)] => navigate_to_artist(cx, *id),

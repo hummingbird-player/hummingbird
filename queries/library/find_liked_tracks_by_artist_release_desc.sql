@@ -1,6 +1,15 @@
-SELECT t.* FROM track t
+SELECT t.*, 0 AS track_source,
+       COALESCE(al.release_date, t.release_date) AS track_date,
+       al.id AS track_album
+FROM track t
 JOIN album al ON t.album_id = al.id
 JOIN album_artist aa ON aa.album_id = al.id
 JOIN playlist_item pi ON pi.track_id = t.id
 WHERE aa.artist_id = $1 AND pi.playlist_id = 1
-ORDER BY al.release_date DESC, al.id DESC, t.disc_number DESC, t.track_number DESC;
+UNION ALL
+SELECT t.*, 1 AS track_source, t.release_date, t.id
+FROM track t
+JOIN track_artist ta ON ta.track_id = t.id
+JOIN playlist_item pi ON pi.track_id = t.id
+WHERE ta.artist_id = $1 AND pi.playlist_id = 1
+ORDER BY track_source, track_date DESC, track_album DESC, disc_number DESC, track_number DESC;

@@ -73,34 +73,14 @@ struct TrackArtistRow {
     artist_names: Option<String>,
 }
 
-/// Rebuild an album's artist links from its tracks' stored artist tags. Claim parts
-/// (`album_artist_keys`) decide which credited names become album artists, keyed by the matching
-/// part; with no claims the credits all link, and when nothing is claimed the album's display
-/// artist does. Derived from the track rows alone, so partial scans converge to the same result
-/// regardless of which files were (re)read.
-pub(crate) async fn recompute_album_artists(
-    conn: &mut SqliteConnection,
-    matcher: &mut ArtistMatcher,
-    album_id: i64,
-) -> anyhow::Result<()> {
-    let rows: Vec<TrackArtistRow> = sqlx::query_as(include_str!(
-        "../../../queries/scan/get_track_artists_for_album.sql"
-    ))
-    .bind(album_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    // an emptied album has no artists to link
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    // artist names to resolve, paired with the sort key they were claimed with
+/// Claimed artist names paired with the sort key each was claimed with, plus the claim parts seen
+/// on any row as the fallback name list. Claim parts decide which credited names link, with no
+/// claims the credits all link.
+fn derive_claimed_artists(rows: &[TrackArtistRow]) -> (Vec<(String, Option<String>)>, Vec<String>) {
     let mut names: Vec<(String, Option<String>)> = Vec::new();
-    // claim parts seen on any track, used as the fallback name list
     let mut fallback: Vec<String> = Vec::new();
 
-    for row in &rows {
+    for row in rows {
         let sort = row.artist_sort.as_deref().filter(|s| !s.trim().is_empty());
         let Some(artists) = row.artists.as_deref() else {
             continue;
@@ -127,8 +107,8 @@ pub(crate) async fn recompute_album_artists(
         }
 
         if parts.is_empty() {
-            // a lone artist always stands for the album and keeps its sort tag for alias merging,
-            // in a multi-artist tag only names claimed by the sort get linked
+            // a lone artist always stands and keeps its sort tag for alias merging, in a
+            // multi-artist tag only names claimed by the sort get linked
             let inherited = if split.len() == 1 {
                 sort.map(str::to_string)
             } else {
@@ -159,6 +139,29 @@ pub(crate) async fn recompute_album_artists(
             }
         }
     }
+
+    (names, fallback)
+}
+
+/// Rebuild an album's artist links from its tracks' stored artist tags - when nothing is claimed
+/// the album's display artist does.
+pub(crate) async fn recompute_album_artists(
+    conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
+    album_id: i64,
+) -> anyhow::Result<()> {
+    let rows: Vec<TrackArtistRow> = sqlx::query_as(include_str!(
+        "../../../queries/scan/get_track_artists_for_album.sql"
+    ))
+    .bind(album_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let (mut names, fallback) = derive_claimed_artists(&rows);
 
     if names.is_empty() {
         let (override_,): (Option<String>,) = sqlx::query_as(include_str!(
@@ -253,6 +256,104 @@ pub async fn flush_album_artists(
     }
     if failed > 0 {
         Err(anyhow::anyhow!("{failed} album(s) failed artist recompute"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Rebuild an album-less track's artist links from its stored artist tags, same claim rules as
+/// albums - nothing claimed falls back to the display artist. Album tracks get artists via the
+/// album instead.
+pub(crate) async fn recompute_track_artists(
+    conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
+    track_id: i64,
+) -> anyhow::Result<()> {
+    let row: Option<TrackArtistRow> = sqlx::query_as(include_str!(
+        "../../../queries/scan/get_track_artist_row.sql"
+    ))
+    .bind(track_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(());
+    };
+
+    let (mut names, fallback) = derive_claimed_artists(std::slice::from_ref(&row));
+
+    if names.is_empty() {
+        let display = row.artist_names.as_deref().filter(|d| !d.trim().is_empty());
+        if let Some(display) = display {
+            names.push((display.to_string(), row.artist_sort.clone()));
+        } else {
+            for part in fallback {
+                push_album_artist_name(&mut names, &part, None);
+            }
+        }
+    }
+
+    let existing: Vec<i64> = sqlx::query_scalar(include_str!(
+        "../../../queries/scan/list_track_artist_ids.sql"
+    ))
+    .bind(track_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut desired: Vec<i64> = Vec::new();
+    for (name, sort) in &names {
+        let artist_id = matcher.resolve(conn, name, sort.as_deref()).await?;
+        if !desired.contains(&artist_id) {
+            desired.push(artist_id);
+        }
+    }
+
+    for artist_id in &desired {
+        if !existing.contains(artist_id) {
+            sqlx::query(include_str!(
+                "../../../queries/scan/create_track_artist.sql"
+            ))
+            .bind(track_id)
+            .bind(artist_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    for artist_id in &existing {
+        if !desired.contains(artist_id) {
+            sqlx::query(include_str!(
+                "../../../queries/scan/delete_track_artist.sql"
+            ))
+            .bind(track_id)
+            .bind(artist_id)
+            .execute(&mut *conn)
+            .await?;
+            // the cleanup trigger can delete the artist row with its last link
+            matcher.evict(*artist_id);
+        }
+    }
+
+    Ok(())
+}
+
+/// Recompute pending track artist links - failures stay pending so the caller can retry them
+/// once the batch is committed.
+pub async fn flush_track_artists(
+    conn: &mut SqliteConnection,
+    matcher: &mut ArtistMatcher,
+    pending: &mut FxHashSet<i64>,
+) -> anyhow::Result<()> {
+    let tracks: Vec<i64> = pending.drain().collect();
+    let mut failed = 0usize;
+    for track_id in tracks {
+        if let Err(e) = recompute_track_artists(conn, matcher, track_id).await {
+            error!("Failed to recompute track {track_id} artists: {:?}", e);
+            failed += 1;
+            pending.insert(track_id);
+        }
+    }
+    if failed > 0 {
+        Err(anyhow::anyhow!("{failed} track(s) failed artist recompute"))
     } else {
         Ok(())
     }
@@ -388,8 +489,6 @@ pub enum TrackWriteOutcome {
     Written(i64),
     /// Rejected on purpose: the album already has a genuine copy in a different folder.
     SkippedDuplicateFolder,
-    /// The file has no album tag.
-    SkippedNoAlbum,
 }
 
 /// Whether the album's folder claim is still backed by a real track row.
@@ -482,47 +581,47 @@ async fn insert_track(
     length: u64,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
 ) -> anyhow::Result<TrackWriteOutcome> {
-    let Some(album_id_val) = album_id else {
-        return Ok(TrackWriteOutcome::SkippedNoAlbum);
-    };
-
-    let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
     let parent = path.parent().unwrap();
-    let ap_key = (album_id_val, disc_num);
 
-    // fetch or create the claim on a cache miss
-    if album_path_cache.get(&ap_key).is_none() {
-        let find_path: Result<(String,), _> =
-            sqlx::query_as(include_str!("../../../queries/scan/get_album_path.sql"))
-                .bind(album_id)
-                .bind(disc_num)
-                .fetch_one(&mut *conn)
-                .await;
+    // album-less tracks have no folder claim to check or heal
+    if let Some(album_id_val) = album_id {
+        let disc_num = metadata.disc_current.map(|v| v as i64).unwrap_or(-1);
+        let ap_key = (album_id_val, disc_num);
 
-        let resolved = match find_path {
-            Ok(found) => Utf8PathBuf::from(&found.0),
-            Err(sqlx::Error::RowNotFound) => {
-                sqlx::query(include_str!("../../../queries/scan/create_album_path.sql"))
+        // fetch or create the claim on a cache miss
+        if album_path_cache.get(&ap_key).is_none() {
+            let find_path: Result<(String,), _> =
+                sqlx::query_as(include_str!("../../../queries/scan/get_album_path.sql"))
                     .bind(album_id)
-                    .bind(parent.as_str())
                     .bind(disc_num)
-                    .execute(&mut *conn)
-                    .await?;
-                parent.to_path_buf()
-            }
-            Err(e) => return Err(e.into()),
-        };
-        album_path_cache.insert(ap_key, resolved);
-    }
+                    .fetch_one(&mut *conn)
+                    .await;
 
-    let claimed = album_path_cache
-        .get(&ap_key)
-        .expect("album path cache populated above");
-    if !paths_equal(claimed, parent) {
-        // end the borrow before the &mut heal call
-        let claimed = claimed.clone();
-        if !handle_folder_mismatch(conn, album_path_cache, ap_key, &claimed, parent).await? {
-            return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
+            let resolved = match find_path {
+                Ok(found) => Utf8PathBuf::from(&found.0),
+                Err(sqlx::Error::RowNotFound) => {
+                    sqlx::query(include_str!("../../../queries/scan/create_album_path.sql"))
+                        .bind(album_id)
+                        .bind(parent.as_str())
+                        .bind(disc_num)
+                        .execute(&mut *conn)
+                        .await?;
+                    parent.to_path_buf()
+                }
+                Err(e) => return Err(e.into()),
+            };
+            album_path_cache.insert(ap_key, resolved);
+        }
+
+        let claimed = album_path_cache
+            .get(&ap_key)
+            .expect("album path cache populated above");
+        if !paths_equal(claimed, parent) {
+            // end the borrow before the &mut heal call
+            let claimed = claimed.clone();
+            if !handle_folder_mismatch(conn, album_path_cache, ap_key, &claimed, parent).await? {
+                return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
+            }
         }
     }
 
@@ -531,6 +630,8 @@ async fn insert_track(
         .clone()
         .or_else(|| path.file_name().map(|v| v.to_string()))
         .ok_or_else(|| anyhow::anyhow!("failed to retrieve filename"))?;
+
+    let (release_date, date_precision) = bind_release_date(metadata);
 
     let result: Result<(i64,), sqlx::Error> =
         sqlx::query_as(include_str!("../../../queries/scan/create_track.sql"))
@@ -553,6 +654,8 @@ async fn insert_track(
             .bind(&metadata.artist_sort)
             .bind(&metadata.album_artist_keys)
             .bind(art_hash)
+            .bind(release_date)
+            .bind(date_precision)
             .fetch_one(&mut *conn)
             .await;
 
@@ -685,6 +788,7 @@ pub async fn update_metadata(
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
     album_path_cache: &mut FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
     pending_albums: &mut FxHashSet<i64>,
+    pending_tracks: &mut FxHashSet<i64>,
     staged_art: &mut StagedArtSet,
     art_ids: &mut ArtIdCache,
     examined_albums: &mut FxHashSet<i64>,
@@ -743,57 +847,68 @@ pub async fn update_metadata(
             if art.representative {
                 examined_albums.insert(album_id);
             }
+        }
 
-            let mut embedded_id: Option<i64> = None;
-            let mut folder_id: Option<(i64, i64)> = None;
-            for candidate in [&art.embedded, &art.folder].into_iter().flatten() {
-                let artwork_id = match art_ids.get(&candidate.hash) {
-                    Some(&cached) => cached,
-                    None => {
-                        let id = get_or_create_artwork(
-                            conn,
-                            candidate.hash as i64,
-                            Some(candidate.bytes.as_ref()),
-                        )
-                        .await;
-                        art_ids.insert(candidate.hash, id);
-                        id
-                    }
-                };
-                let source = candidate.source.db_value();
-                if staged_art.insert((album_id, candidate.hash, source)) {
-                    stage_scan_art(conn, album_id, candidate.hash as i64, source).await?;
+        let mut embedded_id: Option<i64> = None;
+        let mut folder_id: Option<(i64, i64)> = None;
+        for candidate in [&art.embedded, &art.folder].into_iter().flatten() {
+            let artwork_id = match art_ids.get(&candidate.hash) {
+                Some(&cached) => cached,
+                None => {
+                    let id = get_or_create_artwork(
+                        conn,
+                        candidate.hash as i64,
+                        Some(candidate.bytes.as_ref()),
+                    )
+                    .await;
+                    art_ids.insert(candidate.hash, id);
+                    id
                 }
-                match candidate.source {
-                    ArtSource::Embedded => embedded_id = artwork_id,
-                    ArtSource::Folder(_) => folder_id = artwork_id.map(|id| (id, source)),
-                }
+            };
+            let source = candidate.source.db_value();
+            if let Some(album_id) = album_id
+                && staged_art.insert((album_id, candidate.hash, source))
+            {
+                stage_scan_art(conn, album_id, candidate.hash as i64, source).await?;
             }
-
-            // tracks point at their own art right away
-            if let Some(artwork_id) = embedded_id {
-                sqlx::query(include_str!("../../../queries/scan/update_track_art.sql"))
-                    .bind(artwork_id)
-                    .bind(track_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-
-            // provisional pick for albums with no art yet (folder art when present, else
-            // embedded)
-            if let Some((artwork_id, source)) = folder_id.or(embedded_id.map(|id| (id, 0))) {
-                sqlx::query(include_str!("../../../queries/scan/set_album_art.sql"))
-                    .bind(artwork_id)
-                    .bind(source)
-                    .bind(album_id)
-                    .execute(&mut *conn)
-                    .await?;
+            match candidate.source {
+                ArtSource::Embedded => embedded_id = artwork_id,
+                ArtSource::Folder(_) => folder_id = artwork_id.map(|id| (id, source)),
             }
         }
 
-        // album artist links are rebuilt once per album per committed batch
+        // tracks point at their own art right away, singles keep their own pick since no
+        // album consensus covers them
+        let track_art = match album_id {
+            Some(_) => embedded_id,
+            None => folder_id.map(|(id, _)| id).or(embedded_id),
+        };
+        if let Some(artwork_id) = track_art {
+            sqlx::query(include_str!("../../../queries/scan/update_track_art.sql"))
+                .bind(artwork_id)
+                .bind(track_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+
+        // provisional pick for albums with no art yet (folder art when present, else embedded)
+        if let Some(album_id) = album_id
+            && let Some((artwork_id, source)) = folder_id.or(embedded_id.map(|id| (id, 0)))
+        {
+            sqlx::query(include_str!("../../../queries/scan/set_album_art.sql"))
+                .bind(artwork_id)
+                .bind(source)
+                .bind(album_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+
+        // album artist links are rebuilt once per album per committed batch, singles get their
+        // own links
         if let Some(album_id) = album_id {
             pending_albums.insert(album_id);
+        } else {
+            pending_tracks.insert(track_id);
         }
         if let Some(Some(old_id)) = previous_album.map(|(id,)| id)
             && Some(old_id) != album_id
@@ -1367,6 +1482,7 @@ mod tests {
         albums: FxHashMap<AlbumCacheKey, i64>,
         paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
         pending_albums: FxHashSet<i64>,
+        pending_tracks: FxHashSet<i64>,
         staged_art: StagedArtSet,
         art_ids: ArtIdCache,
         examined_albums: FxHashSet<i64>,
@@ -1390,6 +1506,7 @@ mod tests {
             &mut caches.albums,
             &mut caches.paths,
             &mut caches.pending_albums,
+            &mut caches.pending_tracks,
             &mut caches.staged_art,
             &mut caches.art_ids,
             &mut caches.examined_albums,
@@ -1398,9 +1515,10 @@ mod tests {
         .unwrap()
     }
 
-    /// Force-reprocess a file as a rescan does, then rebuild the album's artist links.
+    /// Force-reprocess a file as a rescan does, then rebuild its artist links.
     async fn force_write(conn: &mut SqliteConnection, meta: &Metadata, path: &Utf8Path) {
         let mut pending_albums = FxHashSet::default();
+        let mut pending_tracks = FxHashSet::default();
         update_metadata(
             conn,
             meta,
@@ -1412,6 +1530,7 @@ mod tests {
             &mut FxHashMap::default(),
             &mut FxHashMap::default(),
             &mut pending_albums,
+            &mut pending_tracks,
             &mut FxHashSet::default(),
             &mut FxHashMap::default(),
             &mut FxHashSet::default(),
@@ -1419,6 +1538,9 @@ mod tests {
         .await
         .unwrap();
         flush_album_artists(conn, &mut ArtistMatcher::new(), &mut pending_albums)
+            .await
+            .unwrap();
+        flush_track_artists(conn, &mut ArtistMatcher::new(), &mut pending_tracks)
             .await
             .unwrap();
     }
@@ -1542,7 +1664,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_metadata_reports_no_album_tag() {
+    async fn update_metadata_writes_album_less_track() {
         let (dir, pool) = create_test_pool("db-noalbum-test").await;
         let mut conn = pool.acquire().await.unwrap();
         let path = dir.utf8_join("track.flac");
@@ -1550,8 +1672,168 @@ mod tests {
         let mut meta = track_metadata("Album", "Artist", "Track", 1);
         meta.album = None;
 
-        let outcome = write(&mut conn, &meta, &path, &mut WriteCaches::default()).await;
-        assert_eq!(outcome, TrackWriteOutcome::SkippedNoAlbum);
+        let mut caches = WriteCaches::default();
+        let outcome = write(&mut conn, &meta, &path, &mut caches).await;
+        assert!(matches!(outcome, TrackWriteOutcome::Written(_)));
+
+        assert_eq!(count_rows(&pool, "album").await, 0);
+        assert_eq!(count_rows(&pool, "album_path").await, 0);
+        assert_eq!(count_rows(&pool, "track").await, 1);
+        let (album_id,): (Option<i64>,) = sqlx::query_as("SELECT album_id FROM track")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(album_id, None);
+
+        flush_track_artists(
+            &mut conn,
+            &mut ArtistMatcher::new(),
+            &mut caches.pending_tracks,
+        )
+        .await
+        .unwrap();
+        assert_eq!(count_rows(&pool, "track_artist").await, 1);
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Artist");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_claims_multi_artist_single() {
+        let (dir, pool) = create_test_pool("db-single-claim-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata(
+            "Album",
+            "Porter Robinson (feat. Frost Children)",
+            "Track",
+            1,
+        );
+        meta.album = None;
+        meta.artists = Some("Porter Robinson; Frost Children".to_string());
+        meta.artist_sort = Some("Robinson, Porter; Frost Children".to_string());
+        meta.album_artist_keys = Some("Robinson, Porter; Frost Children".to_string());
+
+        let mut caches = WriteCaches::default();
+        write(&mut conn, &meta, &path, &mut caches).await;
+        flush_track_artists(
+            &mut conn,
+            &mut ArtistMatcher::new(),
+            &mut caches.pending_tracks,
+        )
+        .await
+        .unwrap();
+
+        let artists: Vec<(String, String)> = sqlx::query_as(
+            "SELECT ar.name, ar.name_sortable FROM track_artist ta
+             JOIN artist ar ON ar.id = ta.artist_id
+             ORDER BY ar.name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            artists,
+            [
+                ("Frost Children".to_string(), "Frost Children".to_string()),
+                (
+                    "Porter Robinson".to_string(),
+                    "Robinson, Porter".to_string()
+                )
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_metadata_retag_removes_dropped_single_artists() {
+        let (dir, pool) = create_test_pool("db-single-retag-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata(
+            "Album",
+            "Porter Robinson (feat. Frost Children)",
+            "Track",
+            1,
+        );
+        meta.album = None;
+        meta.artists = Some("Porter Robinson; Frost Children".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "track_artist").await, 2);
+
+        meta.artists = Some("Porter Robinson".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "track_artist").await, 1);
+        sweep_orphan_artists(&pool).await;
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM artist")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Porter Robinson");
+    }
+
+    #[tokio::test]
+    async fn update_metadata_adopting_album_drops_single_artists() {
+        let (dir, pool) = create_test_pool("db-single-adopt-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album = None;
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+        assert_eq!(count_rows(&pool, "track_artist").await, 1);
+
+        meta.album = Some("Real Album".to_string());
+        insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+        assert_eq!(count_rows(&pool, "track_artist").await, 0);
+        assert_eq!(count_rows(&pool, "album_artist").await, 1);
+        assert_eq!(count_rows(&pool, "artist").await, 1);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_stores_track_release_date() {
+        let (dir, pool) = create_test_pool("db-track-date-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album = None;
+        meta.date = Some(Utc.with_ymd_and_hms(1995, 6, 24, 0, 0, 0).single().unwrap());
+        write(&mut conn, &meta, &path, &mut WriteCaches::default()).await;
+
+        let (date, precision): (Option<String>, Option<i32>) =
+            sqlx::query_as("SELECT release_date, date_precision FROM track")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(date.as_deref(), Some("1995-06-24"));
+        assert_eq!(precision, Some(DATE_PRECISION_FULL_DATE));
+    }
+
+    #[tokio::test]
+    async fn update_metadata_stores_year_only_track_release_date() {
+        let (dir, pool) = create_test_pool("db-track-year-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let path = dir.utf8_join("track.flac");
+
+        let mut meta = track_metadata("Album", "Artist", "Track", 1);
+        meta.album = None;
+        meta.year = Some(1995);
+        write(&mut conn, &meta, &path, &mut WriteCaches::default()).await;
+
+        let (date, precision): (Option<String>, Option<i32>) =
+            sqlx::query_as("SELECT release_date, date_precision FROM track")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(date.as_deref(), Some("1995-01-01"));
+        assert_eq!(precision, Some(DATE_PRECISION_YEAR));
     }
 
     /// Scan the alias and the canonical name in both orders, the same artist must result.

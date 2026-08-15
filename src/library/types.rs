@@ -249,6 +249,11 @@ pub struct Track {
     pub rg_album_peak: Option<f64>,
     #[sqlx(default)]
     pub disc_subtitle: Option<DBString>,
+    #[sqlx(default)]
+    pub release_date: Option<DBString>,
+    #[sqlx(default)]
+    /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
+    pub date_precision: Option<i32>,
 }
 
 #[derive(sqlx::Type, Clone, Copy, Debug, PartialEq)]
