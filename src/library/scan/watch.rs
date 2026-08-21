@@ -16,28 +16,21 @@ use tokio::sync::mpsc::WeakSender;
 use tracing::{error, info, warn};
 
 use crate::{
-    library::scan::ScanCommand,
+    library::scan::control::ScanCommand,
     media::{lookup_table::can_be_read, traits::MediaProviderFeatures},
     settings::scan::ScanSettings,
 };
 
-/// How long event bursts are coalesced before dispatching.
 const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
-
-/// Batches touching more directories than this are promoted to a full scan, cheaper
-/// than many targeted rescans.
+/// If one event batch touches more dirs than this, do a full scan instead.
 const STORM_TARGET_CAP: usize = 200;
 
-/// Watches library roots and forwards filesystem changes to the scanner task as rescan
-/// commands - all real work happens there.
-pub struct LibraryWatcher {
-    // held for its Drop, which stops the debouncer thread
+pub(super) struct LibraryWatcher {
+    // kept so Drop stops the notify thread
     _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
-    /// Roots covered by a live backend watch - a root leaves after being unmounted.
     watched: FxHashSet<Utf8PathBuf>,
-    /// Roots that failed to watch or later went missing - re-checked periodically.
     unwatched: FxHashSet<Utf8PathBuf>,
-    /// Unwatchable roots already logged about - retries stay quiet until one succeeds.
+    /// Roots we've already warned about, so retries don't spam the log.
     warned: FxHashSet<Utf8PathBuf>,
 }
 
@@ -90,21 +83,24 @@ impl LibraryWatcher {
         })
     }
 
-    pub fn is_active(&self) -> bool {
+    pub(super) fn is_active(&self) -> bool {
         !self.watched.is_empty()
     }
 
-    pub fn watched_roots(&self) -> Vec<Utf8PathBuf> {
+    pub(super) fn watched_roots(&self) -> Vec<Utf8PathBuf> {
         self.watched.iter().cloned().collect()
     }
 
-    pub fn unwatched_roots(&self) -> Vec<Utf8PathBuf> {
+    pub(super) fn unwatched_roots(&self) -> Vec<Utf8PathBuf> {
         self.unwatched.iter().cloned().collect()
     }
 
-    /// Apply probe results: drop roots that went missing, re-watch recoverable ones.
-    /// Returns whether any watch was added.
-    pub fn apply_probe(&mut self, lost: Vec<Utf8PathBuf>, recoverable: Vec<Utf8PathBuf>) -> bool {
+    /// After a probe: stop watching lost roots, try to watch recovered ones. True if anything new is watched.
+    pub(super) fn apply_probe(
+        &mut self,
+        lost: Vec<Utf8PathBuf>,
+        recoverable: Vec<Utf8PathBuf>,
+    ) -> bool {
         for root in lost {
             self.watched.remove(&root);
             self.unwatched.insert(root);
@@ -139,8 +135,7 @@ impl LibraryWatcher {
     }
 }
 
-/// Which watched roots are gone and which unwatched ones can be watched again. Runs on
-/// a blocking thread so a hung mount can't stall the scanner task.
+/// Check root availability on a blocking thread so dead network mounts don't stall the scanner.
 pub(super) fn probe_roots(
     watched: &[Utf8PathBuf],
     unwatched: &[Utf8PathBuf],
@@ -157,9 +152,10 @@ pub(super) fn probe_roots(
     (lost, recoverable)
 }
 
-/// Install the watcher for the current settings, or `None` if disabled or nothing is
-/// configured. A watcher with no active roots is kept so it can retry them later.
-pub fn arm(settings: &ScanSettings, cmd_tx: &WeakSender<ScanCommand>) -> Option<LibraryWatcher> {
+pub(super) fn arm(
+    settings: &ScanSettings,
+    cmd_tx: &WeakSender<ScanCommand>,
+) -> Option<LibraryWatcher> {
     if !settings.watch_for_changes || settings.paths.is_empty() {
         return None;
     }
@@ -172,12 +168,11 @@ fn try_send_command(cmd_tx: &WeakSender<ScanCommand>, command: ScanCommand) -> b
         .is_some_and(|cmd_tx| cmd_tx.blocking_send(command).is_ok())
 }
 
-/// Blocking sends are deliberate - dropping a send would lose deletions.
 fn handle_debounced(result: DebounceEventResult, cmd_tx: &WeakSender<ScanCommand>) {
     let events = match result {
         Ok(events) => events,
         Err(errors) => {
-            // error batches may have lost events - settle with a full scan
+            // error batches may have lost events - full scan to catch up
             for e in &errors {
                 warn!("Library watcher error: {:?}", e);
             }
@@ -186,7 +181,7 @@ fn handle_debounced(result: DebounceEventResult, cmd_tx: &WeakSender<ScanCommand
         }
     };
 
-    // drop access events, but keep close-write - backends may report it instead of modify
+    // ignore plain access events, but keep close-write - some backends use it instead of modify
     let events: Vec<DebouncedEvent> = events
         .into_iter()
         .filter(|e| {
@@ -226,7 +221,7 @@ fn handle_debounced(result: DebounceEventResult, cmd_tx: &WeakSender<ScanCommand
         ScanCommand::RescanPaths {
             paths: targets.into_iter().collect(),
             respect_record: !force_rescan,
-            // a moved-in tree produces no events for its contents - recurse to find them
+            // a moved-in folder doesn't emit events for its contents - recurse to find them
             recursive: true,
         }
     };
@@ -236,8 +231,7 @@ fn handle_debounced(result: DebounceEventResult, cmd_tx: &WeakSender<ScanCommand
     }
 }
 
-/// Reduces event paths to rescan targets: media, art, and `.lrc` events map to their parent
-/// directory, everything else to itself.
+/// Map event paths to rescan targets: media/art/lyrics use the parent folder, directories use themselves.
 fn affected_targets(paths: &[PathBuf]) -> FxHashSet<Utf8PathBuf> {
     let mut targets = FxHashSet::default();
     let mut non_utf8: usize = 0;
@@ -274,7 +268,6 @@ fn affected_targets(paths: &[PathBuf]) -> FxHashSet<Utf8PathBuf> {
             Ok(false) => {
                 targets.insert(path);
             }
-            // unknown path that isn't media - leave it alone
             Err(_) => {}
         }
     }
@@ -325,37 +318,25 @@ mod tests {
     }
 
     #[test]
-    fn media_file_events_map_to_parent_directory() {
+    fn media_lyrics_and_art_events_map_to_parent_directory() {
         register_test_media_providers();
-        let dir = TestDir::new("watch-test");
-        let file = dir.join("track.flac");
-        std::fs::write(&file, b"").unwrap();
+        for (name, contents) in [
+            ("track.flac", Some(b"".as_slice())),
+            ("track.lrc", Some(b"".as_slice())),
+            ("cover.JPG", None),
+            ("gone.flac", None),
+        ] {
+            let dir = TestDir::new("watch-test");
+            let file = dir.join(name);
+            if let Some(contents) = contents {
+                std::fs::write(&file, contents).unwrap();
+            }
 
-        let targets = affected_targets(std::slice::from_ref(&file));
-        assert_eq!(targets.len(), 1);
-        assert!(targets.contains(&dir.utf8_path().canonicalize_utf8().unwrap()));
-    }
-
-    #[test]
-    fn lyrics_file_events_map_to_parent_directory() {
-        register_test_media_providers();
-        let dir = TestDir::new("watch-test");
-        let file = dir.join("track.lrc");
-        std::fs::write(&file, b"").unwrap();
-
-        let targets = affected_targets(std::slice::from_ref(&file));
-        assert_eq!(targets.len(), 1);
-        assert!(targets.contains(&dir.utf8_path().canonicalize_utf8().unwrap()));
-    }
-
-    #[test]
-    fn album_art_file_events_map_to_parent_directory() {
-        let dir = TestDir::new("watch-test");
-        let file = dir.join("cover.JPG");
-
-        let targets = affected_targets(std::slice::from_ref(&file));
-        assert_eq!(targets.len(), 1);
-        assert!(targets.contains(&dir.utf8_path().canonicalize_utf8().unwrap()));
+            let targets = affected_targets(std::slice::from_ref(&file));
+            let mut expected = FxHashSet::default();
+            expected.insert(dir.utf8_path().canonicalize_utf8().unwrap());
+            assert_eq!(targets, expected);
+        }
     }
 
     #[test]
@@ -366,16 +347,6 @@ mod tests {
         std::fs::write(&file, b"").unwrap();
 
         assert!(affected_targets(&[file]).is_empty());
-    }
-
-    #[test]
-    fn deleted_media_file_maps_to_parent_directory() {
-        register_test_media_providers();
-        let dir = TestDir::new("watch-test");
-
-        let targets = affected_targets(&[dir.join("gone.flac")]);
-        assert_eq!(targets.len(), 1);
-        assert!(targets.contains(&dir.utf8_path().canonicalize_utf8().unwrap()));
     }
 
     #[test]
@@ -412,28 +383,38 @@ mod tests {
             Instant::now(),
         );
 
-        // playback or editor open/close carries no content change - no rescan
+        // open/close without write doesn't change content - no rescan
         handle_for_test(Ok(vec![event]), &tx);
         assert!(rx.try_recv().is_err());
     }
 
     #[test]
-    fn write_close_events_are_rescanned() {
+    fn write_events_queue_record_aware_rescans() {
         register_test_media_providers();
-        let dir = TestDir::new("watch-test");
-        let file = dir.join("track.flac");
-        std::fs::write(&file, b"").unwrap();
-        let (tx, mut rx) = channel(1);
-        let event = DebouncedEvent::new(
-            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Write))).add_path(file),
-            Instant::now(),
-        );
+        for kind in [
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Create(CreateKind::File),
+        ] {
+            let dir = TestDir::new("watch-test");
+            let file = dir.join("track.flac");
+            std::fs::write(&file, b"").unwrap();
+            let (tx, mut rx) = channel(1);
+            let event = DebouncedEvent::new(Event::new(kind).add_path(file), Instant::now());
 
-        handle_for_test(Ok(vec![event]), &tx);
-        assert!(matches!(
-            rx.blocking_recv(),
-            Some(ScanCommand::RescanPaths { .. })
-        ));
+            handle_for_test(Ok(vec![event]), &tx);
+            match rx.blocking_recv() {
+                Some(ScanCommand::RescanPaths {
+                    paths,
+                    respect_record,
+                    recursive,
+                }) => {
+                    assert!(respect_record);
+                    assert!(recursive);
+                    assert_eq!(paths.len(), 1);
+                }
+                other => panic!("expected a record-aware rescan command, got {:?}", other),
+            }
+        }
     }
 
     #[test]
@@ -464,33 +445,6 @@ mod tests {
 
         handle_for_test(Ok(events), &tx);
         assert!(matches!(rx.blocking_recv(), Some(ScanCommand::Scan)));
-    }
-
-    #[test]
-    fn file_batch_queues_record_aware_rescan() {
-        register_test_media_providers();
-        let dir = TestDir::new("watch-test");
-        let file = dir.join("track.flac");
-        std::fs::write(&file, b"").unwrap();
-        let (tx, mut rx) = channel(1);
-        let event = DebouncedEvent::new(
-            Event::new(EventKind::Create(CreateKind::File)).add_path(file),
-            Instant::now(),
-        );
-
-        handle_for_test(Ok(vec![event]), &tx);
-        match rx.blocking_recv() {
-            Some(ScanCommand::RescanPaths {
-                paths,
-                respect_record,
-                recursive,
-            }) => {
-                assert!(respect_record);
-                assert!(recursive);
-                assert_eq!(paths.len(), 1);
-            }
-            other => panic!("expected a rescan command, got {:?}", other),
-        }
     }
 
     #[test]

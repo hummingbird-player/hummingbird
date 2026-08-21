@@ -31,9 +31,8 @@ use crate::{
     },
     media::{
         errors::{
-            ChannelRetrievalError, CloseError, FrameDurationError, MetadataError, OpenError,
-            PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError,
-            TrackDurationError,
+            ChannelRetrievalError, FrameDurationError, MetadataError, OpenError, PlaybackReadError,
+            PlaybackStartError, SeekError, TrackDurationError,
         },
         metadata::{Metadata, MetadataTag, apply_tag},
         pipeline::{ChannelProducers, DecodeResult, WriteError},
@@ -378,11 +377,10 @@ impl MediaProvider for SymphoniaProvider {
 }
 
 impl MediaStream for SymphoniaStream {
-    fn close(&mut self) -> Result<(), CloseError> {
-        self.stop_playback().expect("invalid outcome");
+    fn close(&mut self) {
+        self.stop_playback();
         self.current_metadata = Metadata::default();
         self.format = None;
-        Ok(())
     }
 
     fn start_playback(&mut self) -> Result<(), PlaybackStartError> {
@@ -441,11 +439,9 @@ impl MediaStream for SymphoniaStream {
         Ok(())
     }
 
-    fn stop_playback(&mut self) -> Result<(), PlaybackStopError> {
+    fn stop_playback(&mut self) {
         self.current_track = 0;
         self.decoder = None;
-
-        Ok(())
     }
 
     fn frame_duration(&self) -> Result<u64, FrameDurationError> {
@@ -456,11 +452,12 @@ impl MediaStream for SymphoniaStream {
         }
     }
 
-    fn read_metadata(&mut self) -> Result<&Metadata, MetadataError> {
+    fn read_metadata(&mut self) -> Result<Metadata, MetadataError> {
         self.pending_metadata_update = false;
 
         if self.format.is_some() {
-            Ok(&self.current_metadata)
+            // cloned, not taken - playback re-reads metadata as tags update mid-stream
+            Ok(self.current_metadata.clone())
         } else {
             Err(MetadataError::InvalidState)
         }

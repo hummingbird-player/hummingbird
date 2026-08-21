@@ -10,8 +10,8 @@ use lofty::tag::{ItemValue, Tag, TagItem, TagType};
 use crate::library::scan::artist_match::token_key;
 use crate::media::{
     errors::{
-        ChannelRetrievalError, CloseError, FrameDurationError, MetadataError, OpenError,
-        PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError, TrackDurationError,
+        ChannelRetrievalError, FrameDurationError, MetadataError, OpenError, PlaybackReadError,
+        PlaybackStartError, SeekError, TrackDurationError,
     },
     metadata::{Metadata, MetadataTag, apply_tag},
     pipeline::{ChannelProducers, DecodeResult},
@@ -207,9 +207,9 @@ struct ArtistNames {
     album_artists_tag: Vec<String>,
 }
 
-fn push_unique_vec(names: &mut Vec<String>, name: &str) {
-    if !name.is_empty() && !names.iter().any(|n| n == name) {
-        names.push(name.to_string());
+fn push_unique_vec(names: &mut (impl AsRef<[String]> + Extend<String>), name: &str) {
+    if !name.is_empty() && !names.as_ref().iter().any(|n| n == name) {
+        names.extend([name.to_string()]);
     }
 }
 
@@ -235,7 +235,7 @@ fn apply_tag_items(
             MetadataTag::AlbumArtist(value) => {
                 for name in split_artist_names(&value, split_artists) {
                     push_unique_name(&mut metadata.album_artist, &name, ", ");
-                    push_unique_name(&mut metadata.album_artist_keys, &name, "; ");
+                    push_unique_vec(&mut metadata.album_artist_keys, &name);
                 }
             }
             // the ALBUMARTISTS tag carries the individual album artist credits
@@ -269,7 +269,7 @@ fn finalize_track_artists(metadata: &mut Metadata, tpe1: Vec<String>, artists_ta
     } else {
         artists_tag
     };
-    metadata.artists = (!names.is_empty()).then(|| names.join("; "));
+    metadata.artists = names.into_iter().collect();
 }
 
 /// The claim/keys list is the individual ALBUMARTISTS credits when present, TSO2 split on "&"
@@ -277,7 +277,7 @@ fn finalize_track_artists(metadata: &mut Metadata, tpe1: Vec<String>, artists_ta
 /// `apply_tag_items`. Called once all tags have been applied.
 fn finalize_album_artist_keys(metadata: &mut Metadata, album_artists: &[String]) {
     if !album_artists.is_empty() {
-        metadata.album_artist_keys = Some(album_artists.join("; "));
+        metadata.album_artist_keys = album_artists.iter().cloned().collect();
         // the individual credits also stand in for a missing joined display value
         if metadata
             .album_artist
@@ -303,24 +303,14 @@ fn finalize_album_artist_keys(metadata: &mut Metadata, album_artists: &[String])
         let claimed = |part: &str| {
             metadata
                 .artists
-                .as_deref()
-                .into_iter()
-                .flat_map(|artists| artists.split(';'))
-                .map(str::trim)
+                .iter()
                 .any(|name| token_key(name) == token_key(part))
         };
         let trusted = parts.len() > 1 && parts.iter().all(|part| claimed(part))
             || parts.len() == 1 && album_artists.is_empty();
         if !parts.is_empty() && trusted {
-            metadata.album_artist_keys = Some(parts.join("; "));
+            metadata.album_artist_keys = parts.into_iter().map(str::to_string).collect();
         }
-    }
-    if metadata
-        .album_artist_keys
-        .as_deref()
-        .is_some_and(|k| k.trim().is_empty())
-    {
-        metadata.album_artist_keys = None;
     }
 }
 
@@ -426,9 +416,8 @@ impl MediaProvider for LoftyProvider {
 }
 
 impl MediaStream for LoftyStream {
-    fn close(&mut self) -> Result<(), CloseError> {
+    fn close(&mut self) {
         self.started = false;
-        Ok(())
     }
 
     fn start_playback(&mut self) -> Result<(), PlaybackStartError> {
@@ -436,9 +425,8 @@ impl MediaStream for LoftyStream {
         Ok(())
     }
 
-    fn stop_playback(&mut self) -> Result<(), PlaybackStopError> {
+    fn stop_playback(&mut self) {
         self.started = false;
-        Ok(())
     }
 
     fn seek(&mut self, _time: f64) -> Result<(), SeekError> {
@@ -449,8 +437,8 @@ impl MediaStream for LoftyStream {
         Err(FrameDurationError::NeverStarted)
     }
 
-    fn read_metadata(&mut self) -> Result<&Metadata, MetadataError> {
-        Ok(&self.metadata)
+    fn read_metadata(&mut self) -> Result<Metadata, MetadataError> {
+        Ok(std::mem::take(&mut self.metadata))
     }
 
     fn metadata_updated(&self) -> bool {
@@ -516,7 +504,7 @@ mod tests {
             .unwrap_or_else(|err| panic!("failed to read {name}: {err}"));
 
         stream.start_playback().unwrap();
-        let metadata = stream.read_metadata().unwrap().clone();
+        let metadata = stream.read_metadata().unwrap();
         let has_image = stream.read_image().unwrap().is_some();
         assert!(stream.read_image().unwrap().is_none());
 
@@ -654,6 +642,10 @@ mod tests {
         tag
     }
 
+    fn names(values: &[&str]) -> smallvec::SmallVec<[String; 2]> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
     fn tag_with_items(tag_type: TagType, key: ItemKey, values: &[&str]) -> Tag {
         let mut tag = Tag::new(tag_type);
         for value in values {
@@ -675,14 +667,14 @@ mod tests {
     fn splits_slash_joined_artists_for_id3v23() {
         let tag = tag_with_artists(TagType::Id3v2, "Artist A/Artist B");
         let metadata = applied_metadata(&tag, true);
-        assert_eq!(metadata.artists.as_deref(), Some("Artist A; Artist B"));
+        assert_eq!(metadata.artists, names(&["Artist A", "Artist B"]));
     }
 
     #[test]
     fn keeps_literal_slash_in_artists_for_other_formats() {
         let tag = tag_with_artists(TagType::VorbisComments, "AC/DC");
         let metadata = applied_metadata(&tag, false);
-        assert_eq!(metadata.artists.as_deref(), Some("AC/DC"));
+        assert_eq!(metadata.artists, names(&["AC/DC"]));
     }
 
     #[test]
@@ -694,7 +686,7 @@ mod tests {
         );
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Artist 1, Artist 2"));
-        assert_eq!(metadata.artists.as_deref(), Some("Artist 1; Artist 2"));
+        assert_eq!(metadata.artists, names(&["Artist 1", "Artist 2"]));
     }
 
     #[test]
@@ -706,7 +698,7 @@ mod tests {
         );
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Test Artist"));
-        assert_eq!(metadata.artists.as_deref(), Some("Test Artist"));
+        assert_eq!(metadata.artists, names(&["Test Artist"]));
     }
 
     #[test]
@@ -718,7 +710,7 @@ mod tests {
         );
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Tracy feat. 築山さえ"));
-        assert_eq!(metadata.artists.as_deref(), Some("Tracy feat. 築山さえ"));
+        assert_eq!(metadata.artists, names(&["Tracy feat. 築山さえ"]));
     }
 
     #[test]
@@ -736,8 +728,8 @@ mod tests {
             Some("Halozy, 556ミリメートル")
         );
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Halozy, 556ミリメートル")
+            metadata.album_artist_keys,
+            names(&["Halozy, 556ミリメートル"])
         );
     }
 
@@ -781,8 +773,8 @@ mod tests {
             Some("Halozy, 556ミリメートル")
         );
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Halozy; 556ミリメートル")
+            metadata.album_artist_keys,
+            names(&["Halozy", "556ミリメートル"])
         );
     }
 
@@ -802,8 +794,8 @@ mod tests {
             Some("Halozy, 556ミリメートル")
         );
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Halozy; 556ミリメートル")
+            metadata.album_artist_keys,
+            names(&["Halozy", "556ミリメートル"])
         );
     }
 
@@ -830,11 +822,11 @@ mod tests {
         let mut metadata = Metadata::default();
         let mut artist_names = ArtistNames::default();
         apply_tag_items(&tag, false, &mut metadata, &mut artist_names);
-        metadata.artists = Some("Mark Pritchard; Thom Yorke".to_string());
+        metadata.artists = names(&["Mark Pritchard", "Thom Yorke"]);
         finalize_album_artist_keys(&mut metadata, &artist_names.album_artists_tag);
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Pritchard, Mark; Yorke, Thom")
+            metadata.album_artist_keys,
+            names(&["Pritchard, Mark", "Yorke, Thom"])
         );
     }
 
@@ -876,7 +868,7 @@ mod tests {
         let tag = tag_with_items(TagType::VorbisComments, ItemKey::TrackArtist, &["Artist"]);
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Artist"));
-        assert_eq!(metadata.artists.as_deref(), Some("Artist"));
+        assert_eq!(metadata.artists, names(&["Artist"]));
     }
 
     #[test]
@@ -885,7 +877,7 @@ mod tests {
         let tag = tag_with_items(TagType::Id3v2, ItemKey::TrackArtist, &["Artist A/Artist B"]);
         let metadata = applied_metadata(&tag, true);
         assert_eq!(metadata.artist.as_deref(), Some("Artist A/Artist B"));
-        assert_eq!(metadata.artists.as_deref(), Some("Artist A/Artist B"));
+        assert_eq!(metadata.artists, names(&["Artist A/Artist B"]));
     }
 
     #[test]
@@ -893,7 +885,7 @@ mod tests {
         let tag = tag_with_items(TagType::Id3v2, ItemKey::TrackArtist, &["AC/DC"]);
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("AC/DC"));
-        assert_eq!(metadata.artists.as_deref(), Some("AC/DC"));
+        assert_eq!(metadata.artists, names(&["AC/DC"]));
     }
 
     #[test]
@@ -912,7 +904,7 @@ mod tests {
         }
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.artist.as_deref(), Some("Artist A and Artist B"));
-        assert_eq!(metadata.artists.as_deref(), Some("Artist A; Artist B"));
+        assert_eq!(metadata.artists, names(&["Artist A", "Artist B"]));
     }
 
     #[test]
@@ -920,10 +912,7 @@ mod tests {
         let tag = tag_with_items(TagType::Id3v2, ItemKey::AlbumArtist, &["Band 1", "Band 2"]);
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.album_artist.as_deref(), Some("Band 1, Band 2"));
-        assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Band 1; Band 2")
-        );
+        assert_eq!(metadata.album_artist_keys, names(&["Band 1", "Band 2"]));
     }
 
     #[test]
@@ -934,12 +923,12 @@ mod tests {
             &["Mark Pritchard and Thom Yorke"],
         );
         let mut metadata = applied_metadata(&tag, false);
-        metadata.artists = Some("Mark Pritchard; Thom Yorke".to_string());
+        metadata.artists = names(&["Mark Pritchard", "Thom Yorke"]);
         metadata.album_artist_sort = Some("Pritchard, Mark & Yorke, Thom".to_string());
         finalize_album_artist_keys(&mut metadata, &[]);
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Pritchard, Mark; Yorke, Thom")
+            metadata.album_artist_keys,
+            names(&["Pritchard, Mark", "Yorke, Thom"])
         );
     }
 
@@ -948,13 +937,10 @@ mod tests {
         // Simon & Garfunkel's sort name contains a literal "&", it must not split into claims
         let tag = tag_with_items(TagType::Id3v2, ItemKey::AlbumArtist, &["Simon & Garfunkel"]);
         let mut metadata = applied_metadata(&tag, false);
-        metadata.artists = Some("Simon & Garfunkel".to_string());
+        metadata.artists = names(&["Simon & Garfunkel"]);
         metadata.album_artist_sort = Some("Simon & Garfunkel".to_string());
         finalize_album_artist_keys(&mut metadata, &[]);
-        assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Simon & Garfunkel")
-        );
+        assert_eq!(metadata.album_artist_keys, names(&["Simon & Garfunkel"]));
     }
 
     #[test]
@@ -977,8 +963,8 @@ mod tests {
             Some("Pritchard, Mark & Yorke, Thom")
         );
         assert_eq!(
-            metadata.album_artist_keys.as_deref(),
-            Some("Pritchard, Mark; Yorke, Thom")
+            metadata.album_artist_keys,
+            names(&["Pritchard, Mark", "Yorke, Thom"])
         );
     }
 
@@ -987,7 +973,7 @@ mod tests {
         let tag = tag_with_items(TagType::Id3v2, ItemKey::AlbumArtist, &["   "]);
         let metadata = applied_metadata(&tag, false);
         assert_eq!(metadata.album_artist, None);
-        assert_eq!(metadata.album_artist_keys, None);
+        assert!(metadata.album_artist_keys.is_empty());
     }
 
     #[test]

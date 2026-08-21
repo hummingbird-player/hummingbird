@@ -95,8 +95,8 @@ impl MediaController {
     /// Close the current media stream, if any.
     pub fn close(&mut self) {
         if let Some(mut stream) = self.media_stream.take() {
-            stream.stop_playback().ok();
-            stream.close().ok();
+            stream.stop_playback();
+            stream.close();
         }
 
         self.current_path = None;
@@ -139,7 +139,7 @@ impl MediaController {
             return None;
         }
 
-        let metadata = stream.read_metadata().ok()?.clone();
+        let metadata = stream.read_metadata().ok()?;
         let image = stream.read_image().ok().flatten();
 
         Some(CompleteMetadata {

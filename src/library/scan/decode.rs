@@ -1,10 +1,8 @@
 use crate::library::scan::discover::sidecar_lyrics_path;
 use std::{io::Cursor, sync::Arc};
 
-use camino::{Utf8Path, Utf8PathBuf};
-use globwalk::GlobWalkerBuilder;
+use camino::Utf8Path;
 use image::{DynamicImage, EncodableLayout, codecs::jpeg::JpegEncoder, imageops};
-use rustc_hash::FxHashMap;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::media::{
@@ -15,12 +13,11 @@ use crate::media::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtSource {
     Embedded,
-    /// Folder-level image next to the file, with rank (lower is better)
+    /// Folder image next to the track. Lower ranks win.
     Folder(u8),
 }
 
 impl ArtSource {
-    /// The value stored in `scan_art.source`.
     pub(crate) fn db_value(self) -> i64 {
         match self {
             ArtSource::Embedded => 0,
@@ -29,12 +26,12 @@ impl ArtSource {
     }
 }
 
-/// Folder-art filename ranks, matching the `scan_art.source` values.
+// lower ranks win when more than one recognized folder image is present
 const RANK_COVER: u8 = 1;
 const RANK_FOLDER: u8 = 2;
 const RANK_FRONT: u8 = 3;
 
-fn folder_art_rank(stem: &str) -> Option<u8> {
+pub(crate) fn folder_art_rank(stem: &str) -> Option<u8> {
     match stem.to_ascii_lowercase().as_str() {
         "cover" => Some(RANK_COVER),
         "folder" => Some(RANK_FOLDER),
@@ -43,11 +40,8 @@ fn folder_art_rank(stem: &str) -> Option<u8> {
     }
 }
 
-/// Checks if the file is hidden on the system. The album art finder uses this to check if the
-/// artwork it's considering is hidden, because Windows *used* to generate Folder.jpg files
-/// automatically and *stopped doing this*, so now most long-lived Windows installs have a bunch
-/// of user-invisible files that need to be ignored because they're out of date.
-fn is_hidden_file(path: &std::path::Path) -> bool {
+/// Skip hidden/system files. Windows often leaves stale Folder.jpg files around.
+pub(crate) fn is_hidden_file(path: &std::path::Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -60,16 +54,51 @@ fn is_hidden_file(path: &std::path::Path) -> bool {
     }
     #[cfg(not(windows))]
     {
-        // stop the variable from being unused
         let _ = path;
         false
     }
 }
 
-/// Art extracted from (or next to) a media file, with a content hash of the raw bytes.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub enum RawArt {
+    Owned(Box<[u8]>),
+    Shared(Arc<Vec<u8>>),
+}
+
+impl AsRef<[u8]> for RawArt {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ProcessedImage {
+    Owned(Vec<u8>),
+    Shared(Arc<Vec<u8>>),
+}
+
+impl AsRef<[u8]> for ProcessedImage {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ProcessedArt {
+    pub image: ProcessedImage,
+    pub thumb: Vec<u8>,
+}
+
+#[derive(Debug)]
 pub struct ScannedArt {
-    pub bytes: Arc<[u8]>,
+    pub raw: Option<RawArt>,
+    pub processed: Option<Arc<ProcessedArt>>,
     pub hash: u64,
     pub source: ArtSource,
 }
@@ -78,45 +107,47 @@ impl ScannedArt {
     fn embedded(bytes: Box<[u8]>) -> Self {
         let hash = xxh3_64(&bytes);
         ScannedArt {
-            bytes: Arc::from(bytes),
+            raw: Some(RawArt::Owned(bytes)),
+            processed: None,
             hash,
             source: ArtSource::Embedded,
         }
     }
+
+    pub(crate) fn folder(bytes: Arc<Vec<u8>>, rank: u8) -> Self {
+        Self {
+            hash: xxh3_64(&bytes),
+            raw: Some(RawArt::Shared(bytes)),
+            processed: None,
+            source: ArtSource::Folder(rank),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct FileArt {
     pub embedded: Option<ScannedArt>,
     pub folder: Option<ScannedArt>,
-    /// True when the folder was checked for art (track 1/unknown, disc 1/unknown), even if none
-    /// was found.
+    /// True when the folder was checked for art (first/representative tracks).
     pub representative: bool,
 }
 
-/// Information extracted from a media file during the metadata reading stage.
-/// Raw image bytes pass through the pipeline, and processing (resize + thumbnail) happens once
-/// per distinct image during scan-end artwork finalization.
 pub type FileInformation = (Metadata, u64, FileArt);
 
-/// Per-directory cache of the chosen folder art and its rank.
-pub type FolderArtCache = FxHashMap<Utf8PathBuf, Option<(Arc<[u8]>, u8)>>;
-
-/// Why a file failed to read during a scan. Drives the scan-record policy.
+/// How a failed file read updates the scan record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanReadError {
-    /// Vanished between discovery and read.
+    /// File disappeared after discovery - drop from the record.
     Missing,
-    /// Unreadable right now; not recorded, so it is retried on the next scan. Default bucket.
+    /// Temporary error (e.g. file lock) - don't record, so the next scan retries.
     Transient,
-    /// Unparseable; recorded so it isn't retried until the file changes.
+    /// Corrupt or unreadable stream - record until the file's mtime changes.
     Corrupt,
 }
 
 fn classify_io_kind(kind: std::io::ErrorKind) -> ScanReadError {
     match kind {
         std::io::ErrorKind::NotFound => ScanReadError::Missing,
-        // anything else is assumed recoverable
         _ => ScanReadError::Transient,
     }
 }
@@ -132,35 +163,47 @@ fn classify_open_error(e: &anyhow::Error) -> ScanReadError {
     }
 }
 
-/// Read metadata, duration, and embedded image from a file using the global provider lookup table.
-/// Returns raw (unprocessed) image bytes, hashed for the artwork consensus.
+fn duration_ms_or_else(
+    hint: Option<u64>,
+    fallback: impl FnOnce() -> Result<u64, ScanReadError>,
+) -> Result<u64, ScanReadError> {
+    match hint.filter(|duration| *duration > 0) {
+        Some(duration) => Ok(duration),
+        None => fallback(),
+    }
+}
+
 fn scan_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
     let mut stream = try_open_media(
         path.as_std_path(),
         MediaProviderFeatures::PROVIDES_METADATA | MediaProviderFeatures::ALLOWS_INDEXING,
     )
     .map_err(|e| classify_open_error(&e))?
-    // no provider registered for the extension: unsupported, don't retry every scan
+    // unsupported format or missing provider - treat as corrupt so we don't retry every scan
     .ok_or(ScanReadError::Corrupt)?;
     stream
         .start_playback()
         .map_err(|_| ScanReadError::Corrupt)?;
-    let metadata = stream
-        .read_metadata()
-        .cloned()
-        .map_err(|_| ScanReadError::Corrupt)?;
+    let metadata = stream.read_metadata().map_err(|_| ScanReadError::Corrupt)?;
     let image = stream.read_image().map_err(|_| ScanReadError::Corrupt)?;
+    let duration_hint = stream.duration_ms().ok();
 
-    stream.close().map_err(|_| ScanReadError::Corrupt)?;
+    stream.close();
 
-    let mut decoder = try_open_media(path.as_std_path(), MediaProviderFeatures::PROVIDES_DECODER)
-        .map_err(|e| classify_open_error(&e))?
-        .ok_or(ScanReadError::Corrupt)?;
-    decoder
-        .start_playback()
-        .map_err(|_| ScanReadError::Corrupt)?;
-    let len = decoder.duration_ms().map_err(|_| ScanReadError::Corrupt)? / 1_000;
-    decoder.close().map_err(|_| ScanReadError::Corrupt)?;
+    let duration_ms = duration_ms_or_else(duration_hint, || {
+        // providers without a metadata duration still need a decoder pass
+        let mut decoder =
+            try_open_media(path.as_std_path(), MediaProviderFeatures::PROVIDES_DECODER)
+                .map_err(|e| classify_open_error(&e))?
+                .ok_or(ScanReadError::Corrupt)?;
+        decoder
+            .start_playback()
+            .map_err(|_| ScanReadError::Corrupt)?;
+        let duration = decoder.duration_ms().map_err(|_| ScanReadError::Corrupt)?;
+        decoder.close();
+        Ok(duration)
+    })?;
+    let len = duration_ms / 1_000;
 
     let art = FileArt {
         embedded: image.map(ScannedArt::embedded),
@@ -168,60 +211,6 @@ fn scan_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
         representative: false,
     };
     Ok((metadata, len, art))
-}
-
-#[cfg(test)]
-fn scan_path_for_album_art(path: &Utf8Path, art_cache: &mut FolderArtCache) -> Option<Arc<[u8]>> {
-    scan_path_for_album_art_ranked(path, art_cache).map(|(bytes, _)| bytes)
-}
-
-/// Returns the best-ranked folder art image (cover > folder > front) directly in `dir`, paired
-/// with its rank.
-pub(crate) fn find_folder_art(dir: &Utf8Path) -> Option<(Arc<[u8]>, u8)> {
-    let mut candidates: Vec<(u8, std::path::PathBuf)> =
-        GlobWalkerBuilder::from_patterns(dir, &["{folder,cover,front}.{jpg,jpeg,png}"])
-            .case_insensitive(true)
-            .max_depth(1)
-            .build()
-            .expect("Failed to build album art glob")
-            .filter_map(|e| e.ok())
-            .filter(|entry| !is_hidden_file(entry.path()))
-            .filter_map(|entry| {
-                let rank = entry
-                    .path()
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .and_then(folder_art_rank)?;
-                Some((rank, entry.path().to_path_buf()))
-            })
-            .collect();
-
-    candidates.sort();
-
-    for (rank, candidate) in candidates {
-        if let Ok(bytes) = std::fs::read(&candidate) {
-            return Some((Arc::from(bytes), rank));
-        }
-    }
-
-    None
-}
-
-/// Best-ranked folder art (cover > folder > front) in the track's containing folder, with its
-/// rank. Results are cached per-directory in `art_cache`.
-fn scan_path_for_album_art_ranked(
-    path: &Utf8Path,
-    art_cache: &mut FolderArtCache,
-) -> Option<(Arc<[u8]>, u8)> {
-    let parent = path.parent()?.to_path_buf();
-
-    if let Some(cached) = art_cache.get(&parent) {
-        return cached.clone();
-    }
-
-    let result = find_folder_art(&parent);
-    art_cache.insert(parent, result.clone());
-    result
 }
 
 fn resolve_lyrics(path: &Utf8Path, embedded_lyrics: Option<String>) -> Option<String> {
@@ -232,28 +221,44 @@ fn resolve_lyrics(path: &Utf8Path, embedded_lyrics: Option<String>) -> Option<St
     sidecar_lyrics.or(embedded_lyrics)
 }
 
-/// Process album art into a (resized_full_image, thumbnail_bmp) pair.
-///
-/// The thumbnail is always a 70×70 BMP. The full-size image is passed through if both dimensions
-/// are ≤ 1024, otherwise it is downscaled to 1024×1024 and re-encoded as JPEG.
-pub fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let decoded = image::ImageReader::new(Cursor::new(image))
+enum SourceImage<'a> {
+    Borrowed(&'a [u8]),
+    Owned(RawArt),
+}
+
+impl SourceImage<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Owned(raw) => raw.as_ref(),
+        }
+    }
+
+    fn into_processed(self) -> ProcessedImage {
+        match self {
+            Self::Borrowed(bytes) => ProcessedImage::Owned(bytes.to_vec()),
+            Self::Owned(RawArt::Owned(bytes)) => ProcessedImage::Owned(bytes.into_vec()),
+            Self::Owned(RawArt::Shared(bytes)) => ProcessedImage::Shared(bytes),
+        }
+    }
+}
+
+fn process_source_image(image: SourceImage<'_>) -> anyhow::Result<(ProcessedImage, Vec<u8>)> {
+    let decoded = image::ImageReader::new(Cursor::new(image.bytes()))
         .with_guessed_format()?
         .decode()?
         .into_rgb8();
 
-    // thumbnail
     let thumb_rgb = imageops::thumbnail(&decoded, 70, 70);
     let thumb_rgba = DynamicImage::ImageRgb8(thumb_rgb).into_rgba8();
 
     let mut thumb_buf: Vec<u8> = Vec::new();
     thumb_rgba.write_to(&mut Cursor::new(&mut thumb_buf), image::ImageFormat::Bmp)?;
 
-    // full-size image (resized if necessary)
+    // leave small images alone, scale larger ones to fit in 1024x1024
     let resized = if decoded.dimensions().0 <= 1024 && decoded.dimensions().1 <= 1024 {
-        image.to_vec()
+        image.into_processed()
     } else {
-        // preserve aspect ratio
         let (w, h) = decoded.dimensions();
         let scale = 1024.0_f32 / (w.max(h) as f32);
         let new_w = (w as f32 * scale).round().max(1.0) as u32;
@@ -276,32 +281,34 @@ pub fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         )?;
         drop(encoder);
 
-        buf.into_inner()
+        ProcessedImage::Owned(buf.into_inner())
     };
 
     Ok((resized, thumb_buf))
 }
 
-/// Read metadata and art (embedded or folder-level) from a file. Each reader thread keeps its
-/// own `art_cache` to avoid repeated directory scans. Representative files check folder art
-/// even when they carry embedded art - the consensus ranks folder art above embedded.
-pub fn read_metadata_for_path(
-    path: &Utf8Path,
-    art_cache: &mut FolderArtCache,
-) -> Result<FileInformation, ScanReadError> {
+/// Downscale and encode album art to a full-size JPEG and a 70x70 BMP thumbnail.
+pub fn process_album_art(image: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let (image, thumb) = process_source_image(SourceImage::Borrowed(image))?;
+    let ProcessedImage::Owned(image) = image else {
+        unreachable!("borrowed artwork always produces an owned image");
+    };
+    Ok((image, thumb))
+}
+
+/// Process artwork while reusing its original allocation when no resize is needed.
+pub fn process_owned_album_art(image: RawArt) -> anyhow::Result<(ProcessedImage, Vec<u8>)> {
+    process_source_image(SourceImage::Owned(image))
+}
+
+/// Read metadata and embedded art, and mark tracks suitable for assigning folder art.
+pub fn read_metadata_for_path(path: &Utf8Path) -> Result<FileInformation, ScanReadError> {
     let (mut metadata, len, mut art) = scan_path(path)?;
 
     let is_representative = metadata.track_current.is_none_or(|t| t == 1 || t == 0)
         && metadata.disc_current.is_none_or(|d| d == 1 || d == 0);
     if is_representative {
         art.representative = true;
-        if let Some((bytes, rank)) = scan_path_for_album_art_ranked(path, art_cache) {
-            art.folder = Some(ScannedArt {
-                hash: xxh3_64(&bytes),
-                bytes,
-                source: ArtSource::Folder(rank),
-            });
-        }
     }
 
     metadata.lyrics = resolve_lyrics(path, metadata.lyrics.take());
@@ -310,201 +317,5 @@ pub fn read_metadata_for_path(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::{TestDir, register_test_media_providers};
-    use std::fs;
-
-    #[test]
-    fn resolve_lyrics_prefers_sidecar() {
-        let dir = TestDir::new("decode-lyrics-test");
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-        fs::write(dir.join("track.lrc"), "[00:00.00] sidecar lyrics").unwrap();
-
-        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
-        assert_eq!(result.as_deref(), Some("[00:00.00] sidecar lyrics"));
-    }
-
-    #[test]
-    fn resolve_lyrics_falls_back_to_embedded() {
-        let dir = TestDir::new("decode-lyrics-test");
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-
-        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
-        assert_eq!(result.as_deref(), Some("[00:00.00] embedded lyrics"));
-    }
-
-    #[test]
-    fn resolve_lyrics_ignores_empty_sidecar() {
-        let dir = TestDir::new("decode-lyrics-test");
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-        fs::write(dir.join("track.lrc"), "   \n").unwrap();
-
-        let result = resolve_lyrics(&track, Some("[00:00.00] embedded lyrics".to_string()));
-        assert_eq!(result.as_deref(), Some("[00:00.00] embedded lyrics"));
-    }
-
-    #[test]
-    fn scan_path_for_album_art_finds_folder_jpg() {
-        let dir = TestDir::new("decode-art-test");
-        fs::write(dir.join("folder.jpg"), b"jpegbytes").unwrap();
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let result = scan_path_for_album_art(&track, &mut cache);
-        assert!(result.is_some());
-        assert_eq!(result.as_ref().unwrap().as_ref(), b"jpegbytes");
-    }
-
-    #[test]
-    fn scan_path_for_album_art_is_case_insensitive() {
-        let dir = TestDir::new("decode-art-test");
-        fs::write(dir.join("Folder.JPG"), b"jpegbytes").unwrap();
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let result = scan_path_for_album_art(&track, &mut cache);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn scan_path_for_album_art_prefers_cover_over_folder() {
-        let dir = TestDir::new("decode-art-rank-test");
-        fs::write(dir.join("folder.jpg"), b"folderbytes").unwrap();
-        fs::write(dir.join("cover.png"), b"coverbytes").unwrap();
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let result = scan_path_for_album_art(&track, &mut cache);
-        assert_eq!(result.as_deref(), Some(b"coverbytes".as_slice()));
-    }
-
-    #[test]
-    fn scan_path_for_album_art_caches_none() {
-        let dir = TestDir::new("decode-art-test");
-        let track = dir.utf8_join("track.flac");
-        fs::write(&track, b"").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let result = scan_path_for_album_art(&track, &mut cache);
-        assert!(result.is_none());
-        assert_eq!(cache.get(&dir.utf8_path()), Some(&None));
-    }
-
-    #[test]
-    fn process_album_art_creates_thumbnail() {
-        let image = fs::read("assets/tests/audio-fixtures/cover.jpg").unwrap();
-        let (full, thumb) = process_album_art(&image).unwrap();
-        assert!(!full.is_empty());
-        assert!(thumb.starts_with(b"BM"));
-    }
-
-    #[test]
-    fn read_metadata_for_path_prefers_sidecar_lyrics() {
-        register_test_media_providers();
-        let dir = TestDir::new("decode-meta-test");
-        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
-        let track = dir.utf8_join("track.flac");
-        fs::copy(src, &track).unwrap();
-        fs::write(dir.join("track.lrc"), "[00:00.00] override lyrics").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let info = read_metadata_for_path(&track, &mut cache).unwrap();
-        assert_eq!(info.0.lyrics.as_deref(), Some("[00:00.00] override lyrics"));
-    }
-
-    #[test]
-    fn read_metadata_for_path_keeps_embedded_lyrics_when_no_sidecar() {
-        register_test_media_providers();
-        let dir = TestDir::new("decode-meta-test");
-        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
-        let track = dir.utf8_join("track.flac");
-        fs::copy(src, &track).unwrap();
-
-        let mut cache = FxHashMap::default();
-        let info = read_metadata_for_path(&track, &mut cache).unwrap();
-        assert_eq!(info.0.lyrics.as_deref(), Some("[00:00.00] Test lyrics"));
-    }
-
-    #[test]
-    fn classify_io_kind_only_not_found_is_missing() {
-        assert_eq!(
-            classify_io_kind(std::io::ErrorKind::NotFound),
-            ScanReadError::Missing
-        );
-        for kind in [
-            std::io::ErrorKind::PermissionDenied,
-            std::io::ErrorKind::Interrupted,
-            std::io::ErrorKind::WouldBlock,
-            std::io::ErrorKind::TimedOut,
-            std::io::ErrorKind::UnexpectedEof,
-        ] {
-            assert_eq!(classify_io_kind(kind), ScanReadError::Transient);
-        }
-    }
-
-    #[test]
-    fn read_metadata_for_nonexistent_path_is_missing() {
-        register_test_media_providers();
-        let dir = TestDir::new("decode-missing-test");
-        let track = dir.utf8_join("nonexistent.flac");
-
-        let mut cache = FxHashMap::default();
-        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
-        assert_eq!(err, ScanReadError::Missing);
-    }
-
-    #[test]
-    fn read_metadata_for_garbage_file_is_corrupt() {
-        register_test_media_providers();
-        let dir = TestDir::new("decode-corrupt-test");
-        let track = dir.utf8_join("garbage.flac");
-        fs::write(&track, b"this is definitely not a flac stream").unwrap();
-
-        let mut cache = FxHashMap::default();
-        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
-        assert_eq!(err, ScanReadError::Corrupt);
-    }
-
-    #[test]
-    fn read_metadata_for_truncated_file_is_corrupt() {
-        register_test_media_providers();
-        let dir = TestDir::new("decode-truncated-test");
-        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
-        let track = dir.utf8_join("truncated.flac");
-        // truncated streams must not be classed transient
-        let bytes = fs::read(src).unwrap();
-        fs::write(&track, &bytes[..bytes.len() / 4]).unwrap();
-
-        let mut cache = FxHashMap::default();
-        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
-        assert_eq!(err, ScanReadError::Corrupt);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn read_metadata_for_unreadable_file_is_transient() {
-        use std::os::unix::fs::PermissionsExt;
-        register_test_media_providers();
-        let dir = TestDir::new("decode-transient-test");
-        let src = std::path::Path::new("assets/tests/audio-fixtures/fixture.flac");
-        let track = dir.utf8_join("locked.flac");
-        fs::copy(src, &track).unwrap();
-        fs::set_permissions(&track, fs::Permissions::from_mode(0o000)).unwrap();
-
-        // a privileged process (e.g. root) can still open the file; skip in that case
-        if std::fs::File::open(&track).is_ok() {
-            return;
-        }
-
-        let mut cache = FxHashMap::default();
-        let err = read_metadata_for_path(&track, &mut cache).unwrap_err();
-        assert_eq!(err, ScanReadError::Transient);
-    }
-}
+#[path = "decode/tests.rs"]
+mod tests;

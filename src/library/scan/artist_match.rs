@@ -18,14 +18,8 @@ struct ArtistEntry {
 }
 
 pub struct ArtistMatcher {
-    artists: Option<Vec<ArtistEntry>>,
-    by_key: FxHashMap<String, usize>,
-}
-
-impl Default for ArtistMatcher {
-    fn default() -> Self {
-        Self::new()
-    }
+    artists: Option<FxHashMap<i64, ArtistEntry>>,
+    by_key: FxHashMap<String, i64>,
 }
 
 impl ArtistMatcher {
@@ -42,20 +36,10 @@ impl ArtistMatcher {
     }
 
     pub fn evict(&mut self, artist_id: i64) {
-        let Some(artists) = &mut self.artists else {
-            return;
-        };
-        let Some(pos) = artists.iter().position(|entry| entry.id == artist_id) else {
-            return;
-        };
-        let entry = artists.remove(pos);
-        self.by_key.remove(&entry.key);
-        // indices above the removed entry shift down
-        for index in self.by_key.values_mut() {
-            if *index > pos {
-                *index -= 1;
-            }
+        if let Some(artists) = &mut self.artists {
+            artists.remove(&artist_id);
         }
+        self.by_key.retain(|_, id| *id != artist_id);
     }
 
     async fn load(&mut self, conn: &mut SqliteConnection) -> anyhow::Result<()> {
@@ -68,25 +52,23 @@ impl ArtistMatcher {
                 .fetch_all(&mut *conn)
                 .await?;
 
-        let artists: Vec<ArtistEntry> = rows
-            .into_iter()
-            .map(|(id, name, sort)| ArtistEntry {
+        let mut artists = FxHashMap::default();
+        // query orders by id - lowest id wins a duplicate key
+        let mut by_key = FxHashMap::default();
+        for (id, name, sort) in rows {
+            let entry = ArtistEntry {
                 id,
                 name,
                 key: token_key(&sort),
-            })
-            .collect();
-        // the query orders by id, the lowest id wins a duplicate key
-        let mut by_key = FxHashMap::default();
-        for (i, entry) in artists.iter().enumerate() {
-            by_key.entry(entry.key.clone()).or_insert(i);
+            };
+            by_key.entry(entry.key.clone()).or_insert(entry.id);
+            artists.insert(id, entry);
         }
         self.by_key = by_key;
         self.artists = Some(artists);
         Ok(())
     }
 
-    /// Resolve a raw artist string to an artist id, creating or renaming artists as needed.
     pub async fn resolve(
         &mut self,
         conn: &mut SqliteConnection,
@@ -99,13 +81,17 @@ impl ArtistMatcher {
             .and_then(|s| (!s.trim().is_empty()).then_some(s))
             .unwrap_or(name);
         let key = token_key(sort);
-        let Some(&index) = self.by_key.get(&key) else {
+        let Some(&artist_id) = self.by_key.get(&key) else {
             return self.create(conn, name, sort, key).await;
         };
 
-        // a name matching the sort key displaces an alias; ties keep the incumbent so the
-        // result doesn't depend on scan order
-        let entry = &mut self.artists.as_mut().unwrap()[index];
+        // prefer names matching the sort key - ties keep the existing row so order doesn't matter
+        let entry = self
+            .artists
+            .as_mut()
+            .unwrap()
+            .get_mut(&artist_id)
+            .expect("artist matcher key should point to a loaded artist");
         let is_canonical = |name: &str| token_key(name) == entry.key;
         if is_canonical(name) && !is_canonical(&entry.name) {
             let updated = sqlx::query(include_str!("../../../queries/scan/update_artist_name.sql"))
@@ -113,13 +99,13 @@ impl ArtistMatcher {
                 .bind(entry.id)
                 .execute(&mut *conn)
                 .await?;
-            // another artist can hold the name already, then the rename is ignored
+            // another artist already has this name - ignore the rename
             if updated.rows_affected() > 0 {
                 entry.name = name.to_string();
             }
         }
 
-        Ok(entry.id)
+        Ok(artist_id)
     }
 
     async fn create(
@@ -138,7 +124,7 @@ impl ArtistMatcher {
 
         let (id, name, key) = match result {
             Ok((id,)) => (id, name.to_string(), key),
-            // the name is taken by an artist with a different key, adopt that row
+            // name is taken by an artist with a different key - use that row
             Err(sqlx::Error::RowNotFound) => {
                 let (id, name, sort): (i64, String, String) =
                     sqlx::query_as(include_str!("../../../queries/scan/get_artist_id.sql"))
@@ -146,8 +132,7 @@ impl ArtistMatcher {
                         .fetch_one(&mut *conn)
                         .await?;
                 let existing_key = token_key(&sort);
-                // a row whose sort defaulted to its name takes the incoming tag so later
-                // aliases merge, unless another artist holds that key
+                // if sort defaulted to the name, take the incoming sort when free so aliases merge
                 let upgrade =
                     sort == name && key != existing_key && !self.by_key.contains_key(&key);
                 if upgrade {
@@ -164,26 +149,20 @@ impl ArtistMatcher {
             Err(e) => return Err(e.into()),
         };
 
-        let artists = self.artists.as_mut().unwrap();
-        // a matching entry can exist when the adopted row was already loaded
-        if let Some(&index) = self.by_key.get(&key).filter(|&&i| artists[i].id == id) {
-            artists[index].name = name;
-            return Ok(artists[index].id);
-        }
-        // the adopted row is already loaded: update it in place, an incoming sort tag can
-        // shift its key and a stale key must not outlive the row when it is evicted later
-        if let Some(index) = artists.iter().position(|entry| entry.id == id) {
-            let entry = &mut artists[index];
+        if let Some(entry) = self.artists.as_mut().unwrap().get_mut(&id) {
+            let old_key = std::mem::replace(&mut entry.key, key.clone());
             entry.name = name;
-            if entry.key != key {
-                self.by_key.remove(&entry.key);
-                entry.key = key.clone();
-                self.by_key.insert(key, index);
+            if old_key != key {
+                self.by_key.remove(&old_key);
+                self.by_key.insert(key, id);
             }
             return Ok(id);
         }
-        self.by_key.insert(key.clone(), artists.len());
-        artists.push(ArtistEntry { id, name, key });
+        self.by_key.insert(key.clone(), id);
+        self.artists
+            .as_mut()
+            .unwrap()
+            .insert(id, ArtistEntry { id, name, key });
         Ok(id)
     }
 }
@@ -204,7 +183,7 @@ mod tests {
         let (_dir, pool) = crate::test_support::create_test_pool("matcher-dup-test").await;
         let mut conn = pool.acquire().await.unwrap();
 
-        // a legacy database can hold two artists sharing one token key
+        // an old database can have two artists sharing one token key
         sqlx::query("INSERT INTO artist (name, name_sortable) VALUES ('Alpha', 'Shared Sort')")
             .execute(&mut *conn)
             .await
@@ -224,5 +203,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(id, lowest);
+    }
+
+    #[tokio::test]
+    async fn create_resolve_and_evict_keep_artist_cache_consistent() {
+        let (_dir, pool) = crate::test_support::create_test_pool("matcher-cache-test").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let mut matcher = ArtistMatcher::new();
+
+        let first = matcher
+            .resolve(&mut conn, "First Artist", None)
+            .await
+            .unwrap();
+        let second = matcher
+            .resolve(&mut conn, "Second Artist", None)
+            .await
+            .unwrap();
+        assert_ne!(first, second);
+
+        matcher.evict(first);
+        assert_eq!(
+            matcher
+                .resolve(&mut conn, "Second Artist", None)
+                .await
+                .unwrap(),
+            second
+        );
+        assert_eq!(
+            matcher
+                .resolve(&mut conn, "First Artist", None)
+                .await
+                .unwrap(),
+            first
+        );
     }
 }

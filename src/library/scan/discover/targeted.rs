@@ -1,7 +1,5 @@
-//! Targeted rescan discovery: walk specific files and folders, consulting the scan record so
-//! unchanged files are skipped and case-only renames are relocated instead of duplicated.
-
 use std::{
+    collections::VecDeque,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -10,6 +8,7 @@ use std::{
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
+use futures::{StreamExt, stream::FuturesUnordered};
 use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, mpsc::Sender};
@@ -17,19 +16,19 @@ use tracing::error;
 
 use crate::library::scan::{
     discover::{
-        FoldedIndex, Relocation, canonicalize_dir_entry, canonicalize_or_keep, confirm_relocation,
-        delete_tracks, is_missing, other_recorded_spellings, supported_scan_timestamp,
+        DirectoryReadPolicy, DiscoverAction, DiscoveredPath, FoldedIndex, FolderArtCandidate,
+        FolderArtObservations, PendingDirectoryRead, Relocation, apply_relocation,
+        canonicalize_or_keep, classify, delete_tracks, fold_excluded_roots, is_missing,
+        is_under_excluded, missing_paths, schedule_directory_read,
     },
     fs_case::{fold_path, starts_with_folded},
     record::ScanRecord,
 };
 
-/// Scan-record access shared by a targeted rescan.
 struct RescanState {
     scan_record: Arc<Mutex<ScanRecord>>,
-    /// Folded rescan targets: only record keys under one of them can match a discovered file.
     folded_targets: FxHashSet<Utf8PathBuf>,
-    /// Built on the first unrecorded file - a rescan of purely new files never pays for it.
+    /// Recorded paths under the target folders. Built lazily on first use.
     folded_index: Option<FoldedIndex>,
 }
 
@@ -43,10 +42,7 @@ impl RescanState {
     }
 }
 
-/// Record keys under the rescan targets, keyed by folded spelling. Keys are prefix-filtered
-/// unfolded - `fold_path` stats per key on Unix - so records outside the targets only cost a
-/// string compare. The folded compare over-matches on case-sensitive volumes - `same_file`
-/// rejects false rename candidates before they are relocated.
+/// Index recorded paths under folded targets, filtering prefixes first to avoid Unix stats.
 fn index_records_under(
     records: &FxHashMap<Utf8PathBuf, SystemTime>,
     folded_targets: &FxHashSet<Utf8PathBuf>,
@@ -66,19 +62,17 @@ fn index_records_under(
     index
 }
 
-/// Performs a targeted rescan of specific files and directories.
-/// With `scan_record` set, files whose recorded timestamp matches are skipped and case-only
-/// renames relocate their existing row instead of inserting a duplicate. `recursive` walks
-/// directory targets to any depth, otherwise only their immediate children are scanned.
-///
-/// Returns the total number of discovered files once the walk is complete.
-pub fn rescan_discover(
+/// Discover under the given paths. Skip unchanged files, send case-only renames on `relocate_tx`.
+#[allow(clippy::too_many_arguments)]
+pub async fn rescan_discover(
     paths: Vec<Utf8PathBuf>,
     scan_record: Option<Arc<Mutex<ScanRecord>>>,
     recursive: bool,
-    path_tx: Sender<(Utf8PathBuf, SystemTime)>,
+    path_tx: Sender<DiscoveredPath>,
     relocate_tx: Sender<Relocation>,
     cancel_flag: Arc<AtomicBool>,
+    read_policy: DirectoryReadPolicy,
+    folder_art: FolderArtObservations,
 ) -> u64 {
     let mut targets = FxHashSet::default();
     for entry in paths {
@@ -96,85 +90,81 @@ pub fn rescan_discover(
 
     let mut state = scan_record.map(|scan_record| RescanState::new(scan_record, &targets));
 
-    // guards against symlink loops and double-emission when targets overlap - canonicalization
-    // collapses symlinked spellings onto the already-seen target
-    let mut visited = targets.clone();
+    let mut visited = FxHashSet::default();
     let mut discovered_total: u64 = 0;
+    let mut directories = VecDeque::new();
+    let mut direct_files = Vec::new();
 
-    for canonical in targets {
+    for canonical in &targets {
         if cancel_flag.load(Ordering::Relaxed) {
             return discovered_total;
         }
 
-        // one stat decides dir vs file and feeds the scan timestamp
-        let Ok(metadata) = std::fs::metadata(&canonical) else {
+        let Ok(inspection) = read_policy.inspect(canonical.clone()).await else {
             continue;
         };
 
-        if metadata.is_dir() {
-            let mut dirs = vec![canonical];
-            while let Some(dir) = dirs.pop() {
-                if cancel_flag.load(Ordering::Relaxed) {
-                    return discovered_total;
-                }
+        if inspection.metadata.is_dir() {
+            directories.push_back(canonical.clone());
+        } else if inspection.metadata.is_file()
+            && let Some(timestamp) = inspection.scan_timestamp
+        {
+            direct_files.push((canonical.clone(), timestamp));
+        }
+    }
 
-                let dir_entries = match std::fs::read_dir(&dir) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        error!("Failed to read directory {:?}: {:?}", dir, e);
-                        continue;
-                    }
-                };
+    let mut pending: FuturesUnordered<PendingDirectoryRead> = FuturesUnordered::new();
+    while !directories.is_empty() || !pending.is_empty() {
+        if cancel_flag.load(Ordering::Relaxed) {
+            return discovered_total;
+        }
 
-                for dir_entry in dir_entries {
-                    if cancel_flag.load(Ordering::Relaxed) {
-                        return discovered_total;
-                    }
-
-                    let Some(entry_path) = canonicalize_dir_entry(dir_entry) else {
-                        continue;
-                    };
-
-                    let Ok(entry_metadata) = std::fs::metadata(&entry_path) else {
-                        continue;
-                    };
-
-                    if entry_metadata.is_dir() {
-                        if recursive && visited.insert(entry_path.clone()) {
-                            dirs.push(entry_path);
-                        }
-                        continue;
-                    }
-
-                    if !entry_metadata.is_file() || !visited.insert(entry_path.clone()) {
-                        continue;
-                    }
-
-                    if emit_rescan_path(
-                        &entry_path,
-                        &entry_metadata,
-                        state.as_mut(),
-                        &path_tx,
-                        &relocate_tx,
-                        &cancel_flag,
-                    )
-                    .is_some()
-                    {
-                        discovered_total += 1;
-                    } else if cancel_flag.load(Ordering::Relaxed) {
-                        return discovered_total;
-                    }
-                }
+        while pending.len() < read_policy.max_pending()
+            && let Some(directory) = directories.pop_front()
+        {
+            if visited.insert(directory.clone()) {
+                schedule_directory_read(&mut pending, read_policy.clone(), directory);
             }
-        } else if metadata.is_file() {
+        }
+
+        let Some((directory, result)) = pending.next().await else {
+            continue;
+        };
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                error!("Failed to read directory {:?}: {:?}", directory, e);
+                continue;
+            }
+        };
+        let directory_art = snapshot.folder_art.clone();
+        folder_art.record(directory, directory_art.clone());
+
+        for entry in snapshot.entries {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return discovered_total;
+            }
+
+            if entry.metadata.is_dir() {
+                if recursive {
+                    directories.push_back(entry.path);
+                }
+                continue;
+            }
+            if !entry.metadata.is_file() || !visited.insert(entry.path.clone()) {
+                continue;
+            }
+
             if emit_rescan_path(
-                &canonical,
-                &metadata,
+                &entry.path,
+                entry.scan_timestamp,
+                directory_art.clone(),
                 state.as_mut(),
                 &path_tx,
                 &relocate_tx,
                 &cancel_flag,
             )
+            .await
             .is_some()
             {
                 discovered_total += 1;
@@ -184,92 +174,88 @@ pub fn rescan_discover(
         }
     }
 
+    for (path, timestamp) in direct_files {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+
+        let folder_candidate = if let Some(parent) = path.parent() {
+            match folder_art.get(parent) {
+                Some(candidate) => candidate,
+                None => match read_policy.read(parent.to_path_buf()).await {
+                    Ok(snapshot) => {
+                        let candidate = snapshot.folder_art;
+                        folder_art.record(parent.to_path_buf(), candidate.clone());
+                        candidate
+                    }
+                    Err(e) => {
+                        error!("Failed to read directory {:?}: {:?}", parent, e);
+                        None
+                    }
+                },
+            }
+        } else {
+            None
+        };
+
+        if emit_rescan_path(
+            &path,
+            Some(timestamp),
+            folder_candidate,
+            state.as_mut(),
+            &path_tx,
+            &relocate_tx,
+            &cancel_flag,
+        )
+        .await
+        .is_some()
+        {
+            discovered_total += 1;
+        } else if cancel_flag.load(Ordering::Relaxed) {
+            return discovered_total;
+        }
+    }
+
     discovered_total
 }
 
-enum RescanAction {
-    Skip,
-    Emit,
-    /// Case-only rename candidates, to be confirmed with `same_file` outside the record lock.
-    Relocate {
-        candidates: Vec<(Utf8PathBuf, SystemTime)>,
-    },
-}
-
-/// Skip unchanged files, relocate case-only renames, emit everything else.
-fn classify_rescan_file(
+async fn emit_rescan_path(
     path: &Utf8Path,
-    timestamp: SystemTime,
-    records: &FxHashMap<Utf8PathBuf, SystemTime>,
-    folded_index: &FoldedIndex,
-) -> RescanAction {
-    if let Some(recorded) = records.get(path) {
-        return if *recorded == timestamp {
-            RescanAction::Skip
-        } else {
-            RescanAction::Emit
-        };
-    }
-
-    let candidates = other_recorded_spellings(folded_index, path);
-    if !candidates.is_empty() {
-        return RescanAction::Relocate { candidates };
-    }
-
-    RescanAction::Emit
-}
-
-/// Emits `path` for metadata reading unless the record says it's unchanged - a case-only rename
-/// of a recorded path is relocated via `relocate_tx` instead. Returns `Some` on emission.
-fn emit_rescan_path(
-    path: &Utf8Path,
-    metadata: &std::fs::Metadata,
+    timestamp: Option<SystemTime>,
+    folder_art: Option<FolderArtCandidate>,
     state: Option<&mut RescanState>,
-    path_tx: &Sender<(Utf8PathBuf, SystemTime)>,
+    path_tx: &Sender<DiscoveredPath>,
     relocate_tx: &Sender<Relocation>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> Option<SystemTime> {
-    let timestamp = supported_scan_timestamp(path, metadata)?;
+    let timestamp = timestamp?;
 
-    let mut rescan_ts = None;
-    if let Some(state) = state {
-        // classify with the record locked and build the index on first use, so both see the
-        // same records - same_file checks run after the lock is released
+    let rescan_ts = if let Some(state) = state {
+        // lock the record while building the index
         let action = {
             let RescanState {
                 scan_record,
                 folded_targets,
                 folded_index,
             } = state;
-            let records = scan_record.blocking_lock();
+            let records = scan_record.lock().await;
             let index = folded_index
                 .get_or_insert_with(|| index_records_under(&records.records, folded_targets));
-            classify_rescan_file(path, timestamp, &records.records, index)
+            classify(path, timestamp, &records.records, index).0
         };
 
         match action {
-            RescanAction::Skip => return None,
-            RescanAction::Emit => rescan_ts = Some(timestamp),
-            RescanAction::Relocate { candidates } => match confirm_relocation(candidates, path) {
-                Some((old, old_ts)) => {
-                    // keep the old timestamp on the relocated key - an interrupted rescan must
-                    // not mark unread content as current
-                    if relocate_tx
-                        .blocking_send((old, path.to_path_buf(), old_ts))
-                        .is_err()
-                    {
-                        return None;
-                    }
-                    if old_ts != timestamp {
-                        rescan_ts = Some(timestamp);
-                    }
-                }
-                None => rescan_ts = Some(timestamp),
-            },
+            DiscoverAction::Skip => return None,
+            DiscoverAction::Scan(timestamp) => Some(timestamp),
+            DiscoverAction::Relocate { candidates, ts } => {
+                apply_relocation(path, ts, candidates, relocate_tx)
+                    .await
+                    .ok()?
+            }
         }
     } else {
-        rescan_ts = Some(timestamp);
-    }
+        Some(timestamp)
+    };
 
     let timestamp = rescan_ts?;
 
@@ -278,7 +264,12 @@ fn emit_rescan_path(
     }
 
     if path_tx
-        .blocking_send((path.to_path_buf(), timestamp))
+        .send(DiscoveredPath {
+            path: path.to_path_buf(),
+            timestamp,
+            folder_art,
+        })
+        .await
         .is_err()
     {
         return None;
@@ -287,21 +278,19 @@ fn emit_rescan_path(
     Some(timestamp)
 }
 
+/// Delete missing tracks and record entries under the targets. Excluded roots are left alone.
 pub async fn reconcile_rescan_paths(
     pool: &SqlitePool,
     scan_record: &mut ScanRecord,
     paths: &[Utf8PathBuf],
     excluded_roots: &[Utf8PathBuf],
 ) -> FxHashSet<i64> {
-    // folded prefixes tolerate casing/verbatim differences in stored spellings
-    let excluded: Vec<Utf8PathBuf> = excluded_roots
-        .iter()
-        .map(|r| fold_path(&canonicalize_or_keep(r)))
-        .collect();
+    // folded prefixes match despite casing or \\?\ differences
+    let excluded = fold_excluded_roots(excluded_roots);
 
     let targets: FxHashSet<Utf8PathBuf> = paths.iter().map(|p| canonicalize_or_keep(p)).collect();
 
-    let mut to_delete: FxHashSet<Utf8PathBuf> = FxHashSet::default();
+    let mut candidates: FxHashSet<Utf8PathBuf> = FxHashSet::default();
     for target in &targets {
         let rows = sqlx::query_scalar::<_, String>(include_str!(
             "../../../../queries/scan/list_tracks_in_folder_or_location.sql"
@@ -340,29 +329,22 @@ pub async fn reconcile_rescan_paths(
             }
         }
 
-        to_delete.extend(
+        candidates.extend(
             rows.into_iter()
                 .map(Utf8PathBuf::from)
-                // skip the fold (a stat per row on Unix) when there is nothing to exclude
-                .filter(|location| {
-                    excluded.is_empty()
-                        || !excluded
-                            .iter()
-                            .any(|root| fold_path(location).starts_with(root))
-                })
-                .filter(|location| is_missing(location)),
+                // nothing to exclude - skip fold (a stat per row on Unix)
+                .filter(|location| !is_under_excluded(location, &excluded)),
         );
     }
 
-    let to_delete: Vec<Utf8PathBuf> = to_delete.into_iter().collect();
+    let to_delete: Vec<Utf8PathBuf> = missing_paths(candidates).into_iter().collect();
     delete_tracks(pool, scan_record, &to_delete).await
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, UNIX_EPOCH};
-
     use camino::Utf8PathBuf;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
     use crate::library::scan::{
@@ -380,7 +362,7 @@ mod tests {
         let (count, mut path_rx, _relocate_rx) =
             run_rescan(vec![path.clone(), dir_path], None, false);
         assert_eq!(count, 1);
-        assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+        assert_eq!(path_rx.blocking_recv().unwrap().path, path);
         assert!(path_rx.blocking_recv().is_none());
     }
 
@@ -397,7 +379,7 @@ mod tests {
         let (count, mut path_rx, _relocate_rx) = run_rescan(vec![dir_path], None, false);
         assert_eq!(count, 1);
         assert_eq!(
-            path_rx.blocking_recv().unwrap().0.file_name().unwrap(),
+            path_rx.blocking_recv().unwrap().path.file_name().unwrap(),
             "top.flac"
         );
     }
@@ -431,7 +413,7 @@ mod tests {
 
         let (count, mut path_rx, _relocate_rx) = run_rescan(vec![path.clone()], None, false);
         assert_eq!(count, 1);
-        assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+        assert_eq!(path_rx.blocking_recv().unwrap().path, path);
     }
 
     #[test]
@@ -447,7 +429,7 @@ mod tests {
         assert_eq!(count, 0);
         assert!(path_rx.blocking_recv().is_none());
 
-        // a stale entry means the file changed - re-emitted
+        // stale entry means the file changed - send it again
         record
             .blocking_lock()
             .records
@@ -455,7 +437,7 @@ mod tests {
 
         let (count, mut path_rx, _relocate_rx) = run_rescan(vec![path.clone()], Some(record), true);
         assert_eq!(count, 1);
-        assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+        assert_eq!(path_rx.blocking_recv().unwrap().path, path);
     }
 
     #[test]
@@ -465,7 +447,7 @@ mod tests {
         let path = write_track(&dir, "track.flac");
         let ts = file_scan_timestamp(&path).unwrap();
 
-        // recorded under an older casing of the same path - a case-only rename
+        // recorded under an older casing of the same path - case-only rename
         let old = dir.utf8_join("TRACK.FLAC");
         let record = shared_record_with(&old, ts);
 
@@ -473,13 +455,13 @@ mod tests {
             run_rescan(vec![path.clone()], Some(record), true);
 
         if !is_case_insensitive(&dir.utf8_path()) {
-            // on case-sensitive volumes the two spellings are different files, re-emitted as new
+            // on a case-sensitive volume these are different files - treat as new
             assert_eq!(count, 1);
-            assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+            assert_eq!(path_rx.blocking_recv().unwrap().path, path);
             return;
         }
 
-        // timestamp unchanged by the rename, relocated but not re-read
+        // timestamp unchanged by the rename - relocate but don't re-read
         assert_eq!(count, 0);
         assert!(path_rx.blocking_recv().is_none());
         assert_eq!(relocate_rx.blocking_recv(), Some((old, path, ts)));
@@ -500,13 +482,13 @@ mod tests {
 
         if !is_case_insensitive(&dir.utf8_path()) {
             assert_eq!(count, 1);
-            assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+            assert_eq!(path_rx.blocking_recv().unwrap().path, path);
             return;
         }
 
-        // renamed AND modified: relocated with the recorded timestamp, then re-read
+        // renamed and modified - relocate with the old timestamp, then re-read
         assert_eq!(count, 1);
-        assert_eq!(path_rx.blocking_recv().unwrap().0, path);
+        assert_eq!(path_rx.blocking_recv().unwrap().path, path);
         assert_eq!(relocate_rx.blocking_recv(), Some((old, path, UNIX_EPOCH)));
         assert!(relocate_rx.blocking_recv().is_none());
     }
@@ -518,14 +500,12 @@ mod tests {
         let path1 = insert_track_file(&pool, &dir_path, "track1.flac", 1).await;
         let path2 = insert_track_file(&pool, &dir_path, "track2.flac", 2).await;
 
-        // one file removed from the folder, the other still present
         std::fs::remove_file(&path1).unwrap();
         let mut scan_record = record_of(&[&path1, &path2]);
 
         let updated = reconcile_rescan_paths(&pool, &mut scan_record, &[dir_path], &[]).await;
         assert!(updated.is_empty());
 
-        // deleted track gone from DB and record, surviving track untouched
         assert!(!scan_record.records.contains_key(&path1));
         assert!(scan_record.records.contains_key(&path2));
         assert_eq!(count_tracks_at(&pool, &path1).await, 0);
@@ -541,7 +521,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let mut scan_record = record_of(&[&path]);
 
-        // rescan of just the file (matches on `location`)
+        // rescan of just the file (matches on location)
         let updated =
             reconcile_rescan_paths(&pool, &mut scan_record, std::slice::from_ref(&path), &[]).await;
         assert!(updated.is_empty());
@@ -587,7 +567,7 @@ mod tests {
         )
         .await;
 
-        // the whole tree is gone - the dead target must widen past direct children
+        // whole tree is gone - match has to cover nested paths, not just direct children
         std::fs::remove_dir_all(&artist_dir).unwrap();
         let mut scan_record = record_of(&[&path1, &path2]);
 
@@ -599,7 +579,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_removes_deleted_windows_style_tree() {
-        // Windows locations use backslashes - widen for those too
+        // Windows locations use backslashes - match those too
         let (_dir, pool) = create_test_pool("reconcile-test").await;
         let artist_dir = Utf8PathBuf::from(r"C:\Music\artist");
         let path1 = Utf8PathBuf::from(r"C:\Music\artist\track1.flac");

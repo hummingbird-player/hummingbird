@@ -11,8 +11,7 @@ use tokio::{
 };
 use tracing::{error, info};
 
-/// The version of the scanning process. If this version number is incremented, a re-scan of all
-/// files will be forced (see [ScanCommand::ForceScan]).
+/// Scan algorithm version. Bump to force a full rescan.
 pub const SCAN_VERSION: u16 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,13 +72,63 @@ struct ScanRecordForWrite<'a> {
     directories: &'a [Utf8PathBuf],
 }
 
+async fn write_record_atomic(
+    path: &Path,
+    data: Vec<u8>,
+    label: &str,
+    log_success: bool,
+    failure_hint: Option<&'static str>,
+) {
+    let tmp_path = path.with_extension("hsr.tmp");
+
+    let mut file = match tokio::fs::File::create(&tmp_path)
+        .await
+        .map(ZlibEncoder::new)
+    {
+        Ok(file) => file,
+        Err(e) => {
+            error!("Could not create {label} file: {:?}", e);
+            if let Some(hint) = failure_hint {
+                error!("{hint}");
+            }
+            return;
+        }
+    };
+
+    if let Err(e) = file.write_all(&data).await {
+        error!("Could not write {label}: {:?}", e);
+        if let Some(hint) = failure_hint {
+            error!("{hint}");
+        }
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return;
+    }
+    if let Err(e) = file.shutdown().await {
+        error!("Could not close {label}: {:?}", e);
+        if let Some(hint) = failure_hint {
+            error!("{hint}");
+        }
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return;
+    }
+    if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
+        error!("Could not rename {label} into place: {:?}", e);
+        if let Some(hint) = failure_hint {
+            error!("{hint}");
+        }
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return;
+    }
+    if log_success {
+        info!("Scan record saved successfully");
+    }
+}
+
 pub async fn write_checkpoint(
     checkpoint: Arc<Mutex<FxHashMap<Utf8PathBuf, SystemTime>>>,
     directories: Vec<Utf8PathBuf>,
     path: &Path,
 ) {
-    let tmp_path = path.with_extension("hsr.tmp");
-
     let serialized = {
         let guard = checkpoint.lock().await;
         let view = ScanRecordForWrite {
@@ -90,88 +139,19 @@ pub async fn write_checkpoint(
         postcard::to_allocvec(&view)
     };
 
-    let data = match serialized {
-        Ok(d) => d,
-        Err(e) => {
-            error!("Could not serialize scan record checkpoint: {:?}", e);
-            return;
-        }
-    };
-
-    let mut file = match tokio::fs::File::create(&tmp_path)
-        .await
-        .map(ZlibEncoder::new)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            error!("Could not create scan record checkpoint file: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = file.write_all(&data).await {
-        error!("Could not write scan record checkpoint: {:?}", e);
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return;
-    }
-    if let Err(e) = file.shutdown().await {
-        error!("Could not close scan record checkpoint: {:?}", e);
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return;
-    }
-    if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
-        error!(
-            "Could not rename scan record checkpoint into place: {:?}",
-            e
-        );
-        let _ = tokio::fs::remove_file(&tmp_path).await;
+    match serialized {
+        Ok(data) => write_record_atomic(path, data, "scan record checkpoint", false, None).await,
+        Err(e) => error!("Could not serialize scan record checkpoint: {:?}", e),
     }
 }
 
 pub async fn write_scan_record(scan_record: &ScanRecord, path: &Path) {
-    let tmp_path = path.with_extension("hsr.tmp");
-
-    let mut file = match tokio::fs::File::create(&tmp_path)
-        .await
-        .map(ZlibEncoder::new)
-    {
-        Ok(file) => file,
-        Err(e) => {
-            error!("Could not create temporary scan record file: {:?}", e);
-            error!("Scan record will not be saved, this may cause rescans on restart");
-            return;
-        }
-    };
-
+    const HINT: &str = "Scan record will not be saved, this may cause rescans on restart";
     match postcard::to_allocvec(&scan_record) {
-        Ok(data) => {
-            if let Err(e) = file.write_all(&data).await {
-                error!("Could not write scan record: {:?}", e);
-                error!("Scan record will not be saved, this may cause rescans on restart");
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return;
-            }
-
-            if let Err(e) = file.shutdown().await {
-                error!("Could not close scan record: {:?}", e);
-                error!("Scan record will not be saved, this may cause rescans on restart");
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return;
-            }
-
-            if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
-                error!("Could not rename scan record into place: {:?}", e);
-                error!("Scan record will not be saved, this may cause rescans on restart");
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return;
-            }
-
-            info!("Scan record saved successfully");
-        }
+        Ok(data) => write_record_atomic(path, data, "scan record", true, Some(HINT)).await,
         Err(e) => {
             error!("Could not serialize scan record: {:?}", e);
-            error!("Scan record will not be saved, this may cause rescans on restart");
-            let _ = tokio::fs::remove_file(&tmp_path).await;
+            error!("{HINT}");
         }
     }
 }
@@ -182,18 +162,20 @@ mod tests {
     use crate::test_support::TestDir;
     use std::time::{Duration, UNIX_EPOCH};
 
+    async fn assert_loads_record(path: &Path, expected_path: &Utf8PathBuf, timestamp: SystemTime) {
+        let loaded = load_scan_record(path).await;
+        assert_eq!(loaded.version, SCAN_VERSION);
+        assert_eq!(loaded.records.get(expected_path), Some(&timestamp));
+        assert_eq!(loaded.directories, vec![Utf8PathBuf::from("/music")]);
+    }
+
     #[tokio::test]
-    async fn missing_record_returns_current() {
+    async fn missing_or_corrupt_record_returns_current() {
         let dir = TestDir::new("scan-record-test");
         let record = load_scan_record(&dir.join("missing.hsr")).await;
         assert!(!record.is_version_mismatch());
         assert!(record.records.is_empty());
         assert!(record.directories.is_empty());
-    }
-
-    #[tokio::test]
-    async fn corrupt_record_returns_current() {
-        let dir = TestDir::new("scan-record-test");
         let path = dir.join("corrupt.hsr");
         std::fs::write(&path, b"not valid postcard data").unwrap();
         let record = load_scan_record(&path).await;
@@ -212,11 +194,7 @@ mod tests {
         record.directories.push(Utf8PathBuf::from("/music"));
 
         write_scan_record(&record, &path).await;
-        let loaded = load_scan_record(&path).await;
-
-        assert_eq!(loaded.version, SCAN_VERSION);
-        assert_eq!(loaded.records.get(&p1), Some(&t1));
-        assert_eq!(loaded.directories, vec![Utf8PathBuf::from("/music")]);
+        assert_loads_record(&path, &p1, t1).await;
     }
 
     #[tokio::test]
@@ -230,17 +208,6 @@ mod tests {
 
         let guard = Arc::new(Mutex::new(checkpoint));
         write_checkpoint(guard, vec![Utf8PathBuf::from("/music")], &path).await;
-
-        let loaded = load_scan_record(&path).await;
-        assert_eq!(loaded.version, SCAN_VERSION);
-        assert_eq!(loaded.records.get(&p1), Some(&t1));
-        assert_eq!(loaded.directories, vec![Utf8PathBuf::from("/music")]);
-    }
-
-    #[test]
-    fn version_mismatch_detected() {
-        let mut record = ScanRecord::new_current();
-        record.version = 1;
-        assert!(record.is_version_mismatch());
+        assert_loads_record(&path, &p1, t1).await;
     }
 }

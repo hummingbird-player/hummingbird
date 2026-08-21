@@ -2,7 +2,7 @@ use cntp_i18n::tr;
 use gpui::{App, AppContext, Context, Entity, IntoElement, Render, Window};
 
 use crate::{
-    library::scan::{MissingFolderAction, ScanEvent, ScanInterface},
+    library::scan::{MissingFolderDecision, ScanEvent, ScanInterface},
     settings::{SettingsGlobal, save_settings, scan::MissingFolderPolicy},
     ui::{
         components::{
@@ -25,16 +25,11 @@ impl MissingFolderDialog {
         })
     }
 
-    fn maybe_persist_policy(&mut self, action: MissingFolderAction, cx: &mut Context<Self>) {
+    fn maybe_persist_policy(&mut self, policy: MissingFolderPolicy, cx: &mut Context<Self>) {
         if self.remember_choice {
             let settings = cx.global::<SettingsGlobal>().model.clone();
             settings.update(cx, |settings, cx| {
-                settings.scanning.missing_folder_policy = match action {
-                    MissingFolderAction::KeepInLibrary => MissingFolderPolicy::KeepInLibrary,
-                    MissingFolderAction::DeleteFromLibrary => {
-                        MissingFolderPolicy::DeleteFromLibrary
-                    }
-                };
+                settings.scanning.missing_folder_policy = policy;
                 save_settings(cx, settings);
                 cx.notify();
             });
@@ -43,9 +38,14 @@ impl MissingFolderDialog {
         self.remember_choice = false;
     }
 
-    fn resolve_action(&mut self, action: MissingFolderAction, cx: &mut Context<Self>) {
-        self.maybe_persist_policy(action, cx);
-        cx.global::<ScanInterface>().resolve_missing_folders(action);
+    fn resolve_action(&mut self, decision: MissingFolderDecision, cx: &mut Context<Self>) {
+        let policy = match decision {
+            MissingFolderDecision::KeepInLibrary => MissingFolderPolicy::KeepInLibrary,
+            MissingFolderDecision::DeleteFromLibrary => MissingFolderPolicy::DeleteFromLibrary,
+        };
+        self.maybe_persist_policy(policy, cx);
+        cx.global::<ScanInterface>()
+            .resolve_missing_folders(decision);
         cx.notify();
     }
 }
@@ -90,7 +90,7 @@ impl Render for MissingFolderDialog {
                 tr!("SCANNING_MISSING_DIALOG_KEEP", "Keep in Library"),
                 ButtonIntent::Secondary,
                 cx.listener(|this, _, _, cx| {
-                    this.resolve_action(MissingFolderAction::KeepInLibrary, cx);
+                    this.resolve_action(MissingFolderDecision::KeepInLibrary, cx);
                 }),
             )
             .subtitle(tr!(
@@ -107,7 +107,7 @@ impl Render for MissingFolderDialog {
                 tr!("SCANNING_MISSING_DIALOG_DELETE", "Delete items"),
                 ButtonIntent::Danger,
                 cx.listener(|this, _, _, cx| {
-                    this.resolve_action(MissingFolderAction::DeleteFromLibrary, cx);
+                    this.resolve_action(MissingFolderDecision::DeleteFromLibrary, cx);
                 }),
             )
             .subtitle(tr!(

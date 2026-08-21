@@ -447,14 +447,14 @@ pub fn run() -> anyhow::Result<()> {
             I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
         }
 
-        let mut scan_interface: ScanInterface = start_scanner(pool.clone(), scanning_settings);
+        let (scan_interface, scan_events) = start_scanner(pool.clone(), scanning_settings);
         let initial_health = cx.global::<Models>().settings_health.read(cx).clone();
         if matches!(initial_health, models::SettingsHealth::Ok) {
             scan_interface.scan();
         } else {
             tracing::warn!("Settings file is corrupt; holding scanner until resolved");
         }
-        scan_interface.start_broadcast(cx);
+        scan_interface.start_broadcast(scan_events, cx);
 
         cx.set_global(scan_interface);
 

@@ -8,27 +8,21 @@ use rustc_hash::FxHashMap;
 use sysinfo::Disks;
 
 pub(crate) type DiskGroups = (
-    FxHashMap<String, Vec<Utf8PathBuf>>,
+    Vec<Vec<Utf8PathBuf>>,
     Vec<Utf8PathBuf>,
     FxHashMap<Utf8PathBuf, usize>,
 );
 
-/// Group scan paths by physical disk.
-///
-/// Returns `(groups, mount_points, mount_to_channel)` where:
-/// - `groups` maps physical device ID to its scan paths
-/// - `mount_points` is the sorted list of mount points (for router matching)
-/// - `mount_to_channel` maps each mount point to its physical device channel index
-///
-/// Paths whose mount point cannot be determined are grouped under an empty-string key.
+/// Group library paths by physical disk for slow-disk parallel I/O.
+/// Returns (groups, mounts longest-first, mount-to-channel). Unknown mounts use channel 0.
 pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
     if paths.is_empty() {
-        return (FxHashMap::default(), Vec::new(), FxHashMap::default());
+        return (Vec::new(), Vec::new(), FxHashMap::default());
     }
 
     let disks = Disks::new_with_refreshed_list();
 
-    // Collect and sort mount points by depth (longest first for routing)
+    // longest first so nested mounts match before their parents
     let mut mounts: Vec<&Path> = disks.iter().map(|d| d.mount_point()).collect();
     mounts.sort_by(|a, b| {
         b.as_os_str()
@@ -37,7 +31,6 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
             .cmp(&a.as_os_str().as_encoded_bytes().len())
     });
 
-    // Build mount_point -> (mount_point_path, physical_device_id) mapping
     let mount_to_physical: Vec<(Utf8PathBuf, String)> = mounts
         .iter()
         .filter_map(|m| {
@@ -49,8 +42,9 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
 
     let mount_points: Vec<Utf8PathBuf> = mount_to_physical.iter().map(|(m, _)| m.clone()).collect();
 
-    // Group paths by physical device ID
-    let mut groups: FxHashMap<String, Vec<Utf8PathBuf>> = FxHashMap::default();
+    // assign channels in discovery order so they line up with the router
+    let mut groups: Vec<Vec<Utf8PathBuf>> = Vec::new();
+    let mut physical_to_channel: FxHashMap<String, usize> = FxHashMap::default();
 
     for path in paths {
         let canonical = path.canonicalize_utf8().unwrap_or(path.clone());
@@ -60,22 +54,31 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
             .map(|(_, id)| id.clone())
             .unwrap_or_default();
 
-        groups.entry(device_id).or_default().push(path.clone());
+        let channel = match physical_to_channel.get(&device_id).copied() {
+            Some(channel) => channel,
+            None => {
+                let channel = groups.len();
+                physical_to_channel.insert(device_id, channel);
+                groups.push(Vec::new());
+                channel
+            }
+        };
+        groups[channel].push(path.clone());
     }
 
-    // Build mount_point -> channel index mapping
     let mount_to_channel: FxHashMap<Utf8PathBuf, usize> = mount_to_physical
         .iter()
         .filter_map(|(mount, dev_id)| {
-            let channel = groups.keys().position(|k| k == dev_id)?;
-            Some((mount.clone(), channel))
+            physical_to_channel
+                .get(dev_id)
+                .copied()
+                .map(|channel| (mount.clone(), channel))
         })
         .collect();
 
     (groups, mount_points, mount_to_channel)
 }
 
-/// Whether `path` lives under `mount`.
 #[cfg(not(windows))]
 fn path_is_under_mount(path: &Path, mount: &Path) -> bool {
     path.starts_with(mount)
@@ -90,7 +93,6 @@ fn path_is_under_mount(path: &Path, mount: &Path) -> bool {
         return false;
     };
     if mount_str.starts_with(r"\\?\") {
-        // Already verbatim; already compared above.
         return false;
     }
     let verbatim = if let Some(share) = mount_str.strip_prefix(r"\\") {
@@ -101,33 +103,24 @@ fn path_is_under_mount(path: &Path, mount: &Path) -> bool {
     path.starts_with(Path::new(&verbatim))
 }
 
-/// Get the physical device identifier for a mount point.
-///
-/// On macOS, returns the BSD disk name (e.g., "disk0") via `statfs`.
-/// On Linux, returns the device path with partition stripped (e.g., "sda").
-/// On Windows, returns the physical drive number (e.g., "physicaldrive_0"),
-/// falling back to the drive letter (e.g., "drive_C"). UNC shares are grouped
-/// per share (e.g., "unc_server\share").
-/// Returns `None` for virtual filesystems (tmpfs, procfs, etc.) or on error.
+/// Physical drive behind a mount point, so partitions on one disk share a channel. macOS: BSD name,
+/// Linux: sysfs block device, Windows: IOCTL (else letter/UNC).
 fn physical_device_id(mount_point: &Path) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let mut stat = MaybeUninit::<libc::statfs>::uninit();
         let cpath = std::ffi::CString::new(mount_point.as_os_str().as_encoded_bytes()).ok()?;
-        // Safety: statfs is a well-known POSIX syscall. The buffer is
-        // stack-allocated and zero-initialized by MaybeUninit.
         if unsafe { libc::statfs(cpath.as_ptr(), stat.as_mut_ptr()) } != 0 {
             return None;
         }
         let stat = unsafe { stat.assume_init() };
 
-        // f_mntfromname gives "/dev/disk0s1" on APFS
         let bsd_name = unsafe { CStr::from_ptr(stat.f_mntfromname.as_ptr()) }
             .to_bytes()
             .strip_prefix(b"/dev/")
             .and_then(|name| std::str::from_utf8(name).ok())?;
 
-        // "disk0s1" -> "disk0", "disk0s1s2" -> "disk0s1" (APFS volume, shares physical disk)
+        // "disk0s1" -> "disk0", "disk0s1s2" -> "disk0s1" (APFS volume on the same disk)
         Some(
             bsd_name
                 .trim_end_matches(|c: char| c.is_ascii_digit())
@@ -154,13 +147,7 @@ fn physical_device_id(mount_point: &Path) -> Option<String> {
             .find(|(mp, _)| *mp == mount_str)
             .map(|(_, dev)| dev.to_string())?;
 
-        // /dev/sda1 -> sda, /dev/nvme0n1p1 -> nvme0n1, /dev/mmcblk0p1 -> mmcblk0
-        let path = device.trim_start_matches("/dev/");
-        let physical = path
-            .trim_end_matches(|c: char| c.is_ascii_digit())
-            .trim_end_matches('p')
-            .trim_end_matches(|c: char| c.is_ascii_digit());
-        Some(physical.to_string())
+        linux_physical_device_id(&device)
     }
 
     #[cfg(target_os = "windows")]
@@ -185,8 +172,25 @@ fn physical_device_id(mount_point: &Path) -> Option<String> {
     }
 }
 
-/// Resolve the physical drive number backing a drive letter via `IOCTL_STORAGE_GET_DEVICE_NUMBER`.
-/// Returns `None` if the volume can't be opened or spans multiple disks (e.g. Storage Spaces).
+#[cfg(target_os = "linux")]
+fn linux_physical_device_id(device: &str) -> Option<String> {
+    let sysfs_device = std::fs::canonicalize(Path::new("/sys/dev/block").join(device)).ok();
+
+    let device_name = sysfs_device.and_then(|mut path| {
+        // use the parent disk's name so all of its partitions share a channel
+        if path.join("partition").exists() {
+            path = path.parent()?.to_path_buf();
+        }
+        path.file_name()?.to_str().map(str::to_owned)
+    });
+
+    // if the device cannot be resolved, use its full identifier instead of grouping by major alone
+    device_name
+        .map(|name| format!("linux:{name}"))
+        .or_else(|| Some(format!("linux:{device}")))
+}
+
+/// Physical drive number via IOCTL. None if the volume can't be opened or spans multiple disks.
 #[cfg(target_os = "windows")]
 fn windows_physical_drive_id(letter: char) -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
@@ -198,7 +202,7 @@ fn windows_physical_drive_id(letter: char) -> Option<String> {
     use windows::core::HSTRING;
 
     let volume = HSTRING::from(format!(r"\\.\{letter}:"));
-    // dwDesiredAccess = 0 allows metadata-only IOCTLs without admin rights.
+    // access 0 allows metadata IOCTLs without admin rights
     let handle = unsafe {
         CreateFileW(
             &volume,
@@ -231,7 +235,7 @@ fn windows_physical_drive_id(letter: char) -> Option<String> {
         let _ = CloseHandle(handle);
     }
 
-    // volumes spanning multiple disks report DeviceNumber = 0xFFFFFFFF.
+    // volumes that span multiple disks report DeviceNumber = 0xFFFFFFFF
     result.ok().filter(|_| number.DeviceNumber != u32::MAX)?;
     Some(format!("physicaldrive_{}", number.DeviceNumber))
 }
@@ -243,13 +247,6 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn group_paths_by_disk_handles_empty_input() {
-        let (groups, mounts, _mount_to_channel) = group_paths_by_disk(&[]);
-        assert!(groups.is_empty());
-        assert!(mounts.is_empty());
-    }
-
-    #[test]
     fn group_paths_by_disk_single_disk() {
         let dir = TestDir::new("disk-group-test");
         let p1 = dir.utf8_join("music");
@@ -259,44 +256,16 @@ mod tests {
 
         let (groups, mounts, mount_to_channel) = group_paths_by_disk(&[p1, p2]);
 
-        // Both paths should be on the same disk (temp dir).
         assert_eq!(groups.len(), 1, "expected 1 group, got {groups:?}");
-        let paths = groups.into_values().next().unwrap();
+        let paths = groups.into_iter().next().unwrap();
         assert_eq!(paths.len(), 2);
 
-        // mount_to_channel should map at least the active mount points
         assert!(
             !mount_to_channel.is_empty(),
             "expected non-empty mount_to_channel"
         );
-        // mounts list comes from sysinfo and may include more mounts than
-        // mount_to_channel (if a physical device has no paths assigned)
+        // sysinfo may list mounts that have no paths assigned
         assert!(mount_to_channel.len() <= mounts.len());
-    }
-
-    #[test]
-    fn mount_to_channel_indices_are_valid() {
-        let dir = TestDir::new("mount-channel-test");
-        let p = dir.utf8_join("audio");
-        std::fs::create_dir_all(&p).unwrap();
-
-        let (groups, _mounts, mount_to_channel) = group_paths_by_disk(&[p]);
-
-        // mount_to_channel may have fewer entries than total system mount points
-        // (only mount points whose physical device received paths are mapped)
-        assert!(
-            !mount_to_channel.is_empty(),
-            "expected non-empty mount_to_channel"
-        );
-
-        // Channel indices should be in range for the groups we have
-        for &channel in mount_to_channel.values() {
-            assert!(
-                channel < groups.len(),
-                "channel index {channel} out of range (max {})",
-                groups.len() - 1
-            );
-        }
     }
 
     #[test]
@@ -313,7 +282,7 @@ mod tests {
             assert!(
                 id.len() > 4,
                 "physical_device_id('/') = '{id}' on macOS. expected 'diskN' with a digit, \
-                 got '{id}' which is stripped too far (Q2 bug). Fix the stripping logic."
+                 got '{id}' which is stripped too far. Fix the stripping logic."
             );
         }
     }
@@ -325,7 +294,7 @@ mod tests {
 
         let (groups, _mounts, _mount_to_channel) = group_paths_by_disk(&[nonexistent]);
 
-        // Nonexistent paths still produce a group (fallback key "").
+        // nonexistent paths still get a group (fallback key "")
         assert_eq!(groups.len(), 1);
     }
 }

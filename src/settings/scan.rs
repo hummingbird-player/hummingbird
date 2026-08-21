@@ -3,8 +3,6 @@ use std::fs::exists;
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_os = "windows"))]
-use tracing::error;
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
@@ -81,38 +79,32 @@ fn retrieve_default_paths() -> Vec<Utf8PathBuf> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        if let Some(user_directories) = directories::UserDirs::new() {
-            if let Some(dir) = user_directories.audio_dir() {
-                if exists(dir).unwrap_or(false) {
-                    if let Ok(utf8_path) = Utf8PathBuf::from_path_buf(dir.to_path_buf()) {
-                        return vec![utf8_path];
-                    } else {
-                        warn!(
-                            "Music directory path is not UTF-8: nothing will be scanned by default."
-                        );
-                    }
-                } else {
-                    warn!("Music directory doesn't exist: nothing will be scanned by default.");
-                }
-            } else {
-                let dir = user_directories.home_dir().join("Music");
-                warn!("Music directory couldn't be discovered normally, using $HOME/Music.");
-                if exists(&dir).unwrap_or(false) {
-                    if let Ok(utf8_path) = Utf8PathBuf::from_path_buf(dir) {
-                        return vec![utf8_path];
-                    } else {
-                        warn!("$HOME/Music path is not UTF-8: nothing will be scanned by default.");
-                    }
-                } else {
-                    warn!("$HOME/Music doesn't exist: nothing will be scanned by default.");
-                }
-            };
-        } else {
-            error!("Couldn't find your home directory.");
-            warn!("Nothing will be scanned by default, and no config files will be loadable.");
-            warn!("Please create a home directory for this user.");
-        }
+        let Some(user_directories) = directories::UserDirs::new() else {
+            return default_paths_failure("couldn't find your home directory");
+        };
 
-        vec![]
+        let dir = user_directories
+            .audio_dir()
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                warn!("Music directory couldn't be discovered normally, using $HOME/Music.");
+                Some(user_directories.home_dir().join("Music"))
+            });
+        let Some(dir) = dir.filter(|dir| exists(dir).unwrap_or(false)) else {
+            return default_paths_failure("the Music directory doesn't exist");
+        };
+
+        match Utf8PathBuf::from_path_buf(dir) {
+            Ok(path) => vec![path],
+            Err(_) => default_paths_failure("the Music directory path isn't valid UTF-8"),
+        }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_paths_failure(reason: &str) -> Vec<Utf8PathBuf> {
+    warn!(
+        "Could not find a usable Music directory ({reason}); nothing will be scanned by default."
+    );
+    Vec::new()
 }

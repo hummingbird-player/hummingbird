@@ -8,7 +8,6 @@ use std::{
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
-use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::{
@@ -16,7 +15,7 @@ use crate::{
         db,
         scan::{
             artist_match::ArtistMatcher,
-            database::{flush_album_artists, flush_track_artists, update_metadata},
+            database::{WriteCaches, flush_album_artists, flush_track_artists, update_metadata},
             decode::FileArt,
         },
     },
@@ -163,8 +162,7 @@ pub(crate) async fn insert_metadata(
     path: &Utf8Path,
 ) -> anyhow::Result<()> {
     let mut matcher = ArtistMatcher::new();
-    let mut pending_albums = FxHashSet::default();
-    let mut pending_tracks = FxHashSet::default();
+    let mut caches = WriteCaches::default();
     update_metadata(
         conn,
         metadata,
@@ -172,18 +170,11 @@ pub(crate) async fn insert_metadata(
         100,
         &FileArt::default(),
         false,
-        &mut FxHashSet::default(),
-        &mut FxHashMap::default(),
-        &mut FxHashMap::default(),
-        &mut pending_albums,
-        &mut pending_tracks,
-        &mut FxHashSet::default(),
-        &mut FxHashMap::default(),
-        &mut FxHashSet::default(),
+        &mut caches,
     )
     .await?;
-    flush_album_artists(conn, &mut matcher, &mut pending_albums).await?;
-    flush_track_artists(conn, &mut matcher, &mut pending_tracks).await?;
+    flush_album_artists(conn, &mut matcher, &mut caches.pending_albums).await?;
+    flush_track_artists(conn, &mut matcher, &mut caches.pending_tracks).await?;
     Ok(())
 }
 

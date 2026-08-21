@@ -6,8 +6,8 @@ use crate::devices::format::{ChannelSpec, SampleFormat};
 
 use super::{
     errors::{
-        ChannelRetrievalError, CloseError, FrameDurationError, MetadataError, OpenError,
-        PlaybackReadError, PlaybackStartError, PlaybackStopError, SeekError, TrackDurationError,
+        ChannelRetrievalError, FrameDurationError, MetadataError, OpenError, PlaybackReadError,
+        PlaybackStartError, SeekError, TrackDurationError,
     },
     metadata::Metadata,
     pipeline::{ChannelProducers, DecodeResult},
@@ -62,13 +62,13 @@ pub trait MediaProvider: Send + Sync {
 pub trait MediaStream {
     /// Informs the Provider that the currently opened file is no longer needed. This function is
     /// not guaranteed to be called before open if a file is already opened.
-    fn close(&mut self) -> Result<(), CloseError>;
+    fn close(&mut self);
 
     /// Informs the Provider that playback is about to begin.
     fn start_playback(&mut self) -> Result<(), PlaybackStartError>;
 
     /// Informs the Provider that playback has ended and no more samples or metadata will be read.
-    fn stop_playback(&mut self) -> Result<(), PlaybackStopError>;
+    fn stop_playback(&mut self);
 
     /// Requests the Provider seek to the specified time in the current file. The time is provided
     /// in seconds. If no file is opened, this function should return an error.
@@ -79,9 +79,10 @@ pub trait MediaStream {
     /// be shorter than this duration, but it should never be longer.
     fn frame_duration(&self) -> Result<u64, FrameDurationError>;
 
-    /// Returns the metadata of the currently opened file. If no file is opened, or the provider
-    /// does not support metadata retrieval, this function should return an error.
-    fn read_metadata(&mut self) -> Result<&Metadata, MetadataError>;
+    /// Returns the metadata of the currently opened file, taking ownership of it. If no file is
+    /// opened, or the provider does not support metadata retrieval, this function should return
+    /// an error.
+    fn read_metadata(&mut self) -> Result<Metadata, MetadataError>;
 
     /// Returns whether or not there has been a metadata update since the last call to
     /// read_metadata.

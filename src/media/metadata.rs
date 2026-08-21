@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use regex::Regex;
+use smallvec::SmallVec;
 
 pub fn parse_rg_float_str(value: &str) -> Option<f64> {
     value.trim().parse().ok()
@@ -62,16 +63,9 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
     match tag {
         MetadataTag::Name(v) => metadata.name = Some(v),
         MetadataTag::Artist(v) => metadata.artist = Some(v),
-        MetadataTag::Artists(v) => metadata.artists = Some(v),
+        MetadataTag::Artists(v) => push_unique(&mut metadata.artists, v),
         MetadataTag::AlbumArtist(v) => metadata.album_artist = Some(v),
-        MetadataTag::AlbumArtists(v) => {
-            if let Some(keys) = &mut metadata.album_artist_keys {
-                keys.push_str("; ");
-                keys.push_str(&v);
-            } else {
-                metadata.album_artist_keys = Some(v);
-            }
-        }
+        MetadataTag::AlbumArtists(v) => push_unique(&mut metadata.album_artist_keys, v),
         MetadataTag::OriginalArtist(v) => metadata.original_artist = Some(v),
         MetadataTag::Composer(v) => metadata.composer = Some(v),
         MetadataTag::Album(v) => metadata.album = Some(v),
@@ -153,15 +147,22 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
     }
 }
 
+fn push_unique(values: &mut SmallVec<[String; 2]>, value: String) {
+    let value = value.trim();
+    if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Metadata {
     pub name: Option<String>,
     pub artist: Option<String>,
-    pub artists: Option<String>,
+    pub artists: SmallVec<[String; 2]>,
     pub album_artist: Option<String>,
-    /// Semicolon-joined album artist claim parts: TSO2 split on "&" when every part claims a
-    /// credited track artist, the individual ALBUMARTISTS credits, else the raw TPE2 values.
-    pub album_artist_keys: Option<String>,
+    /// Album artist claim parts: TSO2 split on "&" when every part claims a credited track artist,
+    /// the individual ALBUMARTISTS credits, otherwise the raw TPE2 values.
+    pub album_artist_keys: SmallVec<[String; 2]>,
     pub artist_sort: Option<String>,
     pub album_artist_sort: Option<String>,
     pub original_artist: Option<String>,

@@ -25,10 +25,6 @@ pub async fn create_pool(path: impl AsRef<Path>) -> sqlx::Result<SqlitePool> {
         .create_if_missing(true);
     let pool = SqlitePool::connect_with(options).await?;
 
-    // sqlx::query("PRAGMA mmap_size = 30000000000")
-    //     .execute(&pool)
-    //     .await?;
-
     let migrations = sqlx::migrate!("./migrations")
         .set_ignore_missing(true)
         .run(&pool)
@@ -633,10 +629,12 @@ pub async fn reorder_playlist(
     playlist_id: i64,
     new_position: i64,
 ) -> sqlx::Result<()> {
-    let original_position: i64 = sqlx::query_scalar("SELECT position FROM playlist WHERE id = $1")
-        .bind(playlist_id)
-        .fetch_one(pool)
-        .await?;
+    let original_position: i64 = sqlx::query_scalar(include_str!(
+        "../../queries/playlist/get_playlist_position.sql"
+    ))
+    .bind(playlist_id)
+    .fetch_one(pool)
+    .await?;
 
     if original_position < new_position {
         let move_query = include_str!("../../queries/playlist/move_playlist_down.sql");
