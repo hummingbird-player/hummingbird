@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(metadata.artist.as_deref(), Some("Test Artist"));
         assert_eq!(metadata.album_artist.as_deref(), Some("Test Album Artist"));
         assert_eq!(metadata.album.as_deref(), Some("Test Album"));
-        assert_eq!(metadata.genre.as_deref(), Some("Test Genre"));
+        assert_eq!(metadata.genres, names(&["Test Genre"]));
         assert_eq!(metadata.track_current, Some(2));
         assert_eq!(metadata.track_max, Some(9));
         assert_eq!(metadata.disc_current, Some(1));
@@ -661,6 +661,18 @@ mod tests {
         finalize_track_artists(&mut metadata, artist_names.tpe1, artist_names.artists_tag);
         finalize_album_artist_keys(&mut metadata, &artist_names.album_artists_tag);
         metadata
+    }
+
+    #[test]
+    fn collects_repeated_genres_without_splitting_literal_punctuation() {
+        let tag = tag_with_items(
+            TagType::VorbisComments,
+            ItemKey::Genre,
+            &[" Rock ", "rock", "Dream Pop", "Rock/Pop"],
+        );
+        let metadata = applied_metadata(&tag, false);
+
+        assert_eq!(metadata.genres, names(&["Rock", "Dream Pop", "Rock/Pop"]));
     }
 
     #[test]

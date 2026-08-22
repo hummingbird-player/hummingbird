@@ -207,6 +207,8 @@ pub struct Album {
     pub thumb: Option<Thumbnail>,
     #[sqlx(skip)]
     pub tags: Option<Vec<String>>,
+    #[sqlx(skip)]
+    pub genres: Vec<DBString>,
     #[sqlx(default)]
     pub label: Option<DBString>,
     #[sqlx(default)]
@@ -233,7 +235,7 @@ pub struct Track {
     pub duration: i64,
     pub created_at: DateTime<Utc>,
     #[sqlx(skip)]
-    pub genres: Option<Vec<DBString>>,
+    pub genres: Vec<DBString>,
     #[sqlx(skip)]
     pub tags: Option<Vec<DBString>>,
     #[sqlx(try_from = "String")]

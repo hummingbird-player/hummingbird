@@ -7,7 +7,9 @@ use xxhash_rust::xxh3::xxh3_64;
 use super::*;
 use crate::library::scan::{
     artist_match::ArtistMatcher,
-    database::{WriteCaches, flush_album_artists, flush_track_artists, update_metadata},
+    database::{
+        WriteCaches, flush_album_artists, flush_album_genres, flush_track_artists, update_metadata,
+    },
     decode::{ArtSource, FileArt, RawArt, ScannedArt},
     discover::{FolderArtCandidate, read_scan_directory},
 };
@@ -585,6 +587,9 @@ async fn write_track_cached(
     )
     .await
     .unwrap();
+    flush_album_genres(&mut conn, &mut caches.pending_genre_albums)
+        .await
+        .unwrap();
 }
 
 async fn examine_and_finalize(dir: &TestDir, pool: &SqlitePool) {

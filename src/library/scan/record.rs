@@ -12,7 +12,7 @@ use tokio::{
 use tracing::{error, info};
 
 /// Scan algorithm version. Bump to force a full rescan.
-pub const SCAN_VERSION: u16 = 6;
+pub const SCAN_VERSION: u16 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanRecord {

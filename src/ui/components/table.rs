@@ -279,17 +279,17 @@ where
 
     pub fn show_column(&mut self, column: C, cx: &mut App) {
         // use the previous col widths if available
-        let default_columns = T::default_columns();
+        let available_columns = T::available_columns();
         let width = self
             .hidden_column_widths
             .read(cx)
             .get(&column)
             .copied()
-            .or_else(|| default_columns.get(&column).copied())
+            .or_else(|| available_columns.get(&column).copied())
             .unwrap_or(100.0);
 
-        // insert based on default column positions
-        let default_order: Vec<C> = default_columns.keys().copied().collect();
+        // insert based on the natural available-column order
+        let default_order: Vec<C> = available_columns.keys().copied().collect();
         let target_idx = default_order.iter().position(|c| *c == column).unwrap_or(0);
 
         self.columns.update(cx, |cols, cx| {
@@ -317,6 +317,7 @@ where
     fn build_columns_from_settings(
         settings: Option<&TableSettings>,
     ) -> (IndexMap<C, f32, FxBuildHasher>, FxHashMap<C, f32>) {
+        let available_columns = T::available_columns();
         let default_columns = T::default_columns();
 
         let Some(settings) = settings else {
@@ -347,7 +348,7 @@ where
         let mut hidden_widths = FxHashMap::default();
 
         for name in column_order {
-            if let Some((&col, &default_width)) = default_columns
+            if let Some((&col, &default_width)) = available_columns
                 .iter()
                 .find(|(c, _)| c.get_column_name() == name.as_str())
             {
@@ -360,7 +361,7 @@ where
             }
         }
 
-        for (&col, &default_width) in &default_columns {
+        for (&col, &default_width) in &available_columns {
             if visible_columns.contains_key(&col) {
                 continue;
             }
@@ -460,7 +461,7 @@ where
 
         let columns_read = self.columns.read(cx);
         let column_count = columns_read.len();
-        let default_columns = T::default_columns();
+        let available_columns = T::available_columns();
 
         let table_min_width = columns_read.values().sum::<f32>()
             + if T::has_images() {
@@ -498,7 +499,7 @@ where
             let is_last = i == column_count - 1;
             let base_width = *column.1;
             let column_id = *column.0;
-            let default_width = default_columns
+            let default_width = available_columns
                 .get(&column_id)
                 .copied()
                 .unwrap_or(base_width);
@@ -578,9 +579,8 @@ where
             }
         }
 
-        let all_columns = C::all_columns();
         let mut column_menu = menu();
-        for col in all_columns {
+        for col in available_columns.keys() {
             let is_visible = columns_read.contains_key(col);
             let is_hideable = col.is_hideable();
             let column_copy = *col;

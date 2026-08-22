@@ -141,6 +141,9 @@ async fn write_pipeline_metadata(
     flush_track_artists(&mut transaction, &mut matcher, &mut caches.pending_tracks)
         .await
         .unwrap();
+    flush_album_genres(&mut transaction, &mut caches.pending_genre_albums)
+        .await
+        .unwrap();
     transaction.commit().await.unwrap();
 
     (count, caches)

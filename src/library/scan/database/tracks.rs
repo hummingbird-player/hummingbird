@@ -170,7 +170,6 @@ pub(super) async fn insert_track(
             .bind(metadata.disc_current.map(|x| x as i32))
             .bind(length as i32)
             .bind(path.as_str())
-            .bind(&metadata.genre)
             .bind(&metadata.artist)
             .bind(parent.as_str())
             .bind(metadata.replaygain_track_gain)

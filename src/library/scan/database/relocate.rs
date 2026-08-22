@@ -1,7 +1,7 @@
 use camino::Utf8Path;
 use sqlx::SqliteConnection;
 
-use super::recompute_album_artists;
+use super::{recompute_album_artists, recompute_album_genres};
 use crate::library::scan::artist_match::ArtistMatcher;
 
 /// Move a track row after a case-only rename. Merge playlists/lyrics if the new path already has a row.
@@ -60,9 +60,10 @@ pub async fn relocate_track(
                 .execute(&mut *conn)
                 .await?;
 
-            // the removed row may have been the only one crediting an artist
+            // the removed row may have been the only one crediting an artist or genre
             if let Some((album_id,)) = stale_album {
                 recompute_album_artists(conn, matcher, album_id).await?;
+                recompute_album_genres(conn, album_id).await?;
             }
         }
     } else {

@@ -802,8 +802,14 @@ mod tests {
     #[tokio::test]
     async fn cleanup_with_exclusions_keeps_album_when_other_tracks_remain() {
         let (dir, pool) = create_test_pool("cleanup-test").await;
-        let path1 = insert_track_file(&pool, &dir.utf8_path(), "track1.flac", 1).await;
-        let path2 = insert_track_file(&pool, &dir.utf8_path(), "track2.flac", 2).await;
+        let mut meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        meta1.genres.push("Rock".to_string());
+        let path1 =
+            insert_track_file_with_meta(&pool, &dir.utf8_path(), "track1.flac", meta1).await;
+        let mut meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+        meta2.genres.push("Blues".to_string());
+        let path2 =
+            insert_track_file_with_meta(&pool, &dir.utf8_path(), "track2.flac", meta2).await;
 
         assert_eq!(count_rows(&pool, "album").await, 1);
         assert_eq!(count_rows(&pool, "artist").await, 1);
@@ -815,6 +821,16 @@ mod tests {
 
         assert_eq!(count_rows(&pool, "album").await, 1);
         assert_eq!(count_rows(&pool, "artist").await, 1);
+        let genres: Vec<(String,)> = sqlx::query_as(
+            "SELECT genre.name
+             FROM album_genre
+             JOIN genre ON genre.id = album_genre.genre_id
+             ORDER BY album_genre.position",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(genres, vec![("Blues".to_string(),)]);
     }
 
     #[tokio::test]

@@ -63,7 +63,7 @@ impl MprisControllerServer {
             mpris_data.set_album(metadata.album.clone());
             mpris_data.set_artist(metadata.artist.clone().map(|v| [v]));
             mpris_data.set_album_artist(metadata.album_artist.clone().map(|v| [v]));
-            mpris_data.set_genre(metadata.genre.clone().map(|v| [v]));
+            mpris_data.set_genre((!metadata.genres.is_empty()).then(|| metadata.genres.clone()));
             mpris_data.set_audio_bpm(metadata.bpm.map(|v| v as i32));
             mpris_data.set_track_number(metadata.track_current.map(|v| v as i32));
             mpris_data.set_disc_number(metadata.disc_current.map(|v| v as i32));

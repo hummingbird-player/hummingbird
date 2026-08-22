@@ -1,6 +1,7 @@
 mod albums;
 mod artist_links;
 mod artists;
+mod genre_links;
 mod relocate;
 mod tracks;
 
@@ -24,6 +25,9 @@ pub use albums::AlbumCacheKey;
 use albums::insert_album;
 pub(crate) use artist_links::recompute_album_artists;
 pub use artist_links::{flush_album_artists, flush_track_artists, sweep_orphan_artists};
+pub(crate) use genre_links::recompute_album_genres;
+use genre_links::sync_track_genres;
+pub use genre_links::{flush_album_genres, sweep_orphan_genres};
 pub use relocate::relocate_track;
 pub use tracks::{AlbumPathCacheKey, TrackWriteOutcome};
 use tracks::{delete_lyrics, insert_track, upsert_lyrics};
@@ -48,6 +52,7 @@ pub(crate) struct WriteCaches {
     pub(crate) paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
     pub(crate) pending_albums: FxHashSet<i64>,
     pub(crate) pending_tracks: FxHashSet<i64>,
+    pub(crate) pending_genre_albums: FxHashSet<i64>,
     pub(crate) folder_art_candidates: FolderArtCandidates,
     pub(crate) art_ids: ArtIdCache,
     /// Albums whose folders were checked for artwork this scan.
@@ -107,6 +112,8 @@ pub async fn update_metadata(
     else {
         return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
     };
+
+    sync_track_genres(conn, track_id, &metadata.genres).await?;
 
     if let Some(lyrics) = &metadata.lyrics {
         upsert_lyrics(conn, track_id, lyrics).await?;
@@ -188,6 +195,7 @@ pub async fn update_metadata(
     // album artists once per album per batch, tracks with no album get their own links
     if let Some(album_id) = album_id {
         caches.pending_albums.insert(album_id);
+        caches.pending_genre_albums.insert(album_id);
     } else {
         caches.pending_tracks.insert(track_id);
     }
@@ -195,6 +203,7 @@ pub async fn update_metadata(
         && Some(old_id) != album_id
     {
         caches.pending_albums.insert(old_id);
+        caches.pending_genre_albums.insert(old_id);
     }
 
     Ok(TrackWriteOutcome::Written)

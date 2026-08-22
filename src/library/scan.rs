@@ -24,7 +24,7 @@ use crate::settings::scan::ScanSettings;
 pub use control::{MissingFolderDecision, ScanEvent, ScanInterface};
 
 #[cfg(test)]
-use database::{flush_album_artists, flush_track_artists};
+use database::{flush_album_artists, flush_album_genres, flush_track_artists};
 
 pub fn start_scanner(
     pool: SqlitePool,

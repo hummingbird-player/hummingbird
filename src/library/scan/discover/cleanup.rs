@@ -4,7 +4,9 @@ use sqlx::SqlitePool;
 use tracing::{debug, error, info};
 
 use crate::library::scan::{
-    artist_match::ArtistMatcher, database::recompute_album_artists, fs_case::fold_path,
+    artist_match::ArtistMatcher,
+    database::{recompute_album_artists, recompute_album_genres},
+    fs_case::fold_path,
     record::ScanRecord,
 };
 
@@ -154,7 +156,7 @@ pub(crate) async fn delete_tracks(
                 Ok(conn) => conn,
                 Err(error) => {
                     error!(
-                        "Could not acquire connection to recompute album artists: {:?}",
+                        "Could not acquire connection to recompute album links: {:?}",
                         error
                     );
                     continue;
@@ -164,6 +166,9 @@ pub(crate) async fn delete_tracks(
                 if let Err(error) = recompute_album_artists(&mut conn, &mut matcher, album_id).await
                 {
                     error!("Failed to recompute album {album_id} artists: {:?}", error);
+                }
+                if let Err(error) = recompute_album_genres(&mut conn, album_id).await {
+                    error!("Failed to recompute album {album_id} genres: {error:?}");
                 }
             }
         }

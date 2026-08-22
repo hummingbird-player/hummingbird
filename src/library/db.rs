@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use gpui::App;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     SqlitePool,
@@ -9,7 +10,7 @@ use sqlx::{
 use tracing::debug;
 
 use crate::{
-    library::types::{ArtistWithCounts, Playlist, PlaylistItem, TrackStats},
+    library::types::{ArtistWithCounts, DBString, Playlist, PlaylistItem, TrackStats},
     ui::app::Pool,
 };
 
@@ -83,6 +84,8 @@ pub enum AlbumSortMethod {
     LabelDesc,
     CatalogAsc,
     CatalogDesc,
+    GenresAsc,
+    GenresDesc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,6 +100,8 @@ pub enum TrackSortMethod {
     DurationDesc,
     TrackNumberAsc,
     TrackNumberDesc,
+    GenresAsc,
+    GenresDesc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -141,6 +146,74 @@ pub enum AlbumMethod {
     Metadata,
 }
 
+async fn load_album_genres(pool: &SqlitePool, albums: &mut [Album]) -> sqlx::Result<()> {
+    if albums.is_empty() {
+        return Ok(());
+    }
+
+    let mut query = sqlx::QueryBuilder::new(
+        "SELECT album_genre.album_id, genre.name \
+         FROM album_genre \
+         JOIN genre ON genre.id = album_genre.genre_id \
+         WHERE album_genre.album_id IN (",
+    );
+    {
+        let mut ids = query.separated(", ");
+        for album in albums.iter() {
+            ids.push_bind(album.id);
+        }
+    }
+    query.push(") ORDER BY album_genre.album_id, album_genre.position");
+
+    let rows = query
+        .build_query_as::<(i64, DBString)>()
+        .fetch_all(pool)
+        .await?;
+    let mut genres_by_album: FxHashMap<i64, Vec<DBString>> = FxHashMap::default();
+    for (album_id, genre) in rows {
+        genres_by_album.entry(album_id).or_default().push(genre);
+    }
+    for album in albums {
+        album.genres = genres_by_album.remove(&album.id).unwrap_or_default();
+    }
+
+    Ok(())
+}
+
+async fn load_track_genres(pool: &SqlitePool, tracks: &mut [Track]) -> sqlx::Result<()> {
+    if tracks.is_empty() {
+        return Ok(());
+    }
+
+    let mut query = sqlx::QueryBuilder::new(
+        "SELECT track_genre.track_id, genre.name \
+         FROM track_genre \
+         JOIN genre ON genre.id = track_genre.genre_id \
+         WHERE track_genre.track_id IN (",
+    );
+    {
+        let mut ids = query.separated(", ");
+        for track in tracks.iter() {
+            ids.push_bind(track.id);
+        }
+    }
+    query.push(") ORDER BY track_genre.track_id, track_genre.position");
+
+    let rows = query
+        .build_query_as::<(i64, DBString)>()
+        .fetch_all(pool)
+        .await?;
+    let mut genres_by_track: FxHashMap<i64, Vec<DBString>> = FxHashMap::default();
+    for (track_id, genre) in rows {
+        genres_by_track.entry(track_id).or_default().push(genre);
+    }
+    for track in tracks {
+        track.genres = genres_by_track.remove(&track.id).unwrap_or_default();
+    }
+
+    Ok(())
+}
+
 pub async fn list_albums(
     pool: &SqlitePool,
     sort_method: AlbumSortMethod,
@@ -175,6 +248,12 @@ pub async fn list_albums(
         }
         AlbumSortMethod::CatalogDesc => {
             include_str!("../../queries/library/find_albums_catnum_desc.sql")
+        }
+        AlbumSortMethod::GenresAsc => {
+            include_str!("../../queries/library/find_albums_genres_asc.sql")
+        }
+        AlbumSortMethod::GenresDesc => {
+            include_str!("../../queries/library/find_albums_genres_desc.sql")
         }
     };
 
@@ -220,6 +299,12 @@ pub async fn list_tracks(
         TrackSortMethod::TrackNumberDesc => {
             include_str!("../../queries/library/find_tracks_number_desc.sql")
         }
+        TrackSortMethod::GenresAsc => {
+            include_str!("../../queries/library/find_tracks_genres_asc.sql")
+        }
+        TrackSortMethod::GenresDesc => {
+            include_str!("../../queries/library/find_tracks_genres_desc.sql")
+        }
     };
 
     let tracks = sqlx::query_as::<_, (i64, String, Option<i64>, String)>(query)
@@ -235,14 +320,13 @@ pub async fn list_tracks_in_album(
 ) -> sqlx::Result<Arc<Vec<Track>>> {
     let query = include_str!("../../queries/library/find_tracks_in_album.sql");
 
-    let albums = Arc::new(
-        sqlx::query_as::<_, Track>(query)
-            .bind(album_id)
-            .fetch_all(pool)
-            .await?,
-    );
+    let mut tracks = sqlx::query_as::<_, Track>(query)
+        .bind(album_id)
+        .fetch_all(pool)
+        .await?;
+    load_track_genres(pool, &mut tracks).await?;
 
-    Ok(albums)
+    Ok(Arc::new(tracks))
 }
 
 pub async fn get_album_by_id(
@@ -262,9 +346,10 @@ pub async fn get_album_by_id(
         }
     };
 
-    let album: Arc<Album> = Arc::new(sqlx::query_as(query).bind(album_id).fetch_one(pool).await?);
+    let mut album: Album = sqlx::query_as(query).bind(album_id).fetch_one(pool).await?;
+    load_album_genres(pool, std::slice::from_mut(&mut album)).await?;
 
-    Ok(album)
+    Ok(Arc::new(album))
 }
 
 pub async fn get_artist_by_id(pool: &SqlitePool, artist_id: i64) -> sqlx::Result<Arc<Artist>> {
@@ -364,14 +449,13 @@ pub async fn get_liked_tracks_by_artist(
         }
     };
 
-    let tracks = Arc::new(
-        sqlx::query_as::<_, Track>(query)
-            .bind(artist_id)
-            .fetch_all(pool)
-            .await?,
-    );
+    let mut tracks = sqlx::query_as::<_, Track>(query)
+        .bind(artist_id)
+        .fetch_all(pool)
+        .await?;
+    load_track_genres(pool, &mut tracks).await?;
 
-    Ok(tracks)
+    Ok(Arc::new(tracks))
 }
 
 pub async fn get_all_tracks_by_artist(
@@ -380,14 +464,13 @@ pub async fn get_all_tracks_by_artist(
 ) -> sqlx::Result<Arc<Vec<Track>>> {
     let query = include_str!("../../queries/library/find_all_tracks_by_artist.sql");
 
-    let tracks = Arc::new(
-        sqlx::query_as::<_, Track>(query)
-            .bind(artist_id)
-            .fetch_all(pool)
-            .await?,
-    );
+    let mut tracks = sqlx::query_as::<_, Track>(query)
+        .bind(artist_id)
+        .fetch_all(pool)
+        .await?;
+    load_track_genres(pool, &mut tracks).await?;
 
-    Ok(tracks)
+    Ok(Arc::new(tracks))
 }
 
 pub async fn get_standalone_tracks_by_artist(
@@ -416,34 +499,36 @@ pub async fn get_standalone_tracks_by_artist(
         }
     };
 
-    let tracks = Arc::new(
-        sqlx::query_as::<_, Track>(query)
-            .bind(artist_id)
-            .fetch_all(pool)
-            .await?,
-    );
+    let mut tracks = sqlx::query_as::<_, Track>(query)
+        .bind(artist_id)
+        .fetch_all(pool)
+        .await?;
+    load_track_genres(pool, &mut tracks).await?;
 
-    Ok(tracks)
+    Ok(Arc::new(tracks))
 }
 
 pub async fn get_track_by_id(pool: &SqlitePool, track_id: i64) -> sqlx::Result<Arc<Track>> {
     let query = include_str!("../../queries/library/find_track_by_id.sql");
 
-    let track: Arc<Track> = Arc::new(sqlx::query_as(query).bind(track_id).fetch_one(pool).await?);
+    let mut track: Track = sqlx::query_as(query).bind(track_id).fetch_one(pool).await?;
+    load_track_genres(pool, std::slice::from_mut(&mut track)).await?;
 
-    Ok(track)
+    Ok(Arc::new(track))
 }
 
 pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
     let query = include_str!("../../queries/library/find_track_by_path.sql");
 
-    let track = sqlx::query_as(query)
+    let mut track = sqlx::query_as(query)
         .bind(path.to_string_lossy().as_ref())
         .fetch_optional(pool)
-        .await?
-        .map(Arc::new);
+        .await?;
+    if let Some(track) = track.as_mut() {
+        load_track_genres(pool, std::slice::from_mut(track)).await?;
+    }
 
-    Ok(track)
+    Ok(track.map(Arc::new))
 }
 
 /// Lists all albums for searching. Returns (id, title, artist display override, artist names).

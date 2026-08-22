@@ -13,18 +13,21 @@ use super::{
         finalize_scan_art,
     },
     control::ScanMode,
-    database::{AlbumCacheKey, WriteCaches, flush_album_artists, flush_track_artists},
+    database::{
+        AlbumCacheKey, WriteCaches, flush_album_artists, flush_album_genres, flush_track_artists,
+    },
     discover::{FolderArtObservations, Relocation},
     record::ScanRecord,
 };
 
-async fn retry_artists(
+async fn retry_links(
     pool: &SqlitePool,
     matcher: &mut ArtistMatcher,
     pending_albums: &mut FxHashSet<i64>,
     pending_tracks: &mut FxHashSet<i64>,
+    pending_genre_albums: &mut FxHashSet<i64>,
 ) {
-    if pending_albums.is_empty() && pending_tracks.is_empty() {
+    if pending_albums.is_empty() && pending_tracks.is_empty() && pending_genre_albums.is_empty() {
         return;
     }
     matcher.clear();
@@ -36,6 +39,9 @@ async fn retry_artists(
     }
     if let Err(e) = flush_track_artists(&mut conn, matcher, pending_tracks).await {
         error!("Failed to recompute track artists after commit: {:?}", e);
+    }
+    if let Err(e) = flush_album_genres(&mut conn, pending_genre_albums).await {
+        error!("Failed to recompute album genres after commit: {:?}", e);
     }
 }
 
@@ -79,6 +85,7 @@ pub(super) fn clear_failed_batch(
     pending_relocations.clear();
     caches.pending_albums.clear();
     caches.pending_tracks.clear();
+    caches.pending_genre_albums.clear();
     artist_matcher.clear();
     caches.albums.clear();
     caches.paths.clear();
@@ -102,7 +109,7 @@ pub(super) struct CommitOptions {
     pub(super) label: &'static str,
 }
 
-/// Flush pending artists, commit, and update records. Clear uncommitted caches on failure.
+/// Flush pending links, commit, and update records. Clear uncommitted caches on failure.
 pub(super) async fn commit_batch<'tx, 'state>(
     pool: &SqlitePool,
     tx: &mut Option<sqlx::Transaction<'tx, sqlx::Sqlite>>,
@@ -128,6 +135,14 @@ pub(super) async fn commit_batch<'tx, 'state>(
     .await
     {
         error!("Failed to recompute track artists: {:?}", e);
+    }
+    if let Err(e) = flush_album_genres(
+        tx.as_mut().expect("scan transaction should be active"),
+        &mut caches.pending_genre_albums,
+    )
+    .await
+    {
+        error!("Failed to recompute album genres: {:?}", e);
     }
 
     match tx
@@ -166,11 +181,12 @@ pub(super) async fn commit_batch<'tx, 'state>(
     }
 
     if options.run_retry {
-        retry_artists(
+        retry_links(
             pool,
             artist_matcher,
             &mut caches.pending_albums,
             &mut caches.pending_tracks,
+            &mut caches.pending_genre_albums,
         )
         .await;
     }

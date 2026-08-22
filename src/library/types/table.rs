@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use cntp_i18n::{Date, I18N_MANAGER, StringModifier, tr};
+use cntp_i18n::{Date, I18N_MANAGER, ListFunction, StringModifier, tr};
 use gpui::{App, SharedString};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
@@ -67,10 +67,28 @@ fn format_album_release_date(
     format_album_release_date_with(release_date, format, length)
 }
 
+fn format_genres(genres: &[DBString]) -> Option<SharedString> {
+    if genres.is_empty() {
+        return None;
+    }
+
+    let genres: Vec<String> = genres.iter().map(|genre| genre.0.to_string()).collect();
+    let manager = I18N_MANAGER.read().unwrap();
+    Some(
+        manager
+            .locale
+            .build_list(&genres)
+            .with_list_function(ListFunction::Unit)
+            .build()
+            .into(),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AlbumColumn {
     Title,
     Artist,
+    Genres,
     Date,
     Label,
     CatalogNumber,
@@ -81,6 +99,7 @@ impl Column for AlbumColumn {
         match self {
             AlbumColumn::Title => tr!("COLUMN_TITLE", "Title").into(),
             AlbumColumn::Artist => tr!("COLUMN_ARTIST", "Artist").into(),
+            AlbumColumn::Genres => tr!("COLUMN_GENRES", "Genres").into(),
             AlbumColumn::Date => tr!("COLUMN_DATE", "Date").into(),
             AlbumColumn::Label => tr!("COLUMN_LABEL", "Label").into(),
             AlbumColumn::CatalogNumber => tr!("COLUMN_CATALOG_NUMBER", "Catalog Number").into(),
@@ -89,16 +108,6 @@ impl Column for AlbumColumn {
 
     fn is_hideable(&self) -> bool {
         !matches!(self, AlbumColumn::Title)
-    }
-
-    fn all_columns() -> &'static [Self] {
-        &[
-            AlbumColumn::Title,
-            AlbumColumn::Artist,
-            AlbumColumn::Date,
-            AlbumColumn::Label,
-            AlbumColumn::CatalogNumber,
-        ]
     }
 }
 
@@ -155,6 +164,14 @@ impl TableData<AlbumColumn> for Album {
                 column: AlbumColumn::CatalogNumber,
                 ascending: false,
             }) => AlbumSortMethod::CatalogDesc,
+            Some(TableSort {
+                column: AlbumColumn::Genres,
+                ascending: true,
+            }) => AlbumSortMethod::GenresAsc,
+            Some(TableSort {
+                column: AlbumColumn::Genres,
+                ascending: false,
+            }) => AlbumSortMethod::GenresDesc,
             _ => AlbumSortMethod::ArtistAsc,
         };
 
@@ -169,6 +186,7 @@ impl TableData<AlbumColumn> for Album {
         match column {
             AlbumColumn::Title => Some(self.title.0.clone()),
             AlbumColumn::Artist => self.artist_display_override.as_ref().map(|v| v.0.clone()),
+            AlbumColumn::Genres => format_genres(&self.genres),
             AlbumColumn::Date => {
                 format_album_release_date(self.release_date.as_ref(), self.date_precision)
             }
@@ -201,15 +219,22 @@ impl TableData<AlbumColumn> for Album {
         (self.id as u32, self.title.0.clone().into())
     }
 
-    fn default_columns() -> IndexMap<AlbumColumn, f32, FxBuildHasher> {
+    fn available_columns() -> IndexMap<AlbumColumn, f32, FxBuildHasher> {
         let s = FxBuildHasher;
         let mut columns: IndexMap<AlbumColumn, f32, FxBuildHasher> = IndexMap::with_hasher(s);
         columns.insert(AlbumColumn::Title, 300.0);
         columns.insert(AlbumColumn::Artist, 200.0);
+        columns.insert(AlbumColumn::Genres, 200.0);
         columns.insert(AlbumColumn::Date, 125.0);
         columns.insert(AlbumColumn::Label, 150.0);
         // length is weird because the image column is 47.0
         columns.insert(AlbumColumn::CatalogNumber, 178.0);
+        columns
+    }
+
+    fn default_columns() -> IndexMap<AlbumColumn, f32, FxBuildHasher> {
+        let mut columns = Self::available_columns();
+        columns.shift_remove(&AlbumColumn::Genres);
         columns
     }
 
@@ -287,6 +312,7 @@ pub enum TrackColumn {
     Title,
     Album,
     Artist,
+    Genres,
     Length,
 }
 
@@ -297,22 +323,13 @@ impl Column for TrackColumn {
             TrackColumn::Title => tr!("COLUMN_TITLE").into(),
             TrackColumn::Album => tr!("COLUMN_ALBUM", "Album").into(),
             TrackColumn::Artist => tr!("COLUMN_ARTIST").into(),
+            TrackColumn::Genres => tr!("COLUMN_GENRES").into(),
             TrackColumn::Length => tr!("COLUMN_LENGTH", "Length").into(),
         }
     }
 
     fn is_hideable(&self) -> bool {
         !matches!(self, TrackColumn::Title)
-    }
-
-    fn all_columns() -> &'static [Self] {
-        &[
-            TrackColumn::TrackNumber,
-            TrackColumn::Title,
-            TrackColumn::Album,
-            TrackColumn::Artist,
-            TrackColumn::Length,
-        ]
     }
 }
 
@@ -369,6 +386,14 @@ impl TableData<TrackColumn> for Track {
                 column: TrackColumn::TrackNumber,
                 ascending: false,
             }) => TrackSortMethod::TrackNumberDesc,
+            Some(TableSort {
+                column: TrackColumn::Genres,
+                ascending: true,
+            }) => TrackSortMethod::GenresAsc,
+            Some(TableSort {
+                column: TrackColumn::Genres,
+                ascending: false,
+            }) => TrackSortMethod::GenresDesc,
             _ => TrackSortMethod::ArtistAsc,
         };
 
@@ -424,6 +449,7 @@ impl TableData<TrackColumn> for Track {
                     None
                 }
             }
+            TrackColumn::Genres => format_genres(&self.genres),
             TrackColumn::Length => Some(format_duration(self.duration, true).into()),
         }
     }
@@ -458,14 +484,21 @@ impl TableData<TrackColumn> for Track {
         )
     }
 
-    fn default_columns() -> IndexMap<TrackColumn, f32, FxBuildHasher> {
+    fn available_columns() -> IndexMap<TrackColumn, f32, FxBuildHasher> {
         let s = FxBuildHasher;
         let mut columns: IndexMap<TrackColumn, f32, FxBuildHasher> = IndexMap::with_hasher(s);
         columns.insert(TrackColumn::TrackNumber, 75.0);
         columns.insert(TrackColumn::Title, 350.0);
         columns.insert(TrackColumn::Album, 250.0);
         columns.insert(TrackColumn::Artist, 225.0);
+        columns.insert(TrackColumn::Genres, 225.0);
         columns.insert(TrackColumn::Length, 100.0);
+        columns
+    }
+
+    fn default_columns() -> IndexMap<TrackColumn, f32, FxBuildHasher> {
+        let mut columns = Self::available_columns();
+        columns.shift_remove(&TrackColumn::Genres);
         columns
     }
 
@@ -526,14 +559,6 @@ impl Column for ArtistColumn {
 
     fn is_hideable(&self) -> bool {
         !matches!(self, ArtistColumn::Name)
-    }
-
-    fn all_columns() -> &'static [Self] {
-        &[
-            ArtistColumn::Name,
-            ArtistColumn::Albums,
-            ArtistColumn::Tracks,
-        ]
     }
 }
 
@@ -620,7 +645,7 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         artist_has_available_tracks(cx, self.id)
     }
 
-    fn default_columns() -> IndexMap<ArtistColumn, f32, FxBuildHasher> {
+    fn available_columns() -> IndexMap<ArtistColumn, f32, FxBuildHasher> {
         let s = FxBuildHasher;
         let mut columns: IndexMap<ArtistColumn, f32, FxBuildHasher> = IndexMap::with_hasher(s);
         columns.insert(ArtistColumn::Name, 400.0);

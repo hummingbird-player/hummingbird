@@ -69,6 +69,7 @@
   "COLUMN_ARTIST": "Artist",
   "COLUMN_CATALOG_NUMBER": "Catalog Number",
   "COLUMN_DATE": "Date",
+  "COLUMN_GENRES": "Genres",
   "COLUMN_LABEL": "Label",
   "COLUMN_LENGTH": "Length",
   "COLUMN_NAME": "Name",

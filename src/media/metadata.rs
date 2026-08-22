@@ -69,7 +69,7 @@ pub fn apply_tag(tag: MetadataTag, metadata: &mut Metadata) {
         MetadataTag::OriginalArtist(v) => metadata.original_artist = Some(v),
         MetadataTag::Composer(v) => metadata.composer = Some(v),
         MetadataTag::Album(v) => metadata.album = Some(v),
-        MetadataTag::Genre(v) => metadata.genre = Some(v),
+        MetadataTag::Genre(v) => push_unique_genre(&mut metadata.genres, v),
         MetadataTag::Grouping(v) => metadata.grouping = Some(v),
         MetadataTag::Bpm(v) => metadata.bpm = Some(v),
         MetadataTag::Compilation(v) => metadata.compilation = v,
@@ -154,6 +154,21 @@ fn push_unique(values: &mut SmallVec<[String; 2]>, value: String) {
     }
 }
 
+fn push_unique_genre(values: &mut SmallVec<[String; 2]>, value: String) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+
+    let normalized = value.to_lowercase();
+    if !values
+        .iter()
+        .any(|existing| existing.to_lowercase() == normalized)
+    {
+        values.push(value.to_string());
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Metadata {
     pub name: Option<String>,
@@ -169,7 +184,7 @@ pub struct Metadata {
     pub composer: Option<String>,
     pub album: Option<String>,
     pub sort_album: Option<String>,
-    pub genre: Option<String>,
+    pub genres: SmallVec<[String; 2]>,
     pub grouping: Option<String>,
     pub bpm: Option<u64>,
     pub compilation: bool,
@@ -376,8 +391,22 @@ pub fn parse_disc_number(value: &str) -> Option<ParsedDiscNumber> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedReleaseDate, parse_release_date};
+    use super::{Metadata, MetadataTag, ParsedReleaseDate, apply_tag, parse_release_date};
     use chrono::{NaiveTime, TimeZone, Timelike, Utc};
+
+    #[test]
+    fn genres_are_trimmed_and_deduplicated_case_insensitively() {
+        let mut metadata = Metadata::default();
+
+        for genre in [" Rock ", "rock", "", "Dream Pop", "DREAM POP", "Rock/Pop"] {
+            apply_tag(MetadataTag::Genre(genre.to_string()), &mut metadata);
+        }
+
+        assert_eq!(
+            metadata.genres.as_slice(),
+            ["Rock", "Dream Pop", "Rock/Pop"]
+        );
+    }
 
     #[test]
     fn parses_year_only_release_dates() {

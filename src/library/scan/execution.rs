@@ -20,7 +20,10 @@ use super::{
     active_scan::ActiveScan,
     artist_match::ArtistMatcher,
     control::{PendingRescan, ScanCommand, ScanEvent, ScanMode},
-    database::{TrackWriteOutcome, relocate_track, sweep_orphan_artists, update_metadata},
+    database::{
+        TrackWriteOutcome, relocate_track, sweep_orphan_artists, sweep_orphan_genres,
+        update_metadata,
+    },
     discover::Relocation,
     pipeline::{DecodeFailureCounters, record_decode_failure},
     record::{ScanRecord, write_checkpoint, write_scan_record},
@@ -276,6 +279,7 @@ impl<'a> ScanExecution<'a> {
     async fn commit_final_batch(&mut self) {
         if self.active.caches.pending_albums.is_empty()
             && self.active.caches.pending_tracks.is_empty()
+            && self.active.caches.pending_genre_albums.is_empty()
             && self.items_in_tx == 0
             && self.pending_relocations.is_empty()
         {
@@ -422,6 +426,7 @@ impl<'a> ScanExecution<'a> {
     async fn finish_cancelled(mut self) -> ScanRecord {
         if !self.active.caches.pending_albums.is_empty()
             || !self.active.caches.pending_tracks.is_empty()
+            || !self.active.caches.pending_genre_albums.is_empty()
             || self.items_in_tx > 0
             || !self.pending_relocations.is_empty()
         {
@@ -457,6 +462,7 @@ impl<'a> ScanExecution<'a> {
 
         self.finalize_artwork().await;
         sweep_orphan_artists(self.context.pool).await;
+        sweep_orphan_genres(self.context.pool).await;
         self.finish_checkpoint_write().await;
         write_checkpoint(
             Arc::clone(&self.scan_checkpoint),
@@ -474,6 +480,7 @@ impl<'a> ScanExecution<'a> {
         self.commit_pending_relocations().await;
         self.finalize_artwork().await;
         sweep_orphan_artists(self.context.pool).await;
+        sweep_orphan_genres(self.context.pool).await;
 
         info!(
             "Scan complete, {} files scanned in {} seconds, writing record. \

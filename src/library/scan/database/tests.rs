@@ -71,6 +71,36 @@ use crate::test_support::{
     TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata, track_metadata,
 };
 
+async fn track_genres(pool: &SqlitePool, path: &Utf8Path) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT genre.name, track_genre.position
+         FROM track
+         JOIN track_genre ON track_genre.track_id = track.id
+         JOIN genre ON genre.id = track_genre.genre_id
+         WHERE track.location = $1
+         ORDER BY track_genre.position",
+    )
+    .bind(path.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn album_genres(pool: &SqlitePool, album: &str) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT genre.name, album_genre.position
+         FROM album
+         JOIN album_genre ON album_genre.album_id = album.id
+         JOIN genre ON genre.id = album_genre.genre_id
+         WHERE album.title = $1
+         ORDER BY album_genre.position",
+    )
+    .bind(album)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn update_metadata_inserts_artist_album_track() {
     let (dir, pool) = create_test_pool("db-test").await;
@@ -84,6 +114,113 @@ async fn update_metadata_inserts_artist_album_track() {
     assert_eq!(count_rows(&pool, "album").await, 1);
     assert_eq!(count_rows(&pool, "track").await, 1);
     assert_eq!(count_rows(&pool, "album_path").await, 1);
+}
+
+#[tokio::test]
+async fn update_metadata_links_ordered_case_insensitive_genres() {
+    let (dir, pool) = create_test_pool("db-genre-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path1 = dir.utf8_join("track1.flac");
+    let path2 = dir.utf8_join("track2.flac");
+
+    let mut meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+    meta1.genres = names(&["Rock", "rock", "Dream Pop"]);
+    let mut meta2 = track_metadata("Album", "Artist", "Track 2", 2);
+    meta2.genres = names(&["DREAM POP", "Jazz"]);
+
+    insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+    insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+
+    assert_eq!(
+        track_genres(&pool, &path1).await,
+        vec![("Rock".to_string(), 0), ("Dream Pop".to_string(), 1)]
+    );
+    assert_eq!(
+        track_genres(&pool, &path2).await,
+        vec![("Dream Pop".to_string(), 0), ("Jazz".to_string(), 1)]
+    );
+    assert_eq!(
+        album_genres(&pool, "Album").await,
+        vec![
+            ("Rock".to_string(), 0),
+            ("Dream Pop".to_string(), 1),
+            ("Jazz".to_string(), 2),
+        ]
+    );
+    assert_eq!(count_rows(&pool, "genre").await, 3);
+}
+
+#[tokio::test]
+async fn update_metadata_retag_replaces_genres_and_sweeps_orphans() {
+    let (dir, pool) = create_test_pool("db-genre-retag-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path = dir.utf8_join("track.flac");
+
+    let mut meta = track_metadata("Album", "Artist", "Track", 1);
+    meta.genres = names(&["Rock", "Pop"]);
+    insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+    meta.genres = names(&["Jazz"]);
+    insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+    assert_eq!(
+        track_genres(&pool, &path).await,
+        vec![("Jazz".to_string(), 0)]
+    );
+    assert_eq!(
+        album_genres(&pool, "Album").await,
+        vec![("Jazz".to_string(), 0)]
+    );
+    assert_eq!(count_rows(&pool, "genre").await, 3);
+
+    sweep_orphan_genres(&pool).await;
+    assert_eq!(count_rows(&pool, "genre").await, 1);
+}
+
+#[tokio::test]
+async fn update_metadata_retag_rebuilds_old_and_new_album_genres() {
+    let (dir, pool) = create_test_pool("db-genre-move-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path1 = dir.utf8_join("track1.flac");
+    let path2 = dir.utf8_join("track2.flac");
+
+    let mut meta1 = track_metadata("Old Album", "Artist", "Track 1", 1);
+    meta1.genres = names(&["Rock"]);
+    let mut meta2 = track_metadata("Old Album", "Artist", "Track 2", 2);
+    meta2.genres = names(&["Blues"]);
+    insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+    insert_metadata(&mut conn, &meta2, &path2).await.unwrap();
+
+    meta1.album = Some("New Album".to_string());
+    meta1.genres = names(&["Jazz"]);
+    insert_metadata(&mut conn, &meta1, &path1).await.unwrap();
+
+    assert_eq!(
+        album_genres(&pool, "Old Album").await,
+        vec![("Blues".to_string(), 0)]
+    );
+    assert_eq!(
+        album_genres(&pool, "New Album").await,
+        vec![("Jazz".to_string(), 0)]
+    );
+}
+
+#[tokio::test]
+async fn update_metadata_links_genres_for_standalone_tracks() {
+    let (dir, pool) = create_test_pool("db-standalone-genre-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path = dir.utf8_join("track.flac");
+
+    let mut meta = track_metadata("Unused Album", "Artist", "Track", 1);
+    meta.album = None;
+    meta.genres = names(&["Ambient", "Drone"]);
+    insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+    assert_eq!(
+        track_genres(&pool, &path).await,
+        vec![("Ambient".to_string(), 0), ("Drone".to_string(), 1)]
+    );
+    assert_eq!(count_rows(&pool, "album_genre").await, 0);
 }
 
 #[tokio::test]
@@ -195,6 +332,7 @@ async fn relocate_track_updates_location_and_preserves_references() {
 
     let mut meta = track_metadata("Album", "Artist", "Track", 1);
     meta.lyrics = Some("lyrics".to_string());
+    meta.genres = names(&["Ambient"]);
     insert_metadata(&mut conn, &meta, &old).await.unwrap();
     drop(conn);
 
@@ -215,6 +353,10 @@ async fn relocate_track_updates_location_and_preserves_references() {
     assert_eq!(count_rows(&pool, "track").await, 1);
     assert_eq!(count_rows(&pool, "lyrics").await, 1);
     assert_eq!(count_rows(&pool, "playlist_item").await, 1);
+    assert_eq!(
+        track_genres(&pool, &new).await,
+        vec![("Ambient".to_string(), 0)]
+    );
 
     let (row_id_after, location, folder): (i64, String, String) =
         sqlx::query_as("SELECT id, location, folder FROM track")
@@ -240,11 +382,14 @@ async fn relocate_track_merges_into_existing_row() {
     let stale_path = dir.utf8_join("TRACK.FLAC");
     let current_path = dir.utf8_join("Track.flac");
 
-    let meta = track_metadata("Album", "Artist", "Track", 1);
-    insert_metadata(&mut conn, &meta, &stale_path)
+    let mut stale_meta = track_metadata("Album", "Artist", "Track", 1);
+    stale_meta.genres = names(&["Rock"]);
+    let mut current_meta = track_metadata("Album", "Artist", "Track", 1);
+    current_meta.genres = names(&["Jazz"]);
+    insert_metadata(&mut conn, &stale_meta, &stale_path)
         .await
         .unwrap();
-    insert_metadata(&mut conn, &meta, &current_path)
+    insert_metadata(&mut conn, &current_meta, &current_path)
         .await
         .unwrap();
     drop(conn);
@@ -275,6 +420,10 @@ async fn relocate_track_merges_into_existing_row() {
         .await
         .unwrap();
     assert_eq!(track_id, kept_id);
+    assert_eq!(
+        album_genres(&pool, "Album").await,
+        vec![("Jazz".to_string(), 0)]
+    );
 }
 
 #[tokio::test]
@@ -599,6 +748,9 @@ async fn force_write(conn: &mut SqliteConnection, meta: &Metadata, path: &Utf8Pa
         .await
         .unwrap();
     flush_track_artists(conn, &mut ArtistMatcher::new(), &mut caches.pending_tracks)
+        .await
+        .unwrap();
+    flush_album_genres(conn, &mut caches.pending_genre_albums)
         .await
         .unwrap();
 }

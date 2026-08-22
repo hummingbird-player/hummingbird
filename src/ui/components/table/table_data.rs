@@ -47,10 +47,6 @@ pub trait Column: Clone + Copy + Debug + Hash + PartialEq + Eq {
     fn is_hideable(&self) -> bool {
         true
     }
-
-    /// Returns all possible column variants for this type.
-    /// Required for building the column visibility menu.
-    fn all_columns() -> &'static [Self];
 }
 
 #[derive(Copy, Clone)]
@@ -106,8 +102,13 @@ where
     /// Retrieves the full-quality key for the row, for use with `managed_image`.
     fn get_full_image_key(&self) -> Option<ManagedImageKey>;
 
-    /// Retrieves the default column widths for the table.
-    fn default_columns() -> IndexMap<C, f32, FxBuildHasher>;
+    /// Retrieves every column supported by the table in its natural order and width.
+    fn available_columns() -> IndexMap<C, f32, FxBuildHasher>;
+
+    /// Retrieves the columns visible when the table has no saved settings.
+    fn default_columns() -> IndexMap<C, f32, FxBuildHasher> {
+        Self::available_columns()
+    }
 
     /// Returns a boolean indicating whether or not a given column should be displayed using a
     /// monospaced font.
