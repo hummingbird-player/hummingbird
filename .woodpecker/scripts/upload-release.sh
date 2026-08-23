@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-api="https://codeberg.org/api/v1/repos/hummingbird/hummingbird"
+api="https://git.mailliw.org/api/v1/repos/hummingbird/hummingbird"
 tag="${RELEASE_TAG:-latest}"
 
 if [[ "$#" -eq 0 ]]; then

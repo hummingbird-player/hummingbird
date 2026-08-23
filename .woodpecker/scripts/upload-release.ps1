@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$api = "https://codeberg.org/api/v1/repos/hummingbird/hummingbird"
+$api = "https://git.mailliw.org/api/v1/repos/hummingbird/hummingbird"
 $tag = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { "latest" }
 
 if ($args.Count -eq 0) {
