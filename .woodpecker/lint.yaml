@@ -6,7 +6,7 @@ when:
 
 steps:
   - name: cargo fmt
-    image: hummingbird-ci:rust-1.95-bookworm
+    image: hummingbird-ci:rust-1.97-bookworm
     pull: false
     environment:
       CARGO_TERM_COLOR: always
@@ -14,7 +14,7 @@ steps:
       - cargo fmt --all -- --check
 
   - name: cargo clippy
-    image: hummingbird-ci:rust-1.95-bookworm
+    image: hummingbird-ci:rust-1.97-bookworm
     pull: false
     environment:
       CARGO_TERM_COLOR: always

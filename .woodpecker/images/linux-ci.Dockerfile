@@ -1,4 +1,4 @@
-FROM rust:1.95-bookworm
+FROM rust:1.97.1-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV APPIMAGE_EXTRACT_AND_RUN=1
@@ -52,6 +52,7 @@ RUN cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cnt
 
 WORKDIR /opt/hummingbird
 COPY Cargo.toml Cargo.lock ./
+COPY crates/gpui-unofficial-shim crates/gpui-unofficial-shim
 RUN mkdir -p src \
     && echo '// placeholder for cargo fetch' > src/lib.rs \
     && cargo fetch --locked \
@@ -60,6 +61,7 @@ RUN mkdir -p src \
 # Pre-build all release dependencies for host (amd64)
 WORKDIR /opt/hummingbird
 COPY Cargo.toml Cargo.lock ./
+COPY crates/gpui-unofficial-shim crates/gpui-unofficial-shim
 RUN mkdir -p src \
     && echo 'fn main() {}' > src/main.rs \
     && cargo build --release --locked -F update \
