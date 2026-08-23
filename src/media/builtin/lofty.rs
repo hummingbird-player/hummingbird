@@ -319,10 +319,18 @@ fn tags_by_priority(tags: &[Tag], has_id3v2: bool) -> Vec<&Tag> {
         return tags.iter().collect();
     }
 
-    let is_text_tag = |tag: &&Tag| matches!(tag.tag_type(), TagType::RiffInfo | TagType::AiffText);
+    // these tags are only used when a better quality tagging format is not present. we always
+    // prefer ID3v2 tags and VorbisComment over older, less standardized tag formats
+    let is_fallback_tag = |tag: &&Tag| {
+        matches!(
+            tag.tag_type(),
+            TagType::Ape | TagType::RiffInfo | TagType::AiffText
+        )
+    };
+
     tags.iter()
-        .filter(|tag| is_text_tag(tag))
-        .chain(tags.iter().filter(|tag| !is_text_tag(tag)))
+        .filter(|tag| is_fallback_tag(tag))
+        .chain(tags.iter().filter(|tag| !is_fallback_tag(tag)))
         .collect()
 }
 
@@ -581,6 +589,37 @@ mod tests {
         assert_eq!(metadata.name.as_deref(), Some("Avril 14th (ID3)"));
         let expected_date = Utc.with_ymd_and_hms(2001, 10, 22, 0, 0, 0).unwrap();
         assert_eq!(metadata.date, Some(expected_date));
+    }
+
+    #[test]
+    fn id3v2_overrides_conflicting_ape_fields() {
+        let mut id3 = Tag::new(TagType::Id3v2);
+        assert!(id3.insert_text(ItemKey::AlbumTitle, "Essentials (Apple Music)".to_string()));
+        assert!(id3.insert_text(ItemKey::TrackNumber, "11".to_string()));
+        assert!(id3.insert_text(ItemKey::RecordingDate, "2024".to_string()));
+
+        let mut ape = Tag::new(TagType::Ape);
+        assert!(ape.insert_text(ItemKey::AlbumTitle, "Essentials".to_string()));
+        assert!(ape.insert_text(ItemKey::TrackNumber, "5".to_string()));
+        assert!(ape.insert_text(ItemKey::Year, "2020".to_string()));
+        assert!(ape.insert_text(ItemKey::Isrc, "APE-ONLY".to_string()));
+
+        let tags = [id3, ape];
+        let ordered = tags_by_priority(&tags, true);
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].tag_type(), TagType::Ape);
+        assert_eq!(ordered[1].tag_type(), TagType::Id3v2);
+
+        let mut metadata = Metadata::default();
+        let mut artist_names = ArtistNames::default();
+        for tag in ordered {
+            apply_tag_items(tag, false, &mut metadata, &mut artist_names);
+        }
+
+        assert_eq!(metadata.album.as_deref(), Some("Essentials (Apple Music)"));
+        assert_eq!(metadata.track_current, Some(11));
+        assert_eq!(metadata.year, Some(2024));
+        assert_eq!(metadata.isrc.as_deref(), Some("APE-ONLY"));
     }
 
     #[test]
