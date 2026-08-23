@@ -11,7 +11,7 @@
   "ABOUT_LICENSE_LINK": "Saiba mais sobre seus direitos.",
   "ABOUT_LINKS_BUG": "Reporte um bug",
   "ABOUT_LINKS_CODE": "veja o código fonte",
-  "ABOUT_LINKS_END": "no Codeberg",
+  "ABOUT_LINKS_END": "no Forgejo",
   "ABOUT_LINKS_MIDDLE": "or",
   "ABOUT_LINKS_START": "",
   "ACTION_ABOUT": "Sobre",
@@ -57,7 +57,7 @@
   "CLEAR_QUEUE": "",
   "CLOSE": "",
   "CLOSE_RELEASE_DETAIL": "",
-  "CODEBERG_ISSUES": "Reportar um Problema",
+  "FORGEJO_ISSUES": "Reportar um Problema",
   "COLLAPSE_SIDEBAR": "",
   "COLLECTION_SUMMARY_TRACKS": {
     "one": "",

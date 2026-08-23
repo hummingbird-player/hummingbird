@@ -45,7 +45,7 @@ cargo build --release --features libre-services --no-default-features
 
 ## Building
 ```sh
-git clone https://codeberg.org/hummingbird/hummingbird
+git clone https://git.mailliw.org/hummingbird/hummingbird
 cd hummingbird
 
 # debug mode will result in noticable slowdown in some cases

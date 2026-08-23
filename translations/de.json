@@ -11,7 +11,7 @@
   "ABOUT_LICENSE_LINK": "Erfahre mehr über deine Rechte.",
   "ABOUT_LINKS_BUG": "Melde einen Bug",
   "ABOUT_LINKS_CODE": "sieh dir den Quellcode an",
-  "ABOUT_LINKS_END": " auf Codeberg.",
+  "ABOUT_LINKS_END": " auf Forgejo.",
   "ABOUT_LINKS_MIDDLE": " oder ",
   "ABOUT_LINKS_START": "​",
   "ACTION_ABOUT": "Über Hummingbird",
@@ -57,7 +57,7 @@
   "CLEAR_QUEUE": "Leeren",
   "CLOSE": "Schließen",
   "CLOSE_RELEASE_DETAIL": "Schließen",
-  "CODEBERG_ISSUES": "Problem melden",
+  "FORGEJO_ISSUES": "Problem melden",
   "COLLAPSE_SIDEBAR": "Seitenleiste einklappen",
   "COLLECTION_SUMMARY_TRACKS": {
     "one": "{{count}} Titel",

@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Has this feature been requested before?** Please search [existing issues](https://codeberg.org/hummingbird/hummingbird/issues) to check.
+        **Has this feature been requested before?** Please search [existing issues](https://git.mailliw.org/hummingbird/hummingbird/issues) to check.
   - type: textarea
     attributes:
       label: Description

@@ -8,9 +8,9 @@ use tracing::info;
 use crate::settings::update::ReleaseChannel;
 
 const LATEST_STABLE: &str =
-    "https://codeberg.org/api/v1/repos/hummingbird/hummingbird/releases/latest";
+    "https://git.mailliw.org/api/v1/repos/hummingbird/hummingbird/releases/latest";
 const UNSTABLE: &str =
-    "https://codeberg.org/api/v1/repos/hummingbird/hummingbird/releases/tags/latest";
+    "https://git.mailliw.org/api/v1/repos/hummingbird/hummingbird/releases/tags/latest";
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 struct Asset {

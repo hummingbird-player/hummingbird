@@ -11,7 +11,7 @@
   "ABOUT_LICENSE_LINK": "Saznajte više o svojim pravima.",
   "ABOUT_LINKS_BUG": "Prijavite grešku",
   "ABOUT_LINKS_CODE": "pogledajte izvorni kôd",
-  "ABOUT_LINKS_END": "na Codeberg-u.",
+  "ABOUT_LINKS_END": "na Forgejo-u.",
   "ABOUT_LINKS_MIDDLE": "ili",
   "ABOUT_LINKS_START": "",
   "ACTION_ABOUT": "O Hummingbird-u",
@@ -51,7 +51,7 @@
   "CLEAR_QUEUE": "",
   "CLOSE": "",
   "CLOSE_RELEASE_DETAIL": "",
-  "CODEBERG_ISSUES": "Prijavite problem",
+  "FORGEJO_ISSUES": "Prijavite problem",
   "COLLAPSE_SIDEBAR": "Sklopi bočnu traku",
   "COLLECTION_SUMMARY_TRACKS": {
     "one": "",

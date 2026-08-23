@@ -46,7 +46,7 @@ design standard.
 
 ### Windows, macOS and Linux AppImage
 Binaries for these platforms are officially available for 64-bit ARM and Intel architectures.
-See the [latest release](https://codeberg.org/hummingbird/hummingbird/releases/latest) for downloads.
+See the [latest release](https://git.mailliw.org/hummingbird/hummingbird/releases/latest) for downloads.
 
 ### Fedora
 Fedora users can install Hummingbird using the `william341/hummingbird` COPR:
@@ -67,7 +67,7 @@ currently ongoing.
 
 ## Unstable Builds
 The latest commit is built automatically by CI and uploaded to the
-[latest](https://codeberg.org/hummingbird/hummingbird/releases/tag/latest) tag.
+[latest](https://git.mailliw.org/hummingbird/hummingbird/releases/tag/latest) tag.
 
 Official builds are signed with `minisign`. The signature is attached to the release and must be downloaded seperately and placed next to the binary you are attempting to verify. Verify with:
 ```
@@ -79,7 +79,7 @@ For more detailed instructions, see the [Building](docs/building.md) documentati
 
 ```sh
 # install relevant devel packages for xcb-common, x11, wayland, openssl, and pulseaudio if on Linux
-git clone https://codeberg.org/hummingbird/hummingbird
+git clone https://git.mailliw.org/hummingbird/hummingbird
 cd hummingbird
 
 # last.fm api keys must be set in the environment for scrobbling to work

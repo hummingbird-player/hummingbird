@@ -4,5 +4,5 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Search existing issues
-    url: https://codeberg.org/hummingbird/hummingbird/issues
+    url: https://git.mailliw.org/hummingbird/hummingbird/issues
     about: Please search to see if an issue already exists for the problem or feature you want to report.

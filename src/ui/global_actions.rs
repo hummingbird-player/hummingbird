@@ -137,7 +137,7 @@ pub fn register_actions(cx: &mut App) {
     help_menu = help_menu
         .add_item(menu_separator(MenuPlatform::NonMacOS))
         .add_item(menu_item(
-            tr!("CODEBERG_ISSUES", "Report an Issue"),
+            tr!("FORGEJO_ISSUES", "Report an Issue"),
             Issues,
             MenuPlatform::All,
         ))
@@ -366,7 +366,7 @@ fn patreon(_: &Patreon, cx: &mut App) {
 }
 
 fn issues(_: &Issues, cx: &mut App) {
-    cx.open_url("https://codeberg.org/hummingbird/hummingbird/issues");
+    cx.open_url("https://git.mailliw.org/hummingbird/hummingbird/issues");
 }
 
 fn shuffle_all(_: &ShuffleAll, cx: &mut App) {

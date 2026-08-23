@@ -11,7 +11,7 @@
   "ABOUT_LICENSE_LINK": "Hiểu thêm vè quyền của bận",
   "ABOUT_LINKS_BUG": "Báo cáo lỗi",
   "ABOUT_LINKS_CODE": "xem mã nguồn",
-  "ABOUT_LINKS_END": " trên Codeberg.",
+  "ABOUT_LINKS_END": " trên Forgejo.",
   "ABOUT_LINKS_MIDDLE": " hoặc ",
   "ABOUT_LINKS_START": "​",
   "ACTION_ABOUT": "Giới thiệu",
@@ -52,7 +52,7 @@
   "CLEAR_QUEUE": "Xóa hàng phát",
   "CLOSE": "Đóng",
   "CLOSE_RELEASE_DETAIL": "",
-  "CODEBERG_ISSUES": "",
+  "FORGEJO_ISSUES": "",
   "COLLAPSE_SIDEBAR": "Thu gọn thanh bên",
   "COLLECTION_SUMMARY_TRACKS": {
     "other": ""

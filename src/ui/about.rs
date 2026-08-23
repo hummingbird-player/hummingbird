@@ -9,8 +9,8 @@ use super::{
     theme::Theme,
 };
 
-const ISSUES_URL: &str = "https://codeberg.org/hummingbird/hummingbird/issues";
-const SOURCE_URL: &str = "https://codeberg.org/hummingbird/hummingbird";
+const ISSUES_URL: &str = "https://git.mailliw.org/hummingbird/hummingbird/issues";
+const SOURCE_URL: &str = "https://git.mailliw.org/hummingbird/hummingbird";
 const WEBSITE_URL: &str = "https://hummingbird.mailliw.org/";
 const DISCORD_URL: &str = "https://discord.gg/6tayc2vzs9";
 const LICENSE_URL: &str = "https://choosealicense.com/licenses/apache-2.0/";
@@ -106,7 +106,7 @@ impl RenderOnce for AboutDialog {
                                                 link_color,
                                                 tr!("ABOUT_LINKS_CODE", "view the source code"),
                                             ))
-                                            .child(tr!("ABOUT_LINKS_END", " on Codeberg.")),
+                                            .child(tr!("ABOUT_LINKS_END", " on Forgejo.")),
                                     )
                                     .child(
                                         div()

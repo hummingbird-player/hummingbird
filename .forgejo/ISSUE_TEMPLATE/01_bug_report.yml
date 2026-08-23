@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Is this bug already reported?** Please search [existing issues](https://codeberg.org/hummingbird/hummingbird/issues) to check.
+        **Is this bug already reported?** Please search [existing issues](https://git.mailliw.org/hummingbird/hummingbird/issues) to check.
   - type: textarea
     attributes:
       label: Reproduction steps

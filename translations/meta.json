@@ -335,12 +335,6 @@
     "plural": false,
     "description": null
   },
-  "CODEBERG_ISSUES": {
-    "context": "global_actions.rs",
-    "definedIn": "src/ui/global_actions.rs:140",
-    "plural": false,
-    "description": null
-  },
   "COLLAPSE_SIDEBAR": {
     "context": "sidebar.rs",
     "definedIn": "src/ui/library/sidebar.rs:122",
@@ -638,6 +632,12 @@
   "FILES_REFRESH": {
     "context": "files_view.rs",
     "definedIn": "src/ui/library/files_view.rs:547",
+    "plural": false,
+    "description": null
+  },
+  "FORGEJO_ISSUES": {
+    "context": "global_actions.rs",
+    "definedIn": "src/ui/global_actions.rs:140",
     "plural": false,
     "description": null
   },
