@@ -60,6 +60,10 @@ fn get_available_languages() -> Vec<LanguageOption> {
             display_name: "English".into(),
         },
         LanguageOption {
+            code: "it",
+            display_name: "Italiano".into(),
+        },
+        LanguageOption {
             code: "ja",
             display_name: "日本語".into(),
         },
