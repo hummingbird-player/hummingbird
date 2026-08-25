@@ -105,7 +105,7 @@ impl Render for Sidebar {
                 .w_full()
                 .flex()
                 .mb(px(6.0))
-                .p(px(1.0))
+                .py(px(1.0))
                 .rounded(INNER_PANEL_ROUNDING)
                 .bg(theme.background_secondary)
                 .child(
@@ -134,10 +134,7 @@ impl Render for Sidebar {
             .overflow_hidden()
             .rounded(PANEL_ROUNDING)
             .bg(theme.background_primary)
-            .pt(px(6.0))
-            .pb(px(6.0))
-            .pl(px(6.0))
-            .pr(px(6.0))
+            .p(px(6.0))
             .flex()
             .flex_col()
             .when(collapsed, |this| this.items_center())
@@ -222,6 +219,7 @@ impl Render for Sidebar {
                     .w_full()
                     .flex()
                     .items_end()
+                    .when(collapsed, |this| this.justify_center())
                     .child(
                         nav_button("sidebar-toggle", toggle_icon)
                             .tooltip(build_tooltip(toggle_tooltip))

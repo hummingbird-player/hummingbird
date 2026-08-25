@@ -208,10 +208,12 @@ impl Render for PlaylistList {
         let mut main = div()
             .pt(px(6.0))
             .id("sidebar-playlist")
+            .w_full()
             .flex_grow(1.0)
             .min_h(px(0.0))
             .overflow_y_scroll()
             .track_scroll(&scroll_handle)
+            .when(collapsed, |this| this.flex().flex_col().items_center())
             .when(allow_reorder, |this| {
                 this.on_drag_move::<DragData>(cx.listener(
                     move |this: &mut PlaylistList, event: &DragMoveEvent<DragData>, _, cx| {
@@ -693,7 +695,12 @@ impl Render for PlaylistList {
                 .child(
                     sidebar_item("new-playlist-btn")
                         .icon(PLUS)
-                        .child(tr!("NEW_PLAYLIST", "New Playlist"))
+                        .when(!collapsed, |this| {
+                            this.child(tr!("NEW_PLAYLIST", "New Playlist"))
+                        })
+                        .when(collapsed, |this| {
+                            this.collapsed().collapsed_label(tr!("NEW_PLAYLIST"))
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
@@ -761,6 +768,7 @@ impl Render for PlaylistList {
         );
 
         div()
+            .items_center()
             .gap(px(2.0))
             .mt(px(-6.0))
             .flex()
