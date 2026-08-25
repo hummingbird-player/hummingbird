@@ -89,6 +89,7 @@ impl Render for SearchView {
             });
 
             modal()
+                .transparent()
                 .on_exit(move |_, cx| {
                     weak.update(cx, |this, cx| {
                         this.reset(cx);
@@ -98,7 +99,7 @@ impl Render for SearchView {
                 .child(div().w(px(550.0)).h(px(500.0)).child(self.search.clone()))
                 .into_any_element()
         } else {
-            div().into_any_element()
+            div().hidden().into_any_element()
         }
     }
 }

@@ -42,6 +42,8 @@ pub struct InterfaceSettings {
     #[serde(default)]
     pub two_column_library: bool,
     #[serde(default)]
+    pub always_show_forward_button: bool,
+    #[serde(default)]
     pub startup_library_view: StartupLibraryView,
     #[serde(default = "default_grid_min_item_width")]
     pub grid_min_item_width: f32,
@@ -53,9 +55,6 @@ pub struct InterfaceSettings {
     pub slim_scrollbars: bool,
     #[serde(default = "default_queue_select_on_click")]
     pub queue_select_on_click: bool,
-    #[cfg(not(target_os = "macos"))]
-    #[serde(default)]
-    pub swap_menu_and_nav: bool,
 }
 
 impl InterfaceSettings {
@@ -66,17 +65,6 @@ impl InterfaceSettings {
     pub fn effective_full_width(&self) -> bool {
         self.full_width_library || self.two_column_library
     }
-
-    pub fn should_swap_menu_and_nav(&self) -> bool {
-        #[cfg(not(target_os = "macos"))]
-        {
-            self.swap_menu_and_nav
-        }
-        #[cfg(target_os = "macos")]
-        {
-            false
-        }
-    }
 }
 
 impl Default for InterfaceSettings {
@@ -86,14 +74,13 @@ impl Default for InterfaceSettings {
             theme: None,
             full_width_library: false,
             two_column_library: false,
+            always_show_forward_button: false,
             startup_library_view: StartupLibraryView::default(),
             grid_min_item_width: DEFAULT_GRID_MIN_ITEM_WIDTH,
             reduced_motion: false,
             always_show_scrollbars: false,
             slim_scrollbars: true,
             queue_select_on_click: true,
-            #[cfg(not(target_os = "macos"))]
-            swap_menu_and_nav: false,
         }
     }
 }

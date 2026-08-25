@@ -41,7 +41,7 @@ use super::{
         resizable::{ResizeEdge, resizable},
         slider::slider,
     },
-    constants::APP_ROUNDING,
+    constants::PANEL_ROUNDING,
     global_actions::{Next, PlayPause, Previous, StopAfterCurrent},
     models::{Models, PlaybackInfo},
     theme::Theme,
@@ -75,27 +75,11 @@ impl Controls {
 }
 
 impl Render for Controls {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let decorations = window.window_decorations();
-        let theme = cx.global::<Theme>();
-
+    fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
-            .h(px(68.0))
+            .h(px(60.0))
             .w_full()
-            .bg(theme.background_secondary)
-            .border_t_1()
-            .border_color(theme.border_color)
-            .map(|div| match decorations {
-                Decorations::Server => div,
-                Decorations::Client { tiling } => div
-                    .when(!(tiling.bottom || tiling.left), |div| {
-                        div.rounded_bl(APP_ROUNDING)
-                    })
-                    .when(!(tiling.bottom || tiling.right), |div| {
-                        div.rounded_br(APP_ROUNDING)
-                    }),
-            })
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
@@ -108,7 +92,6 @@ impl Render for Controls {
                 .min_size(px(150.0))
                 .max_size(px(500.0))
                 .default_size(DEFAULT_CONTROLS_LEFT_WIDTH)
-                .border_width(px(0.0))
                 .child(AnyView::from(self.info_section.clone()).cached(StyleRefinement::default())),
             )
             .child(self.scrubber.clone())
@@ -121,7 +104,6 @@ impl Render for Controls {
                 .min_size(px(180.0))
                 .max_size(px(500.0))
                 .default_size(DEFAULT_CONTROLS_RIGHT_WIDTH)
-                .border_width(px(0.0))
                 .child(
                     AnyView::from(self.secondary_controls.clone())
                         .cached(StyleRefinement::default().flex().w_full().h_full()),
@@ -341,7 +323,9 @@ impl Render for InfoSection {
             .flex()
             .w_full()
             .h_full()
-            .overflow_x_hidden()
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(theme.background_primary)
             .flex_shrink_0()
             .child(
                 div()
@@ -908,8 +892,9 @@ impl Render for Scrubber {
         div()
             .pl(px(13.0))
             .pr(px(13.0))
-            .border_x(px(1.0))
-            .border_color(theme.border_color)
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(theme.background_primary)
             .flex_grow(1.0)
             .flex()
             .flex_col()
@@ -1073,107 +1058,114 @@ impl Render for SecondaryControls {
         let lyrics_active = *self.show_lyrics.read(cx);
         let queue_active = *self.show_queue.read(cx);
 
-        div().flex().w_full().h_full().child(
-            div()
-                .px(px(18.0))
-                .flex()
-                .w_full()
-                .my_auto()
-                .pb(px(2.0))
-                .child(
-                    div()
-                        .rounded(px(3.0))
-                        .w(px(25.0))
-                        .h(px(25.0))
-                        .mt(px(2.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .border_color(theme.playback_button_border)
-                        .id("volume-button")
-                        .cursor_pointer()
-                        .bg(theme.playback_button)
-                        .hover(|this| this.bg(theme.playback_button_hover))
-                        .active(|this| this.bg(theme.playback_button_active))
-                        .when(volume <= 0.0, |div| {
-                            div.child(icon(VOLUME_OFF).size(px(14.0)))
-                                .on_click(move |_, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(prev_volume);
-                                })
-                                .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
-                        })
-                        .when(volume > 0.0, |div| {
-                            div.child(icon(VOLUME).size(px(14.0)))
-                                .on_click(move |_, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(0 as f64);
-                                })
-                                .tooltip(build_tooltip(tr!("MUTE", "Mute")))
-                        }),
-                )
-                .child(
-                    div()
-                        .id("volume-container")
-                        .mx(px(4.0))
-                        .flex_1()
-                        .min_w(px(50.0))
-                        .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
-                        .child(
-                            slider()
-                                .w_full()
-                                .h(px(6.0))
-                                .mt(px(11.0))
-                                .rounded(px(3.0))
-                                .id("volume")
-                                .value((volume) as f32)
-                                .on_double_click(|_, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(1.0_f64);
-                                })
-                                .on_change(move |v, _, cx| {
-                                    cx.global::<PlaybackInterface>().set_volume(v as f64);
-                                }),
-                        )
-                        .on_scroll_wheel(move |ev, _, cx| {
-                            let delta: f64 = if ev.delta.precise() {
-                                f64::from(ev.delta.pixel_delta(px(1.0)).y) * 0.01666666
-                            } else {
-                                ev.delta.pixel_delta(px(0.01666666)).y.into()
-                            };
-                            cx.global::<PlaybackInterface>().set_volume(f64::clamp(
-                                volume + delta,
-                                0_f64,
-                                1_f64,
-                            ));
-                        }),
-                )
-                .child(self.replaygain_button.clone())
-                .child(
-                    div()
-                        .h(px(24.0))
-                        .w(px(1.0))
-                        .mt(px(3.0))
-                        .mx(px(4.0))
-                        .bg(theme.border_color),
-                )
-                .child(
-                    sidebar_toggle_button("queue-button", MENU, queue_active)
-                        .on_click(move |_, _, cx| {
-                            show_queue.update(cx, |m, cx| {
-                                *m = !*m;
-                                cx.notify();
+        div()
+            .flex()
+            .w_full()
+            .h_full()
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(theme.background_primary)
+            .child(
+                div()
+                    .px(px(18.0))
+                    .flex()
+                    .w_full()
+                    .my_auto()
+                    .pb(px(2.0))
+                    .child(
+                        div()
+                            .rounded(px(3.0))
+                            .w(px(25.0))
+                            .h(px(25.0))
+                            .mt(px(2.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .border_color(theme.playback_button_border)
+                            .id("volume-button")
+                            .cursor_pointer()
+                            .bg(theme.playback_button)
+                            .hover(|this| this.bg(theme.playback_button_hover))
+                            .active(|this| this.bg(theme.playback_button_active))
+                            .when(volume <= 0.0, |div| {
+                                div.child(icon(VOLUME_OFF).size(px(14.0)))
+                                    .on_click(move |_, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(prev_volume);
+                                    })
+                                    .tooltip(build_tooltip(tr!("UNMUTE", "Unmute")))
                             })
-                        })
-                        .tooltip(build_tooltip(tr!("QUEUE_TITLE"))),
-                )
-                .child(
-                    sidebar_toggle_button("lyrics-button", MICROPHONE, lyrics_active)
-                        .on_click(move |_, _, cx| {
-                            show_lyrics.update(cx, |m, cx| {
-                                *m = !*m;
-                                cx.notify();
+                            .when(volume > 0.0, |div| {
+                                div.child(icon(VOLUME).size(px(14.0)))
+                                    .on_click(move |_, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(0 as f64);
+                                    })
+                                    .tooltip(build_tooltip(tr!("MUTE", "Mute")))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("volume-container")
+                            .mx(px(4.0))
+                            .flex_1()
+                            .min_w(px(50.0))
+                            .hoverable_tooltip(build_volume_tooltip(self.info.volume.clone()))
+                            .child(
+                                slider()
+                                    .w_full()
+                                    .h(px(6.0))
+                                    .mt(px(11.0))
+                                    .rounded(px(3.0))
+                                    .id("volume")
+                                    .value((volume) as f32)
+                                    .on_double_click(|_, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(1.0_f64);
+                                    })
+                                    .on_change(move |v, _, cx| {
+                                        cx.global::<PlaybackInterface>().set_volume(v as f64);
+                                    }),
+                            )
+                            .on_scroll_wheel(move |ev, _, cx| {
+                                let delta: f64 = if ev.delta.precise() {
+                                    f64::from(ev.delta.pixel_delta(px(1.0)).y) * 0.01666666
+                                } else {
+                                    ev.delta.pixel_delta(px(0.01666666)).y.into()
+                                };
+                                cx.global::<PlaybackInterface>().set_volume(f64::clamp(
+                                    volume + delta,
+                                    0_f64,
+                                    1_f64,
+                                ));
+                            }),
+                    )
+                    .child(self.replaygain_button.clone())
+                    .child(
+                        div()
+                            .h(px(24.0))
+                            .w(px(1.0))
+                            .mt(px(3.0))
+                            .mx(px(4.0))
+                            .bg(theme.border_color),
+                    )
+                    .child(
+                        sidebar_toggle_button("queue-button", MENU, queue_active)
+                            .on_click(move |_, _, cx| {
+                                show_queue.update(cx, |m, cx| {
+                                    *m = !*m;
+                                    cx.notify();
+                                })
                             })
-                        })
-                        .tooltip(build_tooltip(tr!("LYRICS", "Lyrics"))),
-                ),
-        )
+                            .tooltip(build_tooltip(tr!("QUEUE_TITLE"))),
+                    )
+                    .child(
+                        sidebar_toggle_button("lyrics-button", MICROPHONE, lyrics_active)
+                            .on_click(move |_, _, cx| {
+                                show_lyrics.update(cx, |m, cx| {
+                                    *m = !*m;
+                                    cx.notify();
+                                })
+                            })
+                            .tooltip(build_tooltip(tr!("LYRICS", "Lyrics"))),
+                    ),
+            )
     }
 }

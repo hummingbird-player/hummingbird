@@ -9,6 +9,7 @@ use gpui::{
 use crate::settings::SettingsGlobal;
 
 use crate::settings::storage::DEFAULT_SIDEBAR_WIDTH;
+use crate::ui::constants::{INNER_PANEL_ROUNDING, PANEL_GAP, PANEL_ROUNDING};
 
 const COLLAPSED_SIDEBAR_WIDTH: Pixels = px(52.0);
 
@@ -70,7 +71,6 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let stats_minutes = self.track_stats.total_duration / 60;
         let current_view = self.nav_model.read(cx).current();
         let two_column = cx
             .global::<SettingsGlobal>()
@@ -91,45 +91,36 @@ impl Render for Sidebar {
         };
         let sidebar_width = cx.global::<Models>().sidebar_width.clone();
         let sidebar_collapsed_entity = cx.global::<Models>().sidebar_collapsed.clone();
-        let sidebar_collapsed_entity_bottom = sidebar_collapsed_entity.clone();
         let collapsed = *sidebar_collapsed_entity.read(cx);
 
         let toggle_icon = if collapsed { SIDEBAR_INACTIVE } else { SIDEBAR };
+        let toggle_tooltip = if collapsed {
+            tr!("EXPAND_SIDEBAR", "Expand Sidebar")
+        } else {
+            tr!("COLLAPSE_SIDEBAR", "Collapse Sidebar")
+        };
 
-        let search_and_toggle = div()
-            .flex()
-            .when(collapsed, |this| {
-                this.flex_col().items_center().gap(px(4.0))
-            })
-            .mt(px(2.0))
-            .mb(px(4.0))
-            .pb(px(8.0))
-            .border_b_1()
-            .border_color(theme.border_color)
-            .child(
-                nav_button("search", SEARCH)
-                    .w(px(36.0))
-                    .h(px(34.0))
-                    .tooltip(build_tooltip(tr!("SEARCH")))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(Search), cx);
-                    }),
-            )
-            .when(!collapsed, |this| {
-                this.child(
-                    nav_button("sidebar-toggle", toggle_icon)
-                        .ml_auto()
-                        .tooltip(build_tooltip(tr!("COLLAPSE_SIDEBAR", "Collapse Sidebar")))
-                        .w(px(36.0))
-                        .h(px(34.0))
-                        .on_click(move |_, _, cx| {
-                            sidebar_collapsed_entity.update(cx, |v, cx| {
-                                *v = !*v;
-                                cx.notify();
-                            });
+        let search_header = div().flex().child(
+            div()
+                .w_full()
+                .flex()
+                .mb(px(6.0))
+                .p(px(1.0))
+                .rounded(INNER_PANEL_ROUNDING)
+                .bg(theme.background_secondary)
+                .child(
+                    sidebar_item("search")
+                        .icon(SEARCH)
+                        .secondary_background()
+                        .when(!collapsed, |this| this.child(tr!("SEARCH")))
+                        .when(collapsed, |this| {
+                            this.collapsed().collapsed_label(tr!("SEARCH"))
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(Search), cx);
                         }),
-                )
-            });
+                ),
+        );
 
         let sidebar_content = sidebar()
             .width(if collapsed {
@@ -140,15 +131,17 @@ impl Render for Sidebar {
             .id("main-sidebar")
             .h_full()
             .max_h_full()
-            .pt(px(8.0))
-            .pb(px(8.0))
-            .pl(px(7.0))
-            .pr(px(8.0))
-            .when(!collapsed, |this| this.overflow_hidden())
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(theme.background_primary)
+            .pt(px(6.0))
+            .pb(px(6.0))
+            .pl(px(6.0))
+            .pr(px(6.0))
             .flex()
             .flex_col()
             .when(collapsed, |this| this.items_center())
-            .child(search_and_toggle)
+            .child(search_header)
             .child(
                 sidebar_item("albums")
                     .icon(DISC)
@@ -223,53 +216,51 @@ impl Render for Sidebar {
             )
             .child(sidebar_separator())
             .child(self.playlists.clone())
-            .when(collapsed, |this| {
-                this.child(
-                    div().mt_auto().child(
-                        nav_button("sidebar-toggle", SIDEBAR_INACTIVE)
-                            .tooltip(build_tooltip(tr!("EXPAND_SIDEBAR", "Expand Sidebar")))
+            .child(
+                div()
+                    .mt_auto()
+                    .w_full()
+                    .flex()
+                    .items_end()
+                    .child(
+                        nav_button("sidebar-toggle", toggle_icon)
+                            .tooltip(build_tooltip(toggle_tooltip))
                             .w(px(36.0))
                             .h(px(34.0))
                             .on_click(move |_, _, cx| {
-                                sidebar_collapsed_entity_bottom.update(cx, |v, cx| {
+                                sidebar_collapsed_entity.update(cx, |v, cx| {
                                     *v = !*v;
                                     cx.notify();
                                 });
                             }),
-                    ),
-                )
-            })
-            .when(!collapsed, |this| {
-                this.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .mt_auto()
-                        .text_xs()
-                        .pt(px(8.0))
-                        .text_color(theme.text_secondary)
-                        .child(trn!(
-                            "STATS_TRACKS",
-                            "{{count}} track",
-                            "{{count}} tracks",
-                            count = self.track_stats.track_count
-                        ))
-                        .child(trn!(
-                            "STATS_TOTAL_LENGTH",
-                            "{{count}} minute",
-                            "{{count}} minutes",
-                            count = stats_minutes
-                        )),
-                )
-            });
+                    )
+                    .when(!collapsed, |this| {
+                        this.child(
+                            div()
+                                .ml_auto()
+                                .flex()
+                                .flex_col()
+                                .text_right()
+                                .text_xs()
+                                .mb(px(6.0))
+                                .mr(px(6.0))
+                                .text_color(theme.text_secondary)
+                                .child(trn!(
+                                    "STATS_TRACKS",
+                                    "{{count}} track",
+                                    "{{count}} tracks",
+                                    count = self.track_stats.track_count
+                                )),
+                        )
+                    }),
+            );
 
         if collapsed {
             div()
                 .w(COLLAPSED_SIDEBAR_WIDTH)
                 .h_full()
                 .flex_shrink_0()
-                .border_r_1()
-                .border_color(theme.border_color)
+                .mr(PANEL_GAP)
                 .child(sidebar_content)
                 .into_any_element()
         } else {

@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use gpui::*;
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::constants::PANEL_GAP;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResizeEdge {
@@ -30,7 +30,7 @@ pub struct Resizable {
     min_size: Pixels,
     max_size: Pixels,
     default_size: Pixels,
-    border_width: Pixels,
+    gap: Pixels,
     size_mode: SizeMode,
 }
 
@@ -45,7 +45,7 @@ impl Resizable {
             min_size: px(150.0),
             max_size: px(500.0),
             default_size: px(225.0),
-            border_width: px(1.0),
+            gap: PANEL_GAP,
             size_mode: SizeMode::default(),
         }
     }
@@ -62,11 +62,6 @@ impl Resizable {
 
     pub fn default_size(mut self, default: Pixels) -> Self {
         self.default_size = default;
-        self
-    }
-
-    pub fn border_width(mut self, width: Pixels) -> Self {
-        self.border_width = width;
         self
     }
 
@@ -143,10 +138,11 @@ impl Element for Resizable {
         let size = *self.size.read(cx);
         match self.size_mode {
             SizeMode::Pixels => {
+                let total = size + self.gap;
                 if self.is_horizontal() {
-                    style.size.width = size.into();
+                    style.size.width = total.into();
                 } else {
-                    style.size.height = size.into();
+                    style.size.height = total.into();
                 }
             }
             SizeMode::Percent => {
@@ -157,6 +153,11 @@ impl Element for Resizable {
                     style.size.height = relative(frac).into();
                 }
             }
+        }
+        match self.edge {
+            ResizeEdge::Left => style.padding.left = self.gap.into(),
+            ResizeEdge::Right => style.padding.right = self.gap.into(),
+            ResizeEdge::Top => style.padding.top = self.gap.into(),
         }
         style.flex_shrink = 0.0;
         style.display = Display::Flex;
@@ -186,7 +187,7 @@ impl Element for Resizable {
         }
 
         window.insert_hitbox(
-            handle_bounds(bounds, self.edge, HANDLE_SIZE),
+            handle_bounds(bounds, self.edge, self.gap),
             HitboxBehavior::Normal,
         )
     }
@@ -201,8 +202,6 @@ impl Element for Resizable {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let border_color = cx.global::<Theme>().border_color;
-
         for child in &mut self.children {
             child.paint(window, cx);
         }
@@ -219,6 +218,7 @@ impl Element for Resizable {
         let max_size = self.max_size;
         let default_size = self.default_size;
         let edge = self.edge;
+        let gap = self.gap;
         let size_mode = self.size_mode;
 
         // Precompute container_size for percent mode from actual rendered bounds and current fraction.
@@ -249,22 +249,6 @@ impl Element for Resizable {
                     state.borrow_mut().container_size = cs;
                 }
 
-                let is_dragging = state.borrow().is_dragging;
-                let line_width = if is_dragging {
-                    self.border_width * 2.0
-                } else {
-                    self.border_width
-                };
-                let line_bounds = divider_bounds(bounds, edge, line_width);
-                cx.paint_quad(quad(
-                    line_bounds,
-                    Corners::default(),
-                    border_color,
-                    Edges::default(),
-                    transparent_black(),
-                    BorderStyle::Solid,
-                ));
-
                 let state_down = state.clone();
                 let size_entity_down = size_entity.clone();
                 cx.on_mouse_event(move |ev: &MouseDownEvent, _, window, cx| {
@@ -272,7 +256,7 @@ impl Element for Resizable {
                         return;
                     }
 
-                    if !handle_bounds(bounds, edge, HANDLE_SIZE).contains(&ev.position) {
+                    if !handle_bounds(bounds, edge, gap).contains(&ev.position) {
                         return;
                     }
 
@@ -358,59 +342,37 @@ fn axis_position(edge: ResizeEdge, position: Point<Pixels>) -> Pixels {
     }
 }
 
-fn handle_bounds(bounds: Bounds<Pixels>, edge: ResizeEdge, handle_size: Pixels) -> Bounds<Pixels> {
+fn handle_bounds(bounds: Bounds<Pixels>, edge: ResizeEdge, gap: Pixels) -> Bounds<Pixels> {
+    let bleed = HANDLE_SIZE / 2.0;
     match edge {
         ResizeEdge::Left => Bounds {
-            origin: bounds.origin,
+            origin: Point {
+                x: bounds.origin.x - bleed,
+                y: bounds.origin.y,
+            },
             size: Size {
-                width: handle_size,
+                width: gap + HANDLE_SIZE,
                 height: bounds.size.height,
             },
         },
         ResizeEdge::Right => Bounds {
             origin: Point {
-                x: bounds.origin.x + bounds.size.width - handle_size,
+                x: bounds.origin.x + bounds.size.width - gap - bleed,
                 y: bounds.origin.y,
             },
             size: Size {
-                width: handle_size,
+                width: gap + HANDLE_SIZE,
                 height: bounds.size.height,
             },
         },
         ResizeEdge::Top => Bounds {
-            origin: bounds.origin,
-            size: Size {
-                width: bounds.size.width,
-                height: handle_size,
-            },
-        },
-    }
-}
-
-fn divider_bounds(bounds: Bounds<Pixels>, edge: ResizeEdge, line_width: Pixels) -> Bounds<Pixels> {
-    match edge {
-        ResizeEdge::Left => Bounds {
-            origin: bounds.origin,
-            size: Size {
-                width: line_width,
-                height: bounds.size.height,
-            },
-        },
-        ResizeEdge::Right => Bounds {
             origin: Point {
-                x: bounds.origin.x + bounds.size.width - line_width,
-                y: bounds.origin.y,
+                x: bounds.origin.x,
+                y: bounds.origin.y - bleed,
             },
-            size: Size {
-                width: line_width,
-                height: bounds.size.height,
-            },
-        },
-        ResizeEdge::Top => Bounds {
-            origin: bounds.origin,
             size: Size {
                 width: bounds.size.width,
-                height: line_width,
+                height: gap + HANDLE_SIZE,
             },
         },
     }

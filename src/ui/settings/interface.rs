@@ -198,7 +198,7 @@ impl Render for InterfaceSettings {
                 })
         };
 
-        let body = div()
+        div()
             .flex()
             .flex_col()
             .gap(px(14.0))
@@ -293,6 +293,31 @@ impl Render for InterfaceSettings {
                 .child(checkbox(
                     "interface-two-column-library-check",
                     interface.two_column_library,
+                )),
+            )
+            .child(
+                label(
+                    "interface-always-show-forward-button",
+                    tr!(
+                        "INTERFACE_ALWAYS_SHOW_FORWARD_BUTTON",
+                        "Always show Forward button"
+                    ),
+                )
+                .subtext(tr!(
+                    "INTERFACE_ALWAYS_SHOW_FORWARD_BUTTON_SUBTEXT",
+                    "Keeps the Forward button visible next to Back instead of revealing it on hover."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_interface(cx, |interface| {
+                        interface.always_show_forward_button =
+                            !interface.always_show_forward_button;
+                    });
+                }))
+                .child(checkbox(
+                    "interface-always-show-forward-button-check",
+                    interface.always_show_forward_button,
                 )),
             )
             .child(
@@ -407,35 +432,6 @@ impl Render for InterfaceSettings {
                     "interface-queue-select-on-click-check",
                     interface.queue_select_on_click,
                 )),
-            );
-
-        #[cfg(not(target_os = "macos"))]
-        let body = body.child(
-            label(
-                "interface-swap-menu-and-nav",
-                tr!(
-                    "INTERFACE_SWAP_MENU_AND_NAV",
-                    "Swap menu and navigation buttons"
-                ),
             )
-            .subtext(tr!(
-                "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT",
-                "Place the menu before the back/forward buttons so navigation sits closer \
-                to the center of the window."
-            ))
-            .cursor_pointer()
-            .w_full()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.update_interface(cx, |interface| {
-                    interface.swap_menu_and_nav = !interface.swap_menu_and_nav;
-                });
-            }))
-            .child(checkbox(
-                "interface-swap-menu-and-nav-check",
-                interface.swap_menu_and_nav,
-            )),
-        );
-
-        body
     }
 }

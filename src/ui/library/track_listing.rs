@@ -47,9 +47,16 @@ impl TrackListing {
                     .iter()
                     .enumerate()
                     .map(move |(index, track)| {
+                        let color_index = track
+                            .track_number
+                            .and_then(|number| number.checked_sub(1))
+                            .and_then(|number| usize::try_from(number).ok())
+                            .unwrap_or(index);
+
                         TrackItem::new(
                             cx,
                             track.clone(),
+                            color_index,
                             index == 0
                                 || track.track_number == Some(1)
                                 || tracks_for_closure

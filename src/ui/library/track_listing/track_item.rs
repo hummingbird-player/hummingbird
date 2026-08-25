@@ -30,6 +30,7 @@ pub type TrackPlaylistInfo = PlaylistMenuInfo;
 
 pub struct TrackItem {
     pub track: Track,
+    pub index: usize,
     pub is_start: bool,
     pub artist_name_visibility: ArtistNameVisibility,
     pub is_liked: Option<i64>,
@@ -77,6 +78,7 @@ impl TrackItem {
     pub fn new(
         cx: &mut App,
         track: Track,
+        index: usize,
         is_start: bool,
         anv: ArtistNameVisibility,
         left_field: TrackItemLeftField,
@@ -103,6 +105,7 @@ impl TrackItem {
                 }),
                 is_available: is_track_available(&track),
                 track,
+                index,
                 is_start,
                 artist_name_visibility: anv,
                 left_field,
@@ -236,7 +239,6 @@ impl Render for TrackItem {
                                 div()
                                     .flex()
                                     .flex_row()
-                                    .border_b_1()
                                     .h(px(39.0))
                                     .id(("track", self.track.id as u64))
                                     .w_full()
@@ -246,9 +248,13 @@ impl Render for TrackItem {
                                     .px(px(18.0))
                                     .py(px(6.0))
                                     .group(self.hover_group.clone())
+                                    .bg(theme.list_item)
+                                    .when(self.index % 2 == 1, |this| {
+                                        this.bg(theme.list_item_alternate)
+                                    })
                                     .when(is_available, |this| {
-                                        this.hover(|this| this.bg(theme.nav_button_hover))
-                                            .active(|this| this.bg(theme.nav_button_active))
+                                        this.hover(|this| this.bg(theme.list_item_hover))
+                                            .active(|this| this.bg(theme.list_item_active))
                                     })
                                     // only handle drag when we're not in a playlist
                                     // playlists have their own drag handler
@@ -267,9 +273,11 @@ impl Render for TrackItem {
                                     })
                                     .when_some(current_track, |this, track| {
                                         this.bg(if track == self.track.location {
-                                            theme.queue_item_current
+                                            theme.list_item_current
+                                        } else if self.index % 2 == 1 {
+                                            theme.list_item_alternate
                                         } else {
-                                            theme.background_primary
+                                            theme.list_item
                                         })
                                     })
                                     .max_w_full()

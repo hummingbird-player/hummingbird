@@ -46,8 +46,6 @@ impl RenderOnce for Callout {
         self.parent_div
             .rounded(px(6.0))
             .bg(theme.callout_background)
-            .border_1()
-            .border_color(theme.callout_border)
             .text_color(theme.callout_text)
             .overflow_hidden()
             .flex()

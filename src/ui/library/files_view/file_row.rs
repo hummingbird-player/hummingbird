@@ -277,16 +277,17 @@ impl Render for FileRowItem {
 
         let theme = cx.global::<Theme>();
         let bg = if is_selected {
-            theme.queue_item_selected
+            theme.list_item_selected
         } else if is_current {
-            theme.queue_item_current
+            theme.list_item_current
         } else {
-            theme.queue_item
+            theme.list_item
         };
         let text_color = theme.text;
         let guide_color = theme.border_color;
         let icon_color = theme.text_secondary;
-        let hover_bg = theme.queue_item_hover;
+        let hover_bg = theme.list_item_hover;
+        let active_bg = theme.list_item_active;
 
         let two_column = cx
             .global::<SettingsGlobal>()
@@ -368,6 +369,7 @@ impl Render for FileRowItem {
             .bg(bg)
             .cursor_pointer()
             .hover(|s| s.bg(hover_bg))
+            .active(|s| s.bg(active_bg))
             .children((0..depth).map(|_| {
                 div()
                     .flex_shrink_0()

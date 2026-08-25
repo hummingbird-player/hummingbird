@@ -22,6 +22,7 @@ use crate::{
         },
         library::{
             ViewSwitchMessage, add_to_playlist::AddToPlaylist, context_menus::navigate_to_artists,
+            library_view_header::LibraryViewHeader,
         },
     },
 };
@@ -33,6 +34,7 @@ use std::time::Duration;
 
 use super::{
     components::button::{ButtonSize, ButtonStyle, button},
+    constants::PANEL_ROUNDING,
     models::{
         HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, subscribe_liked_updates,
         toggle_like, toggle_like_by_id,
@@ -45,7 +47,7 @@ use super::{
 /// The list identifier for queue drag-drop operations
 const QUEUE_LIST_ID: &str = "queue";
 /// Height of each queue item in pixels
-const QUEUE_ITEM_HEIGHT: f32 = 60.0;
+const QUEUE_ITEM_HEIGHT: f32 = 56.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
@@ -298,23 +300,22 @@ impl Render for QueueItem {
                         .gap(px(11.0))
                         .h(px(QUEUE_ITEM_HEIGHT))
                         .px(px(17.0))
-                        .py(px(11.0))
+                        .py(px(10.0))
+                        .bg(theme.list_item)
+                        .when(self.idx % 2 == 1, |this| this.bg(theme.list_item_alternate))
                         // add extra padding when the scrollbar is always drawn
                         // 11px queue item pad + 4px scrollbar + 10px buffer
                         .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
                         .when(is_available, |div| div.cursor_pointer())
                         .when(!is_available, |div| div.cursor_default().opacity(0.5))
                         .relative()
-                        // Default bottom border - always present
-                        .border_b(px(1.0))
-                        .border_color(theme.border_color)
                         .when(item_state.is_being_dragged, |div| div.opacity(0.5))
                         .when(is_selected && !item_state.is_being_dragged, |div| {
-                            div.bg(theme.queue_item_selected)
+                            div.bg(theme.list_item_selected)
                         })
                         .when(
                             !is_selected && is_current && !item_state.is_being_dragged,
-                            |div| div.bg(theme.queue_item_current),
+                            |div| div.bg(theme.list_item_current),
                         )
                         .when(is_available, |div| {
                             div.on_click(move |event: &ClickEvent, _, cx| {
@@ -346,15 +347,15 @@ impl Render for QueueItem {
                         .when(
                             is_available && !is_selected && !item_state.is_being_dragged,
                             |div| {
-                                div.hover(|div| div.bg(theme.queue_item_hover))
-                                    .active(|div| div.bg(theme.queue_item_active))
+                                div.hover(|div| div.bg(theme.list_item_hover))
+                                    .active(|div| div.bg(theme.list_item_active))
                             },
                         )
                         .when(
                             is_available && is_selected && !item_state.is_being_dragged,
                             |div| {
-                                div.hover(|div| div.bg(theme.queue_item_selected))
-                                    .active(|div| div.bg(theme.queue_item_active))
+                                div.hover(|div| div.bg(theme.list_item_selected))
+                                    .active(|div| div.bg(theme.list_item_active))
                             },
                         )
                         .when(is_available, |div| {
@@ -791,28 +792,16 @@ impl Render for Queue {
         div()
             .h_full()
             .w_full()
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(theme.background_primary)
             .flex()
             .flex_col()
             .child(
-                div()
-                    .w_full()
-                    .py(px(11.0))
-                    .pl(px(18.0))
-                    .pr(px(12.0))
-                    .flex()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(theme.border_color)
-                    .child(
-                        div()
-                            .line_height(px(26.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(22.0))
-                            .child(tr!("QUEUE_TITLE", "Queue")),
-                    )
-                    .child(
+                LibraryViewHeader::new(tr!("QUEUE_TITLE", "Queue"))
+                    .without_navigation()
+                    .right(
                         button()
-                            .ml_auto()
                             .style(ButtonStyle::Minimal)
                             .size(ButtonSize::Large)
                             .child(icon(TRASH).size(px(14.0)).my_auto())
@@ -822,7 +811,7 @@ impl Render for Queue {
                                 cx.global::<PlaybackInterface>().clear_queue();
                             }),
                     )
-                    .child(
+                    .right(
                         nav_button("close", CROSS)
                             .on_click(cx.listener(|this: &mut Self, _, _, cx| {
                                 this.show_queue.update(cx, |v, _| *v = !(*v))

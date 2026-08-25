@@ -67,6 +67,7 @@ pub struct SidebarItem {
     icon: Option<&'static str>,
     active: bool,
     collapsed: bool,
+    secondary_background: bool,
     label: Option<SharedString>,
     state_id: ElementId,
 }
@@ -89,6 +90,11 @@ impl SidebarItem {
 
     pub fn collapsed_label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    pub fn secondary_background(mut self) -> Self {
+        self.secondary_background = true;
         self
     }
 }
@@ -116,6 +122,11 @@ impl RenderOnce for SidebarItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.state_id.clone(), cx, |_, _| false);
         let theme = cx.global::<Theme>();
+        let background = if self.secondary_background {
+            theme.background_secondary
+        } else {
+            theme.background_primary
+        };
 
         let item = self
             .parent_div
@@ -129,7 +140,7 @@ impl RenderOnce for SidebarItem {
                     .justify_center()
                     .flex_shrink_0()
             })
-            .bg(theme.background_primary)
+            .bg(background)
             .text_sm()
             .border_1()
             // you may ask: what is even the point of setting the border color to this?
@@ -138,7 +149,7 @@ impl RenderOnce for SidebarItem {
             // why? i don't know, it makes no god damn sense
             //
             // load bearing color
-            .border_color(theme.background_primary)
+            .border_color(background)
             .when(self.active, |div| {
                 div.bg(theme.nav_button_pressed)
                     .border_color(theme.nav_button_pressed_border)
@@ -231,6 +242,7 @@ pub fn sidebar_item(id: impl Into<ElementId>) -> SidebarItem {
         icon: None,
         active: false,
         collapsed: false,
+        secondary_background: false,
         label: None,
         state_id,
     }

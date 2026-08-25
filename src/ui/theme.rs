@@ -80,6 +80,7 @@ fn parse_hex_color(value: &str) -> Result<Rgba, String> {
 
 #[derive(Clone)]
 pub struct Theme {
+    pub frame_background: Rgba,
     pub background_primary: Rgba,
     pub background_secondary: Rgba,
     pub background_tertiary: Rgba,
@@ -116,11 +117,12 @@ pub struct Theme {
     pub close_button_hover: Rgba,
     pub close_button_active: Rgba,
 
-    pub queue_item: Rgba,
-    pub queue_item_hover: Rgba,
-    pub queue_item_active: Rgba,
-    pub queue_item_current: Rgba,
-    pub queue_item_selected: Rgba,
+    pub list_item: Rgba,
+    pub list_item_alternate: Rgba,
+    pub list_item_hover: Rgba,
+    pub list_item_active: Rgba,
+    pub list_item_current: Rgba,
+    pub list_item_selected: Rgba,
 
     pub button_primary: Rgba,
     pub button_primary_border: Rgba,
@@ -261,6 +263,9 @@ impl<'de> Deserialize<'de> for Theme {
                 let mut theme = Theme::default();
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
+                        "frame_background" => {
+                            theme.frame_background = map.next_value::<ColorHex>()?.0
+                        }
                         "background_primary" => {
                             theme.background_primary = map.next_value::<ColorHex>()?.0
                         }
@@ -331,18 +336,21 @@ impl<'de> Deserialize<'de> for Theme {
                         "close_button_active" => {
                             theme.close_button_active = map.next_value::<ColorHex>()?.0
                         }
-                        "queue_item" => theme.queue_item = map.next_value::<ColorHex>()?.0,
-                        "queue_item_hover" => {
-                            theme.queue_item_hover = map.next_value::<ColorHex>()?.0
+                        "list_item" => theme.list_item = map.next_value::<ColorHex>()?.0,
+                        "list_item_alternate" => {
+                            theme.list_item_alternate = map.next_value::<ColorHex>()?.0
                         }
-                        "queue_item_active" => {
-                            theme.queue_item_active = map.next_value::<ColorHex>()?.0
+                        "list_item_hover" => {
+                            theme.list_item_hover = map.next_value::<ColorHex>()?.0
                         }
-                        "queue_item_current" => {
-                            theme.queue_item_current = map.next_value::<ColorHex>()?.0
+                        "list_item_active" => {
+                            theme.list_item_active = map.next_value::<ColorHex>()?.0
                         }
-                        "queue_item_selected" => {
-                            theme.queue_item_selected = map.next_value::<ColorHex>()?.0
+                        "list_item_current" => {
+                            theme.list_item_current = map.next_value::<ColorHex>()?.0
+                        }
+                        "list_item_selected" => {
+                            theme.list_item_selected = map.next_value::<ColorHex>()?.0
                         }
                         "button_primary" => theme.button_primary = map.next_value::<ColorHex>()?.0,
                         "button_primary_border" => {
@@ -616,86 +624,88 @@ impl<'de> Deserialize<'de> for Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            background_primary: rgb(0x0D0E12),
-            background_secondary: rgb(0x161720),
-            background_tertiary: rgb(0x1A1D26),
+            frame_background: rgb(0x010102),
+            background_primary: rgb(0x121213),
+            background_secondary: rgb(0x242425),
+            background_tertiary: rgb(0x303032),
 
-            border_color: rgb(0x202233),
+            border_color: rgb(0x282829),
 
-            album_art_background: rgb(0x303246),
+            album_art_background: rgb(0x313135),
 
             text: rgb(0xE8E9F2),
             text_secondary: rgb(0xA0A1AD),
-            text_disabled: rgb(0x5F5F71),
-            text_link: rgb(0x5279D4),
+            text_disabled: rgb(0x676771),
+            text_link: rgb(0x647ADB),
 
-            nav_button_hover: rgb(0x1A1C28),
-            nav_button_hover_border: rgb(0x212431),
-            nav_button_active: rgb(0x151620),
-            nav_button_active_border: rgb(0x191B27),
-            nav_button_pressed: rgb(0x1F212D),
-            nav_button_pressed_border: rgb(0x292D3F),
+            nav_button_hover: rgb(0x35353E),
+            nav_button_hover_border: rgba(0x00000000),
+            nav_button_active: rgb(0x121214),
+            nav_button_active_border: rgba(0x00000000),
+            nav_button_pressed: rgb(0x242425),
+            nav_button_pressed_border: rgba(0x00000000),
 
             playback_button: rgba(0x00000000),
-            playback_button_hover: rgb(0x272B41),
-            playback_button_active: rgb(0x08080B),
+            playback_button_hover: rgb(0x35353E),
+            playback_button_active: rgb(0x0A0A0B),
             playback_button_border: rgba(0x00000000),
-            playback_button_toggled: rgb(0x688CF0),
+            playback_button_toggled: rgb(0x4063D6),
             playback_button_repeat_one: rgb(0x63C58D),
             stop_after_current_indicator: rgb(0xF0A868),
 
             window_button: rgba(0x00000000),
-            window_button_hover: rgb(0x262D42),
-            window_button_active: rgb(0x0D0F14),
+            window_button_hover: rgb(0x35353E),
+            window_button_active: rgb(0x121214),
 
-            queue_item: rgba(0x00000000),
-            queue_item_hover: rgb(0x151621),
-            queue_item_active: rgb(0x101118),
-            queue_item_current: rgb(0x1B1C28),
-            queue_item_selected: rgb(0x1A2040),
+            list_item: rgba(0x00000000),
+            list_item_alternate: rgb(0x161617),
+            list_item_hover: rgb(0x252528),
+            list_item_active: rgb(0x212122),
+            list_item_current: rgb(0x202022),
+            list_item_selected: rgb(0x1F2B55),
 
             close_button: rgba(0x00000000),
-            close_button_hover: rgb(0x7E2C2C),
-            close_button_active: rgb(0x5B1D1D),
+            close_button_hover: rgb(0xA41717),
+            close_button_active: rgb(0x650000),
 
-            button_primary: rgb(0x5774E7),
-            button_primary_border: rgb(0x6D85E4),
-            button_primary_hover: rgb(0x6D92FF),
-            button_primary_border_hover: rgb(0x5488FF),
-            button_primary_active: rgb(0x495F9F),
-            button_primary_border_active: rgb(0x515C8F),
+            button_primary: rgb(0x4063D6),
+            button_primary_border: rgba(0x00000000),
+            button_primary_hover: rgb(0x4E76FF),
+            button_primary_border_hover: rgba(0x00000000),
+            button_primary_active: rgb(0x445DBB),
+            button_primary_border_active: rgba(0x00000000),
             button_primary_text: rgb(0xE0E7F7),
 
-            button_secondary: rgb(0x373B4E),
-            button_secondary_border: rgb(0x4F5267),
-            button_secondary_hover: rgb(0x494E67),
-            button_secondary_border_hover: rgb(0x565A77),
-            button_secondary_active: rgb(0x262636),
-            button_secondary_border_active: rgb(0x2F3244),
+            button_secondary: rgb(0x303032),
+            button_secondary_border: rgba(0x00000000),
+            button_secondary_hover: rgb(0x43434D),
+            button_secondary_border_hover: rgba(0x00000000),
+            button_secondary_active: rgb(0x232326),
+            button_secondary_border_active: rgba(0x00000000),
             button_secondary_text: rgb(0xDDDEEC),
 
-            button_warning: rgb(0x97792C),
-            button_warning_border: rgb(0xC59E4F),
-            button_warning_hover: rgb(0xA98B4A),
-            button_warning_border_hover: rgb(0xC9A558),
-            button_warning_active: rgb(0x5D4B2E),
-            button_warning_border_active: rgb(0x80683F),
+            button_warning: rgb(0xA08000),
+            button_warning_border: rgba(0x00000000),
+            button_warning_hover: rgb(0xB59215),
+            button_warning_border_hover: rgba(0x00000000),
+            button_warning_active: rgb(0x776015),
+            button_warning_border_active: rgba(0x00000000),
             button_warning_text: rgb(0xF0EBDE),
 
-            button_danger: rgb(0x650B0B),
-            button_danger_border: rgb(0x860808),
-            button_danger_hover: rgb(0x750C0C),
-            button_danger_border_hover: rgb(0x8F0B0B),
-            button_danger_active: rgb(0x440A0A),
-            button_danger_border_active: rgb(0x650707),
+            button_danger: rgb(0x722222),
+            button_danger_border: rgba(0x00000000),
+            button_danger_hover: rgb(0x942424),
+            button_danger_border_hover: rgba(0x00000000),
+            button_danger_active: rgb(0x431212),
+            button_danger_border_active: rgba(0x00000000),
             button_danger_text: rgb(0xE9D4D4),
 
-            slider_foreground: rgb(0x688CF0),
-            slider_background: rgb(0x38374E),
+            slider_foreground: rgb(0x4063D6),
+            slider_background: rgb(0x302F35),
 
             eq_grid_line: rgb(0x202233),
             eq_grid_line_zero: rgb(0x2B2F44),
-            eq_curve: rgb(0x688CF0),
+            eq_curve: rgb(0x4063D6),
             eq_curve_fill: rgba(0x688CF02E),
             eq_band_curve: rgb(0x93ACF2),
             eq_dot: rgb(0xA0A1AD),
@@ -705,73 +715,73 @@ impl Default for Theme {
             eq_spectrum_post: rgba(0x688CF024),
             eq_spectrum_edge: rgba(0x688CF099),
 
-            elevated_background: rgb(0x161820),
-            elevated_border_color: rgb(0x23253B),
+            elevated_background: rgb(0x18181B),
+            elevated_border_color: rgb(0x222223),
 
             menu_item: rgba(0x00000000),
-            menu_item_hover: rgb(0x1F2334),
-            menu_item_border_hover: rgb(0x2B2F44),
+            menu_item_hover: rgb(0x35353E),
+            menu_item_border_hover: rgba(0x00000000),
             menu_item_active: rgb(0x0E0F15),
-            menu_item_border_active: rgb(0x1F212E),
+            menu_item_border_active: rgba(0x00000000),
 
-            modal_overlay_bg: rgba(0x00000055),
+            modal_overlay_bg: rgba(0x0000007A),
 
             text_input_selection: rgba(0x01020388),
             caret_color: rgb(0xE8E8F2),
-            text_highlight_background: rgba(0x3311FF30),
+            text_highlight_background: rgb(0x4E4D67),
 
-            palette_item_hover: rgb(0x1F2334),
-            palette_item_border_hover: rgb(0x2B2F44),
-            palette_item_active: rgb(0x0E0F15),
-            palette_item_border_active: rgb(0x1F212E),
+            palette_item_hover: rgb(0x252528),
+            palette_item_border_hover: rgba(0x00000000),
+            palette_item_active: rgb(0x212122),
+            palette_item_border_active: rgba(0x00000000),
 
-            scrollbar_background: rgb(0x252839),
-            scrollbar_foreground: rgb(0x616794),
+            scrollbar_background: rgb(0x28272E),
+            scrollbar_foreground: rgb(0x636371),
 
-            textbox_background: rgb(0x373B4E),
-            textbox_border: rgb(0x4F5267),
+            textbox_background: rgb(0x303032),
+            textbox_border: rgba(0x00000000),
 
-            checkbox_background: rgb(0x373B4E),
-            checkbox_background_hover: rgb(0x494E67),
-            checkbox_background_active: rgb(0x262636),
-            checkbox_border: rgb(0x4F5267),
-            checkbox_border_hover: rgb(0x565A77),
-            checkbox_border_active: rgb(0x2F3244),
+            checkbox_background: rgb(0x303032),
+            checkbox_background_hover: rgb(0x43434D),
+            checkbox_background_active: rgb(0x232326),
+            checkbox_border: rgba(0x00000000),
+            checkbox_border_hover: rgba(0x00000000),
+            checkbox_border_active: rgba(0x00000000),
             checkbox_checked: rgb(0xC7C7D8),
-            checkbox_checked_bg: rgb(0x618EE6),
-            checkbox_checked_bg_hover: rgb(0x6080F9),
-            checkbox_checked_bg_active: rgb(0x495D9F),
-            checkbox_checked_border: rgb(0x7592E7),
-            checkbox_checked_border_hover: rgb(0x657DFF),
-            checkbox_checked_border_active: rgb(0x515D8F),
+            checkbox_checked_bg: rgb(0x4063D6),
+            checkbox_checked_bg_hover: rgb(0x4E76FF),
+            checkbox_checked_bg_active: rgb(0x445DBB),
+            checkbox_checked_border: rgba(0x00000000),
+            checkbox_checked_border_hover: rgba(0x00000000),
+            checkbox_checked_border_active: rgba(0x00000000),
 
-            callout_background: rgba(0x2E280053),
+            callout_background: rgba(0x6F5F0053),
             callout_border: rgba(0x5B45008E),
             callout_text: rgb(0xF0EBDE),
 
-            liked_song: rgb(0x688CF0),
+            liked_song: rgb(0x4063D6),
 
-            status_success: rgb(0x63C58D),
+            status_success: rgb(0x54CE8B),
             status_error: rgb(0xE54D4D),
-            status_disabled: rgb(0x5F5F71),
+            status_disabled: rgb(0x636371),
 
-            toast_info_background: rgb(0x161820),
-            toast_info_border: rgb(0x23253B),
+            toast_info_background: rgb(0x1E1E1F),
+            toast_info_border: rgb(0x282829),
             toast_info_text: rgb(0xE8E9F2),
             toast_info_track: rgb(0xA0A1AD),
 
             toast_warning_background: rgb(0x18160C),
-            toast_warning_border: rgb(0x3D3005),
+            toast_warning_border: rgb(0x332B15),
             toast_warning_text: rgb(0xF0EBDE),
             toast_warning_track: rgb(0xB5B570),
 
             toast_success_background: rgb(0x121F11),
-            toast_success_border: rgb(0x0C3D05),
+            toast_success_border: rgb(0x182E11),
             toast_success_text: rgb(0xEAF2E8),
             toast_success_track: rgb(0x74A677),
 
             toast_error_background: rgb(0x291817),
-            toast_error_border: rgb(0x4d2422),
+            toast_error_border: rgb(0x3F2423),
             toast_error_text: rgb(0xF2E8E8),
             toast_error_track: rgb(0xC27F7A),
         }

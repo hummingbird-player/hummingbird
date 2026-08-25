@@ -517,7 +517,6 @@ where
             .image_cache(hummingbird_cache("finder-cache", 50))
             .id("finder")
             .flex()
-            .p(px(4.0))
             .child(
                 list(self.list_state.clone(), move |idx, _, cx| {
                     let extras_len = extra_items.len();
@@ -559,6 +558,7 @@ where
                 .flex()
                 .flex_col()
                 .gap(px(2.0))
+                .py(px(6.0))
                 .w_full()
                 .h_full(),
             )
@@ -861,7 +861,7 @@ where
                 this.bg(theme.palette_item_hover)
                     .border_color(theme.palette_item_border_hover)
             })
-            .rounded(px(6.0))
+            .rounded(px(4.0))
             .on_click(cx.listener({
                 let item_data = item_data.clone();
                 move |_, _, _, cx| {

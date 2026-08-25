@@ -28,11 +28,13 @@ use crate::{
             resizable::{ResizeEdge, resizable},
             table::table_data::TABLE_MAX_WIDTH,
         },
+        constants::PANEL_ROUNDING,
         library::{
             playlist_view::{Import, PlaylistView},
             sidebar::Sidebar,
             update_playlist::UpdatePlaylist,
         },
+        theme::Theme,
     },
 };
 
@@ -45,6 +47,7 @@ mod artist_view;
 mod collection_summary;
 pub mod context_menus;
 pub mod files_view;
+pub(crate) mod library_view_header;
 pub mod missing_folder_dialog;
 pub mod nav_buttons;
 pub mod playlist_view;
@@ -63,6 +66,9 @@ pub struct NavigationHistory {
     startup_view: ViewSwitchMessage,
     history: Vec<ViewSwitchMessage>,
     cursor: usize,
+    forward_peek_generation: usize,
+    forward_peek_armed: bool,
+    forward_peek_active: bool,
 }
 
 impl NavigationHistory {
@@ -71,6 +77,9 @@ impl NavigationHistory {
             startup_view,
             history: vec![startup_view],
             cursor: 0,
+            forward_peek_generation: 0,
+            forward_peek_armed: true,
+            forward_peek_active: false,
         }
     }
 
@@ -86,6 +95,14 @@ impl NavigationHistory {
         self.cursor < self.history.len() - 1
     }
 
+    pub fn forward_peek_generation(&self) -> usize {
+        self.forward_peek_generation
+    }
+
+    pub fn forward_peek_active(&self) -> bool {
+        self.forward_peek_active
+    }
+
     /// Returns the history entry immediately before the cursor, if any.
     pub fn previous(&self) -> Option<ViewSwitchMessage> {
         if self.cursor > 0 {
@@ -96,8 +113,17 @@ impl NavigationHistory {
     }
 
     pub fn go_back(&mut self) -> Option<ViewSwitchMessage> {
+        self.forward_peek_active = false;
+
         if self.can_go_back() {
             self.cursor -= 1;
+
+            if self.forward_peek_armed {
+                self.forward_peek_generation = self.forward_peek_generation.wrapping_add(1).max(1);
+                self.forward_peek_armed = false;
+                self.forward_peek_active = true;
+            }
+
             Some(self.current())
         } else {
             None
@@ -105,8 +131,11 @@ impl NavigationHistory {
     }
 
     pub fn go_forward(&mut self) -> Option<ViewSwitchMessage> {
+        self.forward_peek_active = false;
+
         if self.can_go_forward() {
             self.cursor += 1;
+            self.forward_peek_armed = true;
             Some(self.current())
         } else {
             None
@@ -118,6 +147,8 @@ impl NavigationHistory {
     pub fn navigate(&mut self, message: ViewSwitchMessage) {
         // Drop any forward history.
         self.history.truncate(self.cursor + 1);
+        self.forward_peek_armed = true;
+        self.forward_peek_active = false;
 
         // Cap total history at 100 entries by evicting the oldest.
         if self.history.len() >= 100 {
@@ -592,6 +623,7 @@ impl Render for Library {
             .read(cx);
         let full_width = settings.interface.effective_full_width();
         let two_column = settings.interface.two_column_library;
+        let theme = cx.global::<Theme>().clone();
 
         fn render_library_view(view: &LibraryView) -> AnyElement {
             match view {
@@ -608,14 +640,24 @@ impl Render for Library {
         let single_column = |view: &LibraryView| {
             div()
                 .w_full()
-                .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
                 .h_full()
                 .flex()
                 .flex_col()
                 .flex_shrink(1.0)
-                .mr_auto()
+                .items_center()
                 .overflow_hidden()
-                .child(render_library_view(view))
+                .rounded(PANEL_ROUNDING)
+                .bg(theme.background_primary)
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .overflow_hidden()
+                        .when(!full_width, |this: Div| this.max_w(px(TABLE_MAX_WIDTH)))
+                        .child(render_library_view(view)),
+                )
                 .into_any_element()
         };
 
@@ -649,7 +691,6 @@ impl Render for Library {
                 .child(
                     resizable("split-resizable", split_width_model, ResizeEdge::Right)
                         .percent_mode()
-                        .border_width(px(2.0))
                         .min_size(px(0.10))
                         .max_size(px(0.80))
                         .default_size(DEFAULT_SPLIT_FRACTION)
@@ -661,6 +702,8 @@ impl Render for Library {
                                 .flex()
                                 .flex_col()
                                 .overflow_hidden()
+                                .rounded(PANEL_ROUNDING)
+                                .bg(theme.background_primary)
                                 .child(render_library_view(left)),
                         ),
                 )
@@ -672,6 +715,8 @@ impl Render for Library {
                         .flex_col()
                         .flex_shrink(1.0)
                         .overflow_hidden()
+                        .rounded(PANEL_ROUNDING)
+                        .bg(theme.background_primary)
                         .child(render_library_view(right)),
                 )
                 .into_any_element()

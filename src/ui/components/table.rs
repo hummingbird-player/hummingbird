@@ -645,6 +645,7 @@ where
                                                         TableItem::new(
                                                             cx,
                                                             item.clone(),
+                                                            idx,
                                                             &columns,
                                                             list_handler.clone(),
                                                             list_context_menu_context.clone(),

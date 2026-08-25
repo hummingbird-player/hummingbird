@@ -6,15 +6,11 @@ mod update;
 use super::{models::Models, theme::Theme};
 use crate::{
     library::scan::ScanEvent,
-    settings::{Settings, SettingsGlobal},
-    ui::{
-        components::{
-            icons::{FOLDER_BOLT, FOLDER_SEARCH, icon},
-            menu_bar::MenuBar,
-            tooltip::build_complex_tooltip,
-            window_header::header,
-        },
-        library::nav_buttons::nav_buttons,
+    ui::components::{
+        icons::{FOLDER_BOLT, FOLDER_SEARCH, HUMMINGBIRD, icon},
+        menu_bar::MenuBar,
+        tooltip::build_complex_tooltip,
+        window_header::header,
     },
 };
 use cntp_i18n::tr;
@@ -25,47 +21,31 @@ pub struct Header {
     scan_status: Entity<ScanStatus>,
     menu_bar: Option<Entity<MenuBar>>,
     services: Entity<ServicesIndicator>,
-    settings: Entity<Settings>,
 }
 
 impl Header {
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let settings = cx.global::<SettingsGlobal>().model.clone();
-
-        cx.new(|cx| {
-            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
-
-            Self {
-                scan_status: ScanStatus::new(cx),
-                menu_bar: if cfg!(not(target_os = "macos")) {
-                    let menus = cx.get_menus().unwrap();
-                    Some(MenuBar::new(cx, menus))
-                } else {
-                    None
-                },
-                services: ServicesIndicator::new(cx),
-                settings,
-            }
+        cx.new(|cx| Self {
+            scan_status: ScanStatus::new(cx),
+            menu_bar: if cfg!(not(target_os = "macos")) {
+                let menus = cx.get_menus().unwrap();
+                Some(MenuBar::new(cx, menus))
+            } else {
+                None
+            },
+            services: ServicesIndicator::new(cx),
         })
     }
 }
 
 impl Render for Header {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let mut header = header().main_window(true);
 
-        let swap = self.settings.read(cx).interface.should_swap_menu_and_nav();
+        header = header.left(icon(HUMMINGBIRD).size(px(18.0)).ml(px(7.0)).mr(px(18.0)));
 
-        if swap {
-            if let Some(menu_bar) = self.menu_bar.clone() {
-                header = header.left(menu_bar);
-            }
-            header = header.left(nav_buttons());
-        } else {
-            header = header.left(nav_buttons());
-            if let Some(menu_bar) = self.menu_bar.clone() {
-                header = header.left(menu_bar);
-            }
+        if let Some(menu_bar) = self.menu_bar.clone() {
+            header = header.left(menu_bar);
         }
 
         header = header.left(self.scan_status.clone());

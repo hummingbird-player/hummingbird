@@ -66,7 +66,7 @@ impl Render for ArtistPickerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some((position, artists)) = self.model.read(cx).clone() else {
             self.focused = false;
-            return div().into_any_element();
+            return div().hidden().into_any_element();
         };
 
         // grab focus once when the picker opens, not on every frame

@@ -27,7 +27,7 @@ impl Render for MenuBar {
             .id("menu-bar")
             .flex()
             .items_center()
-            .gap(px(5.0))
+            .gap(px(8.0))
             .on_mouse_down(MouseButton::Left, |_, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();

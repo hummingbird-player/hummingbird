@@ -21,6 +21,7 @@ where
     C: Column + 'static,
 {
     context_menu_context: T::ContextMenuContext,
+    index: usize,
     data: Option<Vec<Option<SharedString>>>,
     columns: Arc<IndexMap<C, f32, FxBuildHasher>>,
     on_select: Option<OnSelectHandler<T, C>>,
@@ -38,6 +39,7 @@ where
     pub fn new(
         cx: &mut App,
         id: T::Identifier,
+        index: usize,
         columns: &Entity<Arc<IndexMap<C, f32, FxBuildHasher>>>,
         on_select: Option<OnSelectHandler<T, C>>,
         context_menu_context: T::ContextMenuContext,
@@ -72,6 +74,7 @@ where
 
             Self {
                 context_menu_context,
+                index,
                 data,
                 image_path,
                 columns: columns_read,
@@ -105,7 +108,11 @@ where
         let mut row = div()
             .w_full()
             .flex()
-            .id(self.id.clone().unwrap_or("bad".into()))
+            .id(self.id.clone().unwrap_or(self.index.into()))
+            .bg(theme.list_item)
+            .when(self.index % 2 == 1, |this| {
+                this.bg(theme.list_item_alternate)
+            })
             .when_some(self.on_select.clone(), {
                 let row_data = row_data.clone();
                 move |div, on_select| {
@@ -115,8 +122,8 @@ where
                             on_select(cx, &id)
                         })
                         .cursor_pointer()
-                        .hover(|this| this.bg(theme.nav_button_hover))
-                        .active(|this| this.bg(theme.nav_button_active))
+                        .hover(|this| this.bg(theme.list_item_hover))
+                        .active(|this| this.bg(theme.list_item_active))
                     } else {
                         div.cursor_default().opacity(0.5)
                     }
@@ -165,7 +172,6 @@ where
                     .text_ellipsis()
                     //.border_r_1()
                     .border_color(theme.border_color)
-                    .border_b_1()
                     .border_color(theme.border_color)
                     .flex()
                     .child(
@@ -206,7 +212,6 @@ where
                         .flex_shrink_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .border_b_1()
                         .border_color(theme.border_color)
                         .when_some(column_data.clone(), |div, string| div.child(string)),
                 );
@@ -214,7 +219,7 @@ where
         }
 
         if let Some((menu, overlay)) = context_menu {
-            let ctx = context(self.id.clone().unwrap_or("bad-context".into()))
+            let ctx = context(self.id.clone().unwrap_or(self.index.into()))
                 .with(row)
                 .child(div().bg(theme.elevated_background).child(menu));
             match overlay {

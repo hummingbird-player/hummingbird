@@ -149,12 +149,13 @@ impl RenderOnce for WindowChrome {
                         cx.stop_propagation();
                     })
                     .overflow_hidden()
-                    .bg(theme.background_primary)
+                    .bg(theme.frame_background)
                     .size_full()
                     .flex()
                     .flex_col()
                     .max_w_full()
                     .max_h_full()
+                    .p(px(6.0))
                     .child(self.content),
             );
 

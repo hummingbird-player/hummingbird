@@ -63,6 +63,7 @@ A `theme.json` for the default theme is provided here.
 
 ```json
 {
+  "frame_background": "#000000",
   "background_primary": "#0D0E12",
   "background_secondary": "#161720",
   "background_tertiary": "#1A1D26",
@@ -97,11 +98,12 @@ A `theme.json` for the default theme is provided here.
   "close_button_hover": "#7E2C2C",
   "close_button_active": "#5B1D1D",
 
-  "queue_item": "#00000000",
-  "queue_item_hover": "#151621",
-  "queue_item_active": "#101118",
-  "queue_item_current": "#1B1C28",
-  "queue_item_selected": "#1A2040",
+  "list_item": "#00000000",
+  "list_item_alternate": "#13151C",
+  "list_item_hover": "#151621",
+  "list_item_active": "#101118",
+  "list_item_current": "#1B1C28",
+  "list_item_selected": "#1A2040",
 
   "button_primary": "#5774E7",
   "button_primary_border": "#6D85E4",

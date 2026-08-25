@@ -28,7 +28,8 @@ use crate::{
             nav_button::nav_button,
             tooltip::build_tooltip,
         },
-        theme::Theme,
+        constants::INNER_PANEL_GAP,
+        library::library_view_header::LibraryViewHeader,
         util::{create_or_retrieve_view, prune_views},
     },
 };
@@ -492,9 +493,6 @@ impl Render for FilesView {
         self.poll_bridges(cx);
         self.process_restore(cx);
 
-        let theme = cx.global::<Theme>();
-        let border_color = theme.border_color;
-
         let flat = self.flat.clone();
         let row_views = self.row_views.clone();
         let render_counter = self.render_counter.clone();
@@ -504,53 +502,25 @@ impl Render for FilesView {
         let collapse_entity = cx.entity();
         let refresh_entity = cx.entity();
 
-        let header = div()
+        let controls = div()
             .flex()
-            .border_b_1()
-            .border_color(border_color)
-            .w_full()
+            .items_center()
+            .gap(INNER_PANEL_GAP)
             .child(
-                div()
-                    .min_h(px(48.0))
-                    .w_full()
-                    .py(px(12.0))
-                    .pl(px(18.0))
-                    .pr(px(12.0))
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .line_height(px(26.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(22.0))
-                            .child(tr!("FILES")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .child(
-                                nav_button("files-collapse-all", MINIMIZE)
-                                    .tooltip(build_tooltip(tr!(
-                                        "FILES_COLLAPSE_ALL",
-                                        "Collapse all"
-                                    )))
-                                    .on_click(move |_, _, cx| {
-                                        collapse_entity
-                                            .update(cx, |view, cx| view.collapse_all(cx));
-                                    }),
-                            )
-                            .child(
-                                nav_button("files-refresh", REFRESH)
-                                    .tooltip(build_tooltip(tr!("FILES_REFRESH", "Refresh")))
-                                    .on_click(move |_, _, cx| {
-                                        refresh_entity.update(cx, |view, cx| view.refresh_all(cx));
-                                    }),
-                            ),
-                    ),
+                nav_button("files-collapse-all", MINIMIZE)
+                    .tooltip(build_tooltip(tr!("FILES_COLLAPSE_ALL", "Collapse all")))
+                    .on_click(move |_, _, cx| {
+                        collapse_entity.update(cx, |view, cx| view.collapse_all(cx));
+                    }),
+            )
+            .child(
+                nav_button("files-refresh", REFRESH)
+                    .tooltip(build_tooltip(tr!("FILES_REFRESH", "Refresh")))
+                    .on_click(move |_, _, cx| {
+                        refresh_entity.update(cx, |view, cx| view.refresh_all(cx));
+                    }),
             );
+        let header = LibraryViewHeader::new(tr!("FILES")).right(controls);
 
         div()
             .flex()

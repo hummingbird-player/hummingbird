@@ -11,6 +11,7 @@ use crate::{
             icons::{MICROPHONE, icon},
             scrollbar::{ScrollableHandle, floating_scrollbar},
         },
+        constants::PANEL_ROUNDING,
         models::{CurrentTrack, Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         theme::Theme,
@@ -145,7 +146,6 @@ impl Lyrics {
 
 impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
         let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
         let playback_state = *self.playback_state.read(cx);
         let reduced_motion = cx
@@ -155,8 +155,10 @@ impl Render for Lyrics {
             .interface
             .reduced_motion;
 
-        let muted = theme.text_secondary;
-        let normal = theme.text;
+        let (muted, normal, background_primary) = {
+            let theme = cx.global::<Theme>();
+            (theme.text_secondary, theme.text, theme.background_primary)
+        };
 
         if reduced_motion {
             if self.follow_pending || self.scroll_follow.is_active() || self.needs_animation_frame()
@@ -315,7 +317,15 @@ impl Render for Lyrics {
                 .into_any_element()
         };
 
-        div().h_full().w_full().flex().flex_col().child(inner)
+        div()
+            .h_full()
+            .w_full()
+            .overflow_hidden()
+            .rounded(PANEL_ROUNDING)
+            .bg(background_primary)
+            .flex()
+            .flex_col()
+            .child(inner)
     }
 }
 

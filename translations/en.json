@@ -119,6 +119,8 @@
   "HIDE": "Hide Hummingbird",
   "HIDE_OTHERS": "Hide Others",
   "INTERFACE": "Interface",
+  "INTERFACE_ALWAYS_SHOW_FORWARD_BUTTON": "Always show Forward button",
+  "INTERFACE_ALWAYS_SHOW_FORWARD_BUTTON_SUBTEXT": "Keeps the Forward button visible next to Back instead of revealing it on hover.",
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS": "Always show scrollbars",
   "INTERFACE_ALWAYS_SHOW_SCROLLBARS_SUBTEXT": "Keeps scrollbars visible instead of hiding them automatically.",
   "INTERFACE_FULL_WIDTH_LIBRARY": "Full-width library",
@@ -133,8 +135,6 @@
   "INTERFACE_SLIM_SCROLLBARS_SUBTEXT": "Use slimmer scrollbars for a cleaner visual style.",
   "INTERFACE_STARTUP_LIBRARY_VIEW": "Default startup view",
   "INTERFACE_STARTUP_LIBRARY_VIEW_SUBTEXT": "Choose which library page opens when Hummingbird launches.",
-  "INTERFACE_SWAP_MENU_AND_NAV": "Swap menu and navigation buttons",
-  "INTERFACE_SWAP_MENU_AND_NAV_SUBTEXT": "Place the menu before the back/forward buttons so navigation sits closer to the center of the window.",
   "INTERFACE_THEME": "Theme",
   "INTERFACE_THEME_SUBTEXT": "Choose a built-in theme or add your own. Place custom theme files in the themes folder. Changes apply immediately.",
   "INTERFACE_TWO_COLUMN_LIBRARY": "Two-column library",
@@ -290,10 +290,6 @@
   "SORT_RELEASE_ORDER": "Release Order",
   "SORT_TITLE": "Title",
   "STABLE": "Stable",
-  "STATS_TOTAL_LENGTH": {
-    "one": "{{count}} minute",
-    "other": "{{count}} minutes"
-  },
   "STATS_TRACKS": {
     "one": "{{count}} track",
     "other": "{{count}} tracks"

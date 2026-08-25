@@ -73,10 +73,8 @@ impl RenderOnce for WindowHeader {
             .items_center()
             .w_full()
             .text_sm()
-            .min_h(px(37.0))
-            .max_h(px(37.0))
-            .bg(theme.background_secondary)
-            .border_b_1()
+            .min_h(px(30.0))
+            .max_h(px(30.0))
             .id("titlebar")
             .border_color(theme.border_color)
             .window_control_area(WindowControlArea::Drag)
@@ -112,6 +110,7 @@ impl RenderOnce for WindowHeader {
                     div()
                         .flex()
                         .ml(px(6.0))
+                        .gap(px(3.0))
                         .items_center()
                         .child(WindowButton::Minimize)
                         .child(WindowButton::Maximize)
@@ -152,8 +151,8 @@ impl RenderOnce for WindowButton {
 
         div()
             .flex()
-            .w(px(36.0))
-            .h(px(37.0))
+            .w(px(30.0))
+            .h(px(30.0))
             .items_center()
             .justify_center()
             .cursor_pointer()
@@ -186,9 +185,7 @@ impl RenderOnce for WindowButton {
                 })
                 .size(px(14.0)),
             )
-            .when(matches!(self, WindowButton::Close(_)), |this| {
-                this.rounded_tr(APP_ROUNDING)
-            })
+            .rounded(px(4.0))
             .on_click(move |_, window, cx| match self {
                 WindowButton::Close(false) => window.remove_window(),
                 WindowButton::Close(true) => cx.quit(),

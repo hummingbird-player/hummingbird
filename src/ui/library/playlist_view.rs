@@ -37,6 +37,7 @@ use crate::{
             tooltip::build_tooltip,
         },
         library::collection_summary::format_collection_summary,
+        library::library_view_header::LibraryViewHeader,
         library::track_listing::{
             ArtistNameVisibility,
             track_item::{TrackItem, TrackItemLeftField},
@@ -571,10 +572,11 @@ impl Render for PlaylistView {
             .overflow_x_hidden()
             .when(!full_width, |this| this.max_w(px(TABLE_MAX_WIDTH)))
             .h_full()
+            .child(LibraryViewHeader::without_title())
             .child(
                 div()
-                    .pt(px(52.0))
                     .flex()
+                    .pt(px(18.0))
                     .overflow_x_hidden()
                     .flex_shrink(1.0)
                     .flex_col()
@@ -593,7 +595,7 @@ impl Render for PlaylistView {
                                     .w(px(160.0))
                                     .h(px(160.0))
                                     .flex_shrink_0()
-                                    .rounded(px(4.0))
+                                    .rounded(px(8.0))
                                     .overflow_hidden()
                                     .flex()
                                     .items_center()
@@ -925,6 +927,7 @@ impl Render for PlaylistView {
                                                         let track_item = TrackItem::new(
                                                             cx,
                                                             Arc::try_unwrap(track).unwrap(),
+                                                            idx,
                                                             false,
                                                             ArtistNameVisibility::Always,
                                                             TrackItemLeftField::Art,

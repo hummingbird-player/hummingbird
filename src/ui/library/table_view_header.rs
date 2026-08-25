@@ -8,6 +8,7 @@ use crate::ui::{
         table::{Table, TableViewMode},
         tooltip::build_tooltip,
     },
+    library::library_view_header::LibraryViewHeader,
     theme::Theme,
 };
 
@@ -38,7 +39,6 @@ where
 {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let border_color = theme.border_color;
 
         let table_ref = self.table.clone();
         let right = if T::supports_grid_view() {
@@ -52,6 +52,7 @@ where
             Some(
                 div()
                     .flex()
+                    .items_center()
                     .gap_1()
                     .child(
                         nav_button("list_toggle", if !is_grid { LIST } else { LIST_INACTIVE })
@@ -84,29 +85,7 @@ where
             None
         };
 
-        div()
-            .flex()
-            .border_b_1()
-            .border_color(border_color)
-            .w_full()
-            .child(
-                div()
-                    .min_h(px(48.0))
-                    .w_full()
-                    .py(px(12.0))
-                    .pl(px(18.0))
-                    .pr(px(12.0))
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .line_height(px(26.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(22.0))
-                            .child(Table::<T, C>::get_table_name()),
-                    )
-                    .when_some(right, |d, el| d.child(el)),
-            )
+        LibraryViewHeader::new(Table::<T, C>::get_table_name())
+            .when_some(right, |header, controls| header.right(controls))
     }
 }

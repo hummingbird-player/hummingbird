@@ -29,7 +29,7 @@ use crate::{
         },
         library::{
             context_menus::AlbumContextMenuContext,
-            nav_buttons::detail_close_button,
+            library_view_header::LibraryViewHeader,
             track_listing::{
                 ArtistNameVisibility,
                 track_item::{TrackItem, TrackItemLeftField},
@@ -86,10 +86,12 @@ impl ArtistDetailView {
 
             let liked_track_items: Vec<Entity<TrackItem>> = liked_tracks
                 .iter()
-                .map(|track| {
+                .enumerate()
+                .map(|(index, track)| {
                     TrackItem::new(
                         cx,
                         track.clone(),
+                        index,
                         false,
                         ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
                         TrackItemLeftField::Art,
@@ -111,10 +113,12 @@ impl ArtistDetailView {
 
             let standalone_track_items: Vec<Entity<TrackItem>> = standalone_tracks
                 .iter()
-                .map(|track| {
+                .enumerate()
+                .map(|(index, track)| {
                     TrackItem::new(
                         cx,
                         track.clone(),
+                        index,
                         false,
                         ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
                         TrackItemLeftField::Art,
@@ -189,10 +193,12 @@ impl ArtistDetailView {
         self.liked_track_items = self
             .liked_tracks
             .iter()
-            .map(|track: &Track| {
+            .enumerate()
+            .map(|(index, track): (usize, &Track)| {
                 TrackItem::new(
                     cx,
                     track.clone(),
+                    index,
                     false,
                     ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone()),
                     TrackItemLeftField::Art,
@@ -249,10 +255,12 @@ impl ArtistDetailView {
         self.standalone_track_items = self
             .standalone_tracks
             .iter()
-            .map(|track: &Track| {
+            .enumerate()
+            .map(|(index, track): (usize, &Track)| {
                 TrackItem::new(
                     cx,
                     track.clone(),
+                    index,
                     false,
                     ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone()),
                     TrackItemLeftField::Art,
@@ -358,7 +366,6 @@ impl Render for ArtistDetailView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
-        let two_column = settings.interface.two_column_library;
         let grid_min_item_width = crate::settings::interface::clamp_grid_min_item_width(
             settings.interface.grid_min_item_width,
         );
@@ -658,13 +665,11 @@ impl Render for ArtistDetailView {
                             .overflow_x_hidden()
                             .child(
                                 div()
-                                    .pt(px(52.0))
+                                    .pt(px(48.0))
                                     .px(px(18.0))
                                     .w_full()
                                     .relative()
-                                    .when(two_column, |this| {
-                                        this.child(detail_close_button("artist_detail_close"))
-                                    })
+                                    .child(LibraryViewHeader::detail("artist_detail_close"))
                                     .child(
                                         div()
                                             .font_weight(FontWeight::EXTRA_BOLD)

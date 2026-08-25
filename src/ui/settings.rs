@@ -285,6 +285,7 @@ impl Render for SettingsWindow {
         }
 
         let theme = cx.global::<Theme>();
+        let background_primary = theme.background_primary;
         let active = &self.active;
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_always_visible = {
@@ -331,10 +332,9 @@ impl Render for SettingsWindow {
             .h_full()
             .pt(px(8.0))
             .pb(px(8.0))
-            .pl(px(8.0))
-            .pr(px(7.0))
-            .border_r_1()
-            .border_color(theme.border_color)
+            .px(px(8.0))
+            .rounded(crate::ui::constants::PANEL_ROUNDING)
+            .bg(background_primary)
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -358,11 +358,13 @@ impl Render for SettingsWindow {
                 .child(header())
                 .child(
                     div()
+                        .mt(px(6.0))
                         .flex()
                         .flex_row()
                         .flex_shrink(1.0)
                         .flex_grow(1.0)
                         .min_h(px(0.0))
+                        .gap(crate::ui::constants::PANEL_GAP)
                         .child(sidebar)
                         .child(
                             div()
@@ -372,6 +374,8 @@ impl Render for SettingsWindow {
                                 .flex_shrink(1.0)
                                 .min_h(px(0.0))
                                 .overflow_hidden()
+                                .rounded(crate::ui::constants::PANEL_ROUNDING)
+                                .bg(background_primary)
                                 .child(body)
                                 .when(!fills_height, |this| {
                                     this.child(

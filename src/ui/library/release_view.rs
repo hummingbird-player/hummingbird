@@ -31,7 +31,7 @@ use crate::{
                 AlbumContextMenuContext, add_album_to_playlist_state, album::AlbumContextMenu,
                 navigate_to_album_artists,
             },
-            nav_buttons::detail_close_button,
+            library_view_header::LibraryViewHeader,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
@@ -165,21 +165,18 @@ impl ReleaseView {
         has_available_tracks: bool,
         current_track_in_album: bool,
         is_playing: bool,
-        show_close_button: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
-            .pt(px(52.0))
+            .pt(px(64.0))
             .flex_shrink(1.0)
             .flex()
             .overflow_x_hidden()
             .px(px(18.0))
             .w_full()
             .relative()
-            .when(show_close_button, |this| {
-                this.child(detail_close_button("release_close"))
-            })
+            .child(LibraryViewHeader::detail("release_close"))
             .child(
                 div()
                     .rounded(px(10.0))
@@ -575,7 +572,6 @@ impl Render for ReleaseView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
-        let two_column = settings.interface.two_column_library;
 
         div()
             .image_cache(hummingbird_cache(("release", self.album.id as u64), 1))
@@ -599,7 +595,6 @@ impl Render for ReleaseView {
                         has_available_tracks,
                         current_track_in_album,
                         is_playing,
-                        two_column,
                         window,
                         cx,
                     ))

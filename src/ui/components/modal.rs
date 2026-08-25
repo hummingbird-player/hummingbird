@@ -18,6 +18,7 @@ pub type OnExitHandler = dyn Fn(&mut Window, &mut App);
 pub struct Modal {
     div: Stateful<Div>,
     on_exit: Option<Rc<OnExitHandler>>,
+    transparent: bool,
 }
 
 impl Modal {
@@ -25,11 +26,19 @@ impl Modal {
         Modal {
             div: div().id("modal-fg"),
             on_exit: None,
+            transparent: false,
         }
     }
 
     pub fn on_exit(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_exit = Some(Rc::new(handler));
+        self
+    }
+
+    /// Removes the modal foreground surface so children can render as separate
+    /// floating sections while retaining the modal overlay and dismissal behavior.
+    pub fn transparent(mut self) -> Self {
+        self.transparent = true;
         self
     }
 }
@@ -110,11 +119,14 @@ impl RenderOnce for Modal {
                     self.div
                         .occlude()
                         .m_auto()
-                        .border_color(theme.elevated_border_color)
-                        .border_1()
-                        .bg(theme.elevated_background)
-                        .rounded(px(8.0))
+                        .flex()
                         .flex_col()
+                        .when(!self.transparent, |this| {
+                            this.border_color(theme.elevated_border_color)
+                                .border_1()
+                                .bg(theme.elevated_background)
+                                .rounded(px(8.0))
+                        })
                         .on_any_mouse_down(|_, _, cx| {
                             cx.stop_propagation();
                         }),

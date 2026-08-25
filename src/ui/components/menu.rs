@@ -329,7 +329,6 @@ impl RenderOnce for MenuSeparator {
             .h(px(1.0))
             .flex_shrink_0()
             .bg(theme.elevated_border_color)
-            .mx(px(4.0))
             .my(px(2.0))
     }
 }

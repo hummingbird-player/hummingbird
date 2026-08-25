@@ -71,3 +71,4 @@ pub const FILTER_HIGH_PASS: &str = "!bundled:icons/filter-high-pass.svg";
 pub const FILTER_BAND_PASS: &str = "!bundled:icons/filter-band-pass.svg";
 pub const FILTER_NOTCH: &str = "!bundled:icons/filter-notch.svg";
 pub const ACCESS_POINT: &str = "!bundled:icons/access-point.svg";
+pub const HUMMINGBIRD: &str = "!bundled:icons/hummingbird-symbolic.svg";

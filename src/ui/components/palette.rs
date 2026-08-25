@@ -6,8 +6,8 @@ use tracing::trace;
 use std::sync::Arc;
 
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement,
-    Render, Styled, Window, div, prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, FontWeight, IntoElement,
+    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use nucleo::Utf32String;
 
@@ -166,29 +166,43 @@ where
         let theme = cx.global::<Theme>();
 
         div()
+            // the rest of the design is going to pretend this bg isn't here, but it's here
+            // to stop the visual noise from the background from going through
+            .rounded(px(6.0))
             .w_full()
             .h_full()
-            .overflow_hidden()
+            .flex()
             .flex_col()
+            .gap(px(8.0))
             .child(
                 div()
                     .w_full()
-                    .p(px(12.0))
-                    .line_height(px(14.0))
-                    .h(px(40.0))
-                    .text_sm()
-                    .border_b(px(1.0))
+                    .py(px(12.0))
+                    .px(px(14.0))
+                    .line_height(px(18.0))
+                    .h(px(44.0))
+                    .flex_shrink_0()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .overflow_hidden()
+                    .border_1()
                     .border_color(theme.elevated_border_color)
+                    .bg(theme.elevated_background)
+                    .rounded(px(8.0))
                     .child(self.input.clone()),
             )
             .child(
                 div()
                     .flex()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .px(px(6.0))
                     .w_full()
-                    .h_full()
-                    // FIXME: weird layout issue, this is a hack
-                    // eventually this should be removed
-                    .pb(px(40.0))
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(theme.elevated_border_color)
+                    .bg(theme.elevated_background)
+                    .rounded(px(8.0))
+                    .shadow_md()
                     .when_some(self.finder.clone(), |this, finder| this.child(finder)),
             )
     }

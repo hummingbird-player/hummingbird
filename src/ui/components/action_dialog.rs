@@ -288,8 +288,8 @@ fn render_action(action: ActionDialogAction) -> impl IntoElement {
         .size(ButtonSize::Large)
         .intent(intent)
         .w_full()
-        .py(px(8.0))
-        .px(px(14.0))
+        .py(px(10.0))
+        .px(px(12.0))
         .overflow_x_hidden()
         .child(
             div()
@@ -297,8 +297,8 @@ fn render_action(action: ActionDialogAction) -> impl IntoElement {
                 .flex()
                 .items_center()
                 .overflow_x_hidden()
-                .gap(px(12.0))
-                .child(icon(icon_path).size(px(22.0)).flex_shrink_0())
+                .gap(px(10.0))
+                .child(icon(icon_path).size(px(18.0)).flex_shrink_0().mb_auto())
                 .child(
                     div()
                         .flex()
@@ -307,6 +307,7 @@ fn render_action(action: ActionDialogAction) -> impl IntoElement {
                         .child(
                             div()
                                 .text_sm()
+                                .line_height(px(18.0))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(title),
                         )
@@ -315,6 +316,8 @@ fn render_action(action: ActionDialogAction) -> impl IntoElement {
                                 div()
                                     .overflow_x_hidden()
                                     .text_xs()
+                                    .mt(px(6.0))
+                                    .line_height(px(20.0))
                                     .opacity(0.7)
                                     .child(subtitle),
                             )
@@ -362,7 +365,7 @@ fn render_details(details: ActionDialogDetails) -> impl IntoElement {
                         .id(format!("action-dialog-item-{idx}"))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(px(12.0))
                         .py(px(4.0))
                         .px(px(6.0))
                         .rounded(px(4.0))
@@ -371,7 +374,7 @@ fn render_details(details: ActionDialogDetails) -> impl IntoElement {
                         })
                         .child(
                             div()
-                                .text_xs()
+                                .text_sm()
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .child(item),

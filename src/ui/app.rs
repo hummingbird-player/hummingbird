@@ -53,6 +53,7 @@ use super::{
         modal::{self, ModalActive},
         window_chrome::window_chrome,
     },
+    constants::PANEL_GAP,
     controls::Controls,
     global_actions::register_actions,
     header::Header,
@@ -127,11 +128,17 @@ impl Render for MainWindow {
                     .max_w_full()
                     .max_h_full()
                     .child(
-                        AnyView::from(self.controls.clone())
-                            .cached(StyleRefinement::default().w_full().flex().h(px(68.0))),
+                        AnyView::from(self.controls.clone()).cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .flex()
+                                .flex_shrink_0()
+                                .h(px(60.0)),
+                        ),
                     )
                     .child(
                         div()
+                            .my(PANEL_GAP)
                             .w_full()
                             .h_full()
                             .flex()
