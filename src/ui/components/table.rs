@@ -245,8 +245,9 @@ where
         });
     }
 
-    pub fn get_items(&self) -> Option<Arc<Vec<T::Identifier>>> {
-        self.items.clone()
+    /// The current sort selection (if there is one).
+    pub fn get_sort(&self, cx: &App) -> Option<TableSort<C>> {
+        *self.sort_method.read(cx)
     }
 
     pub fn toggle_column(&mut self, column: C, cx: &mut App) {

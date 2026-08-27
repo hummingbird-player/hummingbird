@@ -43,7 +43,7 @@ use crate::{
 
 use super::ViewSwitchMessage;
 
-type GridHandler = dyn Fn(&mut App, &(u32, String)) + 'static;
+type GridHandler = dyn Fn(&mut App, &u32) + 'static;
 
 pub struct ArtistDetailView {
     artist_id: i64,
@@ -713,7 +713,7 @@ impl Render for ArtistDetailView {
                                 let handler: Option<Rc<GridHandler>> =
                                     Some(Rc::new(move |cx, id| {
                                         nav_model.update(cx, |_, cx| {
-                                            cx.emit(ViewSwitchMessage::Release(id.0 as i64, None));
+                                            cx.emit(ViewSwitchMessage::Release(*id as i64, None));
                                         });
                                     }));
 
@@ -741,7 +741,7 @@ impl Render for ArtistDetailView {
                                                     cx,
                                                 );
 
-                                                let item_id = album_ids[idx].clone();
+                                                let item_id = album_ids[idx].0;
 
                                                 let view = create_or_retrieve_view(
                                                     &grid_views_model,

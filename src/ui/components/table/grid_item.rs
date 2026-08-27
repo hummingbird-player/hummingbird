@@ -80,13 +80,14 @@ where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let row_data = self.row.clone();
         let is_available = self.is_available;
-        let context_menu =
-            self.row
-                .get_context_menu(window, cx, &self.context_menu_context, self.grid_context);
+        // Menus are built only when one opens; see TableItem::render for why this matters.
+        let menu_context = self.context_menu_context.clone();
         let theme = cx.global::<Theme>();
+        let menu_bg = theme.elevated_background;
+        let grid_context = self.grid_context;
 
         let drag_data = if is_available {
             self.row.get_drag_data()
@@ -195,22 +196,20 @@ where
                 )
             });
 
-        if let Some((menu, overlay)) = context_menu {
-            let ctx = context(self.id.clone())
-                .w_full()
-                .h_full()
-                .with(content)
-                .child(div().bg(theme.elevated_background).child(menu));
-            match overlay {
-                Some(overlay) => div()
-                    .size_full()
-                    .child(ctx)
-                    .child(overlay)
-                    .into_any_element(),
-                None => ctx.into_any_element(),
-            }
-        } else {
-            content.into_any_element()
-        }
+        context(self.id.clone())
+            .w_full()
+            .h_full()
+            .with(content)
+            .menu_on_open(move |window, cx| {
+                match row_data.get_context_menu(window, cx, &menu_context, grid_context) {
+                    Some((menu, overlay)) => div()
+                        .bg(menu_bg)
+                        .child(menu)
+                        .when_some(overlay, |this, overlay| this.child(overlay))
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                }
+            })
+            .into_any_element()
     }
 }

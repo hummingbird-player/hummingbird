@@ -112,7 +112,7 @@ impl Column for AlbumColumn {
 }
 
 impl TableData<AlbumColumn> for Album {
-    type Identifier = (u32, String);
+    type Identifier = u32;
     type ContextMenuContext = AlbumContextMenuContext;
 
     fn get_table_name() -> SharedString {
@@ -175,11 +175,15 @@ impl TableData<AlbumColumn> for Album {
             _ => AlbumSortMethod::ArtistAsc,
         };
 
-        Ok(cx.list_albums(sort_method)?)
+        Ok(cx
+            .list_albums(sort_method)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_album_by_id(id.0 as i64, AlbumMethod::Metadata).ok())
+        Ok(cx.get_album_by_id(id as i64, AlbumMethod::Metadata).ok())
     }
 
     fn get_column(&self, _cx: &mut App, column: AlbumColumn) -> Option<SharedString> {
@@ -212,7 +216,7 @@ impl TableData<AlbumColumn> for Album {
     }
 
     fn get_table_id(&self) -> Self::Identifier {
-        (self.id as u32, self.title.0.clone().into())
+        self.id as u32
     }
 
     fn available_columns() -> IndexMap<AlbumColumn, f32, FxBuildHasher> {
@@ -329,8 +333,62 @@ impl Column for TrackColumn {
     }
 }
 
+pub fn track_table_sort(sort: Option<TableSort<TrackColumn>>) -> TrackSortMethod {
+    match sort {
+        Some(TableSort {
+            column: TrackColumn::Title,
+            ascending: true,
+        }) => TrackSortMethod::TitleAsc,
+        Some(TableSort {
+            column: TrackColumn::Title,
+            ascending: false,
+        }) => TrackSortMethod::TitleDesc,
+        Some(TableSort {
+            column: TrackColumn::Artist,
+            ascending: true,
+        }) => TrackSortMethod::ArtistAsc,
+        Some(TableSort {
+            column: TrackColumn::Artist,
+            ascending: false,
+        }) => TrackSortMethod::ArtistDesc,
+        Some(TableSort {
+            column: TrackColumn::Album,
+            ascending: true,
+        }) => TrackSortMethod::AlbumAsc,
+        Some(TableSort {
+            column: TrackColumn::Album,
+            ascending: false,
+        }) => TrackSortMethod::AlbumDesc,
+        Some(TableSort {
+            column: TrackColumn::Length,
+            ascending: true,
+        }) => TrackSortMethod::DurationAsc,
+        Some(TableSort {
+            column: TrackColumn::Length,
+            ascending: false,
+        }) => TrackSortMethod::DurationDesc,
+        Some(TableSort {
+            column: TrackColumn::TrackNumber,
+            ascending: true,
+        }) => TrackSortMethod::TrackNumberAsc,
+        Some(TableSort {
+            column: TrackColumn::TrackNumber,
+            ascending: false,
+        }) => TrackSortMethod::TrackNumberDesc,
+        Some(TableSort {
+            column: TrackColumn::Genres,
+            ascending: true,
+        }) => TrackSortMethod::GenresAsc,
+        Some(TableSort {
+            column: TrackColumn::Genres,
+            ascending: false,
+        }) => TrackSortMethod::GenresDesc,
+        _ => TrackSortMethod::ArtistAsc,
+    }
+}
+
 impl TableData<TrackColumn> for Track {
-    type Identifier = (i64, String, Option<i64>, String);
+    type Identifier = i64;
     type ContextMenuContext = TrackContextMenuContext;
 
     fn get_table_name() -> SharedString {
@@ -341,63 +399,15 @@ impl TableData<TrackColumn> for Track {
         cx: &mut gpui::App,
         sort: Option<TableSort<TrackColumn>>,
     ) -> anyhow::Result<Vec<Self::Identifier>> {
-        let sort_method = match sort {
-            Some(TableSort {
-                column: TrackColumn::Title,
-                ascending: true,
-            }) => TrackSortMethod::TitleAsc,
-            Some(TableSort {
-                column: TrackColumn::Title,
-                ascending: false,
-            }) => TrackSortMethod::TitleDesc,
-            Some(TableSort {
-                column: TrackColumn::Artist,
-                ascending: true,
-            }) => TrackSortMethod::ArtistAsc,
-            Some(TableSort {
-                column: TrackColumn::Artist,
-                ascending: false,
-            }) => TrackSortMethod::ArtistDesc,
-            Some(TableSort {
-                column: TrackColumn::Album,
-                ascending: true,
-            }) => TrackSortMethod::AlbumAsc,
-            Some(TableSort {
-                column: TrackColumn::Album,
-                ascending: false,
-            }) => TrackSortMethod::AlbumDesc,
-            Some(TableSort {
-                column: TrackColumn::Length,
-                ascending: true,
-            }) => TrackSortMethod::DurationAsc,
-            Some(TableSort {
-                column: TrackColumn::Length,
-                ascending: false,
-            }) => TrackSortMethod::DurationDesc,
-            Some(TableSort {
-                column: TrackColumn::TrackNumber,
-                ascending: true,
-            }) => TrackSortMethod::TrackNumberAsc,
-            Some(TableSort {
-                column: TrackColumn::TrackNumber,
-                ascending: false,
-            }) => TrackSortMethod::TrackNumberDesc,
-            Some(TableSort {
-                column: TrackColumn::Genres,
-                ascending: true,
-            }) => TrackSortMethod::GenresAsc,
-            Some(TableSort {
-                column: TrackColumn::Genres,
-                ascending: false,
-            }) => TrackSortMethod::GenresDesc,
-            _ => TrackSortMethod::ArtistAsc,
-        };
-
-        Ok(cx.list_tracks(sort_method)?)
+        Ok(cx
+            .list_tracks(track_table_sort(sort))?
+            .into_iter()
+            .map(|(id, _, _, _)| id)
+            .collect())
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_track_by_id(id.0).ok())
+        Ok(cx.get_track_by_id(id).ok())
     }
 
     fn get_column(&self, cx: &mut App, column: TrackColumn) -> Option<SharedString> {
@@ -468,12 +478,7 @@ impl TableData<TrackColumn> for Track {
     }
 
     fn get_table_id(&self) -> Self::Identifier {
-        (
-            self.id,
-            self.title.0.clone().into(),
-            self.album_id,
-            self.location.to_string_lossy().to_string(),
-        )
+        self.id
     }
 
     fn available_columns() -> IndexMap<TrackColumn, f32, FxBuildHasher> {

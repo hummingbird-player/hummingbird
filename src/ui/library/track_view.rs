@@ -4,12 +4,18 @@ use std::{
     rc::Rc,
 };
 
+use tracing::debug;
+
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
     library::{
+        db::LibraryAccess,
         scan::ScanEvent,
-        types::{Track, table::TrackColumn},
+        types::{
+            Track,
+            table::{TrackColumn, track_table_sort},
+        },
     },
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     ui::{
@@ -42,40 +48,23 @@ impl TrackView {
             let table_ref = Rc::new(RefCell::new(None::<Entity<Table<Track, TrackColumn>>>));
             let table_ref_clone = table_ref.clone();
 
-            let handler = Rc::new(
-                move |cx: &mut App, id: &(i64, String, Option<i64>, String)| {
-                    if let Some(table) = table_ref_clone.borrow().as_ref() {
-                        let items = table.read(cx).get_items();
-                        if let Some(items) = items {
-                            let queue_items: Vec<QueueItemData> = items
-                                .iter()
-                                .filter(|(_, _, _, path)| is_track_path_available(Path::new(path)))
-                                .map(|(id, _, album_id, path)| {
-                                    QueueItemData::new(
-                                        cx,
-                                        PathBuf::from(path),
-                                        Some(*id),
-                                        *album_id,
-                                    )
-                                })
-                                .collect();
-
-                            if queue_items.is_empty() {
-                                return;
-                            }
-
-                            let index = queue_items
-                                .iter()
-                                .position(|item| item.get_db_id() == Some(id.0))
-                                .unwrap_or(0);
-
-                            let playback = cx.global::<PlaybackInterface>();
-                            playback.replace_queue_with_index(queue_items, index);
-                            playback.play();
-                        }
+            let handler = Rc::new(move |cx: &mut App, id: &i64| {
+                if let Some(table) = table_ref_clone.borrow().as_ref() {
+                    let queue_items = playable_queue(cx, table);
+                    if queue_items.is_empty() {
+                        return;
                     }
-                },
-            );
+
+                    let index = queue_items
+                        .iter()
+                        .position(|item| item.get_db_id() == Some(*id))
+                        .unwrap_or(0);
+
+                    let playback = cx.global::<PlaybackInterface>();
+                    playback.replace_queue_with_index(queue_items, index);
+                    playback.play();
+                }
+            });
 
             let context_menu_context = TrackContextMenuContext {
                 show_go_to_album: true,
@@ -87,17 +76,7 @@ impl TrackView {
                         let Some(table) = table_ref_read.as_ref() else {
                             return;
                         };
-                        let Some(items) = table.read(cx).get_items() else {
-                            return;
-                        };
-
-                        let queue_items = items
-                            .iter()
-                            .filter(|(_, _, _, path)| is_track_path_available(Path::new(path)))
-                            .map(|(id, _, album_id, path)| {
-                                QueueItemData::new(cx, PathBuf::from(path), Some(*id), *album_id)
-                            })
-                            .collect::<Vec<_>>();
+                        let queue_items = playable_queue(cx, table);
 
                         play_from_track(cx, track, queue_items);
                     }
@@ -167,5 +146,23 @@ impl Render for TrackView {
                     .child(self.table_view_header.clone())
                     .child(self.table.clone()),
             )
+    }
+}
+
+fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Vec<QueueItemData> {
+    let sort_method = track_table_sort(table.read(cx).get_sort(cx));
+
+    match cx.list_tracks(sort_method) {
+        Ok(rows) => rows
+            .into_iter()
+            .filter(|(_, _, _, path)| is_track_path_available(Path::new(path)))
+            .map(|(id, _, album_id, path)| {
+                QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
+            })
+            .collect(),
+        Err(e) => {
+            debug!("Failed to load tracks for playback: {:?}", e);
+            Vec::new()
+        }
     }
 }

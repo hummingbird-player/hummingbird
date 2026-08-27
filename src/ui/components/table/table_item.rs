@@ -92,13 +92,13 @@ where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let row_data = self.row.clone();
         let is_available = self.is_available;
-        let context_menu = self.row.as_ref().and_then(|row| {
-            row.get_context_menu(window, cx, &self.context_menu_context, GridContext::Table)
-        });
+        let menu_context = self.context_menu_context.clone();
+        let menu_rows = row_data.clone();
         let theme = cx.global::<Theme>();
+        let menu_bg = theme.elevated_background;
         let drag_data = if is_available {
             self.row.as_ref().and_then(|row| row.get_drag_data())
         } else {
@@ -216,16 +216,21 @@ where
             }
         }
 
-        if let Some((menu, overlay)) = context_menu {
-            let ctx = context(self.id.clone().unwrap_or(self.index.into()))
-                .with(row)
-                .child(div().bg(theme.elevated_background).child(menu));
-            match overlay {
-                Some(overlay) => div().w_full().child(ctx).child(overlay).into_any_element(),
-                None => ctx.into_any_element(),
-            }
-        } else {
-            row.into_any_element()
-        }
+        context(self.id.clone().unwrap_or(self.index.into()))
+            .with(row)
+            .menu_on_open(move |window, cx| match menu_rows.as_ref() {
+                Some(row) => {
+                    match row.get_context_menu(window, cx, &menu_context, GridContext::Table) {
+                        Some((menu, overlay)) => div()
+                            .bg(menu_bg)
+                            .child(menu)
+                            .when_some(overlay, |this, overlay| this.child(overlay))
+                            .into_any_element(),
+                        None => div().into_any_element(),
+                    }
+                }
+                None => div().into_any_element(),
+            })
+            .into_any_element()
     }
 }
