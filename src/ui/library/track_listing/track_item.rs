@@ -343,36 +343,53 @@ impl Render for TrackItem {
                                     .child(
                                         div()
                                             .id("like")
-                                            .my_auto()
-                                            .rounded_sm()
                                             .ml(px(10.0))
-                                            .p(px(4.0))
-                                            .child(
-                                                icon(if self.is_liked.is_some() {
-                                                    STAR_FILLED
-                                                } else {
-                                                    STAR
-                                                })
-                                                .size(px(14.0))
-                                                .text_color(if self.is_liked.is_some() {
-                                                    theme.liked_song
-                                                } else {
-                                                    theme.text_secondary
-                                                }),
-                                            )
-                                            .group(self.hover_group.clone())
+                                            .my(px(-6.0))
+                                            .py(px(6.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .group(format!("track-like-{track_id}"))
                                             .when(is_available, |this| {
-                                                this.hover(|this| {
-                                                    this.bg(theme.button_secondary_hover)
-                                                })
-                                                .active(|this| {
-                                                    this.bg(theme.button_secondary_active)
-                                                })
-                                                .on_click(cx.listener(move |_, _, _, cx| {
+                                                this.on_click(cx.listener(move |_, _, _, cx| {
                                                     cx.stop_propagation();
                                                     toggle_like(track_id, cx.entity().clone(), cx);
                                                 }))
-                                            }),
+                                            })
+                                            .child(
+                                                div()
+                                                    .id("like-visual")
+                                                    .h_full()
+                                                    .aspect_ratio(1.0)
+                                                    .rounded_sm()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .when(is_available, |this| {
+                                                        this.group_hover(
+                                                            format!("track-like-{track_id}"),
+                                                            |this| {
+                                                                this.bg(theme.button_secondary_hover)
+                                                            },
+                                                        )
+                                                        .active(|this| {
+                                                            this.bg(theme.button_secondary_active)
+                                                        })
+                                                    })
+                                                    .child(
+                                                        icon(if self.is_liked.is_some() {
+                                                            STAR_FILLED
+                                                        } else {
+                                                            STAR
+                                                        })
+                                                        .size(px(14.0))
+                                                        .text_color(if self.is_liked.is_some() {
+                                                            theme.liked_song
+                                                        } else {
+                                                            theme.text_secondary
+                                                        }),
+                                                    ),
+                                            ),
                                     )
                                     .child(
                                         div()
