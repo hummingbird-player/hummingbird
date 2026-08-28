@@ -92,7 +92,10 @@ impl Render for Controls {
                 .min_size(px(150.0))
                 .max_size(px(500.0))
                 .default_size(DEFAULT_CONTROLS_LEFT_WIDTH)
-                .child(AnyView::from(self.info_section.clone()).cached(StyleRefinement::default())),
+                .child(
+                    AnyView::from(self.info_section.clone())
+                        .cached(StyleRefinement::default().flex().w_full()),
+                ),
             )
             .child(self.scrubber.clone())
             .child(
@@ -310,14 +313,17 @@ impl Render for InfoSection {
         let image_element_key = self.image_element_key;
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
+
         let album_navigation_track = self
             .can_navigate_to_album
             .then(|| self.current_library_track.clone())
             .flatten();
+
         let artist_navigation_track = self
             .can_navigate_to_artist
             .then(|| self.current_library_track.clone())
             .flatten();
+
         let content = div()
             .id("info-section")
             .flex()
@@ -510,7 +516,8 @@ impl Render for InfoSection {
                 .when_some(add_to, |d, add_to| d.child(add_to))
                 .into_any_element()
         } else {
-            content.into_any_element()
+            // no idea why this works and `content.into_any_element()` doesn't, it's just like this
+            div().child(content).into_any_element()
         }
     }
 }
