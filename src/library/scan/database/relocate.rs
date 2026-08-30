@@ -10,9 +10,9 @@ pub async fn relocate_track(
     matcher: &mut ArtistMatcher,
     old: &Utf8Path,
     new: &Utf8Path,
-) -> anyhow::Result<Vec<i64>> {
+) -> anyhow::Result<(Vec<i64>, Option<i64>)> {
     let Some(new_parent) = new.parent() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     };
 
     let existing: Option<(i64,)> = sqlx::query_as(include_str!(
@@ -23,6 +23,7 @@ pub async fn relocate_track(
     .await?;
 
     let mut updated_playlists = Vec::new();
+    let mut affected_album = None;
 
     if let Some((target_id,)) = existing {
         let stale: Option<(i64,)> = sqlx::query_as(include_str!(
@@ -62,6 +63,7 @@ pub async fn relocate_track(
 
             // the removed row may have been the only one crediting an artist or genre
             if let Some((album_id,)) = stale_album {
+                affected_album = Some(album_id);
                 recompute_album_artists(conn, matcher, album_id).await?;
                 recompute_album_genres(conn, album_id).await?;
             }
@@ -85,5 +87,5 @@ pub async fn relocate_track(
         .await?;
     }
 
-    Ok(updated_playlists)
+    Ok((updated_playlists, affected_album))
 }

@@ -9,4 +9,5 @@ FROM
 ORDER BY
     al.title_sortable COLLATE NOCASE DESC,
     t.disc_number ASC,
-    t.track_number ASC;
+    t.track_number ASC,
+    t.track_section ASC;

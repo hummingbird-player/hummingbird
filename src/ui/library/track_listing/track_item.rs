@@ -16,6 +16,7 @@ use crate::ui::models::{
 use crate::ui::util::format_duration;
 
 use crate::library::{db::LibraryAccess, types::Track};
+use crate::media::numbering::{NumberDisplayMode, format_track_position, side_letter};
 use crate::ui::{
     availability::is_track_available,
     components::context::context,
@@ -38,7 +39,8 @@ pub struct TrackItem {
     left_field: TrackItemLeftField,
     album_art: Option<SharedString>,
     pl_info: Option<TrackPlaylistInfo>,
-    vinyl_numbering: bool,
+    number_display_mode: NumberDisplayMode,
+    track_position: Option<SharedString>,
     max_track_num_str: Option<SharedString>,
     is_available: bool,
     queue_context: Option<Arc<Vec<Track>>>,
@@ -83,7 +85,7 @@ impl TrackItem {
         anv: ArtistNameVisibility,
         left_field: TrackItemLeftField,
         pl_info: Option<TrackPlaylistInfo>,
-        vinyl_numbering: bool,
+        number_display_mode: NumberDisplayMode,
         max_track_num_str: Option<SharedString>,
         queue_context: Option<Arc<Vec<Track>>>,
         show_go_to_album: bool,
@@ -91,6 +93,13 @@ impl TrackItem {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let track_id = track.id;
+            let track_position = format_track_position(
+                number_display_mode,
+                track.disc_number,
+                track.track_number,
+                track.track_section,
+            )
+            .map(SharedString::from);
 
             subscribe_liked_updates(cx, move |_| Some(track_id));
 
@@ -110,7 +119,8 @@ impl TrackItem {
                 artist_name_visibility: anv,
                 left_field,
                 pl_info,
-                vinyl_numbering,
+                number_display_mode,
+                track_position,
                 max_track_num_str,
                 queue_context,
                 show_go_to_album,
@@ -207,13 +217,12 @@ impl Render for TrackItem {
                                         .pb(px(6.0))
                                         .text_ellipsis()
                                         .when_some(self.track.disc_number, |this, num| {
-                                            if self.vinyl_numbering {
-                                                let side = (b'A' + (num - 1) as u8) as char;
-                                                let side = side.to_string(); // TODO: fix this upstream
+                                            if self.number_display_mode != NumberDisplayMode::Standard {
                                                 this.child(tr!(
                                                     "TRACK_SIDE",
                                                     "Side {{side}}",
-                                                    side = side
+                                                    side = side_letter(num)
+                                                        .unwrap_or_else(|| num.to_string())
                                                 ))
                                             } else if let Some(subtitle) = &self.track.disc_subtitle
                                             {
@@ -289,11 +298,9 @@ impl Render for TrackItem {
                                                 .text_align(TextAlign::Right)
                                                 .mr(px(13.0))
                                                 .text_color(theme.text_secondary)
-                                                // TODO: handle these numerals better
-                                                .child(format!(
-                                                    "{}",
-                                                    self.track.track_number.unwrap_or_default()
-                                                )),
+                                                .child(
+                                                    self.track_position.clone().unwrap_or_default(),
+                                                ),
                                         )
                                     })
                                     .when(self.left_field == TrackItemLeftField::Art, |this| {

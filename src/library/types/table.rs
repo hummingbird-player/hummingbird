@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{
     library::db::{AlbumMethod, AlbumSortMethod, ArtistSortMethod, LibraryAccess, TrackSortMethod},
+    media::numbering::format_track_table_position,
     ui::{
         availability::{
             album_has_available_tracks, artist_has_available_tracks, is_track_available,
@@ -413,24 +414,19 @@ impl TableData<TrackColumn> for Track {
     fn get_column(&self, cx: &mut App, column: TrackColumn) -> Option<SharedString> {
         match column {
             TrackColumn::TrackNumber => {
-                let vinyl_numbering = self
+                let number_display_mode = self
                     .album_id
                     .and_then(|id| cx.get_album_by_id(id, AlbumMethod::Metadata).ok())
-                    .map(|album| album.vinyl_numbering)
-                    .unwrap_or(false);
+                    .map(|album| album.number_display_mode)
+                    .unwrap_or_default();
 
-                match (self.disc_number, self.track_number) {
-                    (Some(disc), Some(track)) => {
-                        if vinyl_numbering {
-                            let side = (b'A' + (disc - 1) as u8) as char;
-                            Some(format!("{}{}", side, track).into())
-                        } else {
-                            Some(format!("{}-{}", disc, track).into())
-                        }
-                    }
-                    (None, Some(track)) => Some(track.to_string().into()),
-                    _ => None,
-                }
+                format_track_table_position(
+                    number_display_mode,
+                    self.disc_number,
+                    self.track_number,
+                    self.track_section,
+                )
+                .map(SharedString::from)
             }
             TrackColumn::Title => Some(self.title.0.clone()),
             TrackColumn::Album => {

@@ -88,7 +88,7 @@ impl ReleaseView {
                 cx,
                 tracks.clone(),
                 ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
-                album.vinyl_numbering,
+                album.number_display_mode,
                 false,
                 true,
             );

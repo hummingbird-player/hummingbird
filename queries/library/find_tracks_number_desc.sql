@@ -7,4 +7,5 @@ FROM
     track t
 ORDER BY
     t.disc_number DESC,
-    t.track_number DESC;
+    t.track_number DESC,
+    t.track_section ASC;

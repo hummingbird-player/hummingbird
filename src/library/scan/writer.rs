@@ -89,7 +89,6 @@ pub(super) fn clear_failed_batch(
     artist_matcher.clear();
     caches.albums.clear();
     caches.paths.clear();
-    caches.force_encountered.clear();
     caches.folder_art_candidates.clear();
     caches.art_ids.clear();
 }

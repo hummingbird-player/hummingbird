@@ -2,10 +2,11 @@ pub mod track_item;
 
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, Entity, IntoElement};
+use gpui::{AnyElement, App, Entity, IntoElement, SharedString};
 
 use crate::{
     library::types::{DBString, Track},
+    media::numbering::{NumberDisplayMode, format_track_position},
     ui::library::track_listing::track_item::TrackItemLeftField,
 };
 use track_item::TrackItem;
@@ -24,21 +25,33 @@ pub struct TrackListing {
     original_tracks: Arc<Vec<Track>>,
 }
 
+fn is_group_start(index: usize, prev: Option<&Track>, track: &Track) -> bool {
+    index == 0
+        || (track.track_number == Some(1) && track.track_section.is_none())
+        || prev.is_some_and(|prev| prev.disc_number != track.disc_number)
+}
+
 impl TrackListing {
     pub fn new(
         cx: &mut App,
         tracks: Arc<Vec<Track>>,
         artist_name_visibility: ArtistNameVisibility,
-        vinyl_numbering: bool,
+        number_display_mode: NumberDisplayMode,
         show_go_to_album: bool,
         show_go_to_artist: bool,
     ) -> Self {
-        // find biggest track number and provide it to track item for measurement
         let max_track_num_str = tracks
             .iter()
-            .filter_map(|t| t.track_number)
-            .max()
-            .map(|n| format!("{}", n).into());
+            .filter_map(|track| {
+                format_track_position(
+                    number_display_mode,
+                    track.disc_number,
+                    track.track_number,
+                    track.track_section,
+                )
+            })
+            .max_by_key(|label| label.chars().count())
+            .map(SharedString::from);
 
         Self {
             tracks: Arc::new({
@@ -47,25 +60,19 @@ impl TrackListing {
                     .iter()
                     .enumerate()
                     .map(move |(index, track)| {
-                        let color_index = track
-                            .track_number
-                            .and_then(|number| number.checked_sub(1))
-                            .and_then(|number| usize::try_from(number).ok())
-                            .unwrap_or(index);
-
                         TrackItem::new(
                             cx,
                             track.clone(),
-                            color_index,
-                            index == 0
-                                || track.track_number == Some(1)
-                                || tracks_for_closure
-                                    .get(index - 1)
-                                    .is_some_and(|t| t.disc_number != track.disc_number),
+                            index,
+                            is_group_start(
+                                index,
+                                tracks_for_closure.get(index.wrapping_sub(1)),
+                                track,
+                            ),
                             artist_name_visibility.clone(),
                             TrackItemLeftField::TrackNum,
                             None,
-                            vinyl_numbering,
+                            number_display_mode,
                             max_track_num_str.clone(),
                             None,
                             show_go_to_album,
@@ -88,5 +95,59 @@ impl TrackListing {
             .cloned()
             .map(|track| track.into_any_element())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::types::DBString;
+
+    fn track(number: Option<i32>, section: Option<i32>, disc: Option<i32>) -> Track {
+        Track {
+            id: 0,
+            title: DBString::default(),
+            title_sortable: DBString::default(),
+            album_id: None,
+            track_number: number,
+            track_section: section,
+            disc_number: disc,
+            duration: 0,
+            created_at: chrono::DateTime::<chrono::Utc>::default(),
+            genres: Vec::new(),
+            tags: None,
+            location: "".into(),
+            artist_names: None,
+            rg_track_gain: None,
+            rg_track_peak: None,
+            rg_album_gain: None,
+            rg_album_peak: None,
+            disc_subtitle: None,
+            release_date: None,
+            date_precision: None,
+        }
+    }
+
+    #[test]
+    fn finds_group_starts() {
+        let one = track(Some(1), None, None);
+        let one_one = track(Some(1), Some(1), None);
+        let one_two = track(Some(1), Some(2), None);
+        let two = track(Some(2), None, None);
+
+        assert!(is_group_start(0, None, &one));
+        assert!(!is_group_start(1, Some(&one), &one_one));
+        assert!(!is_group_start(2, Some(&one_one), &one_two));
+        assert!(!is_group_start(3, Some(&one_two), &two));
+        assert!(is_group_start(
+            3,
+            Some(&track(Some(4), None, Some(1))),
+            &track(Some(1), None, Some(2))
+        ));
+        assert!(is_group_start(
+            2,
+            Some(&track(Some(7), None, None)),
+            &track(Some(1), None, None)
+        ));
     }
 }

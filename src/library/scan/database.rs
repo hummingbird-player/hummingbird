@@ -23,6 +23,7 @@ use crate::{
 
 pub use albums::AlbumCacheKey;
 use albums::insert_album;
+pub(crate) use albums::reconcile_album_numbering;
 pub(crate) use artist_links::recompute_album_artists;
 pub use artist_links::{flush_album_artists, flush_track_artists, sweep_orphan_artists};
 pub(crate) use genre_links::recompute_album_genres;
@@ -47,8 +48,8 @@ use crate::library::{
 
 #[derive(Default)]
 pub(crate) struct WriteCaches {
-    pub(crate) force_encountered: FxHashSet<i64>,
     pub(crate) albums: FxHashMap<AlbumCacheKey, i64>,
+    pub(crate) numbering_albums: FxHashSet<i64>,
     pub(crate) paths: FxHashMap<AlbumPathCacheKey, Utf8PathBuf>,
     pub(crate) pending_albums: FxHashSet<i64>,
     pub(crate) pending_tracks: FxHashSet<i64>,
@@ -85,10 +86,13 @@ pub async fn update_metadata(
         metadata,
         display_override,
         is_force,
-        &mut caches.force_encountered,
         &mut caches.albums,
     )
     .await?;
+
+    if let Some(album_id) = album_id {
+        caches.numbering_albums.insert(album_id);
+    }
 
     // a retag can move the track to another album - the old album needs a rebuild too
     let previous_album: Option<(Option<i64>,)> = sqlx::query_as(include_str!(
@@ -112,6 +116,10 @@ pub async fn update_metadata(
     else {
         return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
     };
+
+    if let Some((Some(previous_album),)) = previous_album {
+        caches.numbering_albums.insert(previous_album);
+    }
 
     sync_track_genres(conn, track_id, &metadata.genres).await?;
 

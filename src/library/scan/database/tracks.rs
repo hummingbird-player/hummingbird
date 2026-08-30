@@ -160,14 +160,17 @@ pub(super) async fn insert_track(
     let (release_date, date_precision) = bind_release_date(metadata);
     let artists = encode_artist_list(&metadata.artists);
     let album_artist_keys = encode_artist_list(&metadata.album_artist_keys);
+    let track_number = metadata.track_current.map(i32::try_from).transpose()?;
+    let disc_number = metadata.disc_current.map(i32::try_from).transpose()?;
+    let track_section = metadata.track_section.map(i32::try_from).transpose()?;
 
     let result: Result<(i64,), sqlx::Error> =
         sqlx::query_as(include_str!("../../../../queries/scan/create_track.sql"))
             .bind(&name)
             .bind(&name)
             .bind(album_id)
-            .bind(metadata.track_current.map(|x| x as i32))
-            .bind(metadata.disc_current.map(|x| x as i32))
+            .bind(track_number)
+            .bind(disc_number)
             .bind(length as i32)
             .bind(path.as_str())
             .bind(&metadata.artist)
@@ -183,6 +186,8 @@ pub(super) async fn insert_track(
             .bind(art_hash)
             .bind(release_date)
             .bind(date_precision)
+            .bind(track_section)
+            .bind(metadata.number_display_mode)
             .fetch_one(&mut *conn)
             .await;
 

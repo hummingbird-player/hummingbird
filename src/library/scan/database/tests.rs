@@ -1,4 +1,9 @@
 use super::*;
+use crate::media::metadata::{MetadataTag, apply_tag};
+use crate::media::numbering::NumberDisplayMode;
+use crate::test_support::{
+    TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata, track_metadata,
+};
 use chrono::{TimeZone, Utc};
 
 fn names(values: &[&str]) -> smallvec::SmallVec<[String; 2]> {
@@ -67,10 +72,6 @@ fn binds_full_release_dates() {
     );
 }
 
-use crate::test_support::{
-    TestDir, add_track_to_playlist, count_rows, create_test_pool, insert_metadata, track_metadata,
-};
-
 async fn track_genres(pool: &SqlitePool, path: &Utf8Path) -> Vec<(String, i64)> {
     sqlx::query_as(
         "SELECT genre.name, track_genre.position
@@ -84,6 +85,34 @@ async fn track_genres(pool: &SqlitePool, path: &Utf8Path) -> Vec<(String, i64)> 
     .fetch_all(pool)
     .await
     .unwrap()
+}
+
+async fn write_numbered_track(
+    conn: &mut SqliteConnection,
+    caches: &mut WriteCaches,
+    path: &Utf8Path,
+    tag: &str,
+) {
+    let mut metadata = track_metadata("Singles", "Artist", tag, 1);
+    apply_tag(MetadataTag::TrackNumber(tag.to_string()), &mut metadata);
+    update_metadata(
+        conn,
+        &metadata,
+        path,
+        100,
+        &FileArt::default(),
+        false,
+        caches,
+    )
+    .await
+    .unwrap();
+}
+
+async fn album_numbering(conn: &mut SqliteConnection) -> i32 {
+    sqlx::query_scalar("SELECT number_display_mode FROM album")
+        .fetch_one(conn)
+        .await
+        .unwrap()
 }
 
 async fn album_genres(pool: &SqlitePool, album: &str) -> Vec<(String, i64)> {
@@ -344,12 +373,14 @@ async fn relocate_track_updates_location_and_preserves_references() {
         .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
-    let updated = relocate_track(&mut conn, &mut ArtistMatcher::new(), &old, &new)
-        .await
-        .unwrap();
+    let (updated, affected_album) =
+        relocate_track(&mut conn, &mut ArtistMatcher::new(), &old, &new)
+            .await
+            .unwrap();
     drop(conn);
 
     assert!(updated.is_empty());
+    assert_eq!(affected_album, None);
     assert_eq!(count_rows(&pool, "track").await, 1);
     assert_eq!(count_rows(&pool, "lyrics").await, 1);
     assert_eq!(count_rows(&pool, "playlist_item").await, 1);
@@ -402,7 +433,7 @@ async fn relocate_track_merges_into_existing_row() {
         .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
-    let updated = relocate_track(
+    let (updated, affected_album) = relocate_track(
         &mut conn,
         &mut ArtistMatcher::new(),
         &stale_path,
@@ -413,6 +444,7 @@ async fn relocate_track_merges_into_existing_row() {
     drop(conn);
 
     assert_eq!(updated, vec![playlist_id]);
+    assert!(affected_album.is_some());
     assert_eq!(count_rows(&pool, "track").await, 1);
 
     let (track_id,): (i64,) = sqlx::query_as("SELECT track_id FROM playlist_item")
@@ -423,6 +455,124 @@ async fn relocate_track_merges_into_existing_row() {
     assert_eq!(
         album_genres(&pool, "Album").await,
         vec![("Jazz".to_string(), 0)]
+    );
+}
+
+#[tokio::test]
+async fn vinyl_single_tags_map_to_side_numbers_and_set_display_mode() {
+    let (dir, pool) = create_test_pool("db-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let mut caches = WriteCaches::default();
+
+    for tag in ["A", "AA", "B"] {
+        write_numbered_track(
+            &mut conn,
+            &mut caches,
+            &dir.utf8_join(format!("{tag}.flac").as_str()),
+            tag,
+        )
+        .await;
+    }
+
+    let rows: Vec<(Option<i32>, Option<i32>, i32)> = sqlx::query_as(
+        "SELECT disc_number, track_number, number_display_mode_hint
+         FROM track ORDER BY disc_number, track_number",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (Some(1), Some(1), NumberDisplayMode::VinylSingle as i32),
+            (Some(1), Some(2), NumberDisplayMode::VinylSingle as i32),
+            (Some(2), Some(1), NumberDisplayMode::VinylSingle as i32),
+        ]
+    );
+
+    assert_eq!(
+        album_numbering(&mut conn).await,
+        NumberDisplayMode::VinylSingle as i32
+    );
+}
+
+#[tokio::test]
+async fn incremental_scan_reconciles_numbering_with_unchanged_tracks() {
+    let (dir, pool) = create_test_pool("db-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let paths = [dir.utf8_join("1.flac"), dir.utf8_join("2.flac")];
+
+    let mut caches = WriteCaches::default();
+    for (path, tag) in paths.iter().zip(["1", "AA"]) {
+        write_numbered_track(&mut conn, &mut caches, path, tag).await;
+    }
+
+    assert_eq!(
+        album_numbering(&mut conn).await,
+        NumberDisplayMode::Standard as i32
+    );
+
+    reconcile_album_numbering(&pool, &caches.numbering_albums)
+        .await
+        .unwrap();
+
+    let mut incremental = WriteCaches::default();
+    write_numbered_track(&mut conn, &mut incremental, &paths[0], "1").await;
+    assert_eq!(
+        album_numbering(&mut conn).await,
+        NumberDisplayMode::Standard as i32
+    );
+
+    reconcile_album_numbering(&pool, &incremental.numbering_albums)
+        .await
+        .unwrap();
+    assert_eq!(
+        album_numbering(&mut conn).await,
+        NumberDisplayMode::VinylSingle as i32
+    );
+
+    write_numbered_track(&mut conn, &mut incremental, &paths[1], "2").await;
+    reconcile_album_numbering(&pool, &incremental.numbering_albums)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        album_numbering(&mut conn).await,
+        NumberDisplayMode::Standard as i32
+    );
+}
+
+#[tokio::test]
+async fn section_tags_are_stored_per_track() {
+    let (dir, pool) = create_test_pool("db-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+
+    for tag in ["1.1", "1.2", "A1.1"] {
+        let mut meta = track_metadata("Movements", "Artist", &format!("Track {tag}"), 1);
+        meta.disc_current = None;
+        apply_tag(MetadataTag::TrackNumber(tag.to_string()), &mut meta);
+        insert_metadata(
+            &mut conn,
+            &meta,
+            &dir.utf8_join(format!("{tag}.flac").as_str()),
+        )
+        .await
+        .unwrap();
+    }
+
+    let rows: Vec<(Option<i32>, Option<i32>, Option<i32>)> = sqlx::query_as(
+        "SELECT disc_number, track_number, track_section FROM track ORDER BY disc_number, track_number, track_section",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (None, Some(1), Some(1)),
+            (None, Some(1), Some(2)),
+            (Some(1), Some(1), Some(1)),
+        ]
     );
 }
 

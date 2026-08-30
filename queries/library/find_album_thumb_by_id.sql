@@ -10,7 +10,7 @@ SELECT
     album.label,
     album.catalog_number,
     album.isrc,
-    album.vinyl_numbering
+    album.number_display_mode
 FROM album
 LEFT JOIN artwork ON artwork.id = album.artwork_id
 WHERE album.id = $1;

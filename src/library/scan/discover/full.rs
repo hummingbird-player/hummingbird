@@ -287,6 +287,10 @@ mod tests {
         discover::{file_scan_timestamp, helpers::*},
         fs_case::is_case_insensitive,
     };
+    use crate::media::{
+        metadata::{MetadataTag, apply_tag},
+        numbering::NumberDisplayMode,
+    };
 
     #[test]
     fn discover_emits_supported_files_recursively() {
@@ -803,6 +807,7 @@ mod tests {
     async fn cleanup_with_exclusions_keeps_album_when_other_tracks_remain() {
         let (dir, pool) = create_test_pool("cleanup-test").await;
         let mut meta1 = track_metadata("Album", "Artist", "Track 1", 1);
+        apply_tag(MetadataTag::TrackNumber("A1".to_string()), &mut meta1);
         meta1.genres.push("Rock".to_string());
         let path1 =
             insert_track_file_with_meta(&pool, &dir.utf8_path(), "track1.flac", meta1).await;
@@ -810,6 +815,12 @@ mod tests {
         meta2.genres.push("Blues".to_string());
         let path2 =
             insert_track_file_with_meta(&pool, &dir.utf8_path(), "track2.flac", meta2).await;
+
+        sqlx::query("UPDATE album SET number_display_mode = $1")
+            .bind(NumberDisplayMode::Vinyl)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(count_rows(&pool, "album").await, 1);
         assert_eq!(count_rows(&pool, "artist").await, 1);
@@ -821,6 +832,11 @@ mod tests {
 
         assert_eq!(count_rows(&pool, "album").await, 1);
         assert_eq!(count_rows(&pool, "artist").await, 1);
+        let mode: i32 = sqlx::query_scalar("SELECT number_display_mode FROM album")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, NumberDisplayMode::Standard as i32);
         let genres: Vec<(String,)> = sqlx::query_as(
             "SELECT genre.name
              FROM album_genre

@@ -5,7 +5,7 @@ use tracing::{debug, error, info};
 
 use crate::library::scan::{
     artist_match::ArtistMatcher,
-    database::{recompute_album_artists, recompute_album_genres},
+    database::{recompute_album_artists, recompute_album_genres, reconcile_album_numbering},
     fs_case::fold_path,
     record::ScanRecord,
 };
@@ -150,8 +150,11 @@ pub(crate) async fn delete_tracks(
             scan_record.records.remove(path);
         }
 
-        // a remaining album may have lost its only artist link
+        // rebuild derived album data after deleting the chunk
         if !affected_albums.is_empty() {
+            if let Err(error) = reconcile_album_numbering(pool, &affected_albums).await {
+                error!("Failed to reconcile album numbering after cleanup: {error:?}");
+            }
             let mut conn = match pool.acquire().await {
                 Ok(conn) => conn,
                 Err(error) => {

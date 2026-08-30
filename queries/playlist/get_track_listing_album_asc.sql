@@ -4,4 +4,5 @@ SELECT pl.id, pl.track_id, t.album_id, t.location FROM playlist_item as pl
     WHERE pl.playlist_id = $1
     ORDER BY al.title_sortable COLLATE NOCASE ASC,
              t.disc_number ASC,
-             t.track_number ASC;
+             t.track_number ASC,
+             t.track_section ASC;

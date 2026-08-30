@@ -9,6 +9,6 @@ SELECT
     label,
     catalog_number,
     isrc,
-    vinyl_numbering
+    number_display_mode
 FROM album
 WHERE id = $1;

@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use sqlx::SqliteConnection;
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::{
     library::types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
@@ -35,7 +35,6 @@ pub(super) async fn insert_album(
     metadata: &Metadata,
     display_override: Option<&str>,
     is_force: bool,
-    force_encountered_albums: &mut FxHashSet<i64>,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
 ) -> anyhow::Result<Option<i64>> {
     let Some(album) = &metadata.album else {
@@ -53,7 +52,7 @@ pub(super) async fn insert_album(
         display_override.map(str::to_string),
     );
 
-    if !is_force && let Some(&cached_id) = album_cache.get(&cache_key) {
+    if let Some(&cached_id) = album_cache.get(&cache_key) {
         return Ok(Some(cached_id));
     }
 
@@ -65,20 +64,20 @@ pub(super) async fn insert_album(
             .fetch_one(&mut *conn)
             .await;
 
-    let should_force = if let Ok((id,)) = &result
-        && is_force
-    {
-        force_encountered_albums.insert(*id)
-    } else {
-        false
-    };
+    match result {
+        Ok((id,)) if !is_force => {
+            sqlx::query(include_str!(
+                "../../../../queries/scan/update_album_display_mode.sql"
+            ))
+            .bind(id)
+            .bind(metadata.number_display_mode)
+            .execute(&mut *conn)
+            .await?;
 
-    match (result, should_force) {
-        (Ok(v), false) => {
-            album_cache.insert(cache_key, v.0);
-            Ok(Some(v.0))
+            album_cache.insert(cache_key, id);
+            Ok(Some(id))
         }
-        (Err(sqlx::Error::RowNotFound), _) | (Ok(_), _) => {
+        Ok(_) | Err(sqlx::Error::RowNotFound) => {
             let (release_date, date_precision) = bind_release_date(metadata);
 
             let result: (i64,) =
@@ -98,13 +97,41 @@ pub(super) async fn insert_album(
                     .bind(&metadata.catalog)
                     .bind(&metadata.isrc)
                     .bind(&mbid)
-                    .bind(metadata.vinyl_numbering)
+                    .bind(metadata.number_display_mode)
                     .fetch_one(&mut *conn)
                     .await?;
 
             album_cache.insert(cache_key, result.0);
             Ok(Some(result.0))
         }
-        (Err(e), _) => Err(e.into()),
+        Err(e) => Err(e.into()),
     }
+}
+
+pub(crate) async fn reconcile_album_numbering(
+    pool: &SqlitePool,
+    album_ids: &FxHashSet<i64>,
+) -> anyhow::Result<()> {
+    if album_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+    for chunk in album_ids.iter().copied().collect::<Vec<_>>().chunks(500) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "UPDATE album SET number_display_mode = COALESCE((\
+             SELECT MAX(track.number_display_mode_hint) FROM track \
+             WHERE track.album_id = album.id), 0) WHERE album.id IN (",
+        );
+        {
+            let mut ids = query.separated(", ");
+            for id in chunk {
+                ids.push_bind(id);
+            }
+        }
+        query.push(")");
+        query.build().execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }

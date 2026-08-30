@@ -16,6 +16,7 @@ use crate::{
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
+    media::numbering::NumberDisplayMode,
     playback::queue::QueueItemData,
     ui::{
         app::Pool,
@@ -935,7 +936,7 @@ impl Render for PlaylistView {
                                                                 id: pl_id,
                                                                 item_id: playlist_item_id,
                                                             }),
-                                                            false, // vinyl_numbering - not applicable for playlists
+                                                            NumberDisplayMode::Standard,
                                                             None, // max_track_num - not needed for Art left field
                                                             None, // queue_context - playlist uses pl_id instead
                                                             true, // show_go_to_album

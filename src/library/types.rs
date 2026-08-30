@@ -9,6 +9,7 @@ use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
 use sqlx::{Database, Decode, Sqlite, Type, encode::IsNull, error::BoxDynError};
 
+use crate::media::numbering::NumberDisplayMode;
 use crate::util::rgb_to_bgr;
 
 #[derive(sqlx::FromRow)]
@@ -215,10 +216,7 @@ pub struct Album {
     pub catalog_number: Option<DBString>,
     #[sqlx(default)]
     pub isrc: Option<DBString>,
-    #[sqlx(default)]
-    /// Whether this album uses vinyl-style track numbering (A1, A2, B1, B2, etc.)
-    /// When true, disc numbers should be displayed as "SIDE A", "SIDE B", etc.
-    pub vinyl_numbering: bool,
+    pub number_display_mode: NumberDisplayMode,
 }
 
 #[derive(sqlx::FromRow, Clone, Debug)]
@@ -230,6 +228,8 @@ pub struct Track {
     pub album_id: Option<i64>,
     #[sqlx(default)]
     pub track_number: Option<i32>,
+    #[sqlx(default)]
+    pub track_section: Option<i32>,
     #[sqlx(default)]
     pub disc_number: Option<i32>,
     pub duration: i64,

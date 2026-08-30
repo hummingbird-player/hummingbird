@@ -12,4 +12,5 @@ FROM track t
 JOIN track_artist ta ON ta.track_id = t.id
 JOIN playlist_item pi ON pi.track_id = t.id
 WHERE ta.artist_id = $1 AND pi.playlist_id = 1
-ORDER BY track_source, track_date DESC, track_album DESC, disc_number DESC, track_number DESC;
+ORDER BY track_source, track_date DESC, track_album DESC, disc_number DESC, track_number DESC,
+         track_section ASC;

@@ -21,8 +21,8 @@ use super::{
     artist_match::ArtistMatcher,
     control::{PendingRescan, ScanCommand, ScanEvent, ScanMode},
     database::{
-        TrackWriteOutcome, relocate_track, sweep_orphan_artists, sweep_orphan_genres,
-        update_metadata,
+        TrackWriteOutcome, reconcile_album_numbering, relocate_track, sweep_orphan_artists,
+        sweep_orphan_genres, update_metadata,
     },
     discover::Relocation,
     pipeline::{DecodeFailureCounters, record_decode_failure},
@@ -258,7 +258,10 @@ impl<'a> ScanExecution<'a> {
         .await;
 
         match result {
-            Ok(updated) => {
+            Ok((updated, affected_album)) => {
+                if let Some(album_id) = affected_album {
+                    self.active.caches.numbering_albums.insert(album_id);
+                }
                 if !updated.is_empty() {
                     let _ = self
                         .context
@@ -460,6 +463,7 @@ impl<'a> ScanExecution<'a> {
             self.context.started_at.elapsed().as_secs_f32()
         );
 
+        self.finalize_numbering().await;
         self.finalize_artwork().await;
         sweep_orphan_artists(self.context.pool).await;
         sweep_orphan_genres(self.context.pool).await;
@@ -478,6 +482,8 @@ impl<'a> ScanExecution<'a> {
 
     async fn finish_completed(mut self) -> ScanRecord {
         self.commit_pending_relocations().await;
+        drop(self.tx.take());
+        self.finalize_numbering().await;
         self.finalize_artwork().await;
         sweep_orphan_artists(self.context.pool).await;
         sweep_orphan_genres(self.context.pool).await;
@@ -545,6 +551,14 @@ impl<'a> ScanExecution<'a> {
             self.context.tracks_deleted,
         )
         .await;
+    }
+
+    async fn finalize_numbering(&self) {
+        if let Err(error) =
+            reconcile_album_numbering(self.context.pool, &self.active.caches.numbering_albums).await
+        {
+            error!("Failed to reconcile album numbering: {:?}", error);
+        }
     }
 
     async fn finish_checkpoint_write(&mut self) {
