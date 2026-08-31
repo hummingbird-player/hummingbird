@@ -173,6 +173,11 @@ impl QueueItem {
                 cx.notify();
             })
             .detach();
+            let availability = cx.global::<Models>().availability.clone();
+            cx.observe(&availability, |_, _, cx| {
+                cx.notify();
+            })
+            .detach();
 
             let item_ref = item.clone();
             let track_id = item_ref.as_ref().and_then(|item| item.get_db_id());
@@ -236,7 +241,7 @@ impl Render for QueueItem {
         let is_available = self
             .item
             .as_ref()
-            .is_some_and(|queue_item| is_track_path_available(queue_item.get_path()));
+            .is_some_and(|queue_item| is_track_path_available(cx, queue_item.get_path()));
         let is_selected = self.selection.read(cx).contains(self.idx);
 
         if let Some(item) = ui_data.as_ref() {

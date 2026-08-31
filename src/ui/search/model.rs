@@ -9,7 +9,7 @@ use crate::{
     library::{db, scan::ScanEvent},
     ui::{
         app::Pool,
-        availability::is_track_path_available,
+        availability::snapshot,
         components::{input::EnrichedInputAction, palette::Palette},
         library::ViewSwitchMessage,
         models::Models,
@@ -26,7 +26,10 @@ pub struct SearchModel {
     show: Entity<bool>,
 }
 
-async fn load_search_items(pool: &SqlitePool) -> Vec<Arc<SearchPaletteItem>> {
+async fn load_search_items(
+    pool: &SqlitePool,
+    availability: crate::library::availability::AvailabilitySnapshot,
+) -> Vec<Arc<SearchPaletteItem>> {
     let paths = match db::list_album_track_paths(pool).await {
         Ok(paths) => paths,
         Err(e) => {
@@ -35,21 +38,18 @@ async fn load_search_items(pool: &SqlitePool) -> Vec<Arc<SearchPaletteItem>> {
         }
     };
 
-    let availability: HashMap<i64, bool> = crate::RUNTIME
-        .spawn_blocking(move || {
-            let mut availability = HashMap::new();
+    let availability: HashMap<i64, bool> = {
+        let mut available_albums = HashMap::new();
 
-            for (album_id, path) in paths {
-                let available = availability.entry(album_id).or_insert(false);
-                if !*available {
-                    *available = is_track_path_available(Path::new(&path));
-                }
+        for (album_id, path) in paths {
+            let available = available_albums.entry(album_id).or_insert(false);
+            if !*available {
+                *available = availability.is_path_available(Path::new(&path));
             }
+        }
 
-            availability
-        })
-        .await
-        .unwrap_or_default();
+        available_albums
+    };
 
     let albums = match db::list_albums_search(pool).await {
         Ok(album_data) => album_data
@@ -157,15 +157,26 @@ impl SearchModel {
             })
             .detach();
 
+            let availability = cx.global::<Models>().availability.clone();
+            cx.observe(&availability, move |this, _, cx| {
+                if *this.show.read(cx) {
+                    debug!("Storage availability changed, refreshing search items");
+                    this.reload(cx);
+                }
+            })
+            .detach();
+
             search_model
         })
     }
 
     fn reload(&self, cx: &mut Context<Self>) {
         let pool = cx.global::<Pool>().0.clone();
+        let availability = snapshot(cx);
 
         cx.spawn(async move |this, cx| {
-            let task = crate::RUNTIME.spawn(async move { load_search_items(&pool).await });
+            let task =
+                crate::RUNTIME.spawn(async move { load_search_items(&pool, availability).await });
 
             let items = match task.await {
                 Ok(items) => items,

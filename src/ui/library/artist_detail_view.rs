@@ -13,7 +13,7 @@ use crate::{
     media::numbering::NumberDisplayMode,
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
-        availability::{has_available_tracks, is_track_available},
+        availability::{has_available_tracks, snapshot},
         caching::hummingbird_cache,
         components::{
             button::{ButtonSize, button},
@@ -145,6 +145,8 @@ impl ArtistDetailView {
                 }
             })
             .detach();
+            let availability = cx.global::<Models>().availability.clone();
+            cx.observe(&availability, |_, _, cx| cx.notify()).detach();
 
             let grid_views = cx.new(|_| FxHashMap::default());
             let grid_render_counter = cx.new(|_| 0usize);
@@ -379,6 +381,7 @@ impl Render for ArtistDetailView {
 
         let is_playing =
             cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let availability = snapshot(cx);
 
         let current_track_in_artist = cx
             .global::<PlaybackInfo>()
@@ -386,11 +389,12 @@ impl Render for ArtistDetailView {
             .read(cx)
             .clone()
             .is_some_and(|current_track| {
-                self.all_tracks
-                    .iter()
-                    .any(|track| current_track == track.location && is_track_available(track))
+                self.all_tracks.iter().any(|track| {
+                    current_track == track.location
+                        && availability.is_path_available(&track.location)
+                })
             });
-        let has_available_artist_tracks = has_available_tracks(self.all_tracks.as_ref());
+        let has_available_artist_tracks = has_available_tracks(cx, self.all_tracks.as_ref());
 
         let current_track_in_liked = cx
             .global::<PlaybackInfo>()
@@ -398,11 +402,12 @@ impl Render for ArtistDetailView {
             .read(cx)
             .clone()
             .is_some_and(|current_track| {
-                self.liked_tracks
-                    .iter()
-                    .any(|track| current_track == track.location && is_track_available(track))
+                self.liked_tracks.iter().any(|track| {
+                    current_track == track.location
+                        && availability.is_path_available(&track.location)
+                })
             });
-        let has_available_liked_tracks = has_available_tracks(self.liked_tracks.as_ref());
+        let has_available_liked_tracks = has_available_tracks(cx, self.liked_tracks.as_ref());
 
         let current_track_in_standalone = cx
             .global::<PlaybackInfo>()
@@ -410,11 +415,13 @@ impl Render for ArtistDetailView {
             .read(cx)
             .clone()
             .is_some_and(|current_track| {
-                self.standalone_tracks
-                    .iter()
-                    .any(|track| current_track == track.location && is_track_available(track))
+                self.standalone_tracks.iter().any(|track| {
+                    current_track == track.location
+                        && availability.is_path_available(&track.location)
+                })
             });
-        let has_available_standalone_tracks = has_available_tracks(self.standalone_tracks.as_ref());
+        let has_available_standalone_tracks =
+            has_available_tracks(cx, self.standalone_tracks.as_ref());
 
         let liked_track_header =
             if !self.liked_track_items.is_empty() {
@@ -448,10 +455,13 @@ impl Render for ArtistDetailView {
                                     is_playing,
                                     {
                                         let liked_tracks = self.liked_tracks.clone();
+                                        let availability = availability.clone();
                                         move |cx| {
                                             liked_tracks
                                                 .iter()
-                                                .filter(|track| is_track_available(track))
+                                                .filter(|track| {
+                                                    availability.is_path_available(&track.location)
+                                                })
                                                 .map(|track| {
                                                     QueueItemData::new(
                                                         cx,
@@ -561,10 +571,13 @@ impl Render for ArtistDetailView {
                                 is_playing,
                                 {
                                     let standalone_tracks = self.standalone_tracks.clone();
+                                    let availability = availability.clone();
                                     move |cx| {
                                         standalone_tracks
                                             .iter()
-                                            .filter(|track| is_track_available(track))
+                                            .filter(|track| {
+                                                availability.is_path_available(&track.location)
+                                            })
                                             .map(|track| {
                                                 QueueItemData::new(
                                                     cx,
@@ -692,10 +705,14 @@ impl Render for ArtistDetailView {
                                             is_playing,
                                             {
                                                 let all_tracks = self.all_tracks.clone();
+                                                let availability = availability.clone();
                                                 move |cx| {
                                                     all_tracks
                                                         .iter()
-                                                        .filter(|track| is_track_available(track))
+                                                        .filter(|track| {
+                                                            availability
+                                                                .is_path_available(&track.location)
+                                                        })
                                                         .map(|track| {
                                                             QueueItemData::new(
                                                                 cx,

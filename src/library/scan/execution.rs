@@ -151,17 +151,6 @@ impl<'a> ScanExecution<'a> {
                     }
                 }
 
-                _ = self.context.watcher.retry_tick() => {
-                    let (recovered, _) = self
-                        .context
-                        .watcher
-                        .refresh(self.context.scan_settings, self.context.cmd_tx)
-                        .await;
-                    if recovered {
-                        self.context.pending_start.get_or_insert(false);
-                    }
-                }
-
                 result = &mut self.active.discover_handle, if !self.discovery_complete => {
                     self.discovered_total = result.expect("discover task panicked");
                     self.discovery_complete = true;

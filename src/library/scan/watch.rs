@@ -13,7 +13,7 @@ use notify_debouncer_full::{
 };
 use rustc_hash::FxHashSet;
 use tokio::sync::mpsc::WeakSender;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use crate::{
     library::scan::control::ScanCommand,
@@ -29,9 +29,6 @@ pub(super) struct LibraryWatcher {
     // kept so Drop stops the notify thread
     _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
     watched: FxHashSet<Utf8PathBuf>,
-    unwatched: FxHashSet<Utf8PathBuf>,
-    /// Roots we've already warned about, so retries don't spam the log.
-    warned: FxHashSet<Utf8PathBuf>,
 }
 
 impl LibraryWatcher {
@@ -48,12 +45,9 @@ impl LibraryWatcher {
             };
 
         let mut watched = FxHashSet::default();
-        let mut unwatched = FxHashSet::default();
-        let mut warned = FxHashSet::default();
         let mut seen = FxHashSet::default();
         for root in roots {
             let Some(canonical) = root.canonicalize_utf8().ok() else {
-                unwatched.insert(root.clone());
                 continue;
             };
 
@@ -69,8 +63,6 @@ impl LibraryWatcher {
                     warn!("Could not watch {:?}: {:?}", canonical, e);
                     #[cfg(target_os = "linux")]
                     warn!("If this is a watch count limit, raise fs.inotify.max_user_watches");
-                    warned.insert(canonical.clone());
-                    unwatched.insert(canonical);
                 }
             }
         }
@@ -78,78 +70,12 @@ impl LibraryWatcher {
         Some(Self {
             _debouncer: debouncer,
             watched,
-            unwatched,
-            warned,
         })
     }
 
     pub(super) fn is_active(&self) -> bool {
         !self.watched.is_empty()
     }
-
-    pub(super) fn watched_roots(&self) -> Vec<Utf8PathBuf> {
-        self.watched.iter().cloned().collect()
-    }
-
-    pub(super) fn unwatched_roots(&self) -> Vec<Utf8PathBuf> {
-        self.unwatched.iter().cloned().collect()
-    }
-
-    /// After a probe: stop watching lost roots, try to watch recovered ones. True if anything new is watched.
-    pub(super) fn apply_probe(
-        &mut self,
-        lost: Vec<Utf8PathBuf>,
-        recoverable: Vec<Utf8PathBuf>,
-    ) -> bool {
-        for root in lost {
-            self.watched.remove(&root);
-            self.unwatched.insert(root);
-        }
-
-        let mut recovered = false;
-        for canonical in recoverable {
-            if self.watched.contains(&canonical) {
-                continue;
-            }
-
-            match self
-                ._debouncer
-                .watch(canonical.as_std_path(), RecursiveMode::Recursive)
-            {
-                Ok(()) => {
-                    info!("Now watching {:?}", canonical);
-                    self.warned.remove(&canonical);
-                    self.watched.insert(canonical);
-                    recovered = true;
-                }
-                Err(e) => {
-                    if self.warned.insert(canonical.clone()) {
-                        warn!("Could not watch {:?}: {:?}", canonical, e);
-                    }
-                    self.unwatched.insert(canonical);
-                }
-            }
-        }
-
-        recovered
-    }
-}
-
-/// Check root availability on a blocking thread so dead network mounts don't stall the scanner.
-pub(super) fn probe_roots(
-    watched: &[Utf8PathBuf],
-    unwatched: &[Utf8PathBuf],
-) -> (Vec<Utf8PathBuf>, Vec<Utf8PathBuf>) {
-    let lost: Vec<Utf8PathBuf> = watched
-        .iter()
-        .filter(|root| matches!(root.as_std_path().try_exists(), Ok(false)))
-        .cloned()
-        .collect();
-    let recoverable: Vec<Utf8PathBuf> = unwatched
-        .iter()
-        .filter_map(|root| root.canonicalize_utf8().ok())
-        .collect();
-    (lost, recoverable)
 }
 
 pub(super) fn arm(

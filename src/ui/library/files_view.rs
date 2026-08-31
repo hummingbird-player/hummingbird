@@ -210,7 +210,7 @@ impl FilesView {
 
         let audio_entries: SmallVec<[(PathBuf, Option<TrackRef>); 16]> = entries
             .iter()
-            .filter(|entry| entry.entry.is_audio && is_track_path_available(&entry.entry.path))
+            .filter(|entry| entry.entry.is_audio && is_track_path_available(cx, &entry.entry.path))
             .map(|entry| (entry.entry.path.clone(), entry.entry.track.clone()))
             .collect();
 

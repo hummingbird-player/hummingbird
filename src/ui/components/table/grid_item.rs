@@ -12,6 +12,7 @@ use crate::ui::{
         drag_drop::{AlbumDragData, DragPreview, TrackDragData},
         managed_image::{ManagedImageKey, managed_image},
     },
+    models::Models,
     theme::Theme,
 };
 
@@ -52,18 +53,27 @@ where
         let is_available = row.is_available(cx);
         let grid_content = row.get_grid_content_for(cx, context);
         let (primary_text, secondary_text) = grid_content.unwrap_or(("".into(), None));
+        let availability = cx.global::<Models>().availability.clone();
 
-        Some(cx.new(|_| Self {
-            context_menu_context,
-            grid_context: context,
-            row,
-            id: element_id,
-            image_key,
-            primary_text,
-            secondary_text,
-            on_select,
-            is_available,
-            image_target: None,
+        Some(cx.new(|cx| {
+            cx.observe(&availability, |this: &mut GridItem<T, C>, _, cx| {
+                this.is_available = this.row.is_available(cx);
+                cx.notify();
+            })
+            .detach();
+
+            Self {
+                context_menu_context,
+                grid_context: context,
+                row,
+                id: element_id,
+                image_key,
+                primary_text,
+                secondary_text,
+                on_select,
+                is_available,
+                image_target: None,
+            }
         }))
     }
 

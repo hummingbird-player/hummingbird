@@ -19,7 +19,7 @@ use crate::{
     },
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     ui::{
-        availability::is_track_path_available,
+        availability::snapshot,
         components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
         library::{
             context_menus::{TrackContextMenuContext, play_from_track},
@@ -153,13 +153,15 @@ fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Ve
     let sort_method = track_table_sort(table.read(cx).get_sort(cx));
 
     match cx.list_tracks(sort_method) {
-        Ok(rows) => rows
-            .into_iter()
-            .filter(|(_, _, _, path)| is_track_path_available(Path::new(path)))
-            .map(|(id, _, album_id, path)| {
-                QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
-            })
-            .collect(),
+        Ok(rows) => {
+            let availability = snapshot(cx);
+            rows.into_iter()
+                .filter(|(_, _, _, path)| availability.is_path_available(Path::new(path)))
+                .map(|(id, _, album_id, path)| {
+                    QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
+                })
+                .collect()
+        }
         Err(e) => {
             debug!("Failed to load tracks for playback: {:?}", e);
             Vec::new()

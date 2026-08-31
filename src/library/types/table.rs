@@ -504,8 +504,8 @@ impl TableData<TrackColumn> for Track {
         )))
     }
 
-    fn is_available(&self, _cx: &mut App) -> bool {
-        is_track_available(self)
+    fn is_available(&self, cx: &mut App) -> bool {
+        is_track_available(cx, self)
     }
 
     fn get_context_menu(
@@ -517,7 +517,7 @@ impl TableData<TrackColumn> for Track {
     ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
         Some(track_menu_for_table(
             self,
-            is_track_available(self),
+            is_track_available(cx, self),
             context,
             window,
             cx,

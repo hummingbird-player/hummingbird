@@ -35,6 +35,7 @@ pub(super) enum ScanCommand {
     },
     ResolveMissingFolders(MissingFolderDecision),
     UpdateSettings(ScanSettings),
+    StorageAvailable(Vec<Utf8PathBuf>),
     Stop,
 }
 
@@ -77,6 +78,7 @@ impl ScanMode {
     }
 }
 
+#[derive(Clone)]
 pub struct ScanInterface {
     cmd_tx: Sender<ScanCommand>,
 }
@@ -109,6 +111,15 @@ impl ScanInterface {
                 recursive: false,
             })
             .expect("could not send rescan-paths command");
+    }
+
+    /// Notify the scanner that a previously unavailable library root is mounted again. This
+    /// re-arms filesystem watches and performs a non-destructive recursive rescan of those roots.
+    pub async fn storage_available(&self, paths: Vec<Utf8PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        let _ = self.cmd_tx.send(ScanCommand::StorageAvailable(paths)).await;
     }
 
     pub fn stop(&self) {
@@ -244,6 +255,9 @@ pub(super) async fn resolve_missing_folder_action(
                         recursive,
                     }) => {
                         queue_pending_rescan(pending_rescan, paths, respect_record, recursive);
+                    }
+                    Some(ScanCommand::StorageAvailable(paths)) => {
+                        queue_pending_rescan(pending_rescan, paths, false, true);
                     }
                     None => break MissingFolderPolicy::KeepInLibrary,
                 }

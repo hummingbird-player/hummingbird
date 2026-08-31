@@ -14,7 +14,7 @@ use crate::{
     },
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
-        availability::{has_available_tracks, is_track_available},
+        availability::{has_available_tracks, is_track_available, snapshot},
         caching::hummingbird_cache,
         components::{
             button::{ButtonSize, button},
@@ -92,6 +92,8 @@ impl ReleaseView {
                 false,
                 true,
             );
+            let availability = cx.global::<Models>().availability.clone();
+            cx.observe(&availability, |_, _, cx| cx.notify()).detach();
             let collection_summary = format_collection_summary(
                 tracks.len() as i64,
                 tracks.iter().map(|track| track.duration).sum(),
@@ -122,7 +124,7 @@ impl ReleaseView {
             let pending_scroll = target_track_id.and_then(|track_id| {
                 tracks
                     .iter()
-                    .position(|track| track.id == track_id && is_track_available(track))
+                    .position(|track| track.id == track_id && is_track_available(cx, track))
             });
 
             let all_liked = compute_all_liked(cx, &tracks);
@@ -168,6 +170,7 @@ impl ReleaseView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let availability = snapshot(cx);
         div()
             .pt(px(64.0))
             .flex_shrink(1.0)
@@ -256,10 +259,13 @@ impl ReleaseView {
                                     is_playing,
                                     {
                                         let tracks = self.track_listing.tracks().clone();
+                                        let availability = availability.clone();
                                         move |cx| {
                                             tracks
                                                 .iter()
-                                                .filter(|track| is_track_available(track))
+                                                .filter(|track| {
+                                                    availability.is_path_available(&track.location)
+                                                })
                                                 .map(|track| {
                                                     QueueItemData::new(
                                                         cx,
@@ -553,6 +559,7 @@ impl Render for ReleaseView {
 
         let is_playing =
             cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let availability = snapshot(cx);
         // flag whether current track is part of the album
         let current_track_in_album = cx
             .global::<PlaybackInfo>()
@@ -560,11 +567,12 @@ impl Render for ReleaseView {
             .read(cx)
             .clone()
             .is_some_and(|current_track| {
-                self.tracks
-                    .iter()
-                    .any(|track| current_track == track.location && is_track_available(track))
+                self.tracks.iter().any(|track| {
+                    current_track == track.location
+                        && availability.is_path_available(&track.location)
+                })
             });
-        let has_available_tracks = has_available_tracks(self.tracks.as_ref());
+        let has_available_tracks = has_available_tracks(cx, self.tracks.as_ref());
 
         let scroll_handle = self.scroll_handle.clone();
         let settings = cx

@@ -36,6 +36,7 @@ use crate::{
     toasts,
     ui::{
         assets::HummingbirdAssetSource,
+        availability,
         caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
         library::missing_folder_dialog::MissingFolderDialog,
@@ -447,8 +448,21 @@ pub fn run() -> anyhow::Result<()> {
         cx.set_global(modal::ModalActive(AtomicBool::new(false)));
 
         let settings_model = cx.global::<SettingsGlobal>().model.clone();
-        cx.observe(&settings_model, |_, cx| cx.refresh_windows())
-            .detach();
+        let availability_model = cx.global::<Models>().availability.clone();
+        cx.observe(&settings_model, move |_, cx| {
+            let roots = cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .scanning
+                .paths
+                .iter()
+                .map(|path| path.as_std_path().to_path_buf())
+                .collect();
+            availability::update_roots(&availability_model, roots, cx);
+            cx.refresh_windows();
+        })
+        .detach();
 
         if !language.is_empty() {
             I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
@@ -464,6 +478,18 @@ pub fn run() -> anyhow::Result<()> {
         scan_interface.start_broadcast(scan_events, cx);
 
         cx.set_global(scan_interface);
+        availability::start_monitor(
+            cx,
+            cx.global::<Models>().availability.clone(),
+            cx.global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .scanning
+                .paths
+                .iter()
+                .map(|path| path.as_std_path().to_path_buf())
+                .collect(),
+        );
 
         let settings_health = cx.global::<Models>().settings_health.clone();
         cx.observe(&settings_health, |health, cx| {

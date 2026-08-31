@@ -48,7 +48,7 @@ impl RenderOnce for InfoSectionContextMenu {
         let reveal_path = self.current_path;
         let can_reveal_track = reveal_path
             .as_ref()
-            .is_some_and(|path| is_track_path_available(path.as_path()));
+            .is_some_and(|path| is_track_path_available(cx, path.as_path()));
         let track = self.track;
 
         menu()

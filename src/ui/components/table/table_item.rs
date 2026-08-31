@@ -11,6 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    models::Models,
     theme::Theme,
 };
 
@@ -58,6 +59,7 @@ where
 
         let image_path = row.as_ref().and_then(|row| row.get_image_path());
         let is_available = row.as_ref().is_some_and(|row| row.is_available(cx));
+        let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
             cx.observe(columns, |this: &mut TableItem<T, C>, m, cx| {
                 this.columns = m.read(cx).clone();
@@ -68,6 +70,11 @@ where
                     keys.into_iter().map(|v| row.get_column(cx, *v)).collect()
                 });
 
+                cx.notify();
+            })
+            .detach();
+            cx.observe(&availability, |this: &mut TableItem<T, C>, _, cx| {
+                this.is_available = this.row.as_ref().is_some_and(|row| row.is_available(cx));
                 cx.notify();
             })
             .detach();

@@ -29,6 +29,7 @@ use crate::services::mmb::listenbrainz::{
 };
 use crate::{
     library::{
+        availability::AvailabilityState,
         db::{self, LibraryAccess, LikedTrackSortMethod, PlaylistTrackSortMethod},
         scan::ScanEvent,
     },
@@ -89,6 +90,7 @@ pub struct Models {
     pub albumart: Entity<Option<Arc<RenderImage>>>,
     pub albumart_original: Entity<Option<Arc<RenderImage>>>,
     pub queue: Entity<Queue>,
+    pub availability: Entity<AvailabilityState>,
     pub scan_state: Entity<ScanEvent>,
     pub settings_health: Entity<SettingsHealth>,
     pub mmbs: Entity<MMBSList>,
@@ -274,6 +276,16 @@ pub fn build_models(
     let albumart: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
     let albumart_original: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
     let queue: Entity<Queue> = cx.new(move |_| queue);
+    let availability_roots = cx
+        .global::<SettingsGlobal>()
+        .model
+        .read(cx)
+        .scanning
+        .paths
+        .iter()
+        .map(|path| path.as_std_path().to_path_buf())
+        .collect::<Vec<_>>();
+    let availability = cx.new(|_| AvailabilityState::new(availability_roots));
     let scan_state: Entity<ScanEvent> = cx.new(|_| ScanEvent::ScanCompleteIdle);
     let initial_corrupt_path = cx.global::<SettingsGlobal>().initial_corrupt_path.clone();
     let settings_health: Entity<SettingsHealth> = cx.new(|_| match initial_corrupt_path {
@@ -545,6 +557,7 @@ pub fn build_models(
         albumart,
         albumart_original,
         queue,
+        availability,
         scan_state,
         settings_health,
         mmbs,

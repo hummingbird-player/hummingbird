@@ -34,7 +34,7 @@ use crate::{
             files_view::{FilesView, FlatRow, TrackRef, file_context_menu::FileContextMenu},
         },
         models::{
-            HasLikedState, LIKED_SONGS_PLAYLIST_ID, PlaybackInfo, subscribe_liked_updates,
+            HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, subscribe_liked_updates,
             toggle_like_by_id,
         },
         theme::Theme,
@@ -77,7 +77,13 @@ impl FileRowItem {
                 this.flat_row.track.as_ref().map(|t| t.id)
             });
 
-            let is_file_available = is_track_path_available(&flat_row.path);
+            let availability = cx.global::<Models>().availability.clone();
+            let is_file_available = is_track_path_available(cx, &flat_row.path);
+            cx.observe(&availability, |this: &mut FileRowItem, _, cx| {
+                this.is_file_available = is_track_path_available(cx, &this.flat_row.path);
+                cx.notify();
+            })
+            .detach();
 
             if flat_row.is_audio {
                 let current_track = cx.global::<PlaybackInfo>().current_track.clone();
@@ -230,7 +236,7 @@ impl FileRowItem {
 fn batch_queue_items(cx: &mut App, items: &[(PathBuf, Option<TrackRef>)]) -> Vec<QueueItemData> {
     let mut data = Vec::with_capacity(items.len());
     for (path, track) in items {
-        if is_track_path_available(path) {
+        if is_track_path_available(cx, path) {
             data.push(QueueItemData::new(
                 cx,
                 path.clone(),

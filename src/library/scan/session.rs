@@ -64,14 +64,18 @@ impl ActiveCommandContext<'_> {
                 queue_pending_rescan(self.pending_rescan, paths, respect_record, recursive);
                 ActiveCommandOutcome::Continue
             }
+            Some(ScanCommand::StorageAvailable(paths)) => {
+                queue_pending_rescan(self.pending_rescan, paths, false, true);
+                let _ = self
+                    .watcher
+                    .rearm_after_storage_change(self.scan_settings, self.cmd_tx)
+                    .await;
+                ActiveCommandOutcome::Continue
+            }
             Some(ScanCommand::UpdateSettings(settings)) => {
                 *self.scan_settings = settings;
                 if self.watcher.rearm(self.scan_settings, self.cmd_tx).await {
                     self.pending_start.get_or_insert(false);
-                }
-                self.watcher.set_retry(self.scan_settings.watch_for_changes);
-                if !self.scan_settings.watch_for_changes {
-                    self.watcher.stop_probe();
                 }
                 ActiveCommandOutcome::Continue
             }

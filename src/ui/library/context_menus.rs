@@ -19,7 +19,7 @@ use crate::{
         queue::QueueItemData,
     },
     ui::{
-        availability::is_track_available,
+        availability::{is_track_available, snapshot},
         library::{
             ViewSwitchMessage,
             add_to_playlist::AddToPlaylist,
@@ -142,7 +142,7 @@ pub fn album_menu_for_table(
 }
 
 pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {
-    if !is_track_available(track) {
+    if !is_track_available(cx, track) {
         return;
     }
 
@@ -167,10 +167,11 @@ pub fn play_from_track_listing(
     playlist_id: Option<i64>,
     queue_context: Option<Arc<Vec<Track>>>,
 ) {
+    let availability = snapshot(cx);
     let queue_items = if let Some(tracks) = queue_context {
         tracks
             .iter()
-            .filter(|item| is_track_available(item))
+            .filter(|item| availability.is_path_available(&item.location))
             .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
             .collect()
     } else if let Some(playlist_id) = playlist_id {
@@ -180,7 +181,7 @@ pub fn play_from_track_listing(
 
         tracks
             .iter()
-            .filter(|row| Path::new(&row.location).exists())
+            .filter(|row| availability.is_path_available(Path::new(&row.location)))
             .map(|row| {
                 QueueItemData::new(
                     cx,
@@ -194,7 +195,7 @@ pub fn play_from_track_listing(
         cx.list_tracks_in_album(album_id)
             .expect("Failed to retrieve tracks")
             .iter()
-            .filter(|item| is_track_available(item))
+            .filter(|item| availability.is_path_available(&item.location))
             .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
             .collect()
     } else {
@@ -399,10 +400,11 @@ pub(crate) fn navigate_to_artist(cx: &mut App, artist_id: i64) {
 }
 
 fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData> {
+    let availability = snapshot(cx);
     cx.list_tracks_in_album(album.id)
         .unwrap_or_else(|_| Arc::new(Vec::new()))
         .iter()
-        .filter(|track| is_track_available(track))
+        .filter(|track| availability.is_path_available(&track.location))
         .map(|track| QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id))
         .collect()
 }

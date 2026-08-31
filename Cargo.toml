@@ -118,7 +118,9 @@ windows = { version = "0.62", features = [
     "Win32_System_Ioctl",
     "Win32_System_WinRT",
     "Win32_System_Power",
-    "Win32_System_Recovery"
+    "Win32_System_Recovery",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging"
 ] }
 windows-future = "0.3"
 windows-result = "0.4"
@@ -141,6 +143,7 @@ objc2-foundation = { version = "0.3", features = [
 objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 mpris-server = "0.10"
 zbus = "5"
 

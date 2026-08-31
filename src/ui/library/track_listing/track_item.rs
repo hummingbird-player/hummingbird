@@ -11,7 +11,7 @@ use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
 use crate::ui::library::context_menus::play_track_next;
 use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::{
-    HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates, toggle_like,
+    HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, subscribe_liked_updates, toggle_like,
 };
 use crate::ui::util::format_duration;
 
@@ -91,6 +91,7 @@ impl TrackItem {
         show_go_to_album: bool,
         show_go_to_artist: bool,
     ) -> Entity<Self> {
+        let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
             let track_id = track.id;
             let track_position = format_track_position(
@@ -102,6 +103,11 @@ impl TrackItem {
             .map(SharedString::from);
 
             subscribe_liked_updates(cx, move |_| Some(track_id));
+            cx.observe(&availability, |this: &mut TrackItem, _, cx| {
+                this.is_available = is_track_available(cx, &this.track);
+                cx.notify();
+            })
+            .detach();
 
             Self {
                 hover_group: format!("track-{}", track.id).into(),
@@ -112,7 +118,7 @@ impl TrackItem {
                     Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
                     None => format!("!db://track/{}/thumb", track.id).into(),
                 }),
-                is_available: is_track_available(&track),
+                is_available: is_track_available(cx, &track),
                 track,
                 index,
                 is_start,

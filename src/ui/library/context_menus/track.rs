@@ -72,7 +72,7 @@ impl RenderOnce for TrackContextMenu {
                 .artist_ids_for_track(track_for_artist.id)
                 .is_ok_and(|ids| !ids.is_empty());
         let can_go_to_album = track_for_album.album_id.is_some();
-        let can_reveal_track = is_track_path_available(track_for_reveal.location.as_path());
+        let can_reveal_track = is_track_path_available(cx, track_for_reveal.location.as_path());
         let show_add_to = self.show_add_to;
         let play_from_here = self.context.play_from_here.clone();
         let playlist_info = self.playlist_info;

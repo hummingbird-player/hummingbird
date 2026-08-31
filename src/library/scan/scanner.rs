@@ -92,23 +92,11 @@ impl NextScanContext<'_> {
             }
         } else {
             loop {
-                let command = tokio::select! {
-                    command = command_rx.recv() => command,
-                    _ = watcher.retry_tick() => {
-                        let (recovered, _) = watcher.refresh(scan_settings, cmd_tx).await;
-                        if recovered {
-                            break ScanMode::Full { is_force: false };
-                        }
-                        continue;
-                    }
-                };
-
-                match command {
+                match command_rx.recv().await {
                     Some(command @ (ScanCommand::Scan | ScanCommand::ForceScan)) => {
                         let is_force = matches!(command, ScanCommand::ForceScan);
                         *initial_scan_requested = true;
                         watcher.rearm(scan_settings, cmd_tx).await;
-                        watcher.set_retry(scan_settings.watch_for_changes);
                         break ScanMode::Full { is_force };
                     }
                     Some(ScanCommand::RescanPaths {
@@ -126,6 +114,20 @@ impl NextScanContext<'_> {
                             recursive,
                         };
                     }
+                    Some(ScanCommand::StorageAvailable(paths)) => {
+                        // storage events rearm watches for unavailable roots
+                        if !*initial_scan_requested || paths.is_empty() {
+                            continue;
+                        }
+                        watcher
+                            .rearm_after_storage_change(scan_settings, cmd_tx)
+                            .await;
+                        break ScanMode::Targeted {
+                            paths,
+                            respect_record: false,
+                            recursive: true,
+                        };
+                    }
                     Some(ScanCommand::ResolveMissingFolders(_)) => {}
                     Some(ScanCommand::UpdateSettings(settings)) => {
                         *scan_settings = settings;
@@ -133,10 +135,6 @@ impl NextScanContext<'_> {
                             continue;
                         }
                         let rearmed = watcher.rearm(scan_settings, cmd_tx).await;
-                        watcher.set_retry(scan_settings.watch_for_changes);
-                        if !scan_settings.watch_for_changes {
-                            watcher.stop_probe();
-                        }
                         // watcher just became active - scan to catch changes missed while it was off
                         if rearmed {
                             break ScanMode::Full { is_force: false };
