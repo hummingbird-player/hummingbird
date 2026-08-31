@@ -264,7 +264,8 @@ impl ReleaseView {
                                             tracks
                                                 .iter()
                                                 .filter(|track| {
-                                                    availability.is_path_available(&track.location)
+                                                    availability
+                                                        .is_track_path_available(&track.location)
                                                 })
                                                 .map(|track| {
                                                     QueueItemData::new(
@@ -569,7 +570,7 @@ impl Render for ReleaseView {
             .is_some_and(|current_track| {
                 self.tracks.iter().any(|track| {
                     current_track == track.location
-                        && availability.is_path_available(&track.location)
+                        && availability.is_track_path_available(&track.location)
                 })
             });
         let has_available_tracks = has_available_tracks(cx, self.tracks.as_ref());

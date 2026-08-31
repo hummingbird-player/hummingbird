@@ -156,7 +156,7 @@ fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Ve
         Ok(rows) => {
             let availability = snapshot(cx);
             rows.into_iter()
-                .filter(|(_, _, _, path)| availability.is_path_available(Path::new(path)))
+                .filter(|(_, _, _, path)| availability.is_track_path_available(Path::new(path)))
                 .map(|(id, _, album_id, path)| {
                     QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
                 })

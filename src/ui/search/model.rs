@@ -44,7 +44,7 @@ async fn load_search_items(
         for (album_id, path) in paths {
             let available = available_albums.entry(album_id).or_insert(false);
             if !*available {
-                *available = availability.is_path_available(Path::new(&path));
+                *available = availability.is_track_path_available(Path::new(&path));
             }
         }
 

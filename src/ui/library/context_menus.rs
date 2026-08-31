@@ -171,7 +171,7 @@ pub fn play_from_track_listing(
     let queue_items = if let Some(tracks) = queue_context {
         tracks
             .iter()
-            .filter(|item| availability.is_path_available(&item.location))
+            .filter(|item| availability.is_track_path_available(&item.location))
             .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
             .collect()
     } else if let Some(playlist_id) = playlist_id {
@@ -181,7 +181,7 @@ pub fn play_from_track_listing(
 
         tracks
             .iter()
-            .filter(|row| availability.is_path_available(Path::new(&row.location)))
+            .filter(|row| availability.is_track_path_available(Path::new(&row.location)))
             .map(|row| {
                 QueueItemData::new(
                     cx,
@@ -195,7 +195,7 @@ pub fn play_from_track_listing(
         cx.list_tracks_in_album(album_id)
             .expect("Failed to retrieve tracks")
             .iter()
-            .filter(|item| availability.is_path_available(&item.location))
+            .filter(|item| availability.is_track_path_available(&item.location))
             .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
             .collect()
     } else {
@@ -404,7 +404,7 @@ fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData
     cx.list_tracks_in_album(album.id)
         .unwrap_or_else(|_| Arc::new(Vec::new()))
         .iter()
-        .filter(|track| availability.is_path_available(&track.location))
+        .filter(|track| availability.is_track_path_available(&track.location))
         .map(|track| QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id))
         .collect()
 }

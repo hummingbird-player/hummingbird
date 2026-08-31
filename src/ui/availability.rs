@@ -21,7 +21,9 @@ pub fn snapshot<C: AppContext>(cx: &C) -> AvailabilitySnapshot {
 }
 
 pub fn is_track_path_available<C: AppContext>(cx: &C, path: &Path) -> bool {
-    cx.read_global(|models: &Models, app| models.availability.read(app).is_path_available(path))
+    cx.read_global(|models: &Models, app| {
+        models.availability.read(app).is_track_path_available(path)
+    })
 }
 
 pub fn is_track_available<C: AppContext>(cx: &C, track: &Track) -> bool {
@@ -32,7 +34,7 @@ pub fn has_available_tracks<C: AppContext>(cx: &C, tracks: &[Track]) -> bool {
     let availability = snapshot(cx);
     tracks
         .iter()
-        .any(|track| availability.is_path_available(&track.location))
+        .any(|track| availability.is_track_path_available(&track.location))
 }
 
 pub fn album_has_available_tracks(cx: &mut App, album_id: i64) -> bool {
@@ -41,7 +43,7 @@ pub fn album_has_available_tracks(cx: &mut App, album_id: i64) -> bool {
         .map(|tracks| {
             tracks
                 .iter()
-                .any(|track| availability.is_path_available(&track.location))
+                .any(|track| availability.is_track_path_available(&track.location))
         })
         .unwrap_or_default()
 }
@@ -52,7 +54,7 @@ pub fn artist_has_available_tracks(cx: &mut App, artist_id: i64) -> bool {
         .map(|tracks| {
             tracks
                 .iter()
-                .any(|track| availability.is_path_available(&track.location))
+                .any(|track| availability.is_track_path_available(&track.location))
         })
         .unwrap_or_default()
 }

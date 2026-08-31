@@ -268,6 +268,13 @@ impl AvailabilityState {
         )
     }
 
+    /// A track is available only when its storage is available and the indexed path still exists.
+    /// Keep this check separate from [`Self::is_path_available`] so mount reconciliation can reason
+    /// about paths without probing the filesystem.
+    pub fn is_track_path_available(&self, path: &Path) -> bool {
+        self.is_path_available(path) && path.exists()
+    }
+
     pub fn snapshot(&self) -> AvailabilitySnapshot {
         AvailabilitySnapshot {
             roots: Arc::from(self.roots.clone().into_boxed_slice()),
@@ -291,6 +298,10 @@ impl AvailabilitySnapshot {
             &self.unavailable_mountpoints,
             path,
         )
+    }
+
+    pub fn is_track_path_available(&self, path: &Path) -> bool {
+        self.is_path_available(path) && path.exists()
     }
 }
 
@@ -527,6 +538,16 @@ mod tests {
 
         assert!(!state.is_path_available(Path::new("/media/music/song.flac")));
         assert!(state.is_path_available(Path::new("/media/podcast.flac")));
+    }
+
+    #[test]
+    fn a_missing_track_is_unavailable_when_its_storage_is_mounted() {
+        let state = state(&["/media/music"], mounts(&["/", "/media/music"]), true);
+        let path =
+            std::env::temp_dir().join(format!("hummingbird-missing-track-{}", std::process::id()));
+
+        assert!(state.is_path_available(&path));
+        assert!(!state.is_track_path_available(&path));
     }
 
     #[test]

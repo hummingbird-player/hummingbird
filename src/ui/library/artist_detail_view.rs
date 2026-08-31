@@ -391,7 +391,7 @@ impl Render for ArtistDetailView {
             .is_some_and(|current_track| {
                 self.all_tracks.iter().any(|track| {
                     current_track == track.location
-                        && availability.is_path_available(&track.location)
+                        && availability.is_track_path_available(&track.location)
                 })
             });
         let has_available_artist_tracks = has_available_tracks(cx, self.all_tracks.as_ref());
@@ -404,7 +404,7 @@ impl Render for ArtistDetailView {
             .is_some_and(|current_track| {
                 self.liked_tracks.iter().any(|track| {
                     current_track == track.location
-                        && availability.is_path_available(&track.location)
+                        && availability.is_track_path_available(&track.location)
                 })
             });
         let has_available_liked_tracks = has_available_tracks(cx, self.liked_tracks.as_ref());
@@ -417,7 +417,7 @@ impl Render for ArtistDetailView {
             .is_some_and(|current_track| {
                 self.standalone_tracks.iter().any(|track| {
                     current_track == track.location
-                        && availability.is_path_available(&track.location)
+                        && availability.is_track_path_available(&track.location)
                 })
             });
         let has_available_standalone_tracks =
@@ -460,7 +460,8 @@ impl Render for ArtistDetailView {
                                             liked_tracks
                                                 .iter()
                                                 .filter(|track| {
-                                                    availability.is_path_available(&track.location)
+                                                    availability
+                                                        .is_track_path_available(&track.location)
                                                 })
                                                 .map(|track| {
                                                     QueueItemData::new(
@@ -576,7 +577,8 @@ impl Render for ArtistDetailView {
                                         standalone_tracks
                                             .iter()
                                             .filter(|track| {
-                                                availability.is_path_available(&track.location)
+                                                availability
+                                                    .is_track_path_available(&track.location)
                                             })
                                             .map(|track| {
                                                 QueueItemData::new(
@@ -710,8 +712,9 @@ impl Render for ArtistDetailView {
                                                     all_tracks
                                                         .iter()
                                                         .filter(|track| {
-                                                            availability
-                                                                .is_path_available(&track.location)
+                                                            availability.is_track_path_available(
+                                                                &track.location,
+                                                            )
                                                         })
                                                         .map(|track| {
                                                             QueueItemData::new(
