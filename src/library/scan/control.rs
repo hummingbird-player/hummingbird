@@ -114,7 +114,7 @@ impl ScanInterface {
     }
 
     /// Notify the scanner that a previously unavailable library root is mounted again. This
-    /// re-arms filesystem watches and performs a non-destructive recursive rescan of those roots.
+    /// re-arms filesystem watches and recursively checks those roots for changes.
     pub async fn storage_available(&self, paths: Vec<Utf8PathBuf>) {
         if paths.is_empty() {
             return;

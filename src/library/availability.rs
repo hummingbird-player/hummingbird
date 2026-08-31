@@ -182,12 +182,12 @@ impl AvailabilityState {
             let still_unavailable = !mounts.contains(mountpoint);
             if !still_unavailable {
                 changed = true;
-                if self
-                    .roots
-                    .iter()
-                    .any(|root| path_is_within(mountpoint, &root.root))
-                {
-                    push_unique_path(&mut became_available, mountpoint.clone());
+                for root in &self.roots {
+                    if path_is_within(&root.root, mountpoint) {
+                        push_unique_path(&mut became_available, root.root.clone());
+                    } else if path_is_within(mountpoint, &root.root) {
+                        push_unique_path(&mut became_available, mountpoint.clone());
+                    }
                 }
             }
             still_unavailable
@@ -506,6 +506,17 @@ mod tests {
         assert!(state.is_path_available(Path::new("/media/podcast.flac")));
         let (_, reconnected) = state.reconcile_mounts(&mounts(&["/", "/media/music"]));
         assert_eq!(reconnected, vec![PathBuf::from("/media/music")]);
+    }
+
+    #[test]
+    fn a_reconnected_parent_mount_scans_only_the_configured_root() {
+        let initial = mounts(&["/", "/storage"]);
+        let mut state = state(&["/storage/music"], initial, true);
+
+        state.reconcile_mounts(&mounts(&["/"]));
+        let (_, reconnected) = state.reconcile_mounts(&mounts(&["/", "/storage"]));
+
+        assert_eq!(reconnected, vec![PathBuf::from("/storage/music")]);
     }
 
     #[test]

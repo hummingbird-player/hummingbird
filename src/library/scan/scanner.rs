@@ -124,7 +124,7 @@ impl NextScanContext<'_> {
                             .await;
                         break ScanMode::Targeted {
                             paths,
-                            respect_record: false,
+                            respect_record: true,
                             recursive: true,
                         };
                     }

@@ -120,6 +120,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Power",
     "Win32_System_Recovery",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging"
 ] }
 windows-future = "0.3"

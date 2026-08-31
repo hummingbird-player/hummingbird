@@ -64,7 +64,8 @@ pub(super) fn current_mounts(roots: &[PathBuf]) -> MountSnapshot {
                 .is_some_and(is_root_mount)
                 && root.exists()
         })
-        .cloned();
+        .cloned()
+        .collect::<Vec<_>>();
     mounts.with_present_roots(present_roots)
 }
 
@@ -133,7 +134,7 @@ fn monitor_device_changes(tx: UnboundedSender<()>) {
             DEVICE_NOTIFY_WINDOW_HANDLE,
         )
     };
-    if let Err(error) = notification {
+    if let Err(ref error) = notification {
         warn!("Could not register for Windows volume notifications: {error}");
     }
 
@@ -161,7 +162,7 @@ fn monitor_device_changes(tx: UnboundedSender<()>) {
     let mut message = MSG::default();
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
         unsafe {
-            TranslateMessage(&message);
+            let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
     }
@@ -173,7 +174,7 @@ fn monitor_device_changes(tx: UnboundedSender<()>) {
     }
     if shell_notification != 0 {
         unsafe {
-            SHChangeNotifyDeregister(shell_notification);
+            let _ = SHChangeNotifyDeregister(shell_notification);
         }
     }
     let _ = unsafe { DestroyWindow(window) };

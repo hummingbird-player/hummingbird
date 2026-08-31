@@ -65,7 +65,7 @@ impl ActiveCommandContext<'_> {
                 ActiveCommandOutcome::Continue
             }
             Some(ScanCommand::StorageAvailable(paths)) => {
-                queue_pending_rescan(self.pending_rescan, paths, false, true);
+                queue_pending_rescan(self.pending_rescan, paths, true, true);
                 let _ = self
                     .watcher
                     .rearm_after_storage_change(self.scan_settings, self.cmd_tx)
