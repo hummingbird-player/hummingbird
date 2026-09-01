@@ -1,13 +1,13 @@
 use cntp_i18n::tr;
 use gpui::prelude::{FluentBuilder, *};
 use gpui::{
-    App, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun, Window, div,
-    img, px,
+    App, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun, Window, div, px,
 };
 use std::{rc::Rc, sync::Arc};
 
 use crate::ui::components::drag_drop::{DragPreview, TrackDragData};
 use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
+use crate::ui::components::managed_image::{ManagedImageKey, managed_image};
 use crate::ui::library::context_menus::play_track_next;
 use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::{
@@ -29,6 +29,10 @@ use super::ArtistNameVisibility;
 
 pub type TrackPlaylistInfo = PlaylistMenuInfo;
 
+fn track_artwork_key(track_id: i64, album_id: Option<i64>) -> ManagedImageKey {
+    album_id.map_or(ManagedImageKey::Track(track_id), ManagedImageKey::Album)
+}
+
 pub struct TrackItem {
     pub track: Track,
     pub index: usize,
@@ -37,7 +41,7 @@ pub struct TrackItem {
     pub is_liked: Option<i64>,
     pub hover_group: SharedString,
     left_field: TrackItemLeftField,
-    album_art: Option<SharedString>,
+    album_art: ManagedImageKey,
     pl_info: Option<TrackPlaylistInfo>,
     number_display_mode: NumberDisplayMode,
     track_position: Option<SharedString>,
@@ -114,10 +118,7 @@ impl TrackItem {
                 is_liked: cx
                     .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
                     .unwrap_or_default(),
-                album_art: Some(match track.album_id {
-                    Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
-                    None => format!("!db://track/{}/thumb", track.id).into(),
-                }),
+                album_art: track_artwork_key(track.id, track.album_id),
                 is_available: is_track_available(cx, &track),
                 track,
                 index,
@@ -318,14 +319,17 @@ impl Render for TrackItem {
                                                 .my_auto()
                                                 .rounded(px(3.0))
                                                 .bg(theme.album_art_background)
-                                                .when_some(self.album_art.clone(), |this, art| {
-                                                    this.child(
-                                                        img(art)
-                                                            .w(px(22.0))
-                                                            .h(px(22.0))
-                                                            .rounded(px(3.0)),
+                                                .child(
+                                                    managed_image(
+                                                        ("track-listing-art", self.track.id as usize),
+                                                        self.album_art.clone(),
                                                     )
-                                                }),
+                                                    .target_logical_px(22.0)
+                                                    .w(px(22.0))
+                                                    .h(px(22.0))
+                                                    .rounded(px(3.0))
+                                                    .thumb(),
+                                                ),
                                         )
                                     })
                                     .child(

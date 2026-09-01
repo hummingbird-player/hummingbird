@@ -96,9 +96,6 @@ where
     /// determine if placeholder covers and the header section should be displayed.
     fn has_images() -> bool;
 
-    /// Retrieves the associated image for the row.
-    fn get_image_path(&self) -> Option<SharedString>;
-
     /// Retrieves the full-quality key for the row, for use with `managed_image`.
     fn get_full_image_key(&self) -> Option<ManagedImageKey>;
 

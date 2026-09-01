@@ -6,7 +6,7 @@ use prelude::FluentBuilder;
 
 use crate::{
     library::{
-        db::{AlbumMethod, LibraryAccess},
+        db::LibraryAccess,
         types::{
             Album, DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
             DBString, Track,
@@ -15,10 +15,10 @@ use crate::{
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
         availability::{has_available_tracks, is_track_available, snapshot},
-        caching::hummingbird_cache,
         components::{
             button::{ButtonSize, button},
             icons::{DOTS_VERTICAL, STAR, STAR_FILLED, icon},
+            managed_image::{ManagedImageKey, managed_image},
             playback_controls::playback_controls,
             popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
@@ -42,6 +42,10 @@ use crate::{
 
 const RELEASE_SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(250);
 
+fn release_artwork_key(album_id: i64) -> ManagedImageKey {
+    ManagedImageKey::Album(album_id)
+}
+
 fn compute_all_liked(cx: &App, tracks: &[Track]) -> bool {
     if tracks.is_empty() {
         return false;
@@ -58,7 +62,6 @@ pub struct ReleaseView {
     track_listing: TrackListing,
     collection_summary: SharedString,
     release_info: Option<SharedString>,
-    img_path: SharedString,
     scroll_handle: ScrollHandle,
     pending_scroll: Option<usize>,
     scroll_follow: SmoothScrollFollow,
@@ -72,17 +75,12 @@ impl ReleaseView {
         cx.new(|cx| {
             // TODO: error handling
             let album = cx
-                .get_album_by_id(album_id, AlbumMethod::FullQuality)
+                .get_album_by_id(album_id)
                 .expect("Failed to retrieve album");
             let tracks = cx
                 .list_tracks_in_album(album_id)
                 .expect("Failed to retrieve tracks");
             let artist_name = album.artist_display_override.clone();
-
-            cx.on_release(|this: &mut Self, cx: &mut App| {
-                ImageSource::Resource(Resource::Embedded(this.img_path.clone())).remove_asset(cx);
-            })
-            .detach();
 
             let track_listing = TrackListing::new(
                 cx,
@@ -149,7 +147,6 @@ impl ReleaseView {
                 track_listing,
                 collection_summary,
                 release_info,
-                img_path: SharedString::from(format!("!db://album/{album_id}/full")),
                 scroll_handle: ScrollHandle::new(),
                 pending_scroll,
                 scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
@@ -190,18 +187,22 @@ impl ReleaseView {
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(
-                        img(self.img_path.clone())
-                            .min_w(px(160.0))
-                            .min_h(px(160.0))
-                            .max_w(px(160.0))
-                            .max_h(px(160.0))
-                            .overflow_hidden()
-                            .flex()
-                            // TODO: Ideally this should be ObjectFit::Cover, but this
-                            // breaks rounding
-                            // FIXME: This is a GPUI bug
-                            .object_fit(ObjectFit::Fill)
-                            .rounded(px(10.0)),
+                        managed_image(
+                            ("release-artwork", self.album.id as usize),
+                            release_artwork_key(self.album.id),
+                        )
+                        .target_logical_px(160.0)
+                        .min_w(px(160.0))
+                        .min_h(px(160.0))
+                        .max_w(px(160.0))
+                        .max_h(px(160.0))
+                        .overflow_hidden()
+                        .flex()
+                        // TODO: Ideally this should be ObjectFit::Cover, but this
+                        // breaks rounding
+                        // FIXME: This is a GPUI bug
+                        .object_fit(ObjectFit::Fill)
+                        .rounded(px(10.0)),
                     ),
             )
             .child(
@@ -583,7 +584,6 @@ impl Render for ReleaseView {
         let full_width = settings.interface.effective_full_width();
 
         div()
-            .image_cache(hummingbird_cache(("release", self.album.id as u64), 1))
             .flex()
             .flex_col()
             .w_full()
@@ -616,5 +616,16 @@ impl Render for ReleaseView {
                     ),
             )
             .child(floating_scrollbar("release_scrollbar", scroll_handle).right(px(4.0)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_artwork_key;
+    use crate::ui::components::managed_image::ManagedImageKey;
+
+    #[test]
+    fn release_artwork_uses_the_album_managed_image_key() {
+        assert!(release_artwork_key(42) == ManagedImageKey::Album(42));
     }
 }

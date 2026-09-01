@@ -14,7 +14,6 @@ use crate::{
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
         availability::{has_available_tracks, snapshot},
-        caching::hummingbird_cache,
         components::{
             button::{ButtonSize, button},
             dropdown::dropdown,
@@ -786,14 +785,7 @@ impl Render for ArtistDetailView {
                                                     item.set_image_target(item_width, cx);
                                                 });
 
-                                                div()
-                                                    .image_cache(hummingbird_cache(
-                                                        ("artist-album-grid", idx + 1),
-                                                        1,
-                                                    ))
-                                                    .size_full()
-                                                    .child(view)
-                                                    .into_any_element()
+                                                div().size_full().child(view).into_any_element()
                                             },
                                         )
                                         .min_item_width(px(grid_min_item_width))
@@ -808,7 +800,6 @@ impl Render for ArtistDetailView {
                                         .w_full()
                                         .border_t_1()
                                         .border_color(theme.border_color)
-                                        .image_cache(retain_all("artist_liked_tracks_cache"))
                                         .children(
                                             self.liked_track_items
                                                 .iter()
@@ -822,7 +813,6 @@ impl Render for ArtistDetailView {
                                         .w_full()
                                         .border_t_1()
                                         .border_color(theme.border_color)
-                                        .image_cache(retain_all("artist_standalone_tracks_cache"))
                                         .children(
                                             self.standalone_track_items
                                                 .iter()

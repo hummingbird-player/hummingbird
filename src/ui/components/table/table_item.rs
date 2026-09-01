@@ -11,6 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    components::managed_image::{ManagedImageKey, managed_image},
     models::Models,
     theme::Theme,
 };
@@ -28,7 +29,7 @@ where
     on_select: Option<OnSelectHandler<T, C>>,
     row: Option<Arc<T>>,
     id: Option<ElementId>,
-    image_path: Option<SharedString>,
+    image_key: Option<ManagedImageKey>,
     is_available: bool,
 }
 
@@ -57,7 +58,7 @@ where
             keys.into_iter().map(|v| row.get_column(cx, *v)).collect()
         });
 
-        let image_path = row.as_ref().and_then(|row| row.get_image_path());
+        let image_key = row.as_ref().and_then(|row| row.get_full_image_key());
         let is_available = row.as_ref().is_some_and(|row| row.is_available(cx));
         let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
@@ -83,7 +84,7 @@ where
                 context_menu_context,
                 index,
                 data,
-                image_path,
+                image_key,
                 columns: columns_read,
                 on_select,
                 id,
@@ -188,8 +189,15 @@ where
                             .h(px(22.0))
                             .rounded(px(3.0))
                             .bg(theme.album_art_background)
-                            .when_some(self.image_path.clone(), |div, image| {
-                                div.child(img(image).w(px(22.0)).h(px(22.0)).rounded(px(3.0)))
+                            .when_some(self.image_key.clone(), |div, key| {
+                                div.child(
+                                    managed_image(("table-item-art", self.index), key)
+                                        .target_logical_px(22.0)
+                                        .w(px(22.0))
+                                        .h(px(22.0))
+                                        .rounded(px(3.0))
+                                        .thumb(),
+                                )
                             }),
                     ),
             );

@@ -85,13 +85,6 @@ pub enum PlaylistTrackSortMethod {
     RecentlyAddedAsc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AlbumMethod {
-    FullQuality,
-    Thumbnail,
-    Metadata,
-}
-
 async fn load_album_genres(pool: &SqlitePool, albums: &mut [Album]) -> sqlx::Result<()> {
     if albums.is_empty() {
         return Ok(());
@@ -275,22 +268,8 @@ pub async fn list_tracks_in_album(
     Ok(Arc::new(tracks))
 }
 
-pub async fn get_album_by_id(
-    pool: &SqlitePool,
-    album_id: i64,
-    method: AlbumMethod,
-) -> sqlx::Result<Arc<Album>> {
-    let query = match method {
-        AlbumMethod::FullQuality => {
-            include_str!("../../queries/library/find_album_full_by_id.sql")
-        }
-        AlbumMethod::Thumbnail => {
-            include_str!("../../queries/library/find_album_thumb_by_id.sql")
-        }
-        AlbumMethod::Metadata => {
-            include_str!("../../queries/library/find_album_metadata_by_id.sql")
-        }
-    };
+pub async fn get_album_by_id(pool: &SqlitePool, album_id: i64) -> sqlx::Result<Arc<Album>> {
+    let query = include_str!("../../queries/library/find_album_by_id.sql");
 
     let mut album: Album = sqlx::query_as(query).bind(album_id).fetch_one(pool).await?;
     load_album_genres(pool, std::slice::from_mut(&mut album)).await?;
@@ -900,7 +879,7 @@ pub trait LibraryAccess {
         sort_method: TrackSortMethod,
     ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>>;
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
-    fn get_album_by_id(&self, album_id: i64, method: AlbumMethod) -> sqlx::Result<Arc<Album>>;
+    fn get_album_by_id(&self, album_id: i64) -> sqlx::Result<Arc<Album>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
@@ -965,9 +944,9 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(list_tracks_in_album(&pool.0, album_id))
     }
 
-    fn get_album_by_id(&self, album_id: i64, method: AlbumMethod) -> sqlx::Result<Arc<Album>> {
+    fn get_album_by_id(&self, album_id: i64) -> sqlx::Result<Arc<Album>> {
         let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(get_album_by_id(&pool.0, album_id, method))
+        crate::RUNTIME.block_on(get_album_by_id(&pool.0, album_id))
     }
 
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>> {

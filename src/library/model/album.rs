@@ -1,9 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::{
-    library::types::{DBString, Thumbnail},
-    media::numbering::NumberDisplayMode,
-};
+use crate::{library::types::DBString, media::numbering::NumberDisplayMode};
 
 #[derive(sqlx::FromRow, Clone)]
 pub struct Album {
@@ -18,10 +15,6 @@ pub struct Album {
     /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
     pub date_precision: Option<i32>,
     pub created_at: DateTime<Utc>,
-    #[sqlx(default)]
-    pub image: Option<Box<[u8]>>,
-    #[sqlx(default)]
-    pub thumb: Option<Thumbnail>,
     #[sqlx(skip)]
     pub tags: Option<Vec<String>>,
     #[sqlx(skip)]

@@ -11,7 +11,7 @@ use super::{
     DATE_PRECISION_YEAR_MONTH, DBString, Track,
 };
 use crate::{
-    library::db::{AlbumMethod, AlbumSortMethod, ArtistSortMethod, LibraryAccess, TrackSortMethod},
+    library::db::{AlbumSortMethod, ArtistSortMethod, LibraryAccess, TrackSortMethod},
     media::numbering::format_track_table_position,
     ui::{
         availability::{
@@ -186,7 +186,7 @@ impl TableData<AlbumColumn> for Album {
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_album_by_id(id as i64, AlbumMethod::Metadata).ok())
+        Ok(cx.get_album_by_id(id as i64).ok())
     }
 
     fn get_column(&self, _cx: &mut App, column: AlbumColumn) -> Option<SharedString> {
@@ -200,10 +200,6 @@ impl TableData<AlbumColumn> for Album {
             AlbumColumn::Label => self.label.as_ref().map(|v| v.0.clone()),
             AlbumColumn::CatalogNumber => self.catalog_number.as_ref().map(|v| v.0.clone()),
         }
-    }
-
-    fn get_image_path(&self) -> Option<SharedString> {
-        Some(format!("!db://album/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
@@ -418,7 +414,7 @@ impl TableData<TrackColumn> for Track {
             TrackColumn::TrackNumber => {
                 let number_display_mode = self
                     .album_id
-                    .and_then(|id| cx.get_album_by_id(id, AlbumMethod::Metadata).ok())
+                    .and_then(|id| cx.get_album_by_id(id).ok())
                     .map(|album| album.number_display_mode)
                     .unwrap_or_default();
 
@@ -433,9 +429,7 @@ impl TableData<TrackColumn> for Track {
             TrackColumn::Title => Some(self.title.0.clone()),
             TrackColumn::Album => {
                 if let Some(album_id) = self.album_id {
-                    cx.get_album_by_id(album_id, AlbumMethod::Metadata)
-                        .ok()
-                        .map(|v| v.title.0.clone())
+                    cx.get_album_by_id(album_id).ok().map(|v| v.title.0.clone())
                 } else {
                     None
                 }
@@ -444,11 +438,9 @@ impl TableData<TrackColumn> for Track {
                 if let Some(artist) = &self.artist_names {
                     Some(artist.0.clone())
                 } else if let Some(album_id) = self.album_id {
-                    cx.get_album_by_id(album_id, AlbumMethod::Metadata)
-                        .ok()
-                        .and_then(|album| {
-                            album.artist_display_override.as_ref().map(|v| v.0.clone())
-                        })
+                    cx.get_album_by_id(album_id).ok().and_then(|album| {
+                        album.artist_display_override.as_ref().map(|v| v.0.clone())
+                    })
                 } else {
                     None
                 }
@@ -456,11 +448,6 @@ impl TableData<TrackColumn> for Track {
             TrackColumn::Genres => format_genres(&self.genres),
             TrackColumn::Length => Some(format_duration(self.duration, true).into()),
         }
-    }
-
-    fn get_image_path(&self) -> Option<SharedString> {
-        // every track has its own artwork association (shared with the album when identical)
-        Some(format!("!db://track/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
@@ -612,10 +599,6 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
             ArtistColumn::Albums => Some(self.album_count.to_string().into()),
             ArtistColumn::Tracks => Some(self.track_count.to_string().into()),
         }
-    }
-
-    fn get_image_path(&self) -> Option<SharedString> {
-        None
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {

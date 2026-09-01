@@ -13,7 +13,6 @@ use crate::{
         storage::{TableSettings, TableViewModeSetting},
     },
     ui::{
-        caching::hummingbird_cache,
         components::{
             context::context,
             drag_drop::DragPreview,
@@ -604,7 +603,6 @@ where
             .child(div().bg(theme.elevated_background).child(column_menu));
 
         let list_canvas = div()
-            .image_cache(hummingbird_cache((T::get_table_name(), 0_usize), 200))
             .relative()
             .min_w(px(table_min_width))
             .w_full()
@@ -710,14 +708,7 @@ where
                                     item.set_image_target(item_width, cx);
                                 });
 
-                                div()
-                                    .image_cache(hummingbird_cache(
-                                        (T::get_table_name(), idx + 1),
-                                        1,
-                                    ))
-                                    .size_full()
-                                    .child(view)
-                                    .into_any_element()
+                                div().size_full().child(view).into_any_element()
                             },
                         )
                         .min_item_width(px(grid_min_item_width))

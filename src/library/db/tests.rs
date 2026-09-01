@@ -2,8 +2,8 @@ use sqlx::SqlitePool;
 
 use super::{
     AlbumSortMethod, ArtistSortMethod, LikedTrackSortMethod, TrackSortMethod,
-    get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums,
-    list_albums_by_artist, list_artists, list_tracks,
+    get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums, list_albums_by_artist,
+    list_artists, list_tracks,
 };
 use crate::test_support::TestDatabase;
 

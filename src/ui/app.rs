@@ -37,7 +37,6 @@ use crate::{
     ui::{
         assets::HummingbirdAssetSource,
         availability,
-        caching::HummingbirdImageCache,
         command_palette::{CommandPalette, CommandPaletteHolder},
         library::missing_folder_dialog::MissingFolderDialog,
         models::WindowInformation,
@@ -81,7 +80,6 @@ struct MainWindow {
     pub missing_folder_dialog: Entity<MissingFolderDialog>,
     pub corrupt_settings_dialog: Entity<CorruptSettingsDialog>,
     pub palette: Entity<CommandPalette>,
-    pub image_cache: Entity<HummingbirdImageCache>,
     pub toast_layer: Entity<ToastLayer>,
 }
 
@@ -103,79 +101,75 @@ impl Render for MainWindow {
             );
         let show_sidebar = *self.show_queue.read(cx) || *self.show_lyrics.read(cx);
 
-        div()
-            .image_cache(self.image_cache.clone())
-            .key_context("app")
-            .size_full()
-            .child(window_chrome(
-                div()
-                    .cursor(CursorStyle::Arrow)
-                    .on_drop(|ev: &ExternalPaths, _, cx| {
-                        let items = ev
-                            .paths()
-                            .iter()
-                            .map(|path| QueueItemData::new(cx, path.clone(), None, None))
-                            .collect();
+        div().key_context("app").size_full().child(window_chrome(
+            div()
+                .cursor(CursorStyle::Arrow)
+                .on_drop(|ev: &ExternalPaths, _, cx| {
+                    let items = ev
+                        .paths()
+                        .iter()
+                        .map(|path| QueueItemData::new(cx, path.clone(), None, None))
+                        .collect();
 
-                        let playback_interface = cx.global::<PlaybackInterface>();
-                        playback_interface.queue_list(items);
-                    })
-                    .overflow_hidden()
-                    .size_full()
-                    .flex()
-                    // the whole application has to be flipped upside down otherwise sidebar icons
-                    // overlap menu bar menus
-                    .flex_col_reverse()
-                    .max_w_full()
-                    .max_h_full()
-                    .child(
-                        AnyView::from(self.controls.clone()).cached(
-                            StyleRefinement::default()
-                                .w_full()
-                                .flex()
-                                .flex_shrink_0()
-                                .h(px(60.0)),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .my(PANEL_GAP)
+                    let playback_interface = cx.global::<PlaybackInterface>();
+                    playback_interface.queue_list(items);
+                })
+                .overflow_hidden()
+                .size_full()
+                .flex()
+                // the whole application has to be flipped upside down otherwise sidebar icons
+                // overlap menu bar menus
+                .flex_col_reverse()
+                .max_w_full()
+                .max_h_full()
+                .child(
+                    AnyView::from(self.controls.clone()).cached(
+                        StyleRefinement::default()
                             .w_full()
-                            .h_full()
                             .flex()
-                            .max_w_full()
-                            .max_h_full()
-                            .overflow_hidden()
-                            .child(
-                                AnyView::from(self.library.clone()).cached(
-                                    StyleRefinement::default()
-                                        .w_full()
-                                        .h_full()
-                                        .flex_shrink(1.0)
-                                        .max_w_full()
-                                        .max_h_full(),
-                                ),
-                            )
-                            .when(show_sidebar, |this| this.child(right_sidebar)),
-                    )
-                    .child(self.header.clone())
-                    .child(self.search.clone())
-                    .child(self.artist_picker.clone())
-                    .child(self.palette.clone())
-                    .when(show_about, |this| {
-                        this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
-                            let show_about = cx.global::<Models>().show_about.clone();
-                            show_about.write(cx, false);
-                        }))
-                    })
-                    .when(show_missing_folder_dialog, |this| {
-                        this.child(self.missing_folder_dialog.clone())
-                    })
-                    .when(show_corrupt_settings_dialog, |this| {
-                        this.child(self.corrupt_settings_dialog.clone())
-                    })
-                    .child(self.toast_layer.clone()),
-            ))
+                            .flex_shrink_0()
+                            .h(px(60.0)),
+                    ),
+                )
+                .child(
+                    div()
+                        .my(PANEL_GAP)
+                        .w_full()
+                        .h_full()
+                        .flex()
+                        .max_w_full()
+                        .max_h_full()
+                        .overflow_hidden()
+                        .child(
+                            AnyView::from(self.library.clone()).cached(
+                                StyleRefinement::default()
+                                    .w_full()
+                                    .h_full()
+                                    .flex_shrink(1.0)
+                                    .max_w_full()
+                                    .max_h_full(),
+                            ),
+                        )
+                        .when(show_sidebar, |this| this.child(right_sidebar)),
+                )
+                .child(self.header.clone())
+                .child(self.search.clone())
+                .child(self.artist_picker.clone())
+                .child(self.palette.clone())
+                .when(show_about, |this| {
+                    this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
+                        let show_about = cx.global::<Models>().show_about.clone();
+                        show_about.write(cx, false);
+                    }))
+                })
+                .when(show_missing_folder_dialog, |this| {
+                    this.child(self.missing_folder_dialog.clone())
+                })
+                .when(show_corrupt_settings_dialog, |this| {
+                    this.child(self.corrupt_settings_dialog.clone())
+                })
+                .child(self.toast_layer.clone()),
+        ))
     }
 }
 
@@ -319,13 +313,6 @@ fn build_main_window(
             missing_folder_dialog: MissingFolderDialog::new(cx),
             corrupt_settings_dialog: CorruptSettingsDialog::new(cx),
             palette,
-            // use a really small global image cache
-            // this is literally just to ensure that images are *always* removed
-            // from memory *at some point*
-            //
-            // if your view uses a lot of images you need to have your own image
-            // cache
-            image_cache: HummingbirdImageCache::new(20, cx),
             toast_layer,
         }
     })
@@ -377,8 +364,8 @@ pub fn run() -> anyhow::Result<()> {
         );
     }
 
-    let application = Application::with_platform(current_platform(false))
-        .with_assets(HummingbirdAssetSource::new(pool.clone()));
+    let application =
+        Application::with_platform(current_platform(false)).with_assets(HummingbirdAssetSource);
     let toast_layer: Rc<OnceCell<Entity<ToastLayer>>> = Rc::new(OnceCell::new());
     let toast_layer_for_reopen = toast_layer.clone();
     application.on_reopen(move |cx| {

@@ -4,7 +4,6 @@ mod arguments;
 mod artist_picker;
 mod assets;
 pub mod availability;
-mod caching;
 mod command_palette;
 pub mod components;
 mod constants;

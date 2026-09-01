@@ -4,10 +4,11 @@ use cntp_i18n::{I18nString, tr};
 use gpui::{App, IntoElement, SharedString, Window};
 
 use crate::{
-    library::db::{AlbumMethod, LibraryAccess},
+    library::db::LibraryAccess,
     ui::{
         components::{
             icons::{DISC, USERS},
+            managed_image::ManagedImageKey,
             palette::{FinderItemLeft, PaletteItem},
         },
         library::context_menus::{
@@ -41,8 +42,8 @@ pub enum SearchPaletteItem {
 }
 
 impl SearchPaletteItem {
-    fn thumbnail_path(album_id: i64) -> String {
-        format!("!db://album/{}/thumb", album_id)
+    fn thumbnail_key(album_id: i64) -> ManagedImageKey {
+        ManagedImageKey::Album(album_id)
     }
 
     pub fn from_search_results(
@@ -83,14 +84,12 @@ impl PaletteItem for SearchPaletteItem {
     fn left_content(&self, _cx: &mut App) -> Option<FinderItemLeft> {
         match self {
             SearchPaletteItem::Album { id, .. } => {
-                Some(FinderItemLeft::Image(Self::thumbnail_path(*id).into()))
+                Some(FinderItemLeft::Image(Self::thumbnail_key(*id)))
             }
             SearchPaletteItem::Artist { .. } => Some(FinderItemLeft::Icon(USERS.into())),
             SearchPaletteItem::Track { album_id, .. } => {
                 if let Some(album_id) = album_id {
-                    Some(FinderItemLeft::Image(
-                        Self::thumbnail_path(*album_id).into(),
-                    ))
+                    Some(FinderItemLeft::Image(Self::thumbnail_key(*album_id)))
                 } else {
                     Some(FinderItemLeft::Icon(DISC.into()))
                 }
@@ -133,7 +132,7 @@ impl PaletteItem for SearchPaletteItem {
     fn on_middle_click(&self, cx: &mut App) {
         match self {
             SearchPaletteItem::Album { id, .. } => {
-                let album = cx.get_album_by_id(*id, AlbumMethod::Metadata);
+                let album = cx.get_album_by_id(*id);
 
                 if let Ok(album) = album {
                     play_album_next(cx, &album);
@@ -157,7 +156,7 @@ impl PaletteItem for SearchPaletteItem {
                     add_album_to_playlist_state("pi_context_album_add_to", *id, window, cx);
                 let album =
                     window.use_keyed_state(("pi_context_album", *id as usize), cx, |_, cx| {
-                        cx.get_album_by_id(*id, AlbumMethod::Metadata)
+                        cx.get_album_by_id(*id)
                     });
 
                 if let Ok(album) = album.read(cx) {
@@ -222,5 +221,16 @@ impl PaletteItem for SearchPaletteItem {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchPaletteItem;
+    use crate::ui::components::managed_image::ManagedImageKey;
+
+    #[test]
+    fn search_thumbnail_uses_the_album_managed_image_key() {
+        assert!(SearchPaletteItem::thumbnail_key(42) == ManagedImageKey::Album(42));
     }
 }

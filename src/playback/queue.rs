@@ -149,8 +149,7 @@ impl QueueItemData {
 
             // if the database ids are known we can get the data from the database
             if let (Some(track_id), Some(album_id)) = (track_id, album_id) {
-                let album =
-                    cx.get_album_by_id(album_id, crate::library::db::AlbumMethod::Thumbnail);
+                let album = cx.get_album_by_id(album_id);
                 let track = cx.get_track_by_id(track_id);
 
                 if let (Ok(track), Ok(album)) = (track, album) {

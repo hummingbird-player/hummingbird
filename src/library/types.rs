@@ -1,75 +1,12 @@
 #![allow(dead_code)]
 pub mod table;
 
-use std::sync::Arc;
-
-use gpui::{IntoElement, RenderImage, SharedString};
-use image::{Frame, RgbaImage};
-use smallvec::SmallVec;
+use gpui::{IntoElement, SharedString};
 use sqlx::{Database, Decode, Sqlite, Type, encode::IsNull, error::BoxDynError};
-
-use crate::util::rgb_to_bgr;
 
 pub use crate::library::model::{
     Album, Artist, ArtistWithCounts, Playlist, PlaylistItem, PlaylistType, Track, TrackStats,
 };
-
-#[derive(Clone)]
-pub struct Thumbnail(pub Arc<RenderImage>);
-
-impl Thumbnail {
-    pub fn new(image: Arc<RenderImage>) -> Self {
-        Self(image)
-    }
-}
-
-impl From<Box<[u8]>> for Thumbnail {
-    fn from(data: Box<[u8]>) -> Self {
-        let mut image = image::load_from_memory(&data)
-            .unwrap()
-            .as_rgba8()
-            .map(|image| image.to_owned())
-            .unwrap_or_else(|| {
-                let mut image = RgbaImage::new(1, 1);
-                image.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
-                image
-            });
-
-        rgb_to_bgr(&mut image);
-
-        Self(Arc::new(RenderImage::new(SmallVec::from_vec(vec![
-            Frame::new(image),
-        ]))))
-    }
-}
-
-impl<'r, DB: Database> Decode<'r, DB> for Thumbnail
-where
-    Box<[u8]>: Decode<'r, DB>,
-{
-    fn decode(value: <DB as Database>::ValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let data = <Box<[u8]>>::decode(value)?;
-        Ok(Self::from(data))
-    }
-}
-
-impl<'q, DB: Database> sqlx::Encode<'q, DB> for Thumbnail
-where
-    Box<[u8]>: sqlx::Encode<'q, DB>,
-{
-    fn encode_by_ref(
-        &self,
-        _: &mut <DB as Database>::ArgumentBuffer,
-    ) -> Result<IsNull, BoxDynError> {
-        panic!("Thumbnail is write-only")
-    }
-}
-
-impl sqlx::Type<sqlx::Sqlite> for Thumbnail {
-    fn type_info() -> <Sqlite as Database>::TypeInfo {
-        <Box<[u8]> as Type<Sqlite>>::type_info()
-    }
-}
 
 #[derive(Clone, Default, Debug)]
 pub struct DBString(pub SharedString);

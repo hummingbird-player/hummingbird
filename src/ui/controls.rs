@@ -8,7 +8,6 @@ use crate::{
     },
     settings::SettingsGlobal,
     ui::{
-        caching::hummingbird_cache,
         components::{
             context::context,
             icons::{
@@ -341,7 +340,6 @@ impl Render for InfoSection {
                     .overflow_x_hidden()
                     .child(
                         div()
-                            .image_cache(hummingbird_cache("infosection_cache", 1))
                             .id("album-art")
                             .rounded(px(4.0))
                             .bg(theme.album_art_background)
