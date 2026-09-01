@@ -128,3 +128,26 @@ pub(super) fn derive_claimed_artists(
 
     (names, fallback)
 }
+
+/// Track credits include every artist in the track's artist list. Album-artist sort keys may
+/// still provide a useful per-artist sort key, but never decide whether a track artist is linked.
+pub(super) fn derive_track_artists(row: &TrackArtistRow) -> Vec<(String, Option<String>)> {
+    let artists = decode_artist_list(row.artists.as_deref());
+    let keys = decode_artist_list(row.album_artist_keys.as_deref());
+    let single_sort = (artists.len() == 1)
+        .then(|| row.artist_sort.clone())
+        .flatten()
+        .filter(|sort| !sort.trim().is_empty());
+
+    artists
+        .into_iter()
+        .map(|name| {
+            let sort = single_sort.clone().or_else(|| {
+                keys.iter()
+                    .find(|key| token_key(key) == token_key(&name))
+                    .cloned()
+            });
+            (name, sort)
+        })
+        .collect()
+}

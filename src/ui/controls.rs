@@ -249,14 +249,11 @@ impl InfoSection {
             let can_navigate_to_album = current_library_track
                 .as_ref()
                 .is_some_and(|track| track.album_id.is_some());
-            let can_navigate_to_artist = current_library_track
-                .as_ref()
-                .and_then(|track| track.album_id)
-                .is_some_and(|album_id| {
-                    cx.artist_ids_for_album(album_id)
-                        .map(|v| !v.is_empty())
-                        .unwrap_or(false)
-                });
+            let can_navigate_to_artist = current_library_track.as_ref().is_some_and(|track| {
+                cx.artist_ids_for_track(track.id)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+            });
 
             let is_liked = current_library_track.as_ref().and_then(|track| {
                 cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
@@ -536,15 +533,11 @@ fn update_current_track_state(
         .current_library_track
         .as_ref()
         .is_some_and(|track| track.album_id.is_some());
-    this.can_navigate_to_artist = this
-        .current_library_track
-        .as_ref()
-        .and_then(|track| track.album_id)
-        .is_some_and(|album_id| {
-            cx.artist_ids_for_album(album_id)
-                .map(|v| !v.is_empty())
-                .unwrap_or(false)
-        });
+    this.can_navigate_to_artist = this.current_library_track.as_ref().is_some_and(|track| {
+        cx.artist_ids_for_track(track.id)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    });
     this.is_liked = this.current_library_track.as_ref().and_then(|track| {
         cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
             .unwrap_or_default()

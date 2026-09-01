@@ -1135,22 +1135,112 @@ async fn update_metadata_retag_removes_dropped_single_artists() {
 }
 
 #[tokio::test]
-async fn update_metadata_adopting_album_drops_single_artists() {
-    let (dir, pool) = create_test_pool("db-single-adopt-test").await;
+async fn update_metadata_writes_artists_for_album_track() {
+    let (dir, pool) = create_test_pool("db-album-track-artists-test").await;
     let mut conn = pool.acquire().await.unwrap();
     let path = dir.utf8_join("track.flac");
 
-    let mut meta = track_metadata("Album", "Artist", "Track", 1);
-    meta.album = None;
-    insert_metadata(&mut conn, &meta, &path).await.unwrap();
-    assert_eq!(count_rows(&pool, "track_artist").await, 1);
-
-    meta.album = Some("Real Album".to_string());
+    let mut meta = track_metadata("Real Album", "Main Artist feat. Guest Artist", "Track", 1);
+    meta.artists = names(&["Main Artist", "Guest Artist"]);
+    meta.album_artist_keys = names(&["Main Artist"]);
     insert_metadata(&mut conn, &meta, &path).await.unwrap();
 
-    assert_eq!(count_rows(&pool, "track_artist").await, 0);
+    assert_eq!(count_rows(&pool, "track_artist").await, 2);
     assert_eq!(count_rows(&pool, "album_artist").await, 1);
-    assert_eq!(count_rows(&pool, "artist").await, 1);
+    assert_eq!(count_rows(&pool, "artist").await, 2);
+
+    let track_artists: Vec<(String,)> = sqlx::query_as(
+        "SELECT a.name
+         FROM track_artist ta
+         JOIN artist a ON a.id = ta.artist_id
+         ORDER BY a.name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        track_artists,
+        [("Guest Artist".to_string(),), ("Main Artist".to_string(),)]
+    );
+
+    let (track_id,): (i64,) = sqlx::query_as("SELECT id FROM track")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let navigation_artists = crate::library::db::artist_ids_for_track(&pool, track_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        navigation_artists
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["Guest Artist", "Main Artist"]
+    );
+
+    let guest_id = navigation_artists[0].0;
+    let guest_direct_tracks = crate::library::db::get_standalone_tracks_by_artist(
+        &pool,
+        guest_id,
+        crate::library::db::LikedTrackSortMethod::ReleaseOrder,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        guest_direct_tracks
+            .iter()
+            .map(|track| track.id)
+            .collect::<Vec<_>>(),
+        [track_id]
+    );
+
+    let main_id = navigation_artists[1].0;
+    let main_direct_tracks = crate::library::db::get_standalone_tracks_by_artist(
+        &pool,
+        main_id,
+        crate::library::db::LikedTrackSortMethod::ReleaseOrder,
+    )
+    .await
+    .unwrap();
+    assert!(main_direct_tracks.is_empty());
+
+    let guest_counts = crate::library::db::get_artist_with_counts(&pool, guest_id)
+        .await
+        .unwrap();
+    assert_eq!((guest_counts.album_count, guest_counts.track_count), (0, 1));
+    let main_counts = crate::library::db::get_artist_with_counts(&pool, main_id)
+        .await
+        .unwrap();
+    assert_eq!((main_counts.album_count, main_counts.track_count), (1, 1));
+
+    let guest_tracks = crate::library::db::get_all_tracks_by_artist(&pool, guest_id)
+        .await
+        .unwrap();
+    assert_eq!(guest_tracks.len(), 1);
+    let main_tracks = crate::library::db::get_all_tracks_by_artist(&pool, main_id)
+        .await
+        .unwrap();
+    assert_eq!(main_tracks.len(), 1);
+
+    let artists_by_track_count =
+        crate::library::db::list_artists(&pool, crate::library::db::ArtistSortMethod::TracksAsc)
+            .await
+            .unwrap();
+    assert_eq!(artists_by_track_count, [main_id]);
+
+    let visible_artist_ids: Vec<(i64,)> = sqlx::query_as(include_str!(
+        "../../../../queries/library/find_artists_name_asc.sql"
+    ))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(visible_artist_ids.len(), 1);
+    let (visible_name,): (String,) = sqlx::query_as("SELECT name FROM artist WHERE id = $1")
+        .bind(visible_artist_ids[0].0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(visible_name, "Main Artist");
 }
 
 #[tokio::test]

@@ -476,6 +476,8 @@ pub async fn get_all_tracks_by_artist(
     Ok(Arc::new(tracks))
 }
 
+/// Lists tracks directly credited to an artist that are not already represented by one of the
+/// artist's album links. This includes standalone tracks and guest credits on other artists' albums.
 pub async fn get_standalone_tracks_by_artist(
     pool: &SqlitePool,
     artist_id: i64,
@@ -904,7 +906,7 @@ pub async fn artist_ids_for_album(
     Ok(artists)
 }
 
-/// Lists all (id, name) artist pairs linked to a track, through its album or standalone links.
+/// Lists all unique (id, name) artist pairs linked directly to a track or through its album.
 pub async fn artist_ids_for_track(
     pool: &SqlitePool,
     track_id: i64,

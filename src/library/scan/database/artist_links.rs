@@ -3,7 +3,8 @@ use sqlx::{SqliteConnection, SqlitePool};
 use tracing::error;
 
 use super::artists::{
-    TrackArtistRow, derive_claimed_artists, display_is_credited, push_album_artist_name,
+    TrackArtistRow, derive_claimed_artists, derive_track_artists, display_is_credited,
+    push_album_artist_name,
 };
 use crate::library::scan::artist_match::ArtistMatcher;
 
@@ -129,7 +130,7 @@ pub async fn flush_album_artists(
     }
 }
 
-/// Rebuild artist links for a track with no album, using the same claim rules.
+/// Rebuild a track's artist links.
 pub(crate) async fn recompute_track_artists(
     conn: &mut SqliteConnection,
     matcher: &mut ArtistMatcher,
@@ -146,16 +147,12 @@ pub(crate) async fn recompute_track_artists(
         return Ok(());
     };
 
-    let (mut names, fallback) = derive_claimed_artists(std::slice::from_ref(&row));
+    let mut names = derive_track_artists(&row);
 
     if names.is_empty() {
         let display = row.artist_names.as_deref().filter(|d| !d.trim().is_empty());
         if let Some(display) = display {
             names.push((display.to_string(), row.artist_sort.clone()));
-        } else {
-            for part in fallback {
-                push_album_artist_name(&mut names, &part, None);
-            }
         }
     }
 

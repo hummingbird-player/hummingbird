@@ -200,13 +200,11 @@ pub async fn update_metadata(
             .await?;
     }
 
-    // album artists once per album per batch, tracks with no album get their own links
     if let Some(album_id) = album_id {
         caches.pending_albums.insert(album_id);
         caches.pending_genre_albums.insert(album_id);
-    } else {
-        caches.pending_tracks.insert(track_id);
     }
+    caches.pending_tracks.insert(track_id);
     if let Some(Some(old_id)) = previous_album.map(|(id,)| id)
         && Some(old_id) != album_id
     {
