@@ -92,7 +92,7 @@ pub(crate) mod alloc_guard {
 }
 
 pub(crate) struct TestDir {
-    path: PathBuf,
+    path: Option<PathBuf>,
 }
 
 impl TestDir {
@@ -103,29 +103,86 @@ impl TestDir {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("{prefix}-{}-{id}", *RUN_ID));
         fs::create_dir_all(&path).unwrap();
-        Self { path }
+        Self { path: Some(path) }
     }
 
     pub(crate) fn path(&self) -> &Path {
-        &self.path
+        self.path.as_deref().expect("test directory already closed")
     }
 
     pub(crate) fn join(&self, name: &str) -> PathBuf {
-        self.path.join(name)
+        self.path().join(name)
     }
 
     pub(crate) fn utf8_path(&self) -> Utf8PathBuf {
-        Utf8PathBuf::from_path_buf(self.path.clone()).unwrap()
+        Utf8PathBuf::from_path_buf(self.path().to_owned()).unwrap()
     }
 
     pub(crate) fn utf8_join(&self, name: &str) -> Utf8PathBuf {
-        Utf8PathBuf::from_path_buf(self.path.join(name)).unwrap()
+        Utf8PathBuf::from_path_buf(self.path().join(name)).unwrap()
+    }
+
+    fn close(mut self) -> std::io::Result<()> {
+        let path = self.path.take().expect("test directory already closed");
+        fs::remove_dir_all(path)
     }
 }
 
 impl Drop for TestDir {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+/// An isolated, fully migrated, file-backed SQLite database owned by one test.
+///
+/// Call [`TestDatabase::close`] on the success path so SQLx releases its SQLite and WAL handles
+/// before the temporary directory is removed. `Drop` remains a best-effort fallback for panics.
+pub(crate) struct TestDatabase {
+    dir: Option<TestDir>,
+    pool: Option<SqlitePool>,
+}
+
+impl TestDatabase {
+    pub(crate) async fn new(prefix: &str) -> Self {
+        let dir = TestDir::new(prefix);
+        let pool = db::create_pool(dir.join("library.db")).await.unwrap();
+        Self {
+            dir: Some(dir),
+            pool: Some(pool),
+        }
+    }
+
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        self.pool.as_ref().expect("test database already closed")
+    }
+
+    pub(crate) fn dir(&self) -> &TestDir {
+        self.dir.as_ref().expect("test database already closed")
+    }
+
+    pub(crate) async fn close(mut self) {
+        self.pool
+            .take()
+            .expect("test database already closed")
+            .close()
+            .await;
+        self.dir
+            .take()
+            .expect("test database already closed")
+            .close()
+            .unwrap();
+    }
+}
+
+impl Drop for TestDatabase {
+    fn drop(&mut self) {
+        // Dropping a pool cannot wait for SQLite to finish closing connections, but it must still
+        // happen before the best-effort directory cleanup.
+        drop(self.pool.take());
+        drop(self.dir.take());
     }
 }
 
@@ -206,4 +263,32 @@ pub(crate) async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
         .await
         .unwrap();
     row.0
+}
+
+#[cfg(test)]
+mod test_database_tests {
+    use super::TestDatabase;
+
+    #[tokio::test]
+    async fn isolated_databases_use_unique_paths_and_remove_them_after_close() {
+        let first = TestDatabase::new("fixture-isolation").await;
+        let second = TestDatabase::new("fixture-isolation").await;
+        let first_path = first.dir().path().to_owned();
+        let second_path = second.dir().path().to_owned();
+
+        assert_ne!(first_path, second_path);
+        assert!(first_path.join("library.db").is_file());
+        assert!(second_path.join("library.db").is_file());
+
+        let (migration_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(first.pool())
+            .await
+            .unwrap();
+        assert!(migration_count > 0);
+
+        first.close().await;
+        second.close().await;
+        assert!(!first_path.exists());
+        assert!(!second_path.exists());
+    }
 }

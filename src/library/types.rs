@@ -1,32 +1,18 @@
 #![allow(dead_code)]
 pub mod table;
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use gpui::{IntoElement, RenderImage, SharedString};
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
 use sqlx::{Database, Decode, Sqlite, Type, encode::IsNull, error::BoxDynError};
 
-use crate::media::numbering::NumberDisplayMode;
 use crate::util::rgb_to_bgr;
 
-#[derive(sqlx::FromRow)]
-pub struct Artist {
-    pub id: i64,
-    pub name: Option<DBString>,
-    pub name_sortable: Option<String>,
-    #[sqlx(default)]
-    pub bio: Option<DBString>,
-    pub created_at: DateTime<Utc>,
-    #[sqlx(default)]
-    pub image: Option<Box<[u8]>>,
-    #[sqlx(default)]
-    pub image_mime: Option<DBString>,
-    #[sqlx(skip)]
-    pub tags: Option<Vec<String>>,
-}
+pub use crate::library::model::{
+    Album, Artist, ArtistWithCounts, Playlist, PlaylistItem, PlaylistType, Track, TrackStats,
+};
 
 #[derive(Clone)]
 pub struct Thumbnail(pub Arc<RenderImage>);
@@ -188,120 +174,3 @@ impl sqlx::Type<sqlx::Sqlite> for DBString {
 pub const DATE_PRECISION_YEAR: i32 = 0;
 pub const DATE_PRECISION_FULL_DATE: i32 = 1;
 pub const DATE_PRECISION_YEAR_MONTH: i32 = 2;
-
-#[derive(sqlx::FromRow, Clone)]
-pub struct Album {
-    pub id: i64,
-    pub title: DBString,
-    pub title_sortable: DBString,
-    /// Raw album artist tag, shown in place of the linked artists' names.
-    pub artist_display_override: Option<DBString>,
-    #[sqlx(default)]
-    pub release_date: Option<DBString>,
-    #[sqlx(default)]
-    /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
-    pub date_precision: Option<i32>,
-    pub created_at: DateTime<Utc>,
-    #[sqlx(default)]
-    pub image: Option<Box<[u8]>>,
-    #[sqlx(default)]
-    pub thumb: Option<Thumbnail>,
-    #[sqlx(skip)]
-    pub tags: Option<Vec<String>>,
-    #[sqlx(skip)]
-    pub genres: Vec<DBString>,
-    #[sqlx(default)]
-    pub label: Option<DBString>,
-    #[sqlx(default)]
-    pub catalog_number: Option<DBString>,
-    #[sqlx(default)]
-    pub isrc: Option<DBString>,
-    pub number_display_mode: NumberDisplayMode,
-}
-
-#[derive(sqlx::FromRow, Clone, Debug)]
-pub struct Track {
-    pub id: i64,
-    pub title: DBString,
-    pub title_sortable: DBString,
-    #[sqlx(default)]
-    pub album_id: Option<i64>,
-    #[sqlx(default)]
-    pub track_number: Option<i32>,
-    #[sqlx(default)]
-    pub track_section: Option<i32>,
-    #[sqlx(default)]
-    pub disc_number: Option<i32>,
-    pub duration: i64,
-    pub created_at: DateTime<Utc>,
-    #[sqlx(skip)]
-    pub genres: Vec<DBString>,
-    #[sqlx(skip)]
-    pub tags: Option<Vec<DBString>>,
-    #[sqlx(try_from = "String")]
-    pub location: PathBuf,
-    pub artist_names: Option<DBString>,
-    #[sqlx(default)]
-    pub rg_track_gain: Option<f64>,
-    #[sqlx(default)]
-    pub rg_track_peak: Option<f64>,
-    #[sqlx(default)]
-    pub rg_album_gain: Option<f64>,
-    #[sqlx(default)]
-    pub rg_album_peak: Option<f64>,
-    #[sqlx(default)]
-    pub disc_subtitle: Option<DBString>,
-    #[sqlx(default)]
-    pub release_date: Option<DBString>,
-    #[sqlx(default)]
-    /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
-    pub date_precision: Option<i32>,
-}
-
-#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq)]
-#[repr(i32)]
-pub enum PlaylistType {
-    User = 0,
-    System = 1,
-}
-
-#[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
-pub struct Playlist {
-    pub id: i64,
-    pub name: DBString,
-    pub created_at: DateTime<Utc>,
-    #[sqlx(rename = "type")]
-    pub playlist_type: PlaylistType,
-    pub position: i64,
-    pub track_count: i64,
-    pub total_duration: i64,
-}
-
-impl Playlist {
-    pub fn is_liked_songs(&self) -> bool {
-        self.playlist_type == PlaylistType::System && self.name.0.as_str() == "Liked Songs"
-    }
-}
-
-#[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
-pub struct PlaylistItem {
-    pub id: i64,
-    pub playlist_id: i64,
-    pub track_id: i64,
-    pub created_at: DateTime<Utc>,
-    pub position: i64,
-}
-
-#[derive(sqlx::FromRow, Clone)]
-pub struct TrackStats {
-    pub track_count: i64,
-    pub total_duration: i64,
-}
-
-#[derive(sqlx::FromRow, Clone)]
-pub struct ArtistWithCounts {
-    pub id: i64,
-    pub name: Option<DBString>,
-    pub album_count: i64,
-    pub track_count: i64,
-}

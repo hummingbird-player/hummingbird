@@ -112,6 +112,60 @@ impl Column for AlbumColumn {
     }
 }
 
+fn album_table_sort(sort: Option<TableSort<AlbumColumn>>) -> AlbumSortMethod {
+    match sort {
+        Some(TableSort {
+            column: AlbumColumn::Title,
+            ascending: true,
+        }) => AlbumSortMethod::TitleAsc,
+        Some(TableSort {
+            column: AlbumColumn::Title,
+            ascending: false,
+        }) => AlbumSortMethod::TitleDesc,
+        Some(TableSort {
+            column: AlbumColumn::Artist,
+            ascending: true,
+        }) => AlbumSortMethod::ArtistAsc,
+        Some(TableSort {
+            column: AlbumColumn::Artist,
+            ascending: false,
+        }) => AlbumSortMethod::ArtistDesc,
+        Some(TableSort {
+            column: AlbumColumn::Date,
+            ascending: true,
+        }) => AlbumSortMethod::ReleaseAsc,
+        Some(TableSort {
+            column: AlbumColumn::Date,
+            ascending: false,
+        }) => AlbumSortMethod::ReleaseDesc,
+        Some(TableSort {
+            column: AlbumColumn::Label,
+            ascending: true,
+        }) => AlbumSortMethod::LabelAsc,
+        Some(TableSort {
+            column: AlbumColumn::Label,
+            ascending: false,
+        }) => AlbumSortMethod::LabelDesc,
+        Some(TableSort {
+            column: AlbumColumn::CatalogNumber,
+            ascending: true,
+        }) => AlbumSortMethod::CatalogAsc,
+        Some(TableSort {
+            column: AlbumColumn::CatalogNumber,
+            ascending: false,
+        }) => AlbumSortMethod::CatalogDesc,
+        Some(TableSort {
+            column: AlbumColumn::Genres,
+            ascending: true,
+        }) => AlbumSortMethod::GenresAsc,
+        Some(TableSort {
+            column: AlbumColumn::Genres,
+            ascending: false,
+        }) => AlbumSortMethod::GenresDesc,
+        None => AlbumSortMethod::ArtistAsc,
+    }
+}
+
 impl TableData<AlbumColumn> for Album {
     type Identifier = u32;
     type ContextMenuContext = AlbumContextMenuContext;
@@ -124,60 +178,8 @@ impl TableData<AlbumColumn> for Album {
         cx: &mut gpui::App,
         sort: Option<TableSort<AlbumColumn>>,
     ) -> anyhow::Result<Vec<Self::Identifier>> {
-        let sort_method = match sort {
-            Some(TableSort {
-                column: AlbumColumn::Title,
-                ascending: true,
-            }) => AlbumSortMethod::TitleAsc,
-            Some(TableSort {
-                column: AlbumColumn::Title,
-                ascending: false,
-            }) => AlbumSortMethod::TitleDesc,
-            Some(TableSort {
-                column: AlbumColumn::Artist,
-                ascending: true,
-            }) => AlbumSortMethod::ArtistAsc,
-            Some(TableSort {
-                column: AlbumColumn::Artist,
-                ascending: false,
-            }) => AlbumSortMethod::ArtistDesc,
-            Some(TableSort {
-                column: AlbumColumn::Date,
-                ascending: true,
-            }) => AlbumSortMethod::ReleaseAsc,
-            Some(TableSort {
-                column: AlbumColumn::Date,
-                ascending: false,
-            }) => AlbumSortMethod::ReleaseDesc,
-            Some(TableSort {
-                column: AlbumColumn::Label,
-                ascending: true,
-            }) => AlbumSortMethod::LabelAsc,
-            Some(TableSort {
-                column: AlbumColumn::Label,
-                ascending: false,
-            }) => AlbumSortMethod::LabelDesc,
-            Some(TableSort {
-                column: AlbumColumn::CatalogNumber,
-                ascending: true,
-            }) => AlbumSortMethod::CatalogAsc,
-            Some(TableSort {
-                column: AlbumColumn::CatalogNumber,
-                ascending: false,
-            }) => AlbumSortMethod::CatalogDesc,
-            Some(TableSort {
-                column: AlbumColumn::Genres,
-                ascending: true,
-            }) => AlbumSortMethod::GenresAsc,
-            Some(TableSort {
-                column: AlbumColumn::Genres,
-                ascending: false,
-            }) => AlbumSortMethod::GenresDesc,
-            _ => AlbumSortMethod::ArtistAsc,
-        };
-
         Ok(cx
-            .list_albums(sort_method)?
+            .list_albums(album_table_sort(sort))?
             .into_iter()
             .map(|(id, _)| id)
             .collect())
@@ -555,6 +557,36 @@ impl Column for ArtistColumn {
     }
 }
 
+fn artist_table_sort(sort: Option<TableSort<ArtistColumn>>) -> ArtistSortMethod {
+    match sort {
+        Some(TableSort {
+            column: ArtistColumn::Name,
+            ascending: true,
+        }) => ArtistSortMethod::NameAsc,
+        Some(TableSort {
+            column: ArtistColumn::Name,
+            ascending: false,
+        }) => ArtistSortMethod::NameDesc,
+        Some(TableSort {
+            column: ArtistColumn::Albums,
+            ascending: true,
+        }) => ArtistSortMethod::AlbumsAsc,
+        Some(TableSort {
+            column: ArtistColumn::Albums,
+            ascending: false,
+        }) => ArtistSortMethod::AlbumsDesc,
+        Some(TableSort {
+            column: ArtistColumn::Tracks,
+            ascending: true,
+        }) => ArtistSortMethod::TracksAsc,
+        Some(TableSort {
+            column: ArtistColumn::Tracks,
+            ascending: false,
+        }) => ArtistSortMethod::TracksDesc,
+        None => ArtistSortMethod::NameAsc,
+    }
+}
+
 impl TableData<ArtistColumn> for ArtistWithCounts {
     type Identifier = i64;
     type ContextMenuContext = ();
@@ -567,35 +599,7 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         cx: &mut gpui::App,
         sort: Option<TableSort<ArtistColumn>>,
     ) -> anyhow::Result<Vec<Self::Identifier>> {
-        let sort_method = match sort {
-            Some(TableSort {
-                column: ArtistColumn::Name,
-                ascending: true,
-            }) => ArtistSortMethod::NameAsc,
-            Some(TableSort {
-                column: ArtistColumn::Name,
-                ascending: false,
-            }) => ArtistSortMethod::NameDesc,
-            Some(TableSort {
-                column: ArtistColumn::Albums,
-                ascending: true,
-            }) => ArtistSortMethod::AlbumsAsc,
-            Some(TableSort {
-                column: ArtistColumn::Albums,
-                ascending: false,
-            }) => ArtistSortMethod::AlbumsDesc,
-            Some(TableSort {
-                column: ArtistColumn::Tracks,
-                ascending: true,
-            }) => ArtistSortMethod::TracksAsc,
-            Some(TableSort {
-                column: ArtistColumn::Tracks,
-                ascending: false,
-            }) => ArtistSortMethod::TracksDesc,
-            _ => ArtistSortMethod::NameAsc,
-        };
-
-        Ok(cx.list_artists(sort_method)?)
+        Ok(cx.list_artists(artist_table_sort(sort))?)
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
@@ -646,11 +650,120 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_release_date_format, parse_album_release_date};
+    use super::*;
     use crate::library::types::{
         DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH, DBString,
     };
     use chrono::{TimeZone, Utc};
+
+    fn sort<C: Column>(column: C, ascending: bool) -> Option<TableSort<C>> {
+        Some(TableSort { column, ascending })
+    }
+
+    #[test]
+    fn album_table_sort_maps_every_column_and_direction() {
+        let cases = [
+            (sort(AlbumColumn::Title, true), AlbumSortMethod::TitleAsc),
+            (sort(AlbumColumn::Title, false), AlbumSortMethod::TitleDesc),
+            (sort(AlbumColumn::Artist, true), AlbumSortMethod::ArtistAsc),
+            (
+                sort(AlbumColumn::Artist, false),
+                AlbumSortMethod::ArtistDesc,
+            ),
+            (sort(AlbumColumn::Date, true), AlbumSortMethod::ReleaseAsc),
+            (sort(AlbumColumn::Date, false), AlbumSortMethod::ReleaseDesc),
+            (sort(AlbumColumn::Label, true), AlbumSortMethod::LabelAsc),
+            (sort(AlbumColumn::Label, false), AlbumSortMethod::LabelDesc),
+            (
+                sort(AlbumColumn::CatalogNumber, true),
+                AlbumSortMethod::CatalogAsc,
+            ),
+            (
+                sort(AlbumColumn::CatalogNumber, false),
+                AlbumSortMethod::CatalogDesc,
+            ),
+            (sort(AlbumColumn::Genres, true), AlbumSortMethod::GenresAsc),
+            (
+                sort(AlbumColumn::Genres, false),
+                AlbumSortMethod::GenresDesc,
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(album_table_sort(input), expected);
+        }
+        assert_eq!(album_table_sort(None), AlbumSortMethod::ArtistAsc);
+    }
+
+    #[test]
+    fn track_table_sort_maps_every_column_and_direction() {
+        let cases = [
+            (sort(TrackColumn::Title, true), TrackSortMethod::TitleAsc),
+            (sort(TrackColumn::Title, false), TrackSortMethod::TitleDesc),
+            (sort(TrackColumn::Artist, true), TrackSortMethod::ArtistAsc),
+            (
+                sort(TrackColumn::Artist, false),
+                TrackSortMethod::ArtistDesc,
+            ),
+            (sort(TrackColumn::Album, true), TrackSortMethod::AlbumAsc),
+            (sort(TrackColumn::Album, false), TrackSortMethod::AlbumDesc),
+            (
+                sort(TrackColumn::Length, true),
+                TrackSortMethod::DurationAsc,
+            ),
+            (
+                sort(TrackColumn::Length, false),
+                TrackSortMethod::DurationDesc,
+            ),
+            (
+                sort(TrackColumn::TrackNumber, true),
+                TrackSortMethod::TrackNumberAsc,
+            ),
+            (
+                sort(TrackColumn::TrackNumber, false),
+                TrackSortMethod::TrackNumberDesc,
+            ),
+            (sort(TrackColumn::Genres, true), TrackSortMethod::GenresAsc),
+            (
+                sort(TrackColumn::Genres, false),
+                TrackSortMethod::GenresDesc,
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(track_table_sort(input), expected);
+        }
+        assert_eq!(track_table_sort(None), TrackSortMethod::ArtistAsc);
+    }
+
+    #[test]
+    fn artist_table_sort_maps_every_column_and_direction() {
+        let cases = [
+            (sort(ArtistColumn::Name, true), ArtistSortMethod::NameAsc),
+            (sort(ArtistColumn::Name, false), ArtistSortMethod::NameDesc),
+            (
+                sort(ArtistColumn::Albums, true),
+                ArtistSortMethod::AlbumsAsc,
+            ),
+            (
+                sort(ArtistColumn::Albums, false),
+                ArtistSortMethod::AlbumsDesc,
+            ),
+            (
+                sort(ArtistColumn::Tracks, true),
+                ArtistSortMethod::TracksAsc,
+            ),
+            (
+                sort(ArtistColumn::Tracks, false),
+                ArtistSortMethod::TracksDesc,
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(artist_table_sort(input), expected);
+        }
+        assert_eq!(artist_table_sort(None), ArtistSortMethod::NameAsc);
+    }
 
     #[test]
     fn selects_release_date_formats_for_each_precision() {
