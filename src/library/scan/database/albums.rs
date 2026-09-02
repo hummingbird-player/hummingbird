@@ -34,6 +34,7 @@ pub(super) async fn insert_album(
     conn: &mut SqliteConnection,
     metadata: &Metadata,
     display_override: Option<&str>,
+    previous_album_id: Option<i64>,
     is_force: bool,
     album_cache: &mut FxHashMap<AlbumCacheKey, i64>,
 ) -> anyhow::Result<Option<i64>> {
@@ -61,51 +62,57 @@ pub(super) async fn insert_album(
             .bind(album)
             .bind(&mbid)
             .bind(display_override)
+            .bind(previous_album_id)
             .fetch_one(&mut *conn)
             .await;
 
-    match result {
-        Ok((id,)) if !is_force => {
-            sqlx::query(include_str!(
-                "../../../../queries/scan/update_album_display_mode.sql"
-            ))
-            .bind(id)
-            .bind(metadata.number_display_mode)
-            .execute(&mut *conn)
-            .await?;
+    let existing_id = match result {
+        Ok((id,)) => Some(id),
+        Err(sqlx::Error::RowNotFound) => None,
+        Err(e) => return Err(e.into()),
+    };
 
+    if let Some(id) = existing_id {
+        // a stable release ID or the track's existing album identifies it independently of its
+        // mutable display tag
+        sqlx::query(include_str!(
+            "../../../../queries/scan/update_album_display.sql"
+        ))
+        .bind(id)
+        .bind(display_override)
+        .bind(metadata.number_display_mode)
+        .execute(&mut *conn)
+        .await?;
+
+        if !is_force {
             album_cache.insert(cache_key, id);
-            Ok(Some(id))
+            return Ok(Some(id));
         }
-        Ok(_) | Err(sqlx::Error::RowNotFound) => {
-            let (release_date, date_precision) = bind_release_date(metadata);
-
-            let result: (i64,) =
-                sqlx::query_as(include_str!("../../../../queries/scan/create_album.sql"))
-                    .bind(album)
-                    .bind(metadata.sort_album.as_ref().unwrap_or(album))
-                    .bind(display_override)
-                    .bind(
-                        metadata
-                            .album_artist_sort
-                            .as_deref()
-                            .filter(|s| !s.trim().is_empty()),
-                    )
-                    .bind(release_date)
-                    .bind(date_precision)
-                    .bind(&metadata.label)
-                    .bind(&metadata.catalog)
-                    .bind(&metadata.isrc)
-                    .bind(&mbid)
-                    .bind(metadata.number_display_mode)
-                    .fetch_one(&mut *conn)
-                    .await?;
-
-            album_cache.insert(cache_key, result.0);
-            Ok(Some(result.0))
-        }
-        Err(e) => Err(e.into()),
     }
+
+    let (release_date, date_precision) = bind_release_date(metadata);
+    let result: (i64,) = sqlx::query_as(include_str!("../../../../queries/scan/create_album.sql"))
+        .bind(album)
+        .bind(metadata.sort_album.as_ref().unwrap_or(album))
+        .bind(display_override)
+        .bind(
+            metadata
+                .album_artist_sort
+                .as_deref()
+                .filter(|s| !s.trim().is_empty()),
+        )
+        .bind(release_date)
+        .bind(date_precision)
+        .bind(&metadata.label)
+        .bind(&metadata.catalog)
+        .bind(&metadata.isrc)
+        .bind(&mbid)
+        .bind(metadata.number_display_mode)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    album_cache.insert(cache_key, result.0);
+    Ok(Some(result.0))
 }
 
 pub(crate) async fn reconcile_album_numbering(

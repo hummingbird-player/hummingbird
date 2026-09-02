@@ -1533,6 +1533,38 @@ async fn update_metadata_retag_rebuilds_old_album_artists() {
 }
 
 #[tokio::test]
+async fn update_metadata_retag_updates_album_artist_display() {
+    let (dir, pool) = create_test_pool("db-retag-album-display-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path1 = dir.utf8_join("track1.flac");
+    let path2 = dir.utf8_join("track2.flac");
+
+    let mut first = track_metadata("Album", "Old Display", "Track 1", 1);
+    let second = track_metadata("Album", "Old Display", "Track 2", 2);
+    insert_metadata(&mut conn, &first, &path1).await.unwrap();
+    insert_metadata(&mut conn, &second, &path2).await.unwrap();
+
+    first.album_artist = Some("New Display".to_string());
+    first.album_artist_sort = Some("Artist, Canonical".to_string());
+    insert_metadata(&mut conn, &first, &path1).await.unwrap();
+
+    let albums: Vec<(String,)> = sqlx::query_as("SELECT artist_display_override FROM album")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(albums, [("New Display".to_string(),)]);
+
+    let tracks_on_album: (i64,) =
+        sqlx::query_as("SELECT COUNT(DISTINCT album_id) FROM track WHERE location IN ($1, $2)")
+            .bind(path1.as_str())
+            .bind(path2.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(tracks_on_album.0, 1);
+}
+
+#[tokio::test]
 async fn recompute_recreates_artist_deleted_with_its_last_link() {
     let (dir, pool) = create_test_pool("db-evict-test").await;
     let mut conn = pool.acquire().await.unwrap();

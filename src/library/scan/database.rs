@@ -81,10 +81,20 @@ pub async fn update_metadata(
     let artist = metadata.artist.as_deref().filter(|s| !s.trim().is_empty());
     let display_override = album_artist.or(artist);
 
+    // the track's current album anchors retags when mutable display metadata changes
+    let previous_album: Option<(Option<i64>,)> = sqlx::query_as(include_str!(
+        "../../../queries/scan/get_album_id_at_location.sql"
+    ))
+    .bind(path.as_str())
+    .fetch_optional(&mut *conn)
+    .await?;
+    let previous_album_id = previous_album.and_then(|(id,)| id);
+
     let album_id = insert_album(
         conn,
         metadata,
         display_override,
+        previous_album_id,
         is_force,
         &mut caches.albums,
     )
@@ -93,14 +103,6 @@ pub async fn update_metadata(
     if let Some(album_id) = album_id {
         caches.numbering_albums.insert(album_id);
     }
-
-    // a retag can move the track to another album - the old album needs a rebuild too
-    let previous_album: Option<(Option<i64>,)> = sqlx::query_as(include_str!(
-        "../../../queries/scan/get_album_id_at_location.sql"
-    ))
-    .bind(path.as_str())
-    .fetch_optional(&mut *conn)
-    .await?;
 
     let art_hash = art.embedded.as_ref().map(|embedded| embedded.hash as i64);
     let Some(track_id) = insert_track(
@@ -117,7 +119,7 @@ pub async fn update_metadata(
         return Ok(TrackWriteOutcome::SkippedDuplicateFolder);
     };
 
-    if let Some((Some(previous_album),)) = previous_album {
+    if let Some(previous_album) = previous_album_id {
         caches.numbering_albums.insert(previous_album);
     }
 
