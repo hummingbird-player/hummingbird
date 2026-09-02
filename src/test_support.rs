@@ -103,7 +103,9 @@ impl TestDir {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("{prefix}-{}-{id}", *RUN_ID));
         fs::create_dir_all(&path).unwrap();
-        Self { path }
+        Self {
+            path: path.canonicalize().unwrap(),
+        }
     }
 
     pub(crate) fn path(&self) -> &Path {
