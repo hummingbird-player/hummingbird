@@ -4,9 +4,12 @@ use gpui::{AnyElement, App, ElementId, SharedString, Window};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
-use crate::ui::components::{
-    drag_drop::{AlbumDragData, TrackDragData},
-    managed_image::ManagedImageKey,
+use crate::{
+    library::db::SortDirection,
+    ui::components::{
+        drag_drop::{AlbumDragData, TrackDragData},
+        managed_image::ManagedImageKey,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -55,7 +58,7 @@ where
     C: Column,
 {
     pub column: C,
-    pub ascending: bool,
+    pub direction: SortDirection,
 }
 
 /// Context in which a grid item is being displayed.

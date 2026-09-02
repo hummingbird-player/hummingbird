@@ -12,27 +12,16 @@ use crate::{
 
 use super::types::{Album, Artist, Track};
 
+mod direction;
 mod pool;
+mod query;
 #[cfg(test)]
 mod tests;
 
+pub use direction::SortDirection;
 pub use pool::create_pool;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AlbumSortMethod {
-    TitleAsc,
-    TitleDesc,
-    ArtistAsc,
-    ArtistDesc,
-    ReleaseAsc,
-    ReleaseDesc,
-    LabelAsc,
-    LabelDesc,
-    CatalogAsc,
-    CatalogDesc,
-    GenresAsc,
-    GenresDesc,
-}
+#[allow(unused_imports)]
+pub use query::{AlbumColumn, AlbumQuery, albums};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TrackSortMethod {
@@ -85,7 +74,7 @@ pub enum PlaylistTrackSortMethod {
     RecentlyAddedAsc,
 }
 
-async fn load_album_genres(pool: &SqlitePool, albums: &mut [Album]) -> sqlx::Result<()> {
+pub(super) async fn load_album_genres(pool: &SqlitePool, albums: &mut [Album]) -> sqlx::Result<()> {
     if albums.is_empty() {
         return Ok(());
     }
@@ -151,56 +140,6 @@ async fn load_track_genres(pool: &SqlitePool, tracks: &mut [Track]) -> sqlx::Res
     }
 
     Ok(())
-}
-
-pub async fn list_albums(
-    pool: &SqlitePool,
-    sort_method: AlbumSortMethod,
-) -> sqlx::Result<Vec<(u32, String)>> {
-    let query = match sort_method {
-        AlbumSortMethod::TitleAsc => {
-            include_str!("../../queries/library/find_albums_title_asc.sql")
-        }
-        AlbumSortMethod::TitleDesc => {
-            include_str!("../../queries/library/find_albums_title_desc.sql")
-        }
-        AlbumSortMethod::ArtistAsc => {
-            include_str!("../../queries/library/find_albums_artist_asc.sql")
-        }
-        AlbumSortMethod::ArtistDesc => {
-            include_str!("../../queries/library/find_albums_artist_desc.sql")
-        }
-        AlbumSortMethod::ReleaseAsc => {
-            include_str!("../../queries/library/find_albums_release_asc.sql")
-        }
-        AlbumSortMethod::ReleaseDesc => {
-            include_str!("../../queries/library/find_albums_release_desc.sql")
-        }
-        AlbumSortMethod::LabelAsc => {
-            include_str!("../../queries/library/find_albums_label_asc.sql")
-        }
-        AlbumSortMethod::LabelDesc => {
-            include_str!("../../queries/library/find_albums_label_desc.sql")
-        }
-        AlbumSortMethod::CatalogAsc => {
-            include_str!("../../queries/library/find_albums_catnum_asc.sql")
-        }
-        AlbumSortMethod::CatalogDesc => {
-            include_str!("../../queries/library/find_albums_catnum_desc.sql")
-        }
-        AlbumSortMethod::GenresAsc => {
-            include_str!("../../queries/library/find_albums_genres_asc.sql")
-        }
-        AlbumSortMethod::GenresDesc => {
-            include_str!("../../queries/library/find_albums_genres_desc.sql")
-        }
-    };
-
-    let albums = sqlx::query_as::<_, (u32, String)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(albums)
 }
 
 pub async fn list_tracks(
@@ -269,12 +208,7 @@ pub async fn list_tracks_in_album(
 }
 
 pub async fn get_album_by_id(pool: &SqlitePool, album_id: i64) -> sqlx::Result<Arc<Album>> {
-    let query = include_str!("../../queries/library/find_album_by_id.sql");
-
-    let mut album: Album = sqlx::query_as(query).bind(album_id).fetch_one(pool).await?;
-    load_album_genres(pool, std::slice::from_mut(&mut album)).await?;
-
-    Ok(Arc::new(album))
+    Ok(Arc::new(albums().by_id(album_id).fetch(pool).await?))
 }
 
 pub async fn get_artist_by_id(pool: &SqlitePool, artist_id: i64) -> sqlx::Result<Arc<Artist>> {
@@ -324,14 +258,14 @@ pub async fn list_albums_by_artist(
     pool: &SqlitePool,
     artist_id: i64,
 ) -> sqlx::Result<Vec<(u32, String)>> {
-    let query = include_str!("../../queries/library/find_albums_by_artist.sql");
-
-    let albums = sqlx::query_as::<_, (u32, String)>(query)
-        .bind(artist_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(albums)
+    Ok(albums()
+        .from_artist(artist_id)
+        .sort_asc(AlbumColumn::ReleaseDate)
+        .fetch_list(pool)
+        .await?
+        .into_iter()
+        .map(|album| (album.id as u32, album.title.0.to_string()))
+        .collect())
 }
 
 pub async fn get_artist_with_counts(
@@ -463,13 +397,31 @@ pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<O
 pub async fn list_albums_search(
     pool: &SqlitePool,
 ) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>> {
-    let query = include_str!("../../queries/library/find_albums_search.sql");
+    let albums = albums().fetch_list(pool).await?;
+    let artist_rows = sqlx::query_as::<_, (i64, String)>(
+        "SELECT album_artist.album_id, IFNULL(GROUP_CONCAT(artist.name, ' '), '')
+         FROM album_artist
+         JOIN artist ON artist.id = album_artist.artist_id
+         GROUP BY album_artist.album_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let artists_by_album: FxHashMap<i64, String> = artist_rows.into_iter().collect();
 
-    let albums = sqlx::query_as::<_, (i64, String, Option<String>, String)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(albums)
+    Ok(albums
+        .into_iter()
+        .map(|album| {
+            let artists = artists_by_album.get(&album.id).cloned().unwrap_or_default();
+            (
+                album.id,
+                album.title.0.to_string(),
+                album
+                    .artist_display_override
+                    .map(|artist| artist.0.to_string()),
+                artists,
+            )
+        })
+        .collect())
 }
 
 /// Lists all tracks for searching. Returns (id, title, artist_names, album_id).
@@ -871,7 +823,6 @@ pub async fn lyrics_for_track(pool: &SqlitePool, track_id: i64) -> sqlx::Result<
 }
 
 pub trait LibraryAccess {
-    fn list_albums(&self, sort_method: AlbumSortMethod) -> sqlx::Result<Vec<(u32, String)>>;
     // TODO: handle this better
     #[allow(clippy::type_complexity)]
     fn list_tracks(
@@ -926,11 +877,6 @@ pub trait LibraryAccess {
 }
 
 impl LibraryAccess for App {
-    fn list_albums(&self, sort_method: AlbumSortMethod) -> sqlx::Result<Vec<(u32, String)>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_albums(&pool.0, sort_method))
-    }
-
     fn list_tracks(
         &self,
         sort_method: TrackSortMethod,

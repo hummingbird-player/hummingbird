@@ -1611,11 +1611,15 @@ async fn list_albums_sorts_by_artist_sort_not_display() {
         .await
         .unwrap();
 
-    let ordered =
-        crate::library::db::list_albums(&pool, crate::library::db::AlbumSortMethod::ArtistAsc)
-            .await
-            .unwrap();
-    let titles: Vec<String> = ordered.into_iter().map(|(_, title)| title).collect();
+    let ordered = crate::library::db::albums()
+        .sort_asc(crate::library::db::AlbumColumn::Artist)
+        .fetch_list(&pool)
+        .await
+        .unwrap();
+    let titles: Vec<String> = ordered
+        .into_iter()
+        .map(|album| album.title.0.to_string())
+        .collect();
     assert_eq!(titles, ["Zebra Album", "Alpha Album"]);
 }
 
@@ -1695,12 +1699,7 @@ async fn albums_search_includes_override_and_artist_names() {
         .await
         .unwrap();
 
-    let rows: Vec<(i64, String, Option<String>, String)> = sqlx::query_as(include_str!(
-        "../../../../queries/library/find_albums_search.sql"
-    ))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let rows = crate::library::db::list_albums_search(&pool).await.unwrap();
 
     let album = rows
         .iter()

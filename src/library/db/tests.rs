@@ -1,8 +1,8 @@
 use sqlx::SqlitePool;
 
 use super::{
-    AlbumSortMethod, ArtistSortMethod, LikedTrackSortMethod, TrackSortMethod,
-    get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums, list_albums_by_artist,
+    AlbumColumn, ArtistSortMethod, LikedTrackSortMethod, SortDirection, TrackSortMethod, albums,
+    get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums_by_artist,
     list_artists, list_tracks,
 };
 use crate::test_support::TestDatabase;
@@ -90,13 +90,12 @@ async fn link_track_genre(pool: &SqlitePool, track_id: i64, genre_id: i64, posit
         .unwrap();
 }
 
-async fn album_ids(pool: &SqlitePool, method: AlbumSortMethod) -> Vec<i64> {
-    list_albums(pool, method)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(id, _)| i64::from(id))
-        .collect()
+async fn album_ids(pool: &SqlitePool, column: AlbumColumn, direction: SortDirection) -> Vec<i64> {
+    let query = match direction {
+        SortDirection::Ascending => albums().sort_asc(column),
+        SortDirection::Descending => albums().sort_desc(column),
+    };
+    query.fetch_ids(pool).await.unwrap()
 }
 
 async fn track_ids(pool: &SqlitePool, method: TrackSortMethod) -> Vec<i64> {
@@ -161,22 +160,74 @@ async fn album_sort_methods_preserve_current_ordering_rules() {
     link_album_genre(pool, 4, 5, 1).await;
 
     let cases = [
-        (AlbumSortMethod::TitleAsc, vec![2, 1, 4, 3]),
-        (AlbumSortMethod::TitleDesc, vec![3, 4, 1, 2]),
-        (AlbumSortMethod::ArtistAsc, vec![4, 2, 3, 1]),
-        (AlbumSortMethod::ArtistDesc, vec![1, 3, 4, 2]),
-        (AlbumSortMethod::ReleaseAsc, vec![3, 4, 1, 2]),
-        (AlbumSortMethod::ReleaseDesc, vec![2, 1, 4, 3]),
-        (AlbumSortMethod::LabelAsc, vec![4, 2, 1, 3]),
-        (AlbumSortMethod::LabelDesc, vec![3, 1, 4, 2]),
-        (AlbumSortMethod::CatalogAsc, vec![3, 4, 1, 2]),
-        (AlbumSortMethod::CatalogDesc, vec![2, 1, 4, 3]),
-        (AlbumSortMethod::GenresAsc, vec![3, 4, 2, 1]),
-        (AlbumSortMethod::GenresDesc, vec![1, 2, 4, 3]),
+        (
+            AlbumColumn::Title,
+            SortDirection::Ascending,
+            vec![2, 1, 4, 3],
+        ),
+        (
+            AlbumColumn::Title,
+            SortDirection::Descending,
+            vec![3, 4, 1, 2],
+        ),
+        (
+            AlbumColumn::Artist,
+            SortDirection::Ascending,
+            vec![4, 2, 3, 1],
+        ),
+        (
+            AlbumColumn::Artist,
+            SortDirection::Descending,
+            vec![1, 3, 4, 2],
+        ),
+        (
+            AlbumColumn::ReleaseDate,
+            SortDirection::Ascending,
+            vec![3, 4, 1, 2],
+        ),
+        (
+            AlbumColumn::ReleaseDate,
+            SortDirection::Descending,
+            vec![2, 1, 4, 3],
+        ),
+        (
+            AlbumColumn::Label,
+            SortDirection::Ascending,
+            vec![4, 2, 1, 3],
+        ),
+        (
+            AlbumColumn::Label,
+            SortDirection::Descending,
+            vec![3, 1, 4, 2],
+        ),
+        (
+            AlbumColumn::CatalogNumber,
+            SortDirection::Ascending,
+            vec![3, 4, 1, 2],
+        ),
+        (
+            AlbumColumn::CatalogNumber,
+            SortDirection::Descending,
+            vec![2, 1, 4, 3],
+        ),
+        (
+            AlbumColumn::Genres,
+            SortDirection::Ascending,
+            vec![3, 4, 2, 1],
+        ),
+        (
+            AlbumColumn::Genres,
+            SortDirection::Descending,
+            vec![1, 2, 4, 3],
+        ),
     ];
 
-    for (method, expected) in cases {
-        assert_eq!(album_ids(pool, method).await, expected, "{method:?}");
+    for (column, direction, expected) in cases {
+        assert_eq!(
+            album_ids(pool, column, direction).await,
+            expected,
+            "{column:?} {direction:?}"
+        );
     }
 
     db.close().await;
@@ -203,9 +254,126 @@ async fn album_genre_sort_uses_title_and_id_as_stable_ties() {
     link_album_genre(pool, 20, 1, 0).await;
     link_album_genre(pool, 10, 1, 0).await;
 
-    assert_eq!(album_ids(pool, AlbumSortMethod::GenresAsc).await, [10, 20]);
-    assert_eq!(album_ids(pool, AlbumSortMethod::GenresDesc).await, [10, 20]);
+    assert_eq!(
+        album_ids(pool, AlbumColumn::Genres, SortDirection::Ascending).await,
+        [10, 20]
+    );
+    assert_eq!(
+        album_ids(pool, AlbumColumn::Genres, SortDirection::Descending).await,
+        [10, 20]
+    );
 
+    db.close().await;
+}
+
+#[tokio::test]
+async fn album_query_filters_compose_independently_of_call_order() {
+    let db = TestDatabase::new("album-query-composition").await;
+    let pool = db.pool();
+
+    sqlx::query("INSERT INTO artist (id, name, name_sortable) VALUES (1, 'Needle', 'Needle')")
+        .execute(pool)
+        .await
+        .unwrap();
+    insert_album(
+        pool,
+        10,
+        "Matching Album",
+        "Needle",
+        Some("2020-01-01"),
+        None,
+        None,
+    )
+    .await;
+    insert_album(
+        pool,
+        20,
+        "Other Album",
+        "Other",
+        Some("2021-01-01"),
+        None,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO album_artist (album_id, artist_id) VALUES (10, 1)")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let first = albums()
+        .from_artist(1)
+        .search("matching")
+        .sort_desc(AlbumColumn::ReleaseDate)
+        .fetch_list(pool)
+        .await
+        .unwrap();
+    let second = albums()
+        .sort_desc(AlbumColumn::ReleaseDate)
+        .search("matching")
+        .from_artist(1)
+        .fetch_list(pool)
+        .await
+        .unwrap();
+
+    assert_eq!(first.iter().map(|album| album.id).collect::<Vec<_>>(), [10]);
+    assert_eq!(
+        second.iter().map(|album| album.id).collect::<Vec<_>>(),
+        [10]
+    );
+    assert_eq!(
+        albums()
+            .search("needle")
+            .fetch_list(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|album| album.id)
+            .collect::<Vec<_>>(),
+        [10]
+    );
+    assert_eq!(
+        albums()
+            .by_id(10)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        10
+    );
+    assert!(
+        albums()
+            .by_id(999)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn album_query_supports_secondary_ordering_and_limits() {
+    let db = TestDatabase::new("album-query-order-limit").await;
+    let pool = db.pool();
+
+    insert_album(pool, 1, "Beta", "Same", None, None, None).await;
+    insert_album(pool, 2, "Alpha", "Same", None, None, None).await;
+    insert_album(pool, 3, "Gamma", "Same", None, None, None).await;
+
+    let ids: Vec<i64> = albums()
+        .sort_asc(AlbumColumn::Artist)
+        .then_sort_desc(AlbumColumn::Title)
+        .limit(2)
+        .fetch_list(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|album| album.id)
+        .collect();
+
+    assert_eq!(ids, [3, 1]);
     db.close().await;
 }
 

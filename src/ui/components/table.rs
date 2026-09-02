@@ -7,6 +7,7 @@ mod table_item;
 use std::{rc::Rc, sync::Arc};
 
 use crate::{
+    library::db::SortDirection,
     settings::{
         SettingsGlobal,
         interface::clamp_grid_min_item_width,
@@ -529,10 +530,9 @@ where
                     .when_some(sort_method.as_ref(), |this, method| {
                         this.when(method.column == column_id, |this| {
                             this.child(
-                                icon(if method.ascending {
-                                    CHEVRON_UP
-                                } else {
-                                    CHEVRON_DOWN
+                                icon(match method.direction {
+                                    SortDirection::Ascending => CHEVRON_UP,
+                                    SortDirection::Descending => CHEVRON_DOWN,
                                 })
                                 .size(px(14.0))
                                 .ml(px(4.0))
@@ -546,17 +546,17 @@ where
                         this.sort_method.update(cx, move |this, cx| {
                             if let Some(method) = this.as_mut() {
                                 if method.column == column_id {
-                                    method.ascending = !method.ascending;
+                                    method.direction = method.direction.reversed();
                                 } else {
                                     *this = Some(TableSort {
                                         column: column_id,
-                                        ascending: true,
+                                        direction: SortDirection::Ascending,
                                     });
                                 }
                             } else {
                                 *this = Some(TableSort {
                                     column: column_id,
-                                    ascending: true,
+                                    direction: SortDirection::Ascending,
                                 });
                             }
 
