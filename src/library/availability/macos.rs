@@ -42,7 +42,7 @@ fn monitor_kqueue(roots: Vec<PathBuf>, tx: UnboundedSender<()>) {
     watched.extend(
         roots
             .into_iter()
-            .filter_map(|root| root.parent().map(Path::to_path_buf).or_else(|| Some(root))),
+            .filter_map(|root| root.parent().map(Path::to_path_buf).or(Some(root))),
     );
 
     let mut fds = Vec::<RawFd>::new();

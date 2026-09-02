@@ -7,6 +7,7 @@ use prelude::FluentBuilder;
 use crate::{
     library::{
         db::{AlbumMethod, LibraryAccess},
+        scan::ScanEvent,
         types::{
             Album, DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
             DBString, Track,
@@ -49,6 +50,24 @@ fn compute_all_liked(cx: &App, tracks: &[Track]) -> bool {
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     cx.playlist_contains_all_tracks(LIKED_SONGS_PLAYLIST_ID, &ids)
         .unwrap_or(false)
+}
+
+fn release_info(album: &Album) -> Option<SharedString> {
+    let mut info = String::default();
+
+    if let Some(label) = &album.label {
+        info += &label.to_string();
+    }
+
+    if album.label.is_some() && album.catalog_number.is_some() {
+        info += " • ";
+    }
+
+    if let Some(catalog_number) = &album.catalog_number {
+        info += &catalog_number.to_string();
+    }
+
+    (!info.is_empty()).then_some(SharedString::from(info))
 }
 
 pub struct ReleaseView {
@@ -94,32 +113,24 @@ impl ReleaseView {
             );
             let availability = cx.global::<Models>().availability.clone();
             cx.observe(&availability, |_, _, cx| cx.notify()).detach();
+            let scan_state = cx.global::<Models>().scan_state.clone();
+            cx.observe(&scan_state, |this: &mut Self, state, cx| {
+                if matches!(
+                    *state.read(cx),
+                    ScanEvent::ScanCompleteIdle
+                        | ScanEvent::ScanCompleteWatching
+                        | ScanEvent::TargetedRescanComplete
+                ) {
+                    this.refresh(cx);
+                }
+            })
+            .detach();
             let collection_summary = format_collection_summary(
                 tracks.len() as i64,
                 tracks.iter().map(|track| track.duration).sum(),
             );
 
-            let release_info = {
-                let mut info = String::default();
-
-                if let Some(label) = &album.label {
-                    info += &label.to_string();
-                }
-
-                if album.label.is_some() && album.catalog_number.is_some() {
-                    info += " • ";
-                }
-
-                if let Some(catalog_number) = &album.catalog_number {
-                    info += &catalog_number.to_string();
-                }
-
-                if !info.is_empty() {
-                    Some(SharedString::from(info))
-                } else {
-                    None
-                }
-            };
+            let release_info = release_info(&album);
 
             let pending_scroll = target_track_id.and_then(|track_id| {
                 tracks
@@ -158,6 +169,40 @@ impl ReleaseView {
                 menu_open: false,
             }
         })
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let album_id = self.album.id;
+        let album = cx
+            .get_album_by_id(album_id, AlbumMethod::FullQuality)
+            .expect("Failed to retrieve album");
+        let tracks = cx
+            .list_tracks_in_album(album_id)
+            .expect("Failed to retrieve tracks");
+        let artist_name = album.artist_display_override.clone();
+        let track_listing = TrackListing::new(
+            cx,
+            tracks.clone(),
+            ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
+            album.number_display_mode,
+            false,
+            true,
+        );
+        let collection_summary = format_collection_summary(
+            tracks.len() as i64,
+            tracks.iter().map(|track| track.duration).sum(),
+        );
+        let release_info = release_info(&album);
+        let all_liked = compute_all_liked(cx, &tracks);
+
+        self.album = album;
+        self.artist_name = artist_name;
+        self.tracks = tracks;
+        self.track_listing = track_listing;
+        self.collection_summary = collection_summary;
+        self.release_info = release_info;
+        self.all_liked = all_liked;
+        cx.notify();
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     library::{
         db::{LibraryAccess, LikedTrackSortMethod},
+        scan::ScanEvent,
         types::{Album, DBString, Track, table::AlbumColumn},
     },
     media::numbering::NumberDisplayMode,
@@ -147,6 +148,18 @@ impl ArtistDetailView {
             .detach();
             let availability = cx.global::<Models>().availability.clone();
             cx.observe(&availability, |_, _, cx| cx.notify()).detach();
+            let scan_state = cx.global::<Models>().scan_state.clone();
+            cx.observe(&scan_state, |this: &mut Self, state, cx| {
+                if matches!(
+                    *state.read(cx),
+                    ScanEvent::ScanCompleteIdle
+                        | ScanEvent::ScanCompleteWatching
+                        | ScanEvent::TargetedRescanComplete
+                ) {
+                    this.refresh(cx);
+                }
+            })
+            .detach();
 
             let grid_views = cx.new(|_| FxHashMap::default());
             let grid_render_counter = cx.new(|_| 0usize);
@@ -172,6 +185,31 @@ impl ArtistDetailView {
         view
     }
 
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let artist = cx.get_artist_by_id(self.artist_id).ok();
+        let artist_name = artist.as_ref().and_then(|artist| artist.name.clone());
+        let album_ids = cx.list_albums_by_artist(self.artist_id).unwrap_or_default();
+        let all_tracks = cx
+            .get_all_tracks_by_artist(self.artist_id)
+            .unwrap_or_else(|_| Arc::new(Vec::new()));
+        let liked_tracks = cx
+            .get_liked_tracks_by_artist(self.artist_id, self.liked_sort)
+            .unwrap_or_else(|_| Arc::new(Vec::new()));
+        let standalone_tracks = cx
+            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
+            .unwrap_or_else(|_| Arc::new(Vec::new()));
+
+        self.artist_name = artist_name;
+        self.album_ids = album_ids;
+        self.all_tracks = all_tracks;
+        self.rebuild_liked_tracks(liked_tracks, cx);
+        self.rebuild_standalone_tracks(standalone_tracks, cx);
+        self.grid_views.update(cx, |views, _| views.clear());
+        self.grid_render_counter
+            .update(cx, |counter, _| *counter = 0);
+        cx.notify();
+    }
+
     pub fn update_liked_sort(&mut self, sort_method: LikedTrackSortMethod, cx: &mut Context<Self>) {
         let current_descending = Self::is_descending(self.liked_sort);
         let next_sort = Self::apply_direction(Self::base_sort(sort_method), current_descending);
@@ -191,6 +229,11 @@ impl ArtistDetailView {
     }
 
     fn set_liked_tracks(&mut self, liked_tracks: Arc<Vec<Track>>, cx: &mut Context<Self>) {
+        self.rebuild_liked_tracks(liked_tracks, cx);
+        cx.notify();
+    }
+
+    fn rebuild_liked_tracks(&mut self, liked_tracks: Arc<Vec<Track>>, cx: &mut Context<Self>) {
         self.liked_tracks = liked_tracks;
 
         self.liked_track_items = self
@@ -214,8 +257,6 @@ impl ArtistDetailView {
                 )
             })
             .collect();
-
-        cx.notify();
     }
 
     fn toggle_liked_sort_order(&mut self, cx: &mut Context<Self>) {
@@ -253,6 +294,15 @@ impl ArtistDetailView {
         standalone_tracks: Arc<Vec<Track>>,
         cx: &mut Context<Self>,
     ) {
+        self.rebuild_standalone_tracks(standalone_tracks, cx);
+        cx.notify();
+    }
+
+    fn rebuild_standalone_tracks(
+        &mut self,
+        standalone_tracks: Arc<Vec<Track>>,
+        cx: &mut Context<Self>,
+    ) {
         self.standalone_tracks = standalone_tracks;
 
         self.standalone_track_items = self
@@ -276,8 +326,6 @@ impl ArtistDetailView {
                 )
             })
             .collect();
-
-        cx.notify();
     }
 
     fn toggle_standalone_sort_order(&mut self, cx: &mut Context<Self>) {
