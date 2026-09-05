@@ -1,5 +1,5 @@
+use crate::sources::TrackRef;
 use std::{
-    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -14,7 +14,11 @@ use tokio::sync::watch;
 use tracing::{debug, warn};
 
 use crate::{
-    media::metadata::Metadata, playback::thread::PlaybackState,
+    media::metadata::Metadata,
+    playback::{
+        session::{SessionEvent, SessionEventKind, SessionId},
+        thread::PlaybackState,
+    },
     services::mmb::MediaMetadataBroadcastService,
 };
 
@@ -34,8 +38,10 @@ pub enum DiscordRpcStatus {
 }
 
 pub struct Discord {
+    session: Option<SessionId>,
+    sequence: u64,
     metadata: Option<Arc<Metadata>>,
-    last_path: Option<PathBuf>,
+    last_path: Option<TrackRef>,
     start_time: Option<u64>,
     last_position: u64,
     last_duration: Option<u64>,
@@ -56,6 +62,8 @@ impl Discord {
         let client = DiscordIpcClient::new(DISCORD_CLIENT_ID);
 
         let mut discord = Self {
+            session: None,
+            sequence: 0,
             metadata: None,
             last_path: None,
             start_time: None,
@@ -200,7 +208,12 @@ impl Discord {
             .activity_type(discord_rich_presence::activity::ActivityType::Listening)
             .details(if let Some(title) = &info.name {
                 title.clone()
-            } else if let Some(file_name) = self.last_path.as_ref().and_then(|p| p.file_prefix()) {
+            } else if let Some(file_name) = self
+                .last_path
+                .as_ref()
+                .and_then(|p| p.local_path())
+                .and_then(|p| p.file_prefix())
+            {
                 file_name.to_string_lossy().into_owned()
             } else {
                 "Unknown Track".to_string()
@@ -220,8 +233,13 @@ impl Discord {
 
             activity = activity.timestamps(
                 Timestamps::new()
-                    .start((start_time - offset) as i64)
-                    .end((start_time + duration - offset) as i64),
+                    .start(start_time.saturating_sub(offset).min(i64::MAX as u64) as i64)
+                    .end(
+                        start_time
+                            .saturating_add(duration)
+                            .saturating_sub(offset)
+                            .min(i64::MAX as u64) as i64,
+                    ),
             );
         }
 
@@ -290,7 +308,7 @@ impl Discord {
                 self.force_activity_update = false;
                 self.last_update_time = Some(SystemTime::now());
             }
-            PlaybackState::Paused | PlaybackState::Stopped => {
+            PlaybackState::Paused | PlaybackState::Buffering | PlaybackState::Stopped => {
                 self.clear_activity("sync");
             }
             PlaybackState::Playing => {}
@@ -300,7 +318,81 @@ impl Discord {
 
 #[async_trait]
 impl MediaMetadataBroadcastService for Discord {
-    async fn new_track(&mut self, file_path: PathBuf) {
+    fn uses_session_events(&self) -> bool {
+        true
+    }
+
+    async fn session_event(&mut self, event: SessionEvent) {
+        if let SessionEventKind::Started {
+            reference,
+            position_ms,
+            ..
+        } = event.kind
+        {
+            if event.sequence != 1 || self.session == Some(event.session) {
+                return;
+            }
+            self.session = Some(event.session);
+            self.sequence = event.sequence;
+            self.new_track(reference).await;
+            self.last_position = position_ms / 1000;
+            self.state_changed(PlaybackState::Playing).await;
+            return;
+        }
+        // A previous gapless session may end after the new one starts. It must
+        // never clear the current presence or overwrite its metadata/timestamps.
+        if self.session != Some(event.session) || event.sequence <= self.sequence {
+            return;
+        }
+        self.sequence = event.sequence;
+        match event.kind {
+            SessionEventKind::Metadata { metadata } => {
+                self.metadata_recieved(Arc::new(Metadata {
+                    name: metadata.title,
+                    artist: metadata.artist,
+                    artists: metadata.artists.into_iter().collect(),
+                    album: metadata.album,
+                    album_artist: metadata.album_artist,
+                    mbid_album: metadata.album_mbid,
+                    track_current: metadata.track_number,
+                    isrc: metadata.isrc,
+                    ..Default::default()
+                }))
+                .await;
+            }
+            SessionEventKind::Duration { duration_ms } => {
+                if let Some(duration) = duration_ms.filter(|v| *v > 0) {
+                    self.duration_changed(duration / 1000).await;
+                } else {
+                    self.last_duration = None;
+                    self.mark_dirty();
+                }
+            }
+            SessionEventKind::State { state, progress } => {
+                self.last_position = progress.position_ms / 1000;
+                self.state_changed(state).await;
+            }
+            SessionEventKind::Seek { progress } => {
+                self.mark_dirty();
+                self.position_changed(progress.position_ms / 1000).await;
+            }
+            SessionEventKind::Progress { progress } => {
+                self.position_changed(progress.position_ms / 1000).await
+            }
+            SessionEventKind::Ended { .. } => {
+                self.state_changed(PlaybackState::Stopped).await;
+                self.session = None;
+                self.last_path = None;
+                self.metadata = None;
+                self.last_duration = None;
+                self.last_position = 0;
+                self.needs_update_time = None;
+            }
+            SessionEventKind::Started { .. } => unreachable!(),
+        }
+    }
+
+    async fn new_track(&mut self, file_path: TrackRef) {
         self.metadata = None;
         self.start_time = None;
         self.last_duration = None;
@@ -338,7 +430,7 @@ impl MediaMetadataBroadcastService for Discord {
                 self.update_start_time();
                 self.mark_dirty();
             }
-            PlaybackState::Paused | PlaybackState::Stopped => {
+            PlaybackState::Paused | PlaybackState::Buffering | PlaybackState::Stopped => {
                 self.clear_activity("paused/stopped playback");
             }
         }
@@ -375,7 +467,8 @@ impl MediaMetadataBroadcastService for Discord {
             return;
         };
 
-        if time_since_needs > Duration::from_millis(500)
+        if self.last_state == PlaybackState::Playing
+            && time_since_needs > Duration::from_millis(500)
             && (self.force_activity_update || time_since_last_update > Duration::from_secs(15))
         {
             self.update_activity();
@@ -427,3 +520,6 @@ impl MediaMetadataBroadcastService for Discord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

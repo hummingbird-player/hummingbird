@@ -12,6 +12,42 @@ pub struct LastFMClient {
     auth_session: Option<String>,
 }
 
+#[async_trait::async_trait]
+impl crate::services::mmb::direct::Client for LastFMClient {
+    async fn send(
+        &mut self,
+        listen: &crate::services::mmb::scrobble::Listen,
+        submission: bool,
+    ) -> anyhow::Result<()> {
+        let artist = listen
+            .metadata
+            .artist
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing artist"))?;
+        let track = listen
+            .metadata
+            .title
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing track"))?;
+        // Last.fm's existing optional-duration policy is retained.
+        if submission {
+            let timestamp = DateTime::<Utc>::from_timestamp_millis(listen.started_at_ms)
+                .ok_or_else(|| anyhow::anyhow!("Invalid listen timestamp"))?;
+            self.scrobble(
+                artist,
+                track,
+                timestamp,
+                listen.metadata.album.as_deref(),
+                None,
+            )
+            .await
+        } else {
+            self.now_playing(artist, track, listen.metadata.album.as_deref(), None)
+                .await
+        }
+    }
+}
+
 impl LastFMClient {
     pub fn new(api_key: String, api_secret: String) -> Self {
         LastFMClient {
@@ -21,6 +57,8 @@ impl LastFMClient {
             endpoint: "https://ws.audioscrobbler.com/2.0".parse().unwrap(),
             client: zed_reqwest::Client::builder()
                 .user_agent("HummingbirdMMBS/1.0")
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap(),
         }

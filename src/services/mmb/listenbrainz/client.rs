@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::media::metadata::Metadata;
+use crate::playback::session::SessionMetadata;
 
 use super::types::{
     AdditionalInfo, Listen, Session, SubmitListens, SubmitResponse, TrackMetadata, ValidateToken,
@@ -12,6 +12,36 @@ pub struct ListenBrainzClient {
     token: String,
 }
 
+#[async_trait::async_trait]
+impl crate::services::mmb::direct::Client for ListenBrainzClient {
+    async fn send(
+        &mut self,
+        listen: &crate::services::mmb::scrobble::Listen,
+        submission: bool,
+    ) -> anyhow::Result<()> {
+        let artist = listen
+            .metadata
+            .artist
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing artist"))?;
+        let track = listen
+            .metadata
+            .title
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing track"))?;
+        let duration = listen.duration_ms.map(|ms| ms / 1000);
+        if submission {
+            let timestamp = DateTime::<Utc>::from_timestamp_millis(listen.started_at_ms)
+                .ok_or_else(|| anyhow::anyhow!("Invalid listen timestamp"))?;
+            self.scrobble(artist, track, timestamp, &listen.metadata, duration)
+                .await
+        } else {
+            self.now_playing(artist, track, &listen.metadata, duration)
+                .await
+        }
+    }
+}
+
 impl ListenBrainzClient {
     pub fn new(token: String) -> Self {
         ListenBrainzClient {
@@ -19,6 +49,8 @@ impl ListenBrainzClient {
             endpoint: "https://api.listenbrainz.org".parse().unwrap(),
             client: zed_reqwest::Client::builder()
                 .user_agent("HummingbirdMMBS/1.0")
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap(),
         }
@@ -64,7 +96,7 @@ impl ListenBrainzClient {
         artist: &str,
         track: &str,
         timestamp: DateTime<Utc>,
-        metadata: &Metadata,
+        metadata: &SessionMetadata,
         duration: Option<u64>,
     ) -> anyhow::Result<()> {
         self.submit(
@@ -82,7 +114,7 @@ impl ListenBrainzClient {
         &self,
         artist: &str,
         track: &str,
-        metadata: &Metadata,
+        metadata: &SessionMetadata,
         duration: Option<u64>,
     ) -> anyhow::Result<()> {
         self.submit("playing_now", None, artist, track, metadata, duration)
@@ -95,7 +127,7 @@ impl ListenBrainzClient {
         listened_at: Option<i64>,
         artist: &str,
         track: &str,
-        metadata: &Metadata,
+        metadata: &SessionMetadata,
         duration: Option<u64>,
     ) -> anyhow::Result<()> {
         let url = self.endpoint("/1/submit-listens")?;
@@ -125,7 +157,7 @@ fn listen_payload<'a>(
     listened_at: Option<i64>,
     artist: &'a str,
     track: &'a str,
-    metadata: &'a Metadata,
+    metadata: &'a SessionMetadata,
     duration: Option<u64>,
 ) -> Listen<'a> {
     Listen {
@@ -140,8 +172,8 @@ fn listen_payload<'a>(
                 submission_client: "Hummingbird",
                 submission_client_version: env!("CARGO_PKG_VERSION"),
                 duration,
-                release_mbid: metadata.mbid_album.as_deref(),
-                tracknumber: metadata.track_current.map(|track| track.to_string()),
+                release_mbid: metadata.album_mbid.as_deref(),
+                tracknumber: metadata.track_number.map(|track| track.to_string()),
                 isrc: metadata.isrc.as_deref(),
             },
         },
@@ -155,7 +187,7 @@ mod tests {
 
     #[test]
     fn playing_now_payload_omits_listened_at() {
-        let metadata = Metadata::default();
+        let metadata = SessionMetadata::default();
         let payload = listen_payload(None, "artist", "track", &metadata, None);
         let json = serde_json::to_value(payload).unwrap();
 
@@ -166,7 +198,7 @@ mod tests {
 
     #[test]
     fn single_payload_includes_listened_at() {
-        let metadata = Metadata::default();
+        let metadata = SessionMetadata::default();
         let payload = listen_payload(Some(123), "artist", "track", &metadata, None);
         let json = serde_json::to_value(payload).unwrap();
 
@@ -175,12 +207,12 @@ mod tests {
 
     #[test]
     fn payload_includes_available_metadata() {
-        let metadata = Metadata {
+        let metadata = SessionMetadata {
             album: Some("album".to_string()),
-            mbid_album: Some("release-id".to_string()),
-            track_current: Some(7),
+            album_mbid: Some("release-id".to_string()),
+            track_number: Some(7),
             isrc: Some("ISRC".to_string()),
-            ..Metadata::default()
+            ..SessionMetadata::default()
         };
         let payload = listen_payload(Some(123), "artist", "track", &metadata, Some(300));
         let json = serde_json::to_value(payload).unwrap();
