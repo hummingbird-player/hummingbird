@@ -23,6 +23,8 @@ bitflags! {
         const PROVIDES_DECODER         = 0b00000010;
         /// Indicates the provider should be considered for indexing files while scanning.
         const ALLOWS_INDEXING          = 0b00000100;
+        /// Can open a host byte input without requiring a filesystem handle.
+        const ACCEPTS_INPUT           = 0b00001000;
     }
 }
 
@@ -39,8 +41,24 @@ pub trait MediaProvider: Send + Sync {
     /// Provider attempts to determine the file type based off of the file's contents.
     fn open(&self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError>;
 
+    /// Open a host-owned byte input. The default retains compatibility with
+    /// filesystem-only providers; expose ACCEPTS_INPUT only when implemented.
+    fn open_input(
+        &self,
+        _input: Box<dyn super::input::MediaInput>,
+        _ext: Option<&OsStr>,
+    ) -> Result<Box<dyn MediaStream>, OpenError> {
+        Err(OpenError::UnsupportedFormat)
+    }
+
     /// Returns a list of file extensions the plugin supports.
     fn supported_extensions(&self) -> &[&str];
+
+    /// Negotiation capabilities are optional and distinct from filename hints.
+    /// Providers which do not declare them still participate in normal probing.
+    fn audio_decode_profiles(&self) -> Vec<super::capabilities::AudioDecodeProfile> {
+        Vec::new()
+    }
 
     /// Returns a list of media provider feature bitflags that the plugin supports.
     /// See `MediaProviderFeatures` for more information.
@@ -60,6 +78,14 @@ pub trait MediaProvider: Send + Sync {
 /// read metadata many times in rapid succession during library indexing. This is normal and
 /// expected behavior, and your plugin must be able to handle this.
 pub trait MediaStream {
+    /// Actual decoder identity, independently of indexed tags or requested quality.
+    fn codec_name(&self) -> Option<&str> {
+        None
+    }
+    /// Observed average encoded audio bitrate, excluding container metadata.
+    fn encoded_bitrate(&self) -> Option<u64> {
+        None
+    }
     /// Informs the Provider that the currently opened file is no longer needed. This function is
     /// not guaranteed to be called before open if a file is already opened.
     fn close(&mut self);
@@ -129,6 +155,8 @@ pub trait MediaStream {
 
     /// Decode one packet/frame and write samples as f64 directly to the provided ring buffer producers.
     /// The decoder is responsible for converting from the native sample format to f64.
+    /// Internal repeats return `DecodeResult::Repeat` after seeking and before
+    /// writing any post-repeat PCM. A repeat marker itself writes no samples.
     fn decode_into(
         &mut self,
         output: &mut ChannelProducers<f64>,
@@ -141,5 +169,6 @@ pub trait MediaStream {
     /// This is handled by the media stream itself instead of the audio engine so that the media
     /// stream implementation can handle the loop behavior natively (for example, if a tracker
     /// module supports looping natively).
+    /// Reapplying an unchanged policy must preserve pending loop seeks/trimming.
     fn set_looping(&mut self, enabled: bool);
 }

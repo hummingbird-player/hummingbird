@@ -6,7 +6,18 @@ pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeResult {
-    Decoded { frames: usize, rate: u32 },
+    Decoded {
+        frames: usize,
+        rate: u32,
+    },
+    /// A worker is waiting for input. This is neither EOF nor a decoder failure.
+    Buffering,
+    /// An internal repeat completed its seek. No PCM is written by this call;
+    /// the next decoded frames start at this position. Keep this marker ordered
+    /// between PCM blocks through worker and host adapters.
+    Repeat {
+        position_ms: u64,
+    },
     Eof,
 }
 

@@ -40,6 +40,9 @@ pub enum PlaybackReadError {
     ChannelCountChanged(usize),
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
+    /// Input failures are distinct from codec rejection, including during preparation.
+    #[error("Media input error: `{0:?}`")]
+    Input(std::io::ErrorKind),
     #[error("Decode error: `{0}`")]
     DecodeFatal(String),
 }

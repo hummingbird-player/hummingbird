@@ -227,6 +227,62 @@ pub struct Metadata {
     pub loop_end: Option<f64>,
 }
 
+impl Metadata {
+    /// Preserve indexed identity/display metadata and fill fields a stream can
+    /// supply. In particular, stripped transcode tags cannot erase source tags.
+    pub fn fill_missing_from(&mut self, fallback: Metadata) {
+        macro_rules! options { ($($field:ident),* $(,)?) => { $(if self.$field.is_none() { self.$field = fallback.$field; })* }; }
+        options!(
+            name,
+            artist,
+            album_artist,
+            artist_sort,
+            album_artist_sort,
+            original_artist,
+            composer,
+            album,
+            sort_album,
+            grouping,
+            bpm,
+            track_current,
+            track_max,
+            disc_current,
+            disc_max,
+            disc_subtitle,
+            track_section,
+            label,
+            catalog,
+            isrc,
+            mbid_album,
+            replaygain_track_gain,
+            replaygain_track_peak,
+            replaygain_album_gain,
+            replaygain_album_peak,
+            lyrics,
+            loop_start,
+            loop_end
+        );
+        if self.artists.is_empty() {
+            self.artists = fallback.artists;
+        }
+        if self.album_artist_keys.is_empty() {
+            self.album_artist_keys = fallback.album_artist_keys;
+        }
+        if self.genres.is_empty() {
+            self.genres = fallback.genres;
+        }
+        if self.date.is_none() && self.year_month.is_none() && self.year.is_none() {
+            self.date = fallback.date;
+            self.year_month = fallback.year_month;
+            self.year = fallback.year;
+        }
+        self.compilation |= fallback.compilation;
+        if self.number_display_mode == NumberDisplayMode::Standard {
+            self.number_display_mode = fallback.number_display_mode;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParsedReleaseDate {
     FullDate(DateTime<Utc>),
