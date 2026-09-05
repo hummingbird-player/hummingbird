@@ -200,6 +200,20 @@ impl Resampler {
         self.resampler.output_delay()
     }
 
+    /// Output still attributable to input preceding a gapless boundary. Compute
+    /// from cumulative integer frame counts so repeated rounding cannot drift.
+    pub fn pending_output_frames(&self, additional_input: u64) -> u64 {
+        let input = self.frames_in.saturating_add(additional_input);
+        if input == 0 || self.flushed {
+            return 0;
+        }
+        (u128::from(input) * u128::from(self.target_rate))
+            .div_ceil(u128::from(self.source_rate))
+            .saturating_add(self.output_delay() as u128)
+            .saturating_sub(u128::from(self.frames_out))
+            .min(u128::from(u64::MAX)) as u64
+    }
+
     /// Largest number of frames a single process call can emit.
     pub fn output_frames_max(&self) -> usize {
         self.resampler.output_frames_max()
@@ -311,11 +325,12 @@ impl Resampler {
         if self.flushed || !self.needs_resampling() || self.frames_in == 0 {
             return 0;
         }
+        let expected_total = self
+            .frames_out
+            .saturating_add(self.pending_output_frames(0));
         self.flushed = true;
 
         let ratio = f64::from(self.target_rate) / f64::from(self.source_rate);
-        let expected_total =
-            (self.frames_in as f64 * ratio).ceil() as u64 + self.resampler.output_delay() as u64;
 
         let mut written = 0;
         // first call carries the buffered partial chunk, later ones pump zeros

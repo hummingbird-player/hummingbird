@@ -5,9 +5,10 @@ use crate::{
             ResetError, StateError, SubmissionError,
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
+        render_clock::RenderClock,
         resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, GainRamp, Scale, read_available, write_bounded},
+        util::{AtomicF64, GainRamp, Scale, read_available},
     },
     media::{
         pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES},
@@ -24,6 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+mod start;
 
 /// Delay between requesting a fade-out and pausing the stream. Must exceed
 /// the gain ramp length (15 ms) plus a few callback periods to ensure the
@@ -147,6 +149,7 @@ fn create_stream_internal<T: CpalSample>(
     buffer_size: usize,
     target_gain: Arc<AtomicF64>,
     underruns: Arc<AtomicU64>,
+    rendered: Arc<RenderClock>,
 ) -> Result<(cpal::Stream, Producer<T>, Arc<AtomicBool>), OpenError> {
     let (prod, mut cons) = RingBuffer::<T>::new(buffer_size);
     let channels = config.channels as usize;
@@ -159,6 +162,7 @@ fn create_stream_internal<T: CpalSample>(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             let read = read_available(&mut cons, data);
+            rendered.record_samples(read);
             if read < data.len() {
                 underruns.fetch_add(1, Ordering::Relaxed);
             }
@@ -193,12 +197,14 @@ impl CpalDevice {
         info!("Requesting buffer size: {buffer_size}");
         let target_gain = Arc::new(AtomicF64::new(1.0));
         let underruns = Arc::new(AtomicU64::new(0));
+        let rendered = Arc::new(RenderClock::new(config.channels.into(), config.sample_rate));
         let (stream, prod, device_errored) = create_stream_internal::<T>(
             &self.device,
             config,
             buffer_size,
             target_gain.clone(),
             underruns.clone(),
+            rendered.clone(),
         )?;
 
         Ok(Box::new(CpalStream {
@@ -213,10 +219,12 @@ impl CpalDevice {
             // worst case: a full pipeline staging buffer, interleaved
             interleave_buffer: Vec::with_capacity(DEFAULT_BUFFER_FRAMES * channels as usize),
             underruns,
+            rendered,
             underruns_reported: 0,
             last_underrun_log: Instant::now(),
             device_errored,
             pause_at: None,
+            start: start::OutputStart::default(),
         }))
     }
 }
@@ -312,6 +320,7 @@ where
     pub replaygain: f64,
     pub interleave_buffer: Vec<T>,
     pub underruns: Arc<AtomicU64>,
+    rendered: Arc<RenderClock>,
     /// keep track of the last log, so we don't log the same underrun multiple times
     underruns_reported: u64,
     last_underrun_log: Instant,
@@ -319,6 +328,7 @@ where
     /// Indicates that the stream is currently fading out and needs to be paused by the specified
     /// time.
     pause_at: Option<Instant>,
+    start: start::OutputStart,
 }
 
 impl<T> CpalStream<T>
@@ -348,6 +358,9 @@ where
     fn close_stream(&mut self) -> Result<(), CloseError> {
         Ok(())
     }
+    fn render_clock(&self) -> Option<Arc<RenderClock>> {
+        Some(self.rendered.clone())
+    }
 
     fn needs_input(&self) -> bool {
         true // will always be true as long as the submitting thread is not blocked by submit_frame
@@ -357,12 +370,18 @@ where
         self.pause_at = None;
         self.target_gain
             .store(self.last_user_volume, Ordering::Relaxed);
-        self.stream.play().map_err(|v| v.into())
+        let queued = self.ring_buf.slots() < self.buffer_size;
+        self.start
+            .request(queued, || self.stream.play().map_err(Into::into))
     }
 
     fn pause(&mut self) -> Result<(), StateError> {
+        self.start.cancel();
         self.target_gain.store(0.0, Ordering::Relaxed);
-        self.pause_at = Some(Instant::now() + PAUSE_FADE_WAIT);
+        self.pause_at = self
+            .start
+            .running()
+            .then(|| Instant::now() + PAUSE_FADE_WAIT);
         Ok(())
     }
 
@@ -371,7 +390,8 @@ where
             && Instant::now() >= deadline
         {
             self.pause_at = None;
-            return self.stream.pause().map_err(|v| v.into());
+            self.stream.pause()?;
+            self.start.paused();
         }
         Ok(())
     }
@@ -384,11 +404,13 @@ where
             self.buffer_size,
             self.target_gain.clone(),
             self.underruns.clone(),
+            self.rendered.clone(),
         )?;
 
         self.stream = stream;
         self.ring_buf = prod;
         self.device_errored = device_errored;
+        self.start = start::OutputStart::default();
         self.interleave_buffer.clear();
 
         if pause_pending && let Err(e) = self.stream.pause() {
@@ -451,8 +473,12 @@ where
             }
         }
 
-        write_bounded(&mut self.ring_buf, &self.interleave_buffer)
-            .map_err(|_| SubmissionError::WriteTimeout)?;
+        self.start.submit(
+            &mut self.ring_buf,
+            &self.interleave_buffer,
+            &self.rendered,
+            || self.stream.play().map_err(Into::into),
+        )?;
 
         Ok(read)
     }

@@ -28,7 +28,12 @@ fn device_death_mid_playback_recovers_without_dropping_frames() {
 
     let capture = dummy::install_capture();
     let mut engine = engine_playing(&path);
+    let starts_before_fault = dummy::play_calls();
     run_to_eof(&mut engine, MAX_CYCLES);
+    assert!(
+        dummy::play_calls() > starts_before_fault,
+        "the replacement output must be started before retrying submission"
+    );
     engine.stop();
     dummy::uninstall_capture();
 
@@ -86,7 +91,9 @@ fn playback_continues_after_earlier_device_fault() {
     let capture = dummy::install_capture();
     let mut engine = engine_playing(&path_a);
     run_to_eof(&mut engine, MAX_CYCLES); // fault fires during track A
-    engine.open(&path_b, false).expect("failed to open track B");
+    engine
+        .open(&path_b.clone().into(), false)
+        .expect("failed to open track B");
     run_to_eof(&mut engine, MAX_CYCLES); // track B plays on a healthy stream
     engine.stop();
     dummy::uninstall_capture();

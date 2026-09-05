@@ -1,4 +1,5 @@
-use std::{ffi::c_void, path::Path, time::Duration};
+use crate::sources::TrackRef;
+use std::{ffi::c_void, time::Duration};
 
 use async_trait::async_trait;
 use raw_window_handle::RawWindowHandle;
@@ -78,9 +79,10 @@ impl WindowsController {
             .ShuffleEnabledChangeRequested(&TypedEventHandler::<
                 SystemMediaTransportControls,
                 ShuffleEnabledChangeRequestedEventArgs,
-            >::new(move |_, _| {
-                // TODO: do better than this
-                bridge.toggle_shuffle();
+            >::new(move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    bridge.set_shuffle(args.RequestedShuffleEnabled()?);
+                }
 
                 Ok(())
             }))?;
@@ -244,7 +246,7 @@ impl PlaybackController for WindowsController {
         let playback_state = match playback_state {
             PlaybackState::Stopped => MediaPlaybackStatus::Stopped,
             PlaybackState::Playing => MediaPlaybackStatus::Playing,
-            PlaybackState::Paused => MediaPlaybackStatus::Paused,
+            PlaybackState::Paused | PlaybackState::Buffering => MediaPlaybackStatus::Paused,
         };
 
         self.controls.SetPlaybackStatus(playback_state)?;
@@ -256,10 +258,15 @@ impl PlaybackController for WindowsController {
 
         Ok(())
     }
-    async fn new_file(&mut self, path: &Path) -> anyhow::Result<()> {
+    async fn new_file(&mut self, path: &TrackRef) -> anyhow::Result<()> {
         self.display.ClearAll()?;
         self.display.SetType(MediaPlaybackType::Music)?;
-        let title_string = HSTRING::from(path.file_name().unwrap().to_str().unwrap());
+        let title_string = HSTRING::from(
+            path.local_path()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or(""),
+        );
         self.display
             .MusicProperties()
             .unwrap()

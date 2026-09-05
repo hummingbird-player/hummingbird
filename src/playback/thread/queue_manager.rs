@@ -1,7 +1,7 @@
+use crate::sources::{TrackRef, is_playable};
 use std::{
     collections::VecDeque,
     mem::take,
-    path::PathBuf,
     sync::{Arc, RwLock},
 };
 
@@ -30,11 +30,11 @@ pub enum QueueNavigationResult {
     /// The queue position changed.
     Changed {
         index: usize,
-        path: PathBuf,
+        path: TrackRef,
         reshuffled: Reshuffled,
     },
     /// The current track should repeat (RepeatOne mode).
-    Unchanged { path: PathBuf },
+    Unchanged { path: TrackRef },
     /// End of queue reached.
     EndOfQueue,
 }
@@ -46,7 +46,7 @@ pub enum DequeueResult {
     /// The currently playing item was removed.
     RemovedCurrent {
         /// The path of the next track to play, if any.
-        new_path: Option<PathBuf>,
+        new_path: Option<TrackRef>,
     },
     /// Nothing changed (index out of bounds).
     Unchanged,
@@ -57,7 +57,7 @@ pub enum DequeueManyResult {
     /// Items were removed, queue position adjusted.
     Removed { new_position: usize },
     /// The currently playing item was removed.
-    RemovedCurrent { new_path: Option<PathBuf> },
+    RemovedCurrent { new_path: Option<TrackRef> },
     /// Nothing changed (indices empty or all out of bounds).
     Unchanged,
 }
@@ -111,7 +111,7 @@ pub enum ReplaceResult {
 
 #[derive(Debug, Clone)]
 pub enum JumpResult {
-    Jumped { path: PathBuf },
+    Jumped { path: TrackRef },
     OutOfBounds,
 }
 
@@ -170,7 +170,7 @@ pub enum UndoResult {
     /// The last action was undone successfully. Contains the current index and path.
     Ok {
         current_idx: usize,
-        current_path: PathBuf,
+        current_path: TrackRef,
         shuffle: bool,
     },
     /// The last action was undone successfully, but no current track is selected.
@@ -219,6 +219,7 @@ pub struct QueueManager {
     repeat: RepeatState,
     storage_tx: tokio::sync::watch::Sender<PlaybackSessionData>,
     undo_stack: VecDeque<UndoAction>,
+    availability: Option<Arc<dyn Fn(&TrackRef) -> bool + Send + Sync>>,
 }
 
 impl QueueManager {
@@ -233,7 +234,7 @@ impl QueueManager {
         {
             UndoResult::Ok {
                 current_idx,
-                current_path: queue[current_idx].get_path().clone(),
+                current_path: queue[current_idx].get_track_ref().clone(),
                 shuffle,
             }
         } else {
@@ -252,26 +253,35 @@ impl QueueManager {
         }
     }
 
-    fn item_is_playable(item: &QueueItemData) -> bool {
-        item.get_path().exists()
+    pub fn set_availability(&mut self, availability: Arc<dyn Fn(&TrackRef) -> bool + Send + Sync>) {
+        self.availability = Some(availability);
+    }
+    fn item_is_playable(&self, item: &QueueItemData) -> bool {
+        let reference = item.get_track_ref();
+        if reference.source().is_local() {
+            return is_playable(reference);
+        }
+        self.availability
+            .as_ref()
+            .is_some_and(|available| available(reference))
     }
 
-    fn first_playable_index(queue: &[QueueItemData]) -> Option<usize> {
-        queue.iter().position(Self::item_is_playable)
+    fn first_playable_index(&self, queue: &[QueueItemData]) -> Option<usize> {
+        queue.iter().position(|item| self.item_is_playable(item))
     }
 
-    fn last_playable_index(queue: &[QueueItemData]) -> Option<usize> {
-        queue.iter().rposition(Self::item_is_playable)
+    fn last_playable_index(&self, queue: &[QueueItemData]) -> Option<usize> {
+        queue.iter().rposition(|item| self.item_is_playable(item))
     }
 
-    fn next_playable_from(queue: &[QueueItemData], start: usize) -> Option<usize> {
-        (start..queue.len()).find(|idx| Self::item_is_playable(&queue[*idx]))
+    fn next_playable_from(&self, queue: &[QueueItemData], start: usize) -> Option<usize> {
+        (start..queue.len()).find(|idx| self.item_is_playable(&queue[*idx]))
     }
 
-    fn prev_playable_before(queue: &[QueueItemData], end_exclusive: usize) -> Option<usize> {
+    fn prev_playable_before(&self, queue: &[QueueItemData], end_exclusive: usize) -> Option<usize> {
         (0..end_exclusive)
             .rev()
-            .find(|idx| Self::item_is_playable(&queue[*idx]))
+            .find(|idx| self.item_is_playable(&queue[*idx]))
     }
 
     fn push_undo_action(&mut self, action: UndoAction) {
@@ -462,6 +472,7 @@ impl QueueManager {
             queue_next: queue_position.map_or(0, |position| position + 1),
             storage_tx,
             undo_stack: VecDeque::with_capacity(UNDO_STACK_CAPACITY),
+            availability: None,
         }
     }
 
@@ -475,6 +486,26 @@ impl QueueManager {
     /// Get the current repeat state.
     pub fn repeat_state(&self) -> RepeatState {
         self.repeat
+    }
+    /// Inspect the deterministic next remote item without changing navigation,
+    /// probing local files, or shuffling the queue. A shuffle wrap is chosen only
+    /// when navigation occurs, so there is no speculative candidate for it.
+    pub fn next_remote_candidate(&self) -> Option<TrackRef> {
+        let queue = self.queue.read().expect("poisoned queue lock");
+        let index = if self.repeat == RepeatState::RepeatingOne && !self.playback_settings.consume {
+            self.queue_next.checked_sub(1)?
+        } else if self.queue_next < queue.len() {
+            self.queue_next
+        } else if self.repeat == RepeatState::Repeating
+            && !self.shuffle
+            && !self.playback_settings.consume
+        {
+            0
+        } else {
+            return None;
+        };
+        let reference = queue.get(index)?.get_track_ref();
+        (!reference.source().is_local()).then(|| reference.clone())
     }
 
     /// Get the queue length.
@@ -490,13 +521,17 @@ impl QueueManager {
     /// Returns true if every queued item belongs to the same known album.
     pub fn all_items_same_album(&self) -> bool {
         let queue = self.queue.read().expect("poisoned queue lock");
-        let Some(first_album) = queue.first().and_then(QueueItemData::get_db_album_id) else {
+        let Some(first) = queue.first() else {
+            return false;
+        };
+        let Some(first_album) = first.get_db_album_id() else {
             return false;
         };
 
-        queue
-            .iter()
-            .all(|item| item.get_db_album_id() == Some(first_album))
+        queue.iter().all(|item| {
+            item.get_track_ref().source() == first.get_track_ref().source()
+                && item.get_db_album_id() == Some(first_album)
+        })
     }
 
     /// Get the first playable item in the queue along with its index.
@@ -506,14 +541,15 @@ impl QueueManager {
             .expect("poisoned queue lock")
             .iter()
             .enumerate()
-            .find(|(_, item)| Self::item_is_playable(item))
+            .find(|(_, item)| self.item_is_playable(item))
             .map(|(idx, item)| (item.clone(), idx))
     }
 
     /// Get the last item in the queue along with its index, if the queue is non-empty.
     pub fn last_with_index(&self) -> Option<(QueueItemData, usize)> {
         let queue = self.queue.read().expect("poisoned queue lock");
-        Self::last_playable_index(&queue).map(|index| (queue[index].clone(), index))
+        self.last_playable_index(&queue)
+            .map(|index| (queue[index].clone(), index))
     }
 
     /// Set the queue position directly (used after opening a track).
@@ -548,29 +584,29 @@ impl QueueManager {
             if self.repeat == RepeatState::RepeatingOne
                 && !user_initiated
                 && let Some(path) = queue.get(self.queue_next.saturating_sub(1))
-                && Self::item_is_playable(path)
+                && self.item_is_playable(path)
             {
                 return QueueNavigationResult::Unchanged {
-                    path: path.get_path().clone(),
+                    path: path.get_track_ref().clone(),
                 };
             }
 
-            if let Some(index) = Self::next_playable_from(&queue, self.queue_next) {
+            if let Some(index) = self.next_playable_from(&queue, self.queue_next) {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].get_track_ref().clone(),
                     reshuffled: Reshuffled::NotReshuffled,
                 }
             } else if self.repeat == RepeatState::Repeating {
                 if self.shuffle {
                     queue.shuffle(&mut rng());
                 }
-                if let Some(index) = Self::first_playable_index(&queue) {
+                if let Some(index) = self.first_playable_index(&queue) {
                     self.queue_next = index + 1;
                     QueueNavigationResult::Changed {
                         index,
-                        path: queue[index].get_path().clone(),
+                        path: queue[index].get_track_ref().clone(),
                         reshuffled: if self.shuffle {
                             Reshuffled::Reshuffled
                         } else {
@@ -602,12 +638,12 @@ impl QueueManager {
             let mut queue = self.queue.write().expect("poisoned queue lock");
 
             if self.queue_next > 1
-                && let Some(index) = Self::prev_playable_before(&queue, self.queue_next - 1)
+                && let Some(index) = self.prev_playable_before(&queue, self.queue_next - 1)
             {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].get_track_ref().clone(),
                     reshuffled: Reshuffled::NotReshuffled,
                 }
             } else if self.repeat == RepeatState::Repeating
@@ -616,13 +652,13 @@ impl QueueManager {
                     if self.shuffle {
                         queue.shuffle(&mut rng());
                     }
-                    Self::last_playable_index(&queue)
+                    self.last_playable_index(&queue)
                 }
             {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].get_track_ref().clone(),
                     reshuffled: if self.shuffle {
                         Reshuffled::Reshuffled
                     } else {
@@ -649,8 +685,14 @@ impl QueueManager {
     pub fn jump(&mut self, index: usize) -> JumpResult {
         let queue = self.queue.read().expect("poisoned queue lock");
 
-        if index < queue.len() && Self::item_is_playable(&queue[index]) {
-            let path = queue[index].get_path().clone();
+        // An explicit remote selection (including session restoration) may need
+        // asynchronous cache discovery. Automatic navigation still uses the
+        // availability snapshot; resolution validates explicit selections.
+        if index < queue.len()
+            && (!queue[index].get_track_ref().source().is_local()
+                || self.item_is_playable(&queue[index]))
+        {
+            let path = queue[index].get_track_ref().clone();
             drop(queue);
             self.queue_next = index + 1;
             self.persist_session_state();
@@ -871,9 +913,10 @@ impl QueueManager {
         let current = self.queue_next.saturating_sub(1);
 
         let res = if index == current {
-            let new_path = Self::next_playable_from(&queue, current)
+            let new_path = self
+                .next_playable_from(&queue, current)
                 .and_then(|idx| queue.get(idx))
-                .map(|v| v.get_path().clone());
+                .map(|v| v.get_track_ref().clone());
             DequeueResult::RemovedCurrent { new_path }
         } else if index < current {
             self.queue_next -= 1;
@@ -941,9 +984,10 @@ impl QueueManager {
 
         let res = if removed_current {
             let current = current.expect("removed_current implies current is Some");
-            let new_path = Self::next_playable_from(&queue, current - items_before_current)
+            let new_path = self
+                .next_playable_from(&queue, current - items_before_current)
                 .and_then(|idx| queue.get(idx))
-                .map(|v| v.get_path().clone());
+                .map(|v| v.get_track_ref().clone());
             DequeueManyResult::RemovedCurrent { new_path }
         } else if self.queue_next > 0 {
             self.queue_next -= items_before_current;
@@ -1141,7 +1185,9 @@ impl QueueManager {
             *queue = items.clone();
         }
 
-        let first_item = Self::first_playable_index(&queue).map(|idx| queue[idx].clone());
+        let first_item = self
+            .first_playable_index(&queue)
+            .map(|idx| queue[idx].clone());
 
         drop(queue);
 
@@ -1372,6 +1418,57 @@ mod tests {
             .iter()
             .map(|item| item.get_db_id().expect("test items have db ids"))
             .collect()
+    }
+    #[test]
+    fn reused_album_ids_do_not_group_different_sources_for_replay_gain() {
+        let song = |source: &str, location: &str| -> QueueItemData {
+            serde_json::from_value(json!({
+                "db_album_id": 7,
+                "track_ref": {"source": source, "location": location}
+            }))
+            .unwrap()
+        };
+        assert!(
+            !manager_with_queue(vec![song("old", "one"), song("other", "two")])
+                .all_items_same_album()
+        );
+        assert!(
+            manager_with_queue(vec![song("old", "one"), song("old", "two")]).all_items_same_album()
+        );
+    }
+    #[test]
+    fn remote_lookahead_does_not_mutate_shuffle_order_and_tracks_repeat_and_consume() {
+        use crate::playback::events::RepeatState;
+        use crate::sources::{SourceId, TrackRef};
+        let remote = TrackRef::from_database(SourceId::new("remote"), "opaque".into());
+        let remote_item: QueueItemData =
+            serde_json::from_value(json!({"track_ref": remote})).unwrap();
+        let mut queue = manager_with_queue(vec![item(1), remote_item]);
+        queue.set_position(0);
+        let before = snapshot(&queue);
+        assert_eq!(queue.next_remote_candidate(), Some(remote.clone()));
+        assert_eq!(snapshot(&queue), before);
+        queue.set_position(1);
+        queue.set_repeat(RepeatState::RepeatingOne);
+        assert_eq!(queue.next_remote_candidate(), Some(remote));
+        queue.playback_settings.consume = true;
+        assert_eq!(queue.next_remote_candidate(), None);
+        queue.playback_settings.consume = false;
+        queue.set_repeat(RepeatState::Repeating);
+        queue.shuffle = true;
+        let before = snapshot(&queue);
+        assert_eq!(queue.next_remote_candidate(), None);
+        assert_eq!(snapshot(&queue), before);
+    }
+    #[test]
+    fn local_lookahead_does_not_allocate_or_invoke_availability() {
+        let mut queue = manager_with_queue(items(3, 0));
+        queue.set_position(0);
+        queue.set_availability(Arc::new(|_| panic!("lookahead must not probe local files")));
+        let allocations = crate::test_support::alloc_guard::count_allocations(|| {
+            assert!(queue.next_remote_candidate().is_none())
+        });
+        assert_eq!(allocations.1, 0);
     }
 
     fn assert_undo_round_trip(manager: &mut QueueManager, before: QueueManagerState) {

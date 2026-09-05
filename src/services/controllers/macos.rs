@@ -1,4 +1,5 @@
-use std::{path::Path, ptr::NonNull};
+use crate::sources::TrackRef;
+use std::ptr::NonNull;
 
 use async_trait::async_trait;
 use block2::RcBlock;
@@ -28,15 +29,15 @@ pub struct MacMediaPlayerController {
 }
 
 impl MacMediaPlayerController {
-    unsafe fn new_file(&mut self, path: &Path) {
+    unsafe fn new_file(&mut self, path: &TrackRef) {
         unsafe {
             debug!("New file: {:?}", path);
 
             let file_name = path
-                .file_name()
-                .expect("files should have file names")
-                .to_str()
-                .expect("files should have UTF-8 names");
+                .local_path()
+                .and_then(|p| p.file_name())
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
 
             let media_center = MPNowPlayingInfoCenter::defaultCenter();
             let now_playing: Retained<NSMutableDictionary<NSString>> =
@@ -176,7 +177,9 @@ impl MacMediaPlayerController {
             media_center.setPlaybackState(match state {
                 PlaybackState::Stopped => MPNowPlayingPlaybackState::Stopped,
                 PlaybackState::Playing => MPNowPlayingPlaybackState::Playing,
-                PlaybackState::Paused => MPNowPlayingPlaybackState::Paused,
+                PlaybackState::Paused | PlaybackState::Buffering => {
+                    MPNowPlayingPlaybackState::Paused
+                }
             });
         }
     }
@@ -299,7 +302,7 @@ impl PlaybackController for MacMediaPlayerController {
             Ok(())
         }
     }
-    async fn new_file(&mut self, path: &Path) -> anyhow::Result<()> {
+    async fn new_file(&mut self, path: &TrackRef) -> anyhow::Result<()> {
         unsafe {
             self.new_file(path);
             Ok(())

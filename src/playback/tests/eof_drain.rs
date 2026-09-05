@@ -53,7 +53,7 @@ fn gapless_transition_under_backpressure_drops_no_frames() {
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     // gapless transition into track B while the device ring is still full of A
     engine
-        .open(&path_b, true)
+        .open(&path_b.clone().into(), true)
         .expect("failed to open the second track");
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     engine.stop();
@@ -106,7 +106,7 @@ fn gapless_transition_has_no_seam_dropout() {
     let mut engine = engine_playing(&path_a);
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     engine
-        .open(&path_b, true)
+        .open(&path_b.clone().into(), true)
         .expect("failed to open the second track");
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     engine.stop();
@@ -215,7 +215,7 @@ fn gapless_same_rate_tracks_lose_no_frames() {
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     // gapless transition: the resampler (and its tail) carries over
     engine
-        .open(&path_b, true)
+        .open(&path_b.clone().into(), true)
         .expect("failed to open the second track");
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     engine.stop();
@@ -271,7 +271,7 @@ fn rate_change_between_tracks_flushes_previous_tail() {
     // preserve requested, but the rate change forces a rebuild — the old
     // resampler's tail must be flushed, not dropped
     engine
-        .open(&path_b, true)
+        .open(&path_b.clone().into(), true)
         .expect("failed to open the second track");
     super::harness::run_to_eof(&mut engine, MAX_CYCLES);
     engine.stop();

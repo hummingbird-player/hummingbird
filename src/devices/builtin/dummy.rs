@@ -15,6 +15,7 @@ use crate::{
             StateError, SubmissionError,
         },
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
+        render_clock::RenderClock,
         traits::{Device, DeviceProvider, OutputStream},
     },
     media::pipeline::ChannelConsumers,
@@ -23,6 +24,16 @@ use crate::{
 pub type CapturedPlanes = Arc<Mutex<Vec<Vec<f64>>>>;
 
 static CAPTURE: Mutex<Option<CapturedPlanes>> = Mutex::new(None);
+
+#[cfg(test)]
+thread_local! {
+    static PLAY_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn play_calls() -> u64 {
+    PLAY_CALLS.get()
+}
 
 /// Install a sink that records every sample reaching the dummy device layer. Used by tests to
 /// capture the end result of the pipeline.
@@ -169,14 +180,20 @@ impl DummyDevice {
 }
 
 impl Device for DummyDevice {
-    fn open_device(&mut self, _format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+    fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+        let rendered = Arc::new(RenderClock::new(
+            format.channels.count().into(),
+            format.sample_rate,
+        ));
         if let Some(capacity) = DummyDevice::get_bounded_frames() {
             let drain = DummyDevice::get_drain_frames();
-            return Ok(Box::new(BoundedDummyStream::new(capacity, drain)) as Box<dyn OutputStream>);
+            return Ok(Box::new(BoundedDummyStream::new(capacity, drain, rendered))
+                as Box<dyn OutputStream>);
         }
         let device = DummyStream {
             die_after: DummyDevice::get_die_after_frames(),
             consumed: 0,
+            rendered,
         };
         Ok(Box::new(device) as Box<dyn OutputStream>)
     }
@@ -221,6 +238,7 @@ pub struct DummyStream {
     /// If set, fault once after this many consumed frames (see [`arm_device_death`]).
     die_after: Option<usize>,
     consumed: usize,
+    rendered: Arc<RenderClock>,
 }
 
 impl DummyStream {
@@ -236,6 +254,9 @@ impl DummyStream {
 }
 
 impl OutputStream for DummyStream {
+    fn render_clock(&self) -> Option<Arc<RenderClock>> {
+        Some(self.rendered.clone())
+    }
     fn close_stream(&mut self) -> Result<(), CloseError> {
         debug!("Stream closed.");
         Ok(())
@@ -246,6 +267,8 @@ impl OutputStream for DummyStream {
     }
 
     fn play(&mut self) -> Result<(), StateError> {
+        #[cfg(test)]
+        PLAY_CALLS.set(PLAY_CALLS.get() + 1);
         debug!("Stream resumed.");
         Ok(())
     }
@@ -283,6 +306,8 @@ impl OutputStream for DummyStream {
         let read = input.try_read_to_staging(available);
         capture_samples(input.staging(), read);
         self.consumed += read;
+        self.rendered.submitted_frames(read);
+        self.rendered.record_frames(read);
         debug!("Consumed {} samples from ring buffer (dummy device)", read);
         Ok(read)
     }
@@ -297,19 +322,26 @@ pub struct BoundedDummyStream {
     drain: usize,
     /// Frames currently buffered in the modelled hardware ring.
     fill: usize,
+    playing: bool,
+    rendered: Arc<RenderClock>,
 }
 
 impl BoundedDummyStream {
-    fn new(capacity: usize, drain: usize) -> Self {
+    fn new(capacity: usize, drain: usize, rendered: Arc<RenderClock>) -> Self {
         Self {
             capacity,
             drain: drain.max(1),
+            playing: true,
             fill: 0,
+            rendered,
         }
     }
 }
 
 impl OutputStream for BoundedDummyStream {
+    fn render_clock(&self) -> Option<Arc<RenderClock>> {
+        Some(self.rendered.clone())
+    }
     fn close_stream(&mut self) -> Result<(), CloseError> {
         Ok(())
     }
@@ -319,10 +351,21 @@ impl OutputStream for BoundedDummyStream {
     }
 
     fn play(&mut self) -> Result<(), StateError> {
+        #[cfg(test)]
+        PLAY_CALLS.set(PLAY_CALLS.get() + 1);
+        self.playing = true;
         Ok(())
     }
 
     fn pause(&mut self) -> Result<(), StateError> {
+        self.playing = false;
+        Ok(())
+    }
+    fn poll(&mut self) -> Result<(), StateError> {
+        if self.playing {
+            self.rendered.record_frames(self.fill.min(self.drain));
+            self.fill = self.fill.saturating_sub(self.drain);
+        }
         Ok(())
     }
 
@@ -340,7 +383,10 @@ impl OutputStream for BoundedDummyStream {
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, SubmissionError> {
         // advance playback: drain up to `drain` frames from the ring
-        self.fill = self.fill.saturating_sub(self.drain);
+        if self.playing {
+            self.rendered.record_frames(self.fill.min(self.drain));
+            self.fill = self.fill.saturating_sub(self.drain);
+        }
 
         let free = self.capacity - self.fill;
         let available = input.potentially_available().min(free);
@@ -351,6 +397,29 @@ impl OutputStream for BoundedDummyStream {
         let read = input.try_read_to_staging(available);
         capture_samples(input.staging(), read);
         self.fill += read;
+        self.rendered.submitted_frames(read);
         Ok(read)
+    }
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::*;
+    use crate::media::pipeline::ChannelBuffers;
+    #[test]
+    fn queued_and_reset_audio_is_not_counted_as_rendered() {
+        let clock = Arc::new(RenderClock::new(2, 48000));
+        let mut device = BoundedDummyStream::new(8, 3, clock.clone());
+        let (mut input, mut output) = ChannelBuffers::new(2, 8).split();
+        input.write_slices(&[&[1.; 8], &[1.; 8]]).unwrap();
+        assert_eq!(device.consume_from(&mut output).unwrap(), 8);
+        assert_eq!(clock.snapshot().frames, 0);
+        assert_eq!(device.consume_from(&mut output).unwrap(), 0);
+        assert_eq!(clock.snapshot().frames, 3);
+        device.reset().unwrap();
+        device.consume_from(&mut output).unwrap();
+        assert_eq!(clock.snapshot().frames, 3);
+        drop(device);
+        assert_eq!(clock.snapshot().frames, 3); // Retained host counter remains readable.
     }
 }

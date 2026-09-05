@@ -2,8 +2,12 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use cntp_i18n::tr;
 use gpui::App;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    watch,
+};
 
 use crate::{
     playback::{dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
@@ -33,6 +37,7 @@ pub struct PlaybackInterface {
     cmd_tx: UnboundedSender<PlaybackCommand>,
     events_rx: Option<UnboundedReceiver<PlaybackEvent>>,
     spectrum_tap: Option<SpectrumTapConsumer>,
+    closed: watch::Receiver<bool>,
 }
 
 impl gpui::Global for PlaybackInterface {}
@@ -42,11 +47,36 @@ impl PlaybackInterface {
         cmd_tx: UnboundedSender<PlaybackCommand>,
         events_rx: UnboundedReceiver<PlaybackEvent>,
         spectrum_tap: SpectrumTapConsumer,
+        closed: watch::Receiver<bool>,
     ) -> Self {
         Self {
             cmd_tx,
             events_rx: Some(events_rx),
             spectrum_tap: Some(spectrum_tap),
+            closed,
+        }
+    }
+
+    fn send(&self, command: PlaybackCommand) {
+        // UI callbacks may finish while shutdown closes the receiver.
+        let _ = self.cmd_tx.send(command);
+    }
+    pub fn shutdown(&self) -> impl std::future::Future<Output = bool> + Send + 'static {
+        self.send(PlaybackCommand::Shutdown);
+        let mut closed = self.closed.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    if *closed.borrow_and_update() {
+                        return true;
+                    }
+                    if closed.changed().await.is_err() {
+                        return false;
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false)
         }
     }
 
@@ -56,139 +86,115 @@ impl PlaybackInterface {
     }
 
     pub fn play(&self) {
-        self.cmd_tx.send(PlaybackCommand::Play).unwrap();
+        self.send(PlaybackCommand::Play);
     }
 
     pub fn pause(&self) {
-        self.cmd_tx.send(PlaybackCommand::Pause).unwrap();
+        self.send(PlaybackCommand::Pause);
     }
 
     pub fn open(&self, path: PathBuf) {
-        self.cmd_tx.send(PlaybackCommand::Open(path)).unwrap();
+        self.send(PlaybackCommand::Open(path.into()));
     }
 
     pub fn queue(&self, item: QueueItemData) {
-        self.cmd_tx.send(PlaybackCommand::Queue(item)).unwrap();
+        self.send(PlaybackCommand::Queue(item));
     }
 
     pub fn queue_list(&self, items: Vec<QueueItemData>) {
-        self.cmd_tx.send(PlaybackCommand::QueueList(items)).unwrap();
+        self.send(PlaybackCommand::QueueList(items));
     }
 
     pub fn insert_at(&self, item: QueueItemData, position: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::InsertAt { item, position })
-            .unwrap();
+        self.send(PlaybackCommand::InsertAt { item, position });
     }
 
     pub fn insert_list_at(&self, items: Vec<QueueItemData>, position: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::InsertListAt { items, position })
-            .unwrap();
+        self.send(PlaybackCommand::InsertListAt { items, position });
     }
 
     pub fn next(&self) {
-        self.cmd_tx.send(PlaybackCommand::Next).unwrap();
+        self.send(PlaybackCommand::Next);
     }
 
     pub fn previous(&self) {
-        self.cmd_tx.send(PlaybackCommand::Previous).unwrap();
+        self.send(PlaybackCommand::Previous);
     }
 
     pub fn clear_queue(&self) {
-        self.cmd_tx.send(PlaybackCommand::ClearQueue).unwrap();
+        self.send(PlaybackCommand::ClearQueue);
     }
 
     pub fn jump(&self, index: usize) {
-        self.cmd_tx.send(PlaybackCommand::Jump(index)).unwrap();
+        self.send(PlaybackCommand::Jump(index));
     }
 
     pub fn jump_unshuffled(&self, index: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::JumpUnshuffled(index))
-            .unwrap();
+        self.send(PlaybackCommand::JumpUnshuffled(index));
     }
 
     pub fn seek(&self, position: f64) {
-        self.cmd_tx.send(PlaybackCommand::Seek(position)).unwrap();
+        self.send(PlaybackCommand::Seek(position));
     }
 
     pub fn set_volume(&self, volume: f64) {
-        self.cmd_tx
-            .send(PlaybackCommand::SetVolume(volume))
-            .unwrap();
+        self.send(PlaybackCommand::SetVolume(volume));
     }
 
     pub fn replace_queue(&self, items: Vec<QueueItemData>) {
-        self.cmd_tx
-            .send(PlaybackCommand::ReplaceQueue(items))
-            .unwrap();
+        self.send(PlaybackCommand::ReplaceQueue(items));
     }
 
     pub fn replace_queue_with_index(&self, items: Vec<QueueItemData>, idx: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::ReplaceQueueWithIndex(items, idx))
-            .unwrap();
+        self.send(PlaybackCommand::ReplaceQueueWithIndex(items, idx));
     }
 
     pub fn stop(&self) {
-        self.cmd_tx.send(PlaybackCommand::Stop).unwrap();
+        self.send(PlaybackCommand::Stop);
     }
 
     pub fn toggle_stop_after_current(&self) {
-        self.cmd_tx.send(PlaybackCommand::StopAfterCurrent).unwrap();
+        self.send(PlaybackCommand::StopAfterCurrent);
     }
 
     pub fn toggle_shuffle(&self) {
-        self.cmd_tx.send(PlaybackCommand::ToggleShuffle).unwrap();
+        self.send(PlaybackCommand::ToggleShuffle);
     }
 
     pub fn set_repeat(&self, state: RepeatState) {
-        self.cmd_tx.send(PlaybackCommand::SetRepeat(state)).unwrap();
+        self.send(PlaybackCommand::SetRepeat(state));
     }
 
     pub fn remove_item(&self, idx: usize) {
-        self.cmd_tx.send(PlaybackCommand::RemoveItem(idx)).unwrap();
+        self.send(PlaybackCommand::RemoveItem(idx));
     }
 
     pub fn remove_items(&self, indices: Vec<usize>) {
-        self.cmd_tx
-            .send(PlaybackCommand::RemoveItems(indices))
-            .unwrap();
+        self.send(PlaybackCommand::RemoveItems(indices));
     }
 
     pub fn move_item(&self, from: usize, to: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::MoveItem { from, to })
-            .unwrap();
+        self.send(PlaybackCommand::MoveItem { from, to });
     }
 
     pub fn move_items(&self, indices: Vec<usize>, to: usize) {
-        self.cmd_tx
-            .send(PlaybackCommand::MoveItems { indices, to })
-            .unwrap();
+        self.send(PlaybackCommand::MoveItems { indices, to });
     }
 
     pub fn undo(&self) {
-        self.cmd_tx.send(PlaybackCommand::Undo).unwrap();
+        self.send(PlaybackCommand::Undo);
     }
 
     pub fn update_settings(&self, settings: PlaybackSettings) {
-        self.cmd_tx
-            .send(PlaybackCommand::SettingsChanged(settings))
-            .unwrap();
+        self.send(PlaybackCommand::SettingsChanged(settings));
     }
 
     pub fn set_equalizer(&self, settings: EqualizerSettings) {
-        self.cmd_tx
-            .send(PlaybackCommand::SetEqualizer(settings))
-            .unwrap();
+        self.send(PlaybackCommand::SetEqualizer(settings));
     }
 
     pub fn set_position_broadcast_active(&self, active: bool) {
-        self.cmd_tx
-            .send(PlaybackCommand::SetPositionBroadcastActive(active))
-            .unwrap();
+        self.send(PlaybackCommand::SetPositionBroadcastActive(active));
     }
 
     pub fn get_sender(&self) -> UnboundedSender<PlaybackCommand> {
@@ -218,139 +224,151 @@ impl PlaybackInterface {
         };
 
         app.spawn(async move |cx| {
-            loop {
-                while let Some(event) = events_rx.recv().await {
-                    match event {
-                        PlaybackEvent::MetadataUpdate(v) => {
-                            let metadata = Arc::new(*v.clone());
+            while let Some(event) = events_rx.recv().await {
+                match event {
+                    PlaybackEvent::EncodedAudioChanged(info) => {
+                        playback_info.encoded_audio.update(cx, |current, cx| {
+                            *current = info;
+                            cx.notify();
+                        });
+                    }
+                    // Session services receive these directly from the host,
+                    // including when this UI task is no longer being polled.
+                    PlaybackEvent::Session(_) => {}
+                    PlaybackEvent::PlaybackError(message) => {
+                        crate::toasts::emit_toast(crate::toasts::Toast::error(tr!(
+                            "PLAYBACK_FAILED",
+                            "Playback failed: {{message}}",
+                            message = message
+                        )));
+                    }
+                    PlaybackEvent::MetadataUpdate(v) => {
+                        let metadata = Arc::new(*v.clone());
 
-                            metadata_model.update(cx, |m, cx| {
-                                *m = *v;
+                        metadata_model.update(cx, |m, cx| {
+                            *m = *v;
+                            cx.notify()
+                        });
+
+                        mmbs_model.update(cx, |_, cx| {
+                            cx.emit(MMBSEvent::MetadataRecieved(metadata));
+                        });
+                    }
+                    PlaybackEvent::AlbumArtUpdate(v) => {
+                        let v_clone = v.clone();
+                        albumart_model.update(cx, |m, cx| {
+                            if let Some(v) = v {
+                                cx.emit(ImageEvent(v))
+                            } else {
+                                *m = None;
                                 cx.notify()
-                            });
-
-                            mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::MetadataRecieved(metadata));
-                            });
-                        }
-                        PlaybackEvent::AlbumArtUpdate(v) => {
-                            let v_clone = v.clone();
-                            albumart_model.update(cx, |m, cx| {
-                                if let Some(v) = v {
-                                    cx.emit(ImageEvent(v))
-                                } else {
-                                    *m = None;
-                                    cx.notify()
-                                }
-                            });
-
-                            albumart_original_model.update(cx, |m, cx| {
-                                if let Some(v) = v_clone {
-                                    cx.emit(ImageEvent(v))
-                                } else {
-                                    *m = None;
-                                    cx.notify()
-                                }
-                            });
-                        }
-                        PlaybackEvent::StateChanged(v) => {
-                            playback_info.playback_state.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify()
-                            });
-
-                            if v == PlaybackState::Stopped {
-                                playback_info.current_track.update(cx, |m, cx| {
-                                    *m = None;
-                                    cx.notify()
-                                });
                             }
+                        });
 
-                            power_manager.set_state(cx, v);
+                        albumart_original_model.update(cx, |m, cx| {
+                            if let Some(v) = v_clone {
+                                cx.emit(ImageEvent(v))
+                            } else {
+                                *m = None;
+                                cx.notify()
+                            }
+                        });
+                    }
+                    PlaybackEvent::StateChanged(v) => {
+                        playback_info.playback_state.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify()
+                        });
 
-                            mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::StateChanged(v));
-                            });
-                        }
-                        PlaybackEvent::PositionChanged(v) => {
-                            playback_info.position.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify()
-                            });
-                            mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::PositionChanged(v / 1_000));
-                            });
-                        }
-                        PlaybackEvent::DurationChanged(v) => {
-                            playback_info.duration.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify()
-                            });
-                            mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::DurationChanged(v / 1_000));
-                            });
-                        }
-                        PlaybackEvent::SongChanged(path) => {
+                        if v == PlaybackState::Stopped {
                             playback_info.current_track.update(cx, |m, cx| {
-                                *m = Some(CurrentTrack::new(path.clone()));
-                                cx.notify()
-                            });
-                            mmbs_model.update(cx, |_, cx| {
-                                cx.emit(MMBSEvent::NewTrack(path));
-                            });
-                        }
-                        PlaybackEvent::QueueUpdated => {
-                            queue_model.update(cx, |_, cx| cx.notify());
-                        }
-                        PlaybackEvent::ShuffleToggled(v, _) => {
-                            playback_info.shuffling.update(cx, |m, cx| {
-                                *m = v;
+                                *m = None;
                                 cx.notify()
                             });
                         }
-                        PlaybackEvent::VolumeChanged(v) => {
-                            playback_info.volume.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify()
-                            });
 
-                            // Note: `prev_volume` should not be to small.
-                            // Its value needs to be visible in UI
-                            // while toggling volume `on` / `off` and even
-                            // an user used a slider to move volume to `0`
-                            if v > 0.05 {
-                                playback_info.prev_volume.update(cx, |m, cx| {
-                                    *m = v;
-                                    cx.notify()
-                                });
+                        power_manager.set_state(cx, v);
+
+                        mmbs_model.update(cx, |_, cx| {
+                            cx.emit(MMBSEvent::StateChanged(v));
+                        });
+                    }
+                    PlaybackEvent::PositionChanged(v) => {
+                        playback_info.position.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify()
+                        });
+                        mmbs_model.update(cx, |_, cx| {
+                            cx.emit(MMBSEvent::PositionChanged(v / 1_000));
+                        });
+                    }
+                    PlaybackEvent::DurationChanged(v) => {
+                        playback_info.duration.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify()
+                        });
+                        mmbs_model.update(cx, |_, cx| {
+                            cx.emit(MMBSEvent::DurationChanged(v / 1_000));
+                        });
+                    }
+                    PlaybackEvent::SongChanged(path) => {
+                        playback_info.current_track.update(cx, |m, cx| {
+                            *m = Some(CurrentTrack::new(path.clone()));
+                            cx.notify()
+                        });
+                        mmbs_model.update(cx, |_, cx| {
+                            cx.emit(MMBSEvent::NewTrack(path));
+                        });
+                    }
+                    PlaybackEvent::QueueUpdated => {
+                        queue_model.update(cx, |_, cx| cx.notify());
+                    }
+                    PlaybackEvent::ShuffleToggled(v, _) => {
+                        playback_info.shuffling.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify()
+                        });
+                    }
+                    PlaybackEvent::VolumeChanged(v) => {
+                        playback_info.volume.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify()
+                        });
+
+                        // Note: `prev_volume` should not be to small.
+                        // Its value needs to be visible in UI
+                        // while toggling volume `on` / `off` and even
+                        // an user used a slider to move volume to `0`
+                        if v > 0.05 {
+                            playback_info.prev_volume.update(cx, |m, cx| {
+                                *m = v;
+                                cx.notify()
+                            });
+                        }
+                    }
+                    PlaybackEvent::QueuePositionChanged(v) => queue_model.update(cx, |m, cx| {
+                        m.position = v;
+                        cx.notify();
+                    }),
+                    PlaybackEvent::RepeatChanged(v) => {
+                        playback_info.repeating.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify();
+                        })
+                    }
+                    PlaybackEvent::StopAfterCurrentChanged(v) => {
+                        playback_info.stop_after_current.update(cx, |m, cx| {
+                            *m = v;
+                            cx.notify();
+                        })
+                    }
+                    PlaybackEvent::SampleRateChanged(rate) => {
+                        playback_info.sample_rate.update(cx, |m, cx| {
+                            if *m != rate {
+                                *m = rate;
+                                cx.notify();
                             }
-                        }
-                        PlaybackEvent::QueuePositionChanged(v) => {
-                            queue_model.update(cx, |m, cx| {
-                                m.position = v;
-                                cx.notify();
-                            })
-                        }
-                        PlaybackEvent::RepeatChanged(v) => {
-                            playback_info.repeating.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify();
-                            })
-                        }
-                        PlaybackEvent::StopAfterCurrentChanged(v) => {
-                            playback_info.stop_after_current.update(cx, |m, cx| {
-                                *m = v;
-                                cx.notify();
-                            })
-                        }
-                        PlaybackEvent::SampleRateChanged(rate) => {
-                            playback_info.sample_rate.update(cx, |m, cx| {
-                                if *m != rate {
-                                    *m = rate;
-                                    cx.notify();
-                                }
-                            })
-                        }
+                        })
                     }
                 }
             }

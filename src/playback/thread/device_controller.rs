@@ -91,6 +91,9 @@ pub struct DeviceController {
     current_format: Option<FormatInfo>,
     last_volume: f64,
     last_replaygain: f64,
+    render_clock: Option<std::sync::Arc<crate::devices::render_clock::RenderClock>>,
+    render_ledger: super::render_ledger::RenderLedger,
+    audio_owner: Option<u64>,
 }
 
 impl DeviceController {
@@ -102,6 +105,9 @@ impl DeviceController {
             current_format: None,
             last_volume: 1.0,
             last_replaygain: 1.0,
+            render_clock: None,
+            render_ledger: Default::default(),
+            audio_owner: None,
         }
     }
 
@@ -149,6 +155,39 @@ impl DeviceController {
     /// Check if a stream is currently open.
     pub fn has_stream(&self) -> bool {
         self.stream.is_some()
+    }
+    pub fn render_clock(
+        &self,
+    ) -> Option<std::sync::Arc<crate::devices::render_clock::RenderClock>> {
+        self.render_clock.clone()
+    }
+
+    pub fn set_audio_owner(&mut self, owner: Option<u64>) {
+        if owner != self.audio_owner {
+            self.render_ledger.discard_unsubmitted_repeats();
+        }
+        self.audio_owner = owner;
+    }
+    pub fn repeat_after(&mut self, frames: u64, position_ms: u64) -> bool {
+        self.audio_owner
+            .is_none_or(|owner| self.render_ledger.repeat_after(owner, frames, position_ms))
+    }
+    pub fn reserve_audio_tail(&mut self, frames: u64) -> bool {
+        self.render_ledger.reserve_tail(self.audio_owner, frames)
+    }
+    pub fn discard_audio_tail(&mut self) {
+        self.render_ledger.discard_reserved();
+    }
+    pub fn take_rendered(
+        &mut self,
+    ) -> smallvec::SmallVec<[super::render_ledger::RenderedFrames; 4]> {
+        if let Some(clock) = &self.render_clock {
+            self.render_ledger.poll(clock.snapshot());
+        }
+        self.render_ledger.take_rendered()
+    }
+    pub fn has_pending_audio(&self, owner: u64) -> bool {
+        self.render_ledger.has_pending(owner)
     }
 
     /// Create a new stream with the specified channel configuration.
@@ -205,6 +244,11 @@ impl DeviceController {
             stream.set_replaygain(self.last_replaygain).ok();
         }
 
+        self.render_clock = self
+            .stream
+            .as_ref()
+            .and_then(|stream| stream.render_clock());
+        self.render_ledger.new_stream();
         info!(
             "Opened device: {:?}, format: {:?}, rate: {}, channel_count: {}",
             self.device.as_ref().and_then(|d| d.get_name().ok()),
@@ -256,6 +300,9 @@ impl DeviceController {
             warn!("Failed to close stream: {:?}", e);
         }
         self.current_format = None;
+        if let Some(clock) = self.render_clock.take() {
+            self.render_ledger.reset(clock.snapshot());
+        }
     }
 
     /// Start playback on the current stream.
@@ -284,7 +331,15 @@ impl DeviceController {
     /// Reset the stream buffer.
     pub fn reset(&mut self) -> Result<(), DeviceError> {
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
-        stream.reset()?;
+        if let Err(error) = stream.reset() {
+            // Queue ownership after a failed reset is uncertain; recovery must
+            // start from a closed stream rather than relabeling stale audio.
+            self.close_stream();
+            return Err(error.into());
+        }
+        if let Some(clock) = &self.render_clock {
+            self.render_ledger.reset(clock.snapshot());
+        }
         Ok(())
     }
 
@@ -293,9 +348,30 @@ impl DeviceController {
         &mut self,
         input: &mut ChannelConsumers<f64>,
     ) -> Result<usize, DeviceError> {
-        let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
-        let count = stream.consume_from(input)?;
-        Ok(count)
+        if let Some(clock) = &self.render_clock {
+            self.render_ledger.poll(clock.snapshot());
+            if !self.render_ledger.can_submit() {
+                return Ok(0);
+            }
+        }
+        let before = self
+            .render_clock
+            .as_ref()
+            .map(|clock| clock.snapshot().submitted_frames);
+        let result = self
+            .stream
+            .as_mut()
+            .ok_or(DeviceError::NoStream)?
+            .consume_from(input);
+        if let (Some(before), Some(clock)) = (before, &self.render_clock) {
+            let after = clock.snapshot();
+            self.render_ledger.submitted(
+                self.audio_owner,
+                after.submitted_frames.saturating_sub(before),
+            );
+            self.render_ledger.poll(after);
+        }
+        result.map_err(Into::into)
     }
 
     /// Set the playback volume (0.0 to 1.0, already scaled).

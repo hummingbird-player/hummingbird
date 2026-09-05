@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{queue::QueueItemData, thread::PlaybackState};
-use std::path::PathBuf;
+use crate::sources::TrackRef;
 
 #[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize)]
 pub enum RepeatState {
@@ -23,6 +23,8 @@ pub enum RepeatState {
 /// every time additional decoding is required to fill the ring buffer during playback.
 #[derive(Debug, PartialEq, Clone)]
 pub enum PlaybackCommand {
+    /// Stop output and finish session accounting before the host exits.
+    Shutdown,
     /// Requests that the playback thread begin playback.
     Play,
     /// Requests that the playback thread pause playback.
@@ -30,7 +32,7 @@ pub enum PlaybackCommand {
     /// Requests that, if the playback thread is playing, it pauses, and vise/versa.
     TogglePlayPause,
     /// Requests that the playback thread open the specified file for immediate playback.
-    Open(PathBuf),
+    Open(TrackRef),
     /// Requests that the playback thread queue the specified file for playback after the current
     /// file. If there is no current file, the specified file will be played immediately.
     Queue(QueueItemData),
@@ -75,6 +77,8 @@ pub enum PlaybackCommand {
     /// Requests that the playback thread shuffle (or stop shuffling) the next tracks in the
     /// queue. Note that this currently results in duplication of the *entire* queue.
     ToggleShuffle,
+    /// Apply an explicit shuffle state without reshuffling an already matching queue.
+    SetShuffle(bool),
     /// Requests that the repeating setting should be set to the specified RepeatState.
     SetRepeat(RepeatState),
     /// Requests that the item at the index provided be removed from the queue.
@@ -108,10 +112,13 @@ pub enum PlaybackCommand {
 /// main thread processes them in the order they are recieved.
 #[derive(Debug, PartialEq, Clone)]
 pub enum PlaybackEvent {
+    EncodedAudioChanged(Option<crate::media::format::EncodedAudioInfo>),
+    Session(Box<super::session::SessionEvent>),
+    PlaybackError(String),
     /// Indicates that the playback state has changed.
     StateChanged(PlaybackState),
     /// Indicates that the current file has changed providing the path to the new file.
-    SongChanged(PathBuf),
+    SongChanged(TrackRef),
     /// Indicates that the duration of the current file has changed. The u64 is the new duration,
     /// in milliseconds.
     DurationChanged(u64),

@@ -1,3 +1,4 @@
+use crate::sources::TrackRef;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -35,7 +36,7 @@ fn mpris_art_url(path: &Path) -> Option<String> {
 
 pub struct MprisControllerData {
     last_mdata: Option<Metadata>,
-    last_file: Option<PathBuf>,
+    last_file: Option<TrackRef>,
     last_album_art: Option<PathBuf>,
     last_playback_state: Option<PlaybackState>,
     last_repeat_state: Option<RepeatState>,
@@ -98,7 +99,7 @@ impl MprisControllerServer {
         let data = self.data.read().await;
         match data.last_playback_state {
             Some(PlaybackState::Playing) => Ok(PlaybackStatus::Playing),
-            Some(PlaybackState::Paused) => Ok(PlaybackStatus::Paused),
+            Some(PlaybackState::Paused | PlaybackState::Buffering) => Ok(PlaybackStatus::Paused),
             Some(PlaybackState::Stopped) => Ok(PlaybackStatus::Stopped),
             None => Ok(PlaybackStatus::Stopped),
         }
@@ -300,9 +301,8 @@ impl PlayerInterface for MprisControllerServer {
         Ok(1_f64)
     }
 
-    async fn set_shuffle(&self, _shuffle: bool) -> zbus::Result<()> {
-        // TODO: do better than this
-        self.bridge.toggle_shuffle();
+    async fn set_shuffle(&self, shuffle: bool) -> zbus::Result<()> {
+        self.bridge.set_shuffle(shuffle);
 
         Ok(())
     }
@@ -553,9 +553,9 @@ impl PlaybackController for MprisController {
         Ok(())
     }
 
-    async fn new_file(&mut self, path: &Path) -> anyhow::Result<()> {
+    async fn new_file(&mut self, path: &TrackRef) -> anyhow::Result<()> {
         let mut data = self.data.write().await;
-        data.last_file = Some(path.to_path_buf());
+        data.last_file = Some(path.clone());
         data.last_position = None;
         data.last_duration = None;
         data.last_mdata = None;

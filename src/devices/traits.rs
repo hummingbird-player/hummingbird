@@ -47,6 +47,12 @@ pub trait Device {
 }
 
 pub trait OutputStream {
+    /// Optional host accounting for samples actually consumed by the output.
+    /// Unsupported providers must return None; submitted frames are not a valid
+    /// substitute. The host retains the clock until stream shutdown completes.
+    fn render_clock(&self) -> Option<std::sync::Arc<super::render_clock::RenderClock>> {
+        None
+    }
     /// Closes the stream and releases any resources associated with it.
     fn close_stream(&mut self) -> Result<(), CloseError>;
     /// Returns true if the stream requires input (e.g. the buffer is empty).

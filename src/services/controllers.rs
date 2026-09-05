@@ -5,7 +5,7 @@ mod mpris;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use std::path::{Path, PathBuf};
+use crate::sources::TrackRef;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -89,7 +89,7 @@ pub trait PlaybackController: Send {
 
     /// Indicates that a new file has started playing. The metadata, duration, position, and album
     /// art should be reset to default/empty values when this event is recieved.
-    async fn new_file(&mut self, path: &Path) -> anyhow::Result<()>;
+    async fn new_file(&mut self, path: &TrackRef) -> anyhow::Result<()>;
 }
 
 #[derive(Clone)]
@@ -146,9 +146,9 @@ impl ControllerBridge {
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    pub fn toggle_shuffle(&self) {
+    pub fn set_shuffle(&self, enabled: bool) {
         self.playback_thread
-            .send(PlaybackCommand::ToggleShuffle)
+            .send(PlaybackCommand::SetShuffle(enabled))
             .unwrap();
     }
 
@@ -174,7 +174,7 @@ enum PbcEvent {
     AlbumArtChanged(#[debug(skip)] Box<[u8]>),
     PositionChanged(u64),
     DurationChanged(u64),
-    NewFile(PathBuf),
+    NewFile(TrackRef),
     VolumeChanged(f64),
     RepeatStateChanged(RepeatState),
     PlaybackStateChanged(PlaybackState),
@@ -213,7 +213,7 @@ pub fn register_pbc_event_handlers(cx: &mut App) {
 
     cx.observe(&track, |e, cx| {
         if let Some(track) = e.read(cx)
-            && let path = track.get_path().clone()
+            && let path = track.get_track_ref().clone()
             && let PbcHandle(tx, _) = cx.global()
             && let Err(err) = tx.send(PbcEvent::NewFile(path))
         {

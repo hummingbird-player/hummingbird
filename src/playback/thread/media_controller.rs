@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use crate::sources::TrackRef;
 
 use tracing::info;
 
@@ -32,7 +32,7 @@ pub struct CompleteMetadata {
 /// including opening/closing files, decoding audio, and retrieving metadata.
 pub struct MediaController {
     media_stream: Option<Box<dyn MediaStream>>,
-    current_path: Option<PathBuf>,
+    current_path: Option<TrackRef>,
 }
 
 impl MediaController {
@@ -47,18 +47,37 @@ impl MediaController {
     pub fn has_stream(&self) -> bool {
         self.media_stream.is_some()
     }
+    pub fn encoded_audio(&self) -> Option<crate::media::format::EncodedAudioInfo> {
+        let stream = self.media_stream.as_ref()?;
+        let codec = stream.codec_name()?;
+        if codec.is_empty()
+            || codec.len() > 64
+            || !codec
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_- .".contains(&b))
+        {
+            return None;
+        }
+        Some(crate::media::format::EncodedAudioInfo {
+            codec: codec.into(),
+            bitrate_bps: stream.encoded_bitrate().filter(|rate| *rate > 0),
+        })
+    }
 
     /// Open a media file and prepare it for playback.
     ///
     /// Returns information about the opened media file that can be used
     /// to configure the audio pipeline and device.
-    pub fn open(&mut self, path: &Path) -> Result<MediaInfo, PlaybackStartError> {
-        info!("Opening track '{}'", path.display());
+    pub fn open(&mut self, path: &TrackRef) -> Result<MediaInfo, PlaybackStartError> {
+        info!("Opening track '{}'", path);
 
         // Close any existing stream
         self.close();
 
-        let src = try_open_media(path, MediaProviderFeatures::PROVIDES_DECODER);
+        let local_path = path
+            .local_path()
+            .ok_or_else(|| PlaybackStartError::MediaError("Source is unavailable".into()))?;
+        let src = try_open_media(local_path, MediaProviderFeatures::PROVIDES_DECODER);
 
         if let Err(e) = src {
             return Err(PlaybackStartError::MediaError(format!(
@@ -67,12 +86,31 @@ impl MediaController {
             )));
         }
 
-        let Some(mut media_stream) = src.unwrap() else {
+        let Some(media_stream) = src.unwrap() else {
             return Err(PlaybackStartError::MediaError(
                 "No media provider found".to_string(),
             ));
         };
 
+        self.finish_open(path, media_stream)
+    }
+
+    /// Install a prepared worker proxy. Its methods must remain nonblocking on
+    /// the control thread; remote input/codec preparation has already happened.
+    pub fn install(
+        &mut self,
+        path: &TrackRef,
+        stream: Box<dyn MediaStream>,
+    ) -> Result<MediaInfo, PlaybackStartError> {
+        self.close();
+        self.finish_open(path, stream)
+    }
+
+    fn finish_open(
+        &mut self,
+        path: &TrackRef,
+        mut media_stream: Box<dyn MediaStream>,
+    ) -> Result<MediaInfo, PlaybackStartError> {
         media_stream.start_playback().map_err(|e| {
             PlaybackStartError::MediaError(format!("Unable to start playback: {}", e))
         })?;
@@ -84,7 +122,7 @@ impl MediaController {
         let duration_ms = media_stream.duration_ms().ok();
 
         self.media_stream = Some(media_stream);
-        self.current_path = Some(path.to_path_buf());
+        self.current_path = Some(path.clone());
 
         Ok(MediaInfo {
             channels,
@@ -102,8 +140,8 @@ impl MediaController {
         self.current_path = None;
     }
 
-    pub fn current_path(&self) -> Option<&Path> {
-        self.current_path.as_deref()
+    pub fn current_path(&self) -> Option<&TrackRef> {
+        self.current_path.as_ref()
     }
 
     /// Seek to the specified time in seconds.
@@ -153,6 +191,9 @@ impl MediaController {
             .as_ref()
             .ok_or(TrackDurationError::NeverStarted)?
             .position_ms()
+    }
+    pub fn duration_ms(&self) -> Option<u64> {
+        self.media_stream.as_ref()?.duration_ms().ok()
     }
 
     /// Kept for bit-perfect mode, currently unused.

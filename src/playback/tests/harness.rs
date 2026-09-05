@@ -58,7 +58,7 @@ pub fn engine_playing(path: &Path) -> AudioEngine {
         .set_replaygain(1.0)
         .expect("failed to set ReplayGain");
     engine
-        .open(path, false)
+        .open(&path.into(), false)
         .expect("failed to open the generated test WAV");
     engine
 }
@@ -70,6 +70,7 @@ pub fn run_to_eof(engine: &mut AudioEngine, max_cycles: usize) -> usize {
         match engine.process_cycle() {
             EngineCycleResult::Eof => return cycle,
             EngineCycleResult::Continue | EngineCycleResult::NothingToDo => {}
+            EngineCycleResult::Buffering => std::thread::sleep(std::time::Duration::from_millis(1)),
             EngineCycleResult::FatalError(msg) => panic!("fatal engine error: {msg}"),
         }
     }
