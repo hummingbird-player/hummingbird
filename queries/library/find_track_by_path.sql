@@ -1,3 +1,3 @@
 SELECT * FROM track
-WHERE location = $1
+WHERE source = 'local' AND location = $1
 LIMIT 1;

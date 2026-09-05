@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 pub mod table;
 
-use std::{path::PathBuf, sync::Arc};
+use crate::sources::{SourceId, TrackRef};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use gpui::{IntoElement, RenderImage, SharedString};
@@ -191,6 +192,7 @@ pub const DATE_PRECISION_YEAR_MONTH: i32 = 2;
 
 #[derive(sqlx::FromRow, Clone)]
 pub struct Album {
+    pub source: SourceId,
     pub id: i64,
     pub title: DBString,
     pub title_sortable: DBString,
@@ -238,8 +240,9 @@ pub struct Track {
     pub genres: Vec<DBString>,
     #[sqlx(skip)]
     pub tags: Option<Vec<DBString>>,
-    #[sqlx(try_from = "String")]
-    pub location: PathBuf,
+    #[sqlx(flatten)]
+    pub reference: TrackRef,
+    pub present: bool,
     pub artist_names: Option<DBString>,
     #[sqlx(default)]
     pub rg_track_gain: Option<f64>,

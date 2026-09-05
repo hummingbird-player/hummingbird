@@ -1,4 +1,5 @@
-use std::{ffi::OsStr, path::PathBuf};
+use crate::sources::{TrackRef, playlist_reference};
+use std::{ffi::OsStr, path::Path};
 
 use anyhow::Context as _;
 use cntp_i18n::tr;
@@ -20,7 +21,8 @@ const LINE_ENDING: &str = "\n";
 
 #[derive(sqlx::FromRow)]
 struct PlaylistEntry {
-    location: String,
+    #[sqlx(flatten)]
+    reference: TrackRef,
     duration: u32,
     track_artist_names: String,
     artist_name: String,
@@ -38,7 +40,7 @@ async fn write_m3u(mut w: BufWriter<File>, pool: &SqlitePool, pl_id: i64) -> any
         let mut entries = sqlx::query_as(query).bind(pl_id).fetch(pool);
         let mut buf = vec![];
         while let Some(PlaylistEntry {
-            location,
+            reference,
             duration,
             track_artist_names,
             artist_name,
@@ -46,6 +48,12 @@ async fn write_m3u(mut w: BufWriter<File>, pool: &SqlitePool, pl_id: i64) -> any
             album_title,
         }) = entries.try_next().await?
         {
+            let location = playlist_reference::encode(&reference)?;
+            // Server tags are untrusted text, not additional M3U records.
+            let track_artist_names = track_artist_names.replace(['\r', '\n'], " ");
+            let artist_name = artist_name.replace(['\r', '\n'], " ");
+            let track_title = track_title.replace(['\r', '\n'], " ");
+            let album_title = album_title.replace(['\r', '\n'], " ");
             use std::io::Write as _;
             write!(
                 &mut buf,
@@ -103,7 +111,7 @@ struct M3UEntry {
     track_title: Option<String>,
     album_title: Option<String>,
     artist_name: Option<String>,
-    location: PathBuf,
+    location: String,
 }
 
 fn parse_m3u(file: File) -> impl futures::Stream<Item = anyhow::Result<M3UEntry>> {
@@ -175,13 +183,24 @@ pub fn import_playlist(cx: &App, playlist_id: i64) {
                             Ok(entry) => entry,
                             Err(err) => {
                                 error!(?err, "Error parsing M3U entry: {err}");
-                                return None;
+                                return Err(err.into());
                             }
                         };
-                        let location = entry.location.clone();
+                        let reference = match playlist_reference::decode(&entry.location) {
+                            Ok(reference) => reference,
+                            Err(err) => return Err(err),
+                        };
+                        if !reference.source().is_local() {
+                            // No title/artist fallback: it could choose another account's copy.
+                            let id = sqlx::query_scalar::<Sqlite, i64>("SELECT id FROM track WHERE source = $1 AND location = $2")
+                                .bind(reference.source()).bind(reference.remote_id())
+                                .fetch_optional(&pool).await?;
+                            return id.map(Some).context("Remote playlist track is not indexed; original playlist was retained");
+                        }
+                        let location = Path::new(&entry.location);
                         let lookup_query = include_str!("../../queries/playlist/lookup_track.sql");
                         match sqlx::query_scalar::<Sqlite, i64>(lookup_query)
-                            .bind(entry.location.to_string_lossy().into_owned())
+                            .bind(&entry.location)
                             .bind(entry.track_title)
                             .bind(entry.artist_name)
                             .bind(entry.album_title)
@@ -189,32 +208,30 @@ pub fn import_playlist(cx: &App, playlist_id: i64) {
                             .bind(entry.duration)
                             .bind(format!(
                                 "%{}%",
-                                entry
-                                    .location
-                                    .file_stem()
+                                location.file_stem()
                                     .and_then(OsStr::to_str)
                                     .unwrap_or_default()
                             ))
                             .fetch_one(&pool)
                             .await
                         {
-                            Ok(id) => Some(id),
+                            Ok(id) => Ok(Some(id)),
                             Err(err) => {
                                 warn!(
                                     ?err,
                                     "Failed to find track for '{}': {err}",
                                     location.display()
                                 );
-                                None
+                                Ok(None)
                             }
                         }
                     }
                 })
                 .buffered(8)
-                .filter_map(std::future::ready)
-                .collect()
+                .try_filter_map(|id| std::future::ready(Ok(id)))
+                .try_collect()
                 .instrument(debug_span!(parent: &span, "lookup_tracks"))
-                .await;
+                .await?;
 
             let mut tx = pool.begin().await?;
 

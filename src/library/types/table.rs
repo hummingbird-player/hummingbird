@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use cntp_i18n::{Date, I18N_MANAGER, ListFunction, StringModifier, tr};
-use gpui::{App, SharedString};
+use gpui::{App, SharedString, Task};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
@@ -29,6 +29,28 @@ use crate::{
         util::format_duration,
     },
 };
+
+/// Cancel a row query when its view disappears, including before the UI task's
+/// first poll. Dropping a Tokio JoinHandle alone would leave the query running.
+struct CancelRowQuery(tokio::task::AbortHandle);
+
+impl Drop for CancelRowQuery {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn load_rows<T: Send + 'static>(
+    cx: &mut App,
+    query: impl std::future::Future<Output = sqlx::Result<Vec<T>>> + Send + 'static,
+) -> Task<anyhow::Result<Vec<T>>> {
+    let task = crate::RUNTIME.spawn(query);
+    let cancel = CancelRowQuery(task.abort_handle());
+    cx.spawn(async move |_| {
+        let _cancel = cancel;
+        Ok(task.await??)
+    })
+}
 
 fn parse_album_release_date(release_date: &DBString) -> Option<DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(release_date.0.as_ref(), "%Y-%m-%d").ok()?;
@@ -120,6 +142,13 @@ impl TableData<AlbumColumn> for Album {
     type Identifier = u32;
     type ContextMenuContext = AlbumContextMenuContext;
 
+    fn source_id(&self) -> Option<&crate::sources::SourceId> {
+        Some(&self.source)
+    }
+    fn is_source_column(column: AlbumColumn) -> bool {
+        column == AlbumColumn::Title
+    }
+
     fn get_table_name() -> SharedString {
         tr!("TABLE_ALBUMS", "Albums").into()
     }
@@ -127,7 +156,7 @@ impl TableData<AlbumColumn> for Album {
     fn get_rows(
         cx: &mut gpui::App,
         sort: Option<TableSort<AlbumColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
+    ) -> Task<anyhow::Result<Vec<Self::Identifier>>> {
         let sort_method = match sort {
             Some(TableSort {
                 column: AlbumColumn::Title,
@@ -180,11 +209,14 @@ impl TableData<AlbumColumn> for Album {
             _ => AlbumSortMethod::ArtistAsc,
         };
 
-        Ok(cx
-            .list_albums(sort_method)?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect())
+        let pool = cx.global::<crate::ui::app::Pool>().0.clone();
+        load_rows(cx, async move {
+            Ok(crate::library::db::list_albums(&pool, sort_method)
+                .await?
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect())
+        })
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
@@ -256,7 +288,7 @@ impl TableData<AlbumColumn> for Album {
         cx: &mut App,
         context: &Self::ContextMenuContext,
         _grid_context: GridContext,
-    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyView>)> {
         Some(album_menu_for_table(self, context, window, cx))
     }
 
@@ -404,6 +436,12 @@ pub fn track_table_sort(sort: Option<TableSort<TrackColumn>>) -> TrackSortMethod
 }
 
 impl TableData<TrackColumn> for Track {
+    fn source_id(&self) -> Option<&crate::sources::SourceId> {
+        Some(self.reference.source())
+    }
+    fn is_source_column(column: TrackColumn) -> bool {
+        column == TrackColumn::Title
+    }
     type Identifier = i64;
     type ContextMenuContext = TrackContextMenuContext;
 
@@ -414,12 +452,12 @@ impl TableData<TrackColumn> for Track {
     fn get_rows(
         cx: &mut gpui::App,
         sort: Option<TableSort<TrackColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
-        Ok(cx
-            .list_tracks(track_table_sort(sort))?
-            .into_iter()
-            .map(|(id, _, _, _)| id)
-            .collect())
+    ) -> Task<anyhow::Result<Vec<Self::Identifier>>> {
+        let pool = cx.global::<crate::ui::app::Pool>().0.clone();
+        let sort = track_table_sort(sort);
+        load_rows(cx, async move {
+            crate::library::db::list_track_ids(&pool, sort).await
+        })
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
@@ -514,7 +552,7 @@ impl TableData<TrackColumn> for Track {
         Some(TableDragData::Track(TrackDragData::from_track(
             self.id,
             self.album_id,
-            self.location.clone(),
+            self.reference.clone(),
             self.title.0.clone(),
         )))
     }
@@ -529,7 +567,7 @@ impl TableData<TrackColumn> for Track {
         cx: &mut App,
         context: &Self::ContextMenuContext,
         _grid_context: GridContext,
-    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyView>)> {
         Some(track_menu_for_table(
             self,
             is_track_available(cx, self),
@@ -592,7 +630,7 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
     fn get_rows(
         cx: &mut gpui::App,
         sort: Option<TableSort<ArtistColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
+    ) -> Task<anyhow::Result<Vec<Self::Identifier>>> {
         let sort_method = match sort {
             Some(TableSort {
                 column: ArtistColumn::Name,
@@ -621,7 +659,10 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
             _ => ArtistSortMethod::NameAsc,
         };
 
-        Ok(cx.list_artists(sort_method)?)
+        let pool = cx.global::<crate::ui::app::Pool>().0.clone();
+        load_rows(cx, async move {
+            crate::library::db::list_artists(&pool, sort_method).await
+        })
     }
 
     fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {

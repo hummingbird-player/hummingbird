@@ -27,16 +27,18 @@ pub(crate) use albums::reconcile_album_numbering;
 pub(crate) use artist_links::recompute_album_artists;
 pub use artist_links::{flush_album_artists, flush_track_artists, sweep_orphan_artists};
 pub(crate) use genre_links::recompute_album_genres;
-use genre_links::sync_track_genres;
+pub(crate) use genre_links::sync_track_genres;
 pub use genre_links::{flush_album_genres, sweep_orphan_genres};
 pub use relocate::relocate_track;
 pub use tracks::{AlbumPathCacheKey, TrackWriteOutcome};
 use tracks::{delete_lyrics, insert_track, upsert_lyrics};
 
 #[cfg(test)]
+use crate::library::metadata::encode_artist_list;
+#[cfg(test)]
 use albums::bind_release_date;
 #[cfg(test)]
-use artists::{decode_artist_list, encode_artist_list, sort_mentions_artist};
+use artists::{decode_artist_list, sort_mentions_artist};
 #[cfg(test)]
 use sqlx::SqlitePool;
 

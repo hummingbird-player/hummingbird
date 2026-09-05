@@ -69,6 +69,25 @@ impl ArtistMatcher {
         Ok(())
     }
 
+    /// Imported source metadata can match an existing artist, but must not rename
+    /// or change sort metadata belonging to other sources.
+    pub(crate) async fn resolve_preserving_metadata(
+        &mut self,
+        conn: &mut SqliteConnection,
+        name: &str,
+        sort_name: Option<&str>,
+    ) -> anyhow::Result<i64> {
+        self.load(&mut *conn).await?;
+        let sort = sort_name
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(name);
+        let key = token_key(sort);
+        if let Some(&id) = self.by_key.get(&key) {
+            return Ok(id);
+        }
+        self.create(conn, name, sort, key).await
+    }
+
     pub async fn resolve(
         &mut self,
         conn: &mut SqliteConnection,

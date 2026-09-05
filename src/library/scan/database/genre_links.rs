@@ -21,7 +21,7 @@ async fn resolve_genre(
 }
 
 /// Synchronize the ordered genre links for one track.
-pub(super) async fn sync_track_genres(
+pub(crate) async fn sync_track_genres(
     conn: &mut SqliteConnection,
     track_id: i64,
     genres: &[String],

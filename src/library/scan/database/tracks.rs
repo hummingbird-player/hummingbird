@@ -3,7 +3,6 @@ use rustc_hash::FxHashMap;
 use sqlx::SqliteConnection;
 use tracing::warn;
 
-use super::{albums::bind_release_date, artists::encode_artist_list};
 use crate::{library::scan::fs_case::paths_equal, media::metadata::Metadata};
 
 pub type AlbumPathCacheKey = (i64, i64);
@@ -157,43 +156,18 @@ pub(super) async fn insert_track(
         .or_else(|| path.file_name().map(|v| v.to_string()))
         .ok_or_else(|| anyhow::anyhow!("failed to retrieve filename"))?;
 
-    let (release_date, date_precision) = bind_release_date(metadata);
-    let artists = encode_artist_list(&metadata.artists);
-    let album_artist_keys = encode_artist_list(&metadata.album_artist_keys);
-    let track_number = metadata.track_current.map(i32::try_from).transpose()?;
-    let disc_number = metadata.disc_current.map(i32::try_from).transpose()?;
-    let track_section = metadata.track_section.map(i32::try_from).transpose()?;
-
-    let result: Result<(i64,), sqlx::Error> =
-        sqlx::query_as(include_str!("../../../../queries/scan/create_track.sql"))
-            .bind(&name)
-            .bind(&name)
-            .bind(album_id)
-            .bind(track_number)
-            .bind(disc_number)
-            .bind(length as i32)
-            .bind(path.as_str())
-            .bind(&metadata.artist)
-            .bind(parent.as_str())
-            .bind(metadata.replaygain_track_gain)
-            .bind(metadata.replaygain_track_peak)
-            .bind(metadata.replaygain_album_gain)
-            .bind(metadata.replaygain_album_peak)
-            .bind(&metadata.disc_subtitle)
-            .bind(artists)
-            .bind(&metadata.artist_sort)
-            .bind(album_artist_keys)
-            .bind(art_hash)
-            .bind(release_date)
-            .bind(date_precision)
-            .bind(track_section)
-            .bind(metadata.number_display_mode)
-            .fetch_one(&mut *conn)
-            .await;
-
-    match result {
-        Ok((track_id,)) => Ok(Some(track_id)),
-        Err(sqlx::Error::RowNotFound) => Err(anyhow::anyhow!("create_track returned no row")),
-        Err(e) => Err(e.into()),
-    }
+    crate::library::metadata::write_track(
+        conn,
+        metadata,
+        &crate::sources::SourceId::local(),
+        path.as_str(),
+        Some(parent.as_str()),
+        album_id,
+        &name,
+        length,
+        art_hash,
+        0,
+    )
+    .await
+    .map(Some)
 }

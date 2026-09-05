@@ -1,6 +1,6 @@
 SELECT id
 FROM album
-WHERE title = $1
+WHERE source = 'local' AND title = $1
   AND mbid = $2
   AND (
       ($4 IS NOT NULL AND id = $4)

@@ -1,3 +1,3 @@
 SELECT location
 FROM track
-WHERE folder = $1 OR location = $1;
+WHERE source = 'local' AND (folder = $1 OR location = $1);

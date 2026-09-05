@@ -1,34 +1,11 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
-use crate::{
-    library::types::{DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH},
-    media::metadata::Metadata,
-};
+use crate::media::metadata::Metadata;
 
 pub type AlbumCacheKey = (String, String, Option<String>);
 
-pub(super) fn bind_release_date(metadata: &Metadata) -> (Option<String>, Option<i32>) {
-    if let Some(date) = metadata.date {
-        return (
-            Some(date.format("%Y-%m-%d").to_string()),
-            Some(DATE_PRECISION_FULL_DATE),
-        );
-    }
-
-    if let Some((year, month)) = metadata.year_month {
-        return (
-            Some(format!("{year:04}-{month:02}-01")),
-            Some(DATE_PRECISION_YEAR_MONTH),
-        );
-    }
-
-    if let Some(year) = metadata.year {
-        return (Some(format!("{year:04}-01-01")), Some(DATE_PRECISION_YEAR));
-    }
-
-    (None, None)
-}
+pub(super) use crate::library::metadata::bind_release_date;
 
 pub(super) async fn insert_album(
     conn: &mut SqliteConnection,

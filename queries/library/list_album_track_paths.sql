@@ -1,6 +1,6 @@
 SELECT
     album_id,
-    location
+    location, source, present
 FROM
     track
 WHERE

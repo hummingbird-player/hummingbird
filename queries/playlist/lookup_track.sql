@@ -11,8 +11,8 @@
  */
 
 SELECT t.id FROM track t
-    JOIN main.album a ON a.id = t.album_id
-    WHERE t.location = $1
+    LEFT JOIN main.album a ON a.id = t.album_id
+    WHERE t.source = 'local' AND (t.location = $1
         OR (
                 (    $2 IS NOT NULL
                  OR ($3 IS NOT NULL AND $7 IS NOT NULL)
@@ -30,4 +30,4 @@ SELECT t.id FROM track t
             AND ($5 IS NULL OR t.artist_names = $5)
             AND ($6 IS NULL OR (t.duration > $6 - 1 AND t.duration < $6 + 1))
             AND ($7 IS NULL OR $2 IS NOT NULL OR t.location LIKE $7)
-        );
+        ));

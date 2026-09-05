@@ -78,7 +78,7 @@ async fn track_genres(pool: &SqlitePool, path: &Utf8Path) -> Vec<(String, i64)> 
          FROM track
          JOIN track_genre ON track_genre.track_id = track.id
          JOIN genre ON genre.id = track_genre.genre_id
-         WHERE track.location = $1
+         WHERE track.source = 'local' AND track.location = $1
          ORDER BY track_genre.position",
     )
     .bind(path.as_str())

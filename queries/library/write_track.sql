@@ -1,0 +1,33 @@
+INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration,
+                   location, artist_names, folder, rg_track_gain, rg_track_peak,
+                   rg_album_gain, rg_album_peak, disc_subtitle, artists, artist_sort,
+                   album_artist_keys, art_hash, release_date, date_precision, track_section,
+                   number_display_mode_hint, source, sync_generation)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+            $19, $20, $21, $22, $23, $24)
+    ON CONFLICT (source, location) DO UPDATE SET
+        present = 1,
+        sync_generation = EXCLUDED.sync_generation,
+        title = EXCLUDED.title,
+        title_sortable = CASE WHEN track.source != 'local' AND track.title = EXCLUDED.title THEN track.title_sortable ELSE EXCLUDED.title_sortable END,
+        album_id = EXCLUDED.album_id,
+        track_number = CASE WHEN track.source = 'local' THEN EXCLUDED.track_number ELSE COALESCE(EXCLUDED.track_number, track.track_number) END,
+        disc_number = CASE WHEN track.source = 'local' THEN EXCLUDED.disc_number ELSE COALESCE(EXCLUDED.disc_number, track.disc_number) END,
+        duration = EXCLUDED.duration,
+        location = EXCLUDED.location,
+        artist_names = CASE WHEN track.source = 'local' THEN EXCLUDED.artist_names ELSE COALESCE(EXCLUDED.artist_names, track.artist_names) END,
+        folder = EXCLUDED.folder,
+        rg_track_gain = CASE WHEN track.source = 'local' THEN EXCLUDED.rg_track_gain ELSE COALESCE(EXCLUDED.rg_track_gain, track.rg_track_gain) END,
+        rg_track_peak = CASE WHEN track.source = 'local' THEN EXCLUDED.rg_track_peak ELSE COALESCE(EXCLUDED.rg_track_peak, track.rg_track_peak) END,
+        rg_album_gain = CASE WHEN track.source = 'local' THEN EXCLUDED.rg_album_gain ELSE COALESCE(EXCLUDED.rg_album_gain, track.rg_album_gain) END,
+        rg_album_peak = CASE WHEN track.source = 'local' THEN EXCLUDED.rg_album_peak ELSE COALESCE(EXCLUDED.rg_album_peak, track.rg_album_peak) END,
+        disc_subtitle = CASE WHEN track.source = 'local' THEN EXCLUDED.disc_subtitle ELSE COALESCE(EXCLUDED.disc_subtitle, track.disc_subtitle) END,
+        artists = CASE WHEN track.source = 'local' THEN EXCLUDED.artists ELSE COALESCE(EXCLUDED.artists, track.artists) END,
+        artist_sort = CASE WHEN track.source = 'local' THEN EXCLUDED.artist_sort ELSE COALESCE(EXCLUDED.artist_sort, track.artist_sort) END,
+        album_artist_keys = CASE WHEN track.source = 'local' THEN EXCLUDED.album_artist_keys ELSE COALESCE(EXCLUDED.album_artist_keys, track.album_artist_keys) END,
+        art_hash = CASE WHEN track.source = 'local' THEN EXCLUDED.art_hash ELSE COALESCE(EXCLUDED.art_hash, track.art_hash) END,
+        release_date = CASE WHEN track.source = 'local' THEN EXCLUDED.release_date ELSE COALESCE(EXCLUDED.release_date, track.release_date) END,
+        date_precision = CASE WHEN track.source = 'local' THEN EXCLUDED.date_precision ELSE COALESCE(EXCLUDED.date_precision, track.date_precision) END,
+        track_section = CASE WHEN track.source = 'local' THEN EXCLUDED.track_section ELSE COALESCE(EXCLUDED.track_section, track.track_section) END,
+        number_display_mode_hint = EXCLUDED.number_display_mode_hint
+    RETURNING id;

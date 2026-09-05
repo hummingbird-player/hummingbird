@@ -69,6 +69,8 @@ impl MountSnapshot {
 /// clone through a GPUI entity.
 #[derive(Clone, Debug)]
 pub struct AvailabilityState {
+    remote_sources: Arc<HashSet<crate::sources::SourceId>>,
+    cached_tracks: Arc<HashSet<crate::sources::TrackRef>>,
     roots: Vec<RootAvailability>,
     mounts: MountSnapshot,
     unavailable_mountpoints: Vec<PathBuf>,
@@ -76,6 +78,8 @@ pub struct AvailabilityState {
 
 #[derive(Clone, Debug)]
 pub struct AvailabilitySnapshot {
+    remote_sources: Arc<HashSet<crate::sources::SourceId>>,
+    cached_tracks: Arc<HashSet<crate::sources::TrackRef>>,
     roots: Arc<[RootAvailability]>,
     mounts: MountSnapshot,
     unavailable_mountpoints: Arc<[PathBuf]>,
@@ -94,6 +98,28 @@ struct RootAvailability {
 }
 
 impl AvailabilityState {
+    pub fn set_cached_tracks(&mut self, tracks: Arc<HashSet<crate::sources::TrackRef>>) -> bool {
+        if self.cached_tracks == tracks {
+            return false;
+        }
+        self.cached_tracks = tracks;
+        true
+    }
+
+    pub fn set_remote_sources(
+        &mut self,
+        sources: impl IntoIterator<Item = crate::sources::SourceId>,
+    ) -> bool {
+        let next: HashSet<_> = sources
+            .into_iter()
+            .filter(|source| !source.is_local())
+            .collect();
+        if *self.remote_sources == next {
+            return false;
+        }
+        self.remote_sources = Arc::new(next);
+        true
+    }
     pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Self {
         let roots = roots.into_iter().collect::<Vec<_>>();
         Self::with_mounts(roots.clone(), current_mounts_for(&roots))
@@ -129,6 +155,8 @@ impl AvailabilityState {
             .collect();
 
         let mut state = Self {
+            remote_sources: Arc::new(HashSet::new()),
+            cached_tracks: Arc::default(),
             roots,
             mounts: mounts.clone(),
             unavailable_mountpoints: Vec::new(),
@@ -271,12 +299,32 @@ impl AvailabilityState {
     /// A track is available only when its storage is available and the indexed path still exists.
     /// Keep this check separate from [`Self::is_path_available`] so mount reconciliation can reason
     /// about paths without probing the filesystem.
+    pub fn is_indexed_track_available(
+        &self,
+        reference: &crate::sources::TrackRef,
+        present: bool,
+    ) -> bool {
+        self.cached_tracks.contains(reference) || (present && self.is_track_available(reference))
+    }
+
+    pub fn is_track_available(&self, reference: &crate::sources::TrackRef) -> bool {
+        match reference.local_path() {
+            Some(path) => self.is_track_path_available(path),
+            None => {
+                self.cached_tracks.contains(reference)
+                    || self.remote_sources.contains(reference.source())
+            }
+        }
+    }
+
     pub fn is_track_path_available(&self, path: &Path) -> bool {
         self.is_path_available(path) && path.exists()
     }
 
     pub fn snapshot(&self) -> AvailabilitySnapshot {
         AvailabilitySnapshot {
+            remote_sources: self.remote_sources.clone(),
+            cached_tracks: self.cached_tracks.clone(),
             roots: Arc::from(self.roots.clone().into_boxed_slice()),
             mounts: self.mounts.clone(),
             unavailable_mountpoints: Arc::from(
@@ -291,6 +339,9 @@ impl AvailabilityState {
 }
 
 impl AvailabilitySnapshot {
+    pub fn is_cached(&self, reference: &crate::sources::TrackRef) -> bool {
+        self.cached_tracks.contains(reference)
+    }
     pub fn is_path_available(&self, path: &Path) -> bool {
         is_path_available(
             &self.roots,
@@ -298,6 +349,24 @@ impl AvailabilitySnapshot {
             &self.unavailable_mountpoints,
             path,
         )
+    }
+
+    pub fn is_indexed_track_available(
+        &self,
+        reference: &crate::sources::TrackRef,
+        present: bool,
+    ) -> bool {
+        self.cached_tracks.contains(reference) || (present && self.is_track_available(reference))
+    }
+
+    pub fn is_track_available(&self, reference: &crate::sources::TrackRef) -> bool {
+        match reference.local_path() {
+            Some(path) => self.is_track_path_available(path),
+            None => {
+                self.cached_tracks.contains(reference)
+                    || self.remote_sources.contains(reference.source())
+            }
+        }
     }
 
     pub fn is_track_path_available(&self, path: &Path) -> bool {
@@ -460,6 +529,8 @@ mod tests {
 
     fn state(roots: &[&str], mounts: MountSnapshot, present: bool) -> AvailabilityState {
         AvailabilityState {
+            remote_sources: Arc::new(HashSet::new()),
+            cached_tracks: Arc::default(),
             roots: roots
                 .iter()
                 .map(|root| RootAvailability {
@@ -483,6 +554,29 @@ mod tests {
         assert!(state.reconcile_mounts(&mounts(&["/"])).0);
         assert!(!state.is_path_available(Path::new("/media/music/song.flac")));
         assert!(!state.reconcile_mounts(&mounts(&["/"])).0);
+    }
+
+    #[test]
+    fn cached_remote_tracks_remain_available_without_a_source_or_present_server_row() {
+        use crate::sources::{SourceId, TrackRef};
+        let mut state = state(&[], mounts(&["/"]), true);
+        let source = SourceId::new("offline-fixture");
+        let cached = TrackRef::from_database(source.clone(), "cached".into());
+        let missing = TrackRef::from_database(source.clone(), "missing".into());
+        state.set_remote_sources([source]);
+        assert!(state.is_indexed_track_available(&missing, true));
+        assert!(!state.is_indexed_track_available(&missing, false));
+        state.set_cached_tracks(Arc::new([cached.clone()].into()));
+        state.set_remote_sources([]);
+        let snapshot = state.snapshot();
+        assert!(snapshot.is_indexed_track_available(&cached, false));
+        assert!(!snapshot.is_indexed_track_available(&missing, true));
+        state.set_cached_tracks(Arc::default());
+        assert!(!state.is_track_available(&cached));
+        assert!(
+            snapshot.is_track_available(&cached),
+            "existing snapshots stay immutable"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-SELECT
+SELECT album.source,
     album.id,
     album.title,
     album.title_sortable,

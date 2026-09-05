@@ -1,1 +1,1 @@
-SELECT id FROM track WHERE location = $1;
+SELECT id FROM track WHERE source = 'local' AND location = $1;

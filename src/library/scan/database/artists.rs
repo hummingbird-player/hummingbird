@@ -47,11 +47,6 @@ pub(super) fn decode_artist_list(value: Option<&str>) -> Vec<String> {
     })
 }
 
-// it feels a little insane to make a table for this so we're just going to use json
-pub(super) fn encode_artist_list(values: &[String]) -> Option<String> {
-    (!values.is_empty()).then(|| serde_json::to_string(values).expect("artist list serializes"))
-}
-
 /// True when the display artist is a real credited artist, not a generic tag like "Various Artists".
 pub(super) fn display_is_credited(rows: &[TrackArtistRow], display: &str) -> bool {
     let display_lower = display.to_lowercase();

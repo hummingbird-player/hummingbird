@@ -1,3 +1,4 @@
+use crate::sources::{SourceId, TrackRef};
 use std::{path::Path, sync::Arc};
 
 use gpui::App;
@@ -267,11 +268,8 @@ pub async fn list_albums(
     Ok(albums)
 }
 
-pub async fn list_tracks(
-    pool: &SqlitePool,
-    sort_method: TrackSortMethod,
-) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
-    let query = match sort_method {
+fn tracks_query(sort_method: TrackSortMethod) -> &'static str {
+    match sort_method {
         TrackSortMethod::TitleAsc => {
             include_str!("../../queries/library/find_tracks_title_asc.sql")
         }
@@ -308,13 +306,270 @@ pub async fn list_tracks(
         TrackSortMethod::GenresDesc => {
             include_str!("../../queries/library/find_tracks_genres_desc.sql")
         }
-    };
+    }
+}
 
-    let tracks = sqlx::query_as::<_, (i64, String, Option<i64>, String)>(query)
+/// Table ordering only needs IDs; avoid allocating titles and playable references
+/// for the entire library on every catalog refresh.
+pub async fn list_track_ids(
+    pool: &SqlitePool,
+    sort_method: TrackSortMethod,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(tracks_query(sort_method))
+        .fetch_all(pool)
+        .await
+}
+
+#[cfg(test)]
+mod row_query_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn title_sort_reverses_titles_and_keeps_source_collisions_stable() {
+        let (_directory, pool) = crate::test_support::create_test_pool("track-title-order").await;
+        sqlx::query("INSERT INTO library_source(id,kind) VALUES('remote','subsonic')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, title, source) in [
+            (1, "Zulu", "local"),
+            (2, "alpha", "remote"),
+            (3, "Alpha", "local"),
+            (4, "middle", "remote"),
+        ] {
+            sqlx::query("INSERT INTO track(id,title,title_sortable,duration,location,source,present) VALUES(?,?,?,90,?,?,0)")
+                .bind(id).bind(title).bind(title).bind(if id == 1 {"zulu"} else if id == 4 {"other"} else {"collision"}).bind(source)
+                .execute(&pool).await.unwrap();
+        }
+        // Give Zulu a distinct local location; Alpha shares the remote song's
+        // opaque location without either unavailable row disappearing.
+        for (sort, expected) in [
+            (TrackSortMethod::TitleAsc, vec![2, 3, 4, 1]),
+            (TrackSortMethod::TitleDesc, vec![1, 4, 2, 3]),
+        ] {
+            assert_eq!(list_track_ids(&pool, sort).await.unwrap(), expected);
+            assert_eq!(
+                list_tracks(&pool, sort)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.0)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn restored_queue_reference_does_not_follow_reused_database_ids() {
+        let (_directory, pool) = crate::test_support::create_test_pool("queue-reused-id").await;
+        sqlx::raw_sql(
+            "INSERT INTO library_source(id,kind) VALUES('old','subsonic'),('other','subsonic');
+             INSERT INTO album(id,title,title_sortable,source) VALUES(66,'Old album','Old album','old');
+             INSERT INTO track(id,title,title_sortable,album_id,duration,location,source)
+               VALUES(55,'Old song','Old song',66,90,'same-opaque-id','old');"
+        ).execute(&pool).await.unwrap();
+        let item: crate::playback::queue::QueueItemData = serde_json::from_str(
+            r#"{"db_id":55,"db_album_id":66,"track_ref":{"source":"old","location":"same-opaque-id"}}"#
+        ).unwrap();
+        sqlx::raw_sql(
+            "DELETE FROM track WHERE source='old';
+             DELETE FROM album WHERE source='old';
+             INSERT INTO album(id,title,title_sortable,source) VALUES(66,'Other album','Other album','other');
+             INSERT INTO track(id,title,title_sortable,album_id,duration,location,source)
+               VALUES(55,'Other song','Other song',66,90,'same-opaque-id','other');"
+        ).execute(&pool).await.unwrap();
+        assert_eq!(
+            get_track_by_id(&pool, 55).await.unwrap().title,
+            "Other song"
+        );
+        assert!(
+            get_track_by_ref(&pool, item.get_track_ref())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Reindexing the actual source may assign a new numeric ID. A restored
+        // queue must bind to that row while retaining its durable reference.
+        sqlx::query("INSERT INTO track(id,title,title_sortable,duration,location,source) VALUES(56,'Returned song','Returned song',90,'same-opaque-id','old')")
+            .execute(&pool).await.unwrap();
+        let resolved = get_track_by_ref(&pool, item.get_track_ref())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.id, 56);
+        assert_eq!(resolved.album_id, None);
+        assert_eq!(item.get_db_id(), Some(55));
+    }
+
+    #[tokio::test]
+    async fn playlist_batch_preserves_membership_and_rolls_back_invalid_tracks() {
+        let (_directory, pool) = crate::test_support::create_test_pool("playlist-batch").await;
+        sqlx::query("INSERT INTO library_source(id,kind) VALUES('remote', 'subsonic')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tracks = Vec::new();
+        for (source, location) in [("local", "same"), ("remote", "same"), ("remote", "next")] {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO track(title,title_sortable,duration,location,source,present) VALUES('Song','Song',90,?,?,0) RETURNING id"
+            ).bind(location).bind(source).fetch_one(&pool).await.unwrap();
+            tracks.push(id);
+        }
+        let playlist = create_playlist(&pool, "Mixed").await.unwrap();
+        let item = add_playlist_item(&pool, playlist, tracks[0]).await.unwrap();
+        let original: (i64, String) =
+            sqlx::query_as("SELECT position,created_at FROM playlist_item WHERE id=?")
+                .bind(item)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        add_tracks_to_playlist_if_missing(&pool, playlist, &[tracks[0], tracks[1], tracks[1]])
+            .await
+            .unwrap();
+        let rows: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT id,track_id FROM playlist_item WHERE playlist_id=? ORDER BY position",
+        )
+        .bind(playlist)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], (item, tracks[0]));
+        assert_eq!(rows[1].1, tracks[1]);
+        let retained: (i64, String) =
+            sqlx::query_as("SELECT position,created_at FROM playlist_item WHERE id=?")
+                .bind(item)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(original, retained);
+        // A source removal can invalidate a later item while an album dialog is
+        // open. Do not commit the earlier additions or suppress foreign-key errors.
+        assert!(
+            add_tracks_to_playlist_if_missing(&pool, playlist, &[tracks[2], i64::MAX])
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            playlist_has_track(&pool, playlist, tracks[2])
+                .await
+                .unwrap(),
+            None
+        );
+        let after: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT id,track_id FROM playlist_item WHERE playlist_id=? ORDER BY position",
+        )
+        .bind(playlist)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, rows);
+        add_tracks_to_playlist_if_missing(&pool, playlist, &tracks)
+            .await
+            .unwrap();
+        assert!(
+            playlist_contains_all_tracks(&pool, playlist, &tracks)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn table_ids_preserve_mixed_library_order_and_unavailable_rows() {
+        let (_directory, pool) = crate::test_support::create_test_pool("table-row-order").await;
+        let mut expected_ids = Vec::new();
+        for (source_index, source) in ["local", "one", "two"].into_iter().enumerate() {
+            if source != "local" {
+                sqlx::query("INSERT INTO library_source(id,kind) VALUES(?, 'subsonic')")
+                    .bind(source)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            let album: i64 = sqlx::query_scalar(
+                "INSERT INTO album(title,title_sortable,source) VALUES(?,?,?) RETURNING id",
+            )
+            .bind(format!("Album {source_index}"))
+            .bind(format!("Album {source_index}"))
+            .bind(source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            for index in 0..3 {
+                // Opaque locations collide across sources, and each source has
+                // an albumless and an unavailable track. Neither may vanish.
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO track(title,title_sortable,album_id,track_number,duration,location,source,present) VALUES(?,?,?,?,?,?,?,?) RETURNING id"
+                ).bind(format!("Title {index}"))
+                    .bind(format!("Title {index}"))
+                    .bind((index != 0).then_some(album))
+                    .bind(3 - index).bind(100 + source_index as i64 * 10 + index)
+                    .bind(format!("opaque-{index}")).bind(source).bind(index != 2)
+                    .fetch_one(&pool).await.unwrap();
+                expected_ids.push(id);
+            }
+        }
+        for sort in [
+            TrackSortMethod::TitleAsc,
+            TrackSortMethod::TitleDesc,
+            TrackSortMethod::ArtistAsc,
+            TrackSortMethod::ArtistDesc,
+            TrackSortMethod::AlbumAsc,
+            TrackSortMethod::AlbumDesc,
+            TrackSortMethod::DurationAsc,
+            TrackSortMethod::DurationDesc,
+            TrackSortMethod::TrackNumberAsc,
+            TrackSortMethod::TrackNumberDesc,
+            TrackSortMethod::GenresAsc,
+            TrackSortMethod::GenresDesc,
+        ] {
+            let ids = list_track_ids(&pool, sort).await.unwrap();
+            let rows = list_tracks(&pool, sort).await.unwrap();
+            assert_eq!(ids, rows.iter().map(|row| row.0).collect::<Vec<_>>());
+            let mut all_ids = ids;
+            all_ids.sort_unstable();
+            assert_eq!(all_ids, expected_ids);
+            assert_eq!(rows.iter().filter(|row| !row.4).count(), 3);
+        }
+        assert_eq!(
+            list_track_ids(&pool, TrackSortMethod::DurationAsc)
+                .await
+                .unwrap(),
+            expected_ids
+        );
+        expected_ids.reverse();
+        assert_eq!(
+            list_track_ids(&pool, TrackSortMethod::DurationDesc)
+                .await
+                .unwrap(),
+            expected_ids
+        );
+    }
+}
+
+pub async fn list_tracks(
+    pool: &SqlitePool,
+    sort_method: TrackSortMethod,
+) -> sqlx::Result<Vec<(i64, String, Option<i64>, TrackRef, bool)>> {
+    let query = tracks_query(sort_method);
+
+    let tracks = sqlx::query_as::<_, (i64, String, Option<i64>, String, SourceId, bool)>(query)
         .fetch_all(pool)
         .await?;
 
-    Ok(tracks)
+    Ok(tracks
+        .into_iter()
+        .map(|(id, title, album, location, source, present)| {
+            (
+                id,
+                title,
+                album,
+                TrackRef::from_database(source, location),
+                present,
+            )
+        })
+        .collect())
 }
 
 pub async fn list_tracks_in_album(
@@ -523,16 +778,35 @@ pub async fn get_track_by_id(pool: &SqlitePool, track_id: i64) -> sqlx::Result<A
 }
 
 pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
-    let query = include_str!("../../queries/library/find_track_by_path.sql");
+    let Some(location) = path.to_str() else {
+        return Ok(None);
+    };
+    get_track_at(pool, &SourceId::local(), location).await
+}
 
-    let mut track = sqlx::query_as(query)
-        .bind(path.to_string_lossy().as_ref())
+pub async fn get_track_by_ref(
+    pool: &SqlitePool,
+    reference: &TrackRef,
+) -> sqlx::Result<Option<Arc<Track>>> {
+    let Some(location) = reference.database_location() else {
+        return Ok(None);
+    };
+    get_track_at(pool, reference.source(), location).await
+}
+
+async fn get_track_at(
+    pool: &SqlitePool,
+    source: &SourceId,
+    location: &str,
+) -> sqlx::Result<Option<Arc<Track>>> {
+    let mut track = sqlx::query_as("SELECT * FROM track WHERE source = $1 AND location = $2")
+        .bind(source)
+        .bind(location)
         .fetch_optional(pool)
         .await?;
     if let Some(track) = track.as_mut() {
         load_track_genres(pool, std::slice::from_mut(track)).await?;
     }
-
     Ok(track.map(Arc::new))
 }
 
@@ -575,14 +849,18 @@ pub async fn list_artists_search(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, St
 }
 
 /// Lists track paths grouped by album ID for availability checks. Returns (album_id, path).
-pub async fn list_album_track_paths(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, String)>> {
-    let query = include_str!("../../queries/library/list_album_track_paths.sql");
-
-    let paths = sqlx::query_as::<_, (i64, String)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(paths)
+pub async fn list_album_track_paths(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, TrackRef, bool)>> {
+    let rows: Vec<(i64, String, SourceId, bool)> = sqlx::query_as(include_str!(
+        "../../queries/library/list_album_track_paths.sql"
+    ))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, location, source, present)| {
+            (id, TrackRef::from_database(source, location), present)
+        })
+        .collect())
 }
 
 pub async fn add_playlist_item(
@@ -655,11 +933,13 @@ pub async fn get_playlist(pool: &SqlitePool, playlist_id: i64) -> sqlx::Result<A
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PlaylistTrackRow {
+    pub present: bool,
     #[sqlx(rename = "id")]
     pub playlist_item_id: i64,
     pub track_id: i64,
-    pub album_id: i64,
-    pub location: String,
+    pub album_id: Option<i64>,
+    #[sqlx(flatten)]
+    pub reference: TrackRef,
 }
 
 pub async fn get_playlist_tracks(
@@ -867,15 +1147,17 @@ pub async fn add_tracks_to_playlist_if_missing(
     playlist_id: i64,
     track_ids: &[i64],
 ) -> sqlx::Result<()> {
+    let mut transaction = pool.begin().await?;
     for &track_id in track_ids {
-        if playlist_has_track(pool, playlist_id, track_id)
-            .await?
-            .is_none()
-        {
-            add_playlist_item(pool, playlist_id, track_id).await?;
-        }
+        sqlx::query(include_str!(
+            "../../queries/playlist/add_track_if_missing.sql"
+        ))
+        .bind(playlist_id)
+        .bind(track_id)
+        .execute(&mut *transaction)
+        .await?;
     }
-    Ok(())
+    transaction.commit().await
 }
 
 pub async fn remove_tracks_from_playlist(
@@ -921,12 +1203,15 @@ pub async fn artist_ids_for_track(
     Ok(artists)
 }
 
-pub async fn get_all_tracks(pool: &SqlitePool) -> sqlx::Result<Vec<(String, i64, i64)>> {
+pub async fn get_all_tracks(pool: &SqlitePool) -> sqlx::Result<Vec<(TrackRef, i64, Option<i64>)>> {
     let query = include_str!("../../queries/library/get_all_tracks.sql");
 
-    let tracks: Vec<(String, i64, i64)> = sqlx::query_as(query).fetch_all(pool).await?;
-
-    Ok(tracks)
+    let tracks: Vec<(String, i64, Option<i64>, SourceId)> =
+        sqlx::query_as(query).fetch_all(pool).await?;
+    Ok(tracks
+        .into_iter()
+        .map(|(location, id, album, source)| (TrackRef::from_database(source, location), id, album))
+        .collect())
 }
 
 pub async fn list_album_paths(pool: &SqlitePool, album_id: i64) -> sqlx::Result<Vec<String>> {
@@ -955,12 +1240,13 @@ pub trait LibraryAccess {
     fn list_tracks(
         &self,
         sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>>;
+    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, TrackRef, bool)>>;
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn get_album_by_id(&self, album_id: i64, method: AlbumMethod) -> sqlx::Result<Arc<Album>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
+    fn get_track_by_ref(&self, reference: &TrackRef) -> sqlx::Result<Option<Arc<Track>>>;
     fn create_playlist(&self, name: &str) -> sqlx::Result<i64>;
     fn delete_playlist(&self, playlist_id: i64) -> sqlx::Result<()>;
     fn rename_playlist(&self, playlist_id: i64, name: &str) -> sqlx::Result<()>;
@@ -998,7 +1284,7 @@ pub trait LibraryAccess {
     fn get_all_tracks_by_artist(&self, artist_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn artist_ids_for_album(&self, album_id: i64) -> sqlx::Result<Vec<(i64, String)>>;
     fn artist_ids_for_track(&self, track_id: i64) -> sqlx::Result<Vec<(i64, String)>>;
-    fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>>;
+    fn get_all_tracks(&self) -> sqlx::Result<Vec<(TrackRef, i64, Option<i64>)>>;
     fn list_album_paths(&self, album_id: i64) -> sqlx::Result<Vec<String>>;
     fn lyrics_for_track(&self, track_id: i64) -> sqlx::Result<Option<String>>;
 }
@@ -1012,7 +1298,7 @@ impl LibraryAccess for App {
     fn list_tracks(
         &self,
         sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
+    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, TrackRef, bool)>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_tracks(&pool.0, sort_method))
     }
@@ -1035,6 +1321,11 @@ impl LibraryAccess for App {
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_track_by_id(&pool.0, track_id))
+    }
+
+    fn get_track_by_ref(&self, reference: &TrackRef) -> sqlx::Result<Option<Arc<Track>>> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(get_track_by_ref(&pool.0, reference))
     }
 
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
@@ -1175,7 +1466,7 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(artist_ids_for_track(&pool.0, track_id))
     }
 
-    fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>> {
+    fn get_all_tracks(&self) -> sqlx::Result<Vec<(TrackRef, i64, Option<i64>)>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_all_tracks(&pool.0))
     }
