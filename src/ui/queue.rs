@@ -4,7 +4,6 @@ use crate::{
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     settings::SettingsGlobal,
     ui::{
-        availability::is_track_path_available,
         components::{
             context::context,
             drag_drop::{
@@ -139,6 +138,7 @@ pub struct QueueItem {
     show_add_to: Entity<bool>,
     track_id: Option<i64>,
     is_liked: Option<i64>,
+    source_label: Option<SharedString>,
 }
 
 impl HasLikedState for QueueItem {
@@ -160,6 +160,11 @@ impl QueueItem {
         selection: Entity<QueueSelection>,
     ) -> Entity<Self> {
         cx.new(move |cx| {
+            crate::ui::sources::labels::observe(cx, |this: &mut Self, cx| {
+                this.source_label = this.item.as_ref().and_then(|item| {
+                    crate::ui::sources::labels::label(item.get_track_ref().source(), cx)
+                });
+            });
             cx.on_release(|m: &mut QueueItem, cx| {
                 if let Some(item) = m.item.as_mut() {
                     item.drop_data(cx);
@@ -180,8 +185,11 @@ impl QueueItem {
             .detach();
 
             let item_ref = item.clone();
-            let track_id = item_ref.as_ref().and_then(|item| item.get_db_id());
             let data = item_ref.as_ref().unwrap().get_data(cx);
+            let track_id = data.read(cx).as_ref().and_then(|data| data.track_id);
+
+            let library_change = cx.global::<Models>().library_change.clone();
+            cx.observe(&library_change, |_, _, cx| cx.notify()).detach();
 
             cx.observe(&data, |_, _, cx| {
                 cx.notify();
@@ -211,6 +219,9 @@ impl QueueItem {
             subscribe_liked_updates(cx, |this: &QueueItem| this.track_id);
 
             Self {
+                source_label: item.as_ref().and_then(|item| {
+                    crate::ui::sources::labels::label(item.get_track_ref().source(), cx)
+                }),
                 item,
                 idx,
                 current: queue.read(cx).position,
@@ -233,15 +244,24 @@ impl QueueItem {
 impl Render for QueueItem {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = self.item.as_mut();
-        let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
-        let track_id = data.as_ref().and_then(|item| item.get_db_id());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
+        let track_id = ui_data.as_ref().and_then(|item| item.track_id);
+        let album_id = ui_data.as_ref().and_then(|item| item.album_id);
+        if self.track_id != track_id {
+            self.track_id = track_id;
+            self.show_add_to.write(cx, false);
+            self.add_to =
+                track_id.map(|id| AddToPlaylist::new(cx, self.show_add_to.clone(), vec![id]));
+            self.is_liked = track_id.and_then(|id| {
+                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
+                    .unwrap_or_default()
+            });
+        }
         let theme = cx.global::<Theme>().clone();
         let show_add_to = self.show_add_to.clone();
-        let is_available = self
-            .item
-            .as_ref()
-            .is_some_and(|queue_item| is_track_path_available(cx, queue_item.get_path()));
+        let is_available = self.item.as_ref().is_some_and(|queue_item| {
+            crate::ui::availability::is_reference_available(cx, queue_item.get_track_ref())
+        });
         let is_selected = self.selection.read(cx).contains(self.idx);
 
         if let Some(item) = ui_data.as_ref() {
@@ -256,7 +276,8 @@ impl Render for QueueItem {
             let image_key = track_id.map(ManagedImageKey::Track).or_else(|| {
                 self.item
                     .as_ref()
-                    .map(|i| ManagedImageKey::TrackFile(i.get_path().to_path_buf()))
+                    .and_then(|i| i.get_track_ref().local_path())
+                    .map(|p| ManagedImageKey::TrackFile(p.to_path_buf()))
             });
             let idx = self.idx;
             let current = self.current;
@@ -276,11 +297,15 @@ impl Render for QueueItem {
             let is_liked = self.is_liked.is_some();
 
             let selected_track_ids: Vec<i64> = if is_multi_selected {
-                let queue = cx.global::<Models>().queue.read(cx);
-                let queue_data = queue.data.read().expect("could not read queue");
+                let queue_data = cx.global::<Models>().queue.read(cx).data.clone();
+                let queue_data = queue_data.read().expect("could not read queue");
                 selected_indices
                     .iter()
-                    .filter_map(|&i| queue_data.get(i).and_then(|item| item.get_db_id()))
+                    .filter_map(|&i| {
+                        queue_data
+                            .get(i)
+                            .and_then(|item| item.get_resolved_db_id(cx))
+                    })
                     .collect()
             } else {
                 self.track_id.into_iter().collect()
@@ -367,8 +392,8 @@ impl Render for QueueItem {
                             let path_for_drag = self
                                 .item
                                 .as_ref()
-                                .map(|i| i.get_path().to_path_buf())
-                                .unwrap_or_default();
+                                .map(|i| i.get_track_ref().clone())
+                                .expect("available queue row has an item");
                             let mut drag_data = if let Some(tid) = self.track_id {
                                 TrackDragData::from_track(
                                     tid,
@@ -469,6 +494,13 @@ impl Render for QueueItem {
                                                     || tr!("UNKNOWN_ARTIST").into(),
                                                 )),
                                         )
+                                        .when_some(self.source_label.clone(), |div, label| {
+                                            div.child(
+                                                crate::ui::sources::labels::badge(label, &theme)
+                                                    .max_w(px(100.0))
+                                                    .ml(px(6.0)),
+                                            )
+                                        })
                                         .when_some(item.duration, |child, duration| {
                                             child.child(
                                                 div()
@@ -1014,7 +1046,7 @@ impl Render for Queue {
                                     .map(|track| {
                                         QueueItemData::new(
                                             cx,
-                                            track.location.clone(),
+                                            track.reference.clone(),
                                             Some(track.id),
                                             Some(drag_data.album_id),
                                         )

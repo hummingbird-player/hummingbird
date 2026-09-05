@@ -11,6 +11,7 @@ use super::{
 use crate::ui::{
     components::context::context,
     components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    components::managed_image::{ManagedImageKey, managed_image},
     models::Models,
     theme::Theme,
 };
@@ -29,7 +30,9 @@ where
     row: Option<Arc<T>>,
     id: Option<ElementId>,
     image_path: Option<SharedString>,
+    image_key: Option<ManagedImageKey>,
     is_available: bool,
+    source_label: Option<SharedString>,
 }
 
 impl<T, C> TableItem<T, C>
@@ -57,10 +60,22 @@ where
             keys.into_iter().map(|v| row.get_column(cx, *v)).collect()
         });
 
-        let image_path = row.as_ref().and_then(|row| row.get_image_path());
+        let image_key = row.as_ref().and_then(|row| row.get_full_image_key());
+        let image_path = if image_key.is_none() {
+            row.as_ref().and_then(|row| row.get_image_path())
+        } else {
+            None
+        };
         let is_available = row.as_ref().is_some_and(|row| row.is_available(cx));
         let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
+            crate::ui::sources::labels::observe(cx, |this: &mut Self, cx| {
+                this.source_label = this
+                    .row
+                    .as_ref()
+                    .and_then(|row| row.source_id())
+                    .and_then(|id| crate::ui::sources::labels::label(id, cx));
+            });
             cx.observe(columns, |this: &mut TableItem<T, C>, m, cx| {
                 this.columns = m.read(cx).clone();
 
@@ -80,10 +95,15 @@ where
             .detach();
 
             Self {
+                source_label: row
+                    .as_ref()
+                    .and_then(|row| row.source_id())
+                    .and_then(|id| crate::ui::sources::labels::label(id, cx)),
                 context_menu_context,
                 index,
                 data,
                 image_path,
+                image_key,
                 columns: columns_read,
                 on_select,
                 id,
@@ -187,6 +207,16 @@ where
                             .h(px(22.0))
                             .rounded(px(3.0))
                             .bg(theme.album_art_background)
+                            .when_some(self.image_key.clone(), |div, key| {
+                                div.child(
+                                    managed_image("table-thumbnail", key)
+                                        .thumb()
+                                        .target_logical_px(22.0)
+                                        .w(px(22.0))
+                                        .h(px(22.0))
+                                        .rounded(px(3.0)),
+                                )
+                            })
                             .when_some(self.image_path.clone(), |div, image| {
                                 div.child(img(image).w(px(22.0)).h(px(22.0)).rounded(px(3.0)))
                             }),
@@ -204,6 +234,9 @@ where
                     .expect("data references column outside of viewed table");
                 let is_last = i == column_count - 1;
                 let base_width = *col.1;
+                let source_label = T::is_source_column(*col.0)
+                    .then(|| self.source_label.clone())
+                    .flatten();
                 row = row.child(
                     div()
                         .when(!is_last, |this| this.w(px(base_width)))
@@ -220,25 +253,40 @@ where
                         .overflow_hidden()
                         .text_ellipsis()
                         .border_color(theme.border_color)
-                        .when_some(column_data.clone(), |div, string| div.child(string)),
+                        .when(source_label.is_none(), |div| {
+                            div.when_some(column_data.clone(), |div, string| div.child(string))
+                        })
+                        .when_some(source_label, |div, label| {
+                            div.flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .when_some(column_data.clone(), |div, string| {
+                                    div.child(
+                                        gpui::div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .child(string),
+                                    )
+                                })
+                                .child(crate::ui::sources::labels::badge(label, theme))
+                        }),
                 );
             }
         }
 
         context(self.id.clone().unwrap_or(self.index.into()))
             .with(row)
-            .menu_on_open(move |window, cx| match menu_rows.as_ref() {
+            .menu_with_overlay_on_open(move |window, cx| match menu_rows.as_ref() {
                 Some(row) => {
                     match row.get_context_menu(window, cx, &menu_context, GridContext::Table) {
-                        Some((menu, overlay)) => div()
-                            .bg(menu_bg)
-                            .child(menu)
-                            .when_some(overlay, |this, overlay| this.child(overlay))
-                            .into_any_element(),
-                        None => div().into_any_element(),
+                        Some((menu, overlay)) => {
+                            (div().bg(menu_bg).child(menu).into_any_element(), overlay)
+                        }
+                        None => (div().into_any_element(), None),
                     }
                 }
-                None => div().into_any_element(),
+                None => (div().into_any_element(), None),
             })
             .into_any_element()
     }

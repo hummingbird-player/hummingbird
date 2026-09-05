@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use crate::sources::TrackRef;
 
 use gpui::{
     Anchor, App, AppContext, Bounds, Context, Div, DragMoveEvent, ElementId, Entity, Hsla,
@@ -36,7 +36,7 @@ impl DragData {
 pub struct TrackDragData {
     pub track_id: Option<i64>,
     pub album_id: Option<i64>,
-    pub path: PathBuf,
+    pub path: TrackRef,
     pub display_name: SharedString,
     /// Source list ID, if dragged from a reorderable list (e.g. a playlist or the queue).
     pub source_list_id: Option<ElementId>,
@@ -46,7 +46,7 @@ pub struct TrackDragData {
 }
 
 impl TrackDragData {
-    pub fn new(path: impl Into<PathBuf>, display_name: impl Into<SharedString>) -> Self {
+    pub fn new(path: impl Into<TrackRef>, display_name: impl Into<SharedString>) -> Self {
         Self {
             track_id: None,
             album_id: None,
@@ -61,7 +61,7 @@ impl TrackDragData {
     pub fn from_track(
         track_id: i64,
         album_id: Option<i64>,
-        path: impl Into<PathBuf>,
+        path: impl Into<TrackRef>,
         display_name: impl Into<SharedString>,
     ) -> Self {
         Self {

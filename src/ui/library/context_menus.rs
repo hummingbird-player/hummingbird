@@ -2,11 +2,13 @@ pub mod album;
 pub mod info_section;
 pub mod track;
 
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use camino::Utf8PathBuf;
 use cntp_i18n::tr;
-use gpui::{AnyElement, App, AppContext, Entity, IntoElement, Pixels, Point, SharedString, Window};
+use gpui::{
+    AnyElement, AnyView, App, AppContext, Entity, IntoElement, Pixels, Point, SharedString, Window,
+};
 
 use crate::{
     library::{
@@ -108,7 +110,7 @@ pub fn track_menu_for_table(
     context: &TrackContextMenuContext,
     window: &mut Window,
     cx: &mut App,
-) -> (AnyElement, Option<AnyElement>) {
+) -> (AnyElement, Option<AnyView>) {
     let (show_add_to, add_to) = add_to_playlist_state("track-menu-state", track.id, window, cx);
     let is_liked = cx
         .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
@@ -124,7 +126,7 @@ pub fn track_menu_for_table(
     )
     .into_any_element();
 
-    (menu, Some(add_to.into_any_element()))
+    (menu, Some(add_to.into()))
 }
 
 pub fn album_menu_for_table(
@@ -132,13 +134,13 @@ pub fn album_menu_for_table(
     context: &AlbumContextMenuContext,
     window: &mut Window,
     cx: &mut App,
-) -> (AnyElement, Option<AnyElement>) {
+) -> (AnyElement, Option<AnyView>) {
     let (show_add_to, add_to) =
         add_album_to_playlist_state("album-menu-state", album.id, window, cx);
     let menu =
         AlbumContextMenu::new(Rc::new(album.clone()), show_add_to, *context).into_any_element();
 
-    (menu, Some(add_to.into_any_element()))
+    (menu, Some(add_to.into()))
 }
 
 pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {
@@ -153,7 +155,7 @@ pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemDa
     let playback_interface = cx.global::<PlaybackInterface>();
     if let Some(index) = queue_items
         .iter()
-        .position(|item| item.get_path() == &track.location)
+        .position(|item| item.get_track_ref() == &track.reference)
     {
         playback_interface.replace_queue_with_index(queue_items, index);
     } else {
@@ -171,8 +173,10 @@ pub fn play_from_track_listing(
     let queue_items = if let Some(tracks) = queue_context {
         tracks
             .iter()
-            .filter(|item| availability.is_track_path_available(&item.location))
-            .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
+            .filter(|item| availability.is_indexed_track_available(&item.reference, item.present))
+            .map(|item| {
+                QueueItemData::new(cx, item.reference.clone(), Some(item.id), item.album_id)
+            })
             .collect()
     } else if let Some(playlist_id) = playlist_id {
         let tracks = cx
@@ -181,27 +185,24 @@ pub fn play_from_track_listing(
 
         tracks
             .iter()
-            .filter(|row| availability.is_track_path_available(Path::new(&row.location)))
+            .filter(|row| availability.is_indexed_track_available(&row.reference, row.present))
             .map(|row| {
-                QueueItemData::new(
-                    cx,
-                    row.location.clone().into(),
-                    Some(row.track_id),
-                    Some(row.album_id),
-                )
+                QueueItemData::new(cx, row.reference.clone(), Some(row.track_id), row.album_id)
             })
             .collect()
     } else if let Some(album_id) = track.album_id {
         cx.list_tracks_in_album(album_id)
             .expect("Failed to retrieve tracks")
             .iter()
-            .filter(|item| availability.is_track_path_available(&item.location))
-            .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
+            .filter(|item| availability.is_indexed_track_available(&item.reference, item.present))
+            .map(|item| {
+                QueueItemData::new(cx, item.reference.clone(), Some(item.id), item.album_id)
+            })
             .collect()
     } else {
         vec![QueueItemData::new(
             cx,
-            track.location.clone(),
+            track.reference.clone(),
             Some(track.id),
             track.album_id,
         )]
@@ -220,8 +221,11 @@ pub fn track_show_in_file_manager_label() -> SharedString {
     }
 }
 
-pub fn resolve_library_track_by_path(cx: &App, path: &Path) -> Option<Rc<Track>> {
-    cx.get_track_by_path(path)
+pub fn resolve_library_track_by_ref(
+    cx: &App,
+    path: &crate::sources::TrackRef,
+) -> Option<Rc<Track>> {
+    cx.get_track_by_ref(path)
         .ok()
         .flatten()
         .map(|track| Rc::new((*track).clone()))
@@ -319,17 +323,17 @@ pub(crate) fn queue_items(cx: &mut App, items: impl IntoIterator<Item = QueueIte
 }
 
 fn play_track_now(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::new(cx, track.reference.clone(), Some(track.id), track.album_id);
     play_now(cx, data);
 }
 
 pub fn play_track_next(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::new(cx, track.reference.clone(), Some(track.id), track.album_id);
     play_next(cx, data);
 }
 
 fn queue_track(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::new(cx, track.reference.clone(), Some(track.id), track.album_id);
     queue_item(cx, data);
 }
 
@@ -404,8 +408,10 @@ fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData
     cx.list_tracks_in_album(album.id)
         .unwrap_or_else(|_| Arc::new(Vec::new()))
         .iter()
-        .filter(|track| availability.is_track_path_available(&track.location))
-        .map(|track| QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id))
+        .filter(|track| availability.is_indexed_track_available(&track.reference, track.present))
+        .map(|track| {
+            QueueItemData::new(cx, track.reference.clone(), Some(track.id), track.album_id)
+        })
         .collect()
 }
 
@@ -449,6 +455,9 @@ fn queue_album(cx: &mut App, album: &Album) {
 }
 
 pub(crate) fn rescan_album(cx: &App, album: &Album) {
+    if !album.source.is_local() {
+        return;
+    }
     let paths = match cx.list_album_paths(album.id) {
         Ok(paths) => paths,
         Err(err) => {
@@ -462,7 +471,10 @@ pub(crate) fn rescan_album(cx: &App, album: &Album) {
 }
 
 pub(crate) fn rescan_track(cx: &App, track: &Track) {
-    let path = match Utf8PathBuf::from_path_buf(track.location.clone()) {
+    let Some(local_path) = track.reference.local_path() else {
+        return;
+    };
+    let path = match Utf8PathBuf::from_path_buf(local_path.to_path_buf()) {
         Ok(path) => path,
         Err(path) => {
             tracing::error!("cannot rescan track with non-UTF-8 path: {:?}", path);

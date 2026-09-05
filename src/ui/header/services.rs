@@ -27,8 +27,18 @@ use crate::{
     services::mmb::listenbrainz::ListenBrainzState, ui::settings::listenbrainz as listenbrainz_ui,
 };
 
+fn delivery_failure_text(failure: crate::services::mmb::mailbox::Failure) -> SharedString {
+    match failure {
+        crate::services::mmb::mailbox::Failure::Capacity => tr!("SERVICE_DELIVERY_CAPACITY", "Playback updates exceeded this service's queue limit. Some updates were not delivered. Restart Hummingbird to resume reporting.").into(),
+        crate::services::mmb::mailbox::Failure::Unavailable => tr!("SERVICE_DELIVERY_UNAVAILABLE", "This service stopped processing playback updates. Restart Hummingbird to resume reporting.").into(),
+    }
+}
+
 pub struct ServicesIndicator {
     settings: Entity<Settings>,
+    sources: Entity<
+        std::collections::HashMap<crate::sources::SourceId, crate::sources::registry::SourceStatus>,
+    >,
     #[cfg(feature = "proprietary-services")]
     lastfm: Entity<LastFMState>,
     #[cfg(feature = "libre-services")]
@@ -42,7 +52,14 @@ impl ServicesIndicator {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
             let discord_rpc = cx.global::<Models>().discord_rpc.clone();
+            let mailboxes = cx.global::<Models>().mmbs.clone();
+            cx.observe(&mailboxes, |_, _, cx| cx.notify()).detach();
 
+            let sources = cx
+                .global::<crate::ui::sources::SourceModels>()
+                .status
+                .clone();
+            cx.observe(&sources, |_, _, cx| cx.notify()).detach();
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
             cx.observe(&discord_rpc, |_, _, cx| cx.notify()).detach();
 
@@ -61,6 +78,7 @@ impl ServicesIndicator {
 
             Self {
                 settings,
+                sources,
                 #[cfg(feature = "proprietary-services")]
                 lastfm,
                 #[cfg(feature = "libre-services")]
@@ -87,6 +105,15 @@ enum ServiceKind {
 }
 
 impl ServiceKind {
+    fn mailbox_key(self) -> &'static str {
+        match self {
+            #[cfg(feature = "proprietary-services")]
+            Self::LastFm => crate::services::mmb::lastfm::MMBS_KEY,
+            #[cfg(feature = "libre-services")]
+            Self::ListenBrainz => crate::services::mmb::listenbrainz::MMBS_KEY,
+            Self::DiscordRpc => crate::services::mmb::discord::MMBS_KEY,
+        }
+    }
     fn name(self) -> SharedString {
         match self {
             #[cfg(feature = "proprietary-services")]
@@ -214,6 +241,67 @@ fn status_dot(entry: &ServiceEntry) -> StatusDotKind {
     }
 }
 
+fn source_dot(
+    enabled: bool,
+    status: Option<&crate::sources::registry::SourceStatus>,
+) -> StatusDotKind {
+    use crate::sources::registry::ConnectionState;
+    if !enabled {
+        return StatusDotKind::Disabled;
+    }
+    let Some(status) = status else {
+        return StatusDotKind::Pending;
+    };
+    if status.syncing
+        || matches!(
+            status.state,
+            ConnectionState::Connecting | ConnectionState::Disabled
+        )
+    {
+        return StatusDotKind::Pending;
+    }
+    if status.sync_error.is_some()
+        || status.reporting_error.is_some()
+        || status.live_reporting_error.is_some()
+        || status.failed_reports > 0
+    {
+        return StatusDotKind::Error;
+    }
+    match status.state {
+        ConnectionState::Connected => StatusDotKind::Success,
+        _ => StatusDotKind::Error,
+    }
+}
+fn source_indicator(
+    base: &'static str,
+    sources: &[crate::sources::config::SourceConfig],
+    statuses: &std::collections::HashMap<
+        crate::sources::SourceId,
+        crate::sources::registry::SourceStatus,
+    >,
+) -> &'static str {
+    if base == WORLD_X {
+        return base;
+    }
+    let mut pending = false;
+    let mut active = false;
+    for source in sources.iter().filter(|source| source.enabled) {
+        active = true;
+        match source_dot(true, statuses.get(&source.id)) {
+            StatusDotKind::Error => return WORLD_X,
+            StatusDotKind::Pending => pending = true,
+            _ => {}
+        }
+    }
+    if pending {
+        WORLD
+    } else if active {
+        WORLD_CHECK
+    } else {
+        base
+    }
+}
+
 fn toggle_service(
     cx: &mut App,
     kind: ServiceKind,
@@ -248,7 +336,7 @@ impl Render for ServicesIndicator {
         #[cfg(feature = "libre-services")]
         let listenbrainz = self.listenbrainz.read(cx).clone();
         let discord_rpc = self.discord_rpc.read(cx).clone();
-        let services = collect_services(
+        let mut services = collect_services(
             self.settings.read(cx),
             #[cfg(feature = "proprietary-services")]
             &lastfm,
@@ -258,7 +346,27 @@ impl Render for ServicesIndicator {
             #[cfg(feature = "proprietary-services")]
             is_available(),
         );
-        let indicator = indicator_icon(&services);
+        let mailboxes = cx.global::<Models>().mmbs.read(cx);
+        for entry in &mut services {
+            if let Some(failure) = mailboxes
+                .0
+                .get(entry.kind.mailbox_key())
+                .and_then(|mailbox| mailbox.failure())
+            {
+                entry.status = ServiceStatus::Disconnected;
+                entry.error = Some(delivery_failure_text(failure));
+            }
+        }
+        let source_failure = mailboxes
+            .0
+            .get(crate::services::mmb::source::MMBS_KEY)
+            .and_then(|mailbox| mailbox.failure());
+        let sources = self.settings.read(cx).services.libraries.clone();
+        let source_statuses = self.sources.read(cx).clone();
+        let mut indicator = source_indicator(indicator_icon(&services), &sources, &source_statuses);
+        if source_failure.is_some() && sources.iter().any(|source| source.enabled) {
+            indicator = WORLD_X;
+        }
         let show_popover = self.show_popover;
         let weak_self = cx.entity().downgrade();
 
@@ -285,7 +393,7 @@ impl Render for ServicesIndicator {
 
                 let mut menu_contents = menu();
 
-                if services.is_empty() {
+                if services.is_empty() && sources.is_empty() {
                     menu_contents = menu_contents.item(
                         menu_item(
                             "services-no-active",
@@ -350,6 +458,57 @@ impl Render for ServicesIndicator {
                                 .right_element(toggle_button),
                         );
                     }
+                }
+
+                for source in &sources {
+                    let state = source_statuses.get(&source.id);
+                    let dot = if source.enabled && source_failure.is_some() {
+                        StatusDotKind::Error
+                    } else {
+                        source_dot(source.enabled, state)
+                    };
+                    let title: SharedString = format!(
+                        "{} — {}",
+                        source.name,
+                        crate::ui::sources::status_text(source.enabled, state)
+                    )
+                    .into();
+                    let tooltip = source_failure.map(delivery_failure_text).or_else(|| {
+                        state
+                            .and_then(|state| {
+                                state
+                                    .sync_error
+                                    .as_ref()
+                                    .or(state.reporting_error.as_ref())
+                                    .or(state.live_reporting_error.as_ref())
+                            })
+                            .map(crate::ui::sources::error_text)
+                    });
+                    let refresh_source = source.id.clone();
+                    let refresh = crate::ui::components::button::button()
+                        .id(SharedString::from(format!(
+                            "source-header-refresh-{}",
+                            source.id
+                        )))
+                        .on_click(move |_, _, cx| {
+                            let _ = cx
+                                .global::<crate::ui::sources::SourceModels>()
+                                .service
+                                .refresh(refresh_source.clone());
+                        })
+                        .child(tr!("SOURCE_REFRESH"));
+                    menu_contents = menu_contents.item(
+                        status_menu_item(
+                            SharedString::from(format!("source-header-{}", source.id)),
+                            dot,
+                            title,
+                            |_, _, cx| {
+                                open_settings_window_with_section(cx, SettingsSectionKind::Services)
+                            },
+                        )
+                        .tooltip(tooltip)
+                        .right_element(refresh),
+                    );
                 }
 
                 let open_settings_weak = weak_self.clone();
@@ -671,5 +830,50 @@ mod tests {
             services[0].error.as_ref().map(|s| s.as_ref()),
             Some("pipe closed")
         );
+    }
+}
+
+#[cfg(test)]
+mod source_status_tests {
+    use super::{WORLD, WORLD_CHECK, WORLD_X, source_indicator};
+    use crate::sources::{
+        backend::{BackendError, BackendErrorKind},
+        config::SourceConfig,
+        registry::{ConnectionState, SourceStatus},
+    };
+    #[test]
+    fn source_health_keeps_pending_disabled_and_failed_states_distinct() {
+        let mut config = SourceConfig::default();
+        let mut states = std::collections::HashMap::new();
+        assert_eq!(source_indicator(WORLD, &[config.clone()], &states), WORLD);
+        let mut state = SourceStatus {
+            failed_reports: 0,
+            state: ConnectionState::Connected,
+            syncing: false,
+            indexed_tracks: 10,
+            pending_reports: 0,
+            sync_error: None,
+            reporting_error: None,
+            live_reporting_error: None,
+            info: None,
+            last_success_at: None,
+        };
+        states.insert(config.id.clone(), state.clone());
+        assert_eq!(
+            source_indicator(WORLD, &[config.clone()], &states),
+            WORLD_CHECK
+        );
+        state.sync_error = Some(BackendError::new(BackendErrorKind::Network));
+        states.insert(config.id.clone(), state.clone());
+        assert_eq!(source_indicator(WORLD, &[config.clone()], &states), WORLD_X);
+        state.syncing = true;
+        states.insert(config.id.clone(), state);
+        assert_eq!(source_indicator(WORLD, &[config.clone()], &states), WORLD);
+        config.enabled = false;
+        assert_eq!(
+            source_indicator(WORLD_CHECK, &[config.clone()], &states),
+            WORLD_CHECK
+        );
+        assert_eq!(source_indicator(WORLD_X, &[config], &states), WORLD_X);
     }
 }

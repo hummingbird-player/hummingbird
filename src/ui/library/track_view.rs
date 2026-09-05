@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use tracing::debug;
 
@@ -11,7 +7,6 @@ use gpui::{prelude::FluentBuilder, *};
 use crate::{
     library::{
         db::LibraryAccess,
-        scan::ScanEvent,
         types::{
             Track,
             table::{TrackColumn, track_table_sort},
@@ -37,7 +32,7 @@ pub struct TrackView {
 impl TrackView {
     pub(super) fn new(cx: &mut App, initial_scroll_offset: Option<f32>) -> Entity<Self> {
         cx.new(|cx| {
-            let state = cx.global::<Models>().scan_state.clone();
+            let state = cx.global::<Models>().library_change.clone();
 
             let table_settings = cx.global::<Models>().table_settings.clone();
             let initial_settings = table_settings
@@ -94,19 +89,8 @@ impl TrackView {
 
             let table_clone = table.clone();
 
-            cx.observe(&state, move |_: &mut TrackView, e, cx| {
-                let value = e.read(cx);
-                match value {
-                    ScanEvent::ScanCompleteIdle
-                    | ScanEvent::ScanCompleteWatching
-                    | ScanEvent::TargetedRescanComplete => {
-                        table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
-                    }
-                    ScanEvent::ScanProgress { current, .. } if current % 100 == 0 => {
-                        table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
-                    }
-                    _ => {}
-                }
+            cx.observe(&state, move |_, _, cx| {
+                table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
             })
             .detach();
 
@@ -156,10 +140,10 @@ fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Ve
         Ok(rows) => {
             let availability = snapshot(cx);
             rows.into_iter()
-                .filter(|(_, _, _, path)| availability.is_track_path_available(Path::new(path)))
-                .map(|(id, _, album_id, path)| {
-                    QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
+                .filter(|(_, _, _, path, present)| {
+                    availability.is_indexed_track_available(path, *present)
                 })
+                .map(|(id, _, album_id, path, _)| QueueItemData::new(cx, path, Some(id), album_id))
                 .collect()
         }
         Err(e) => {

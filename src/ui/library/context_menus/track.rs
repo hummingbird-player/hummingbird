@@ -67,18 +67,32 @@ impl RenderOnce for TrackContextMenu {
         let track_for_album = self.track.clone();
         let track_for_reveal = self.track.clone();
         let track_for_rescan = self.track.clone();
+        let can_rescan = self.track.reference.source().is_local();
         let can_go_to_artist = self.context.show_go_to_artist
             && cx
                 .artist_ids_for_track(track_for_artist.id)
                 .is_ok_and(|ids| !ids.is_empty());
         let can_go_to_album = track_for_album.album_id.is_some();
-        let can_reveal_track = is_track_path_available(cx, track_for_reveal.location.as_path());
+        let can_reveal_track = track_for_reveal
+            .reference
+            .local_path()
+            .is_some_and(|path| is_track_path_available(cx, path));
         let show_add_to = self.show_add_to;
         let play_from_here = self.context.play_from_here.clone();
         let playlist_info = self.playlist_info;
         let is_available = self.is_available;
         let is_liked = self.is_liked;
         let like_track_id = self.track.id;
+        let download_reference = self.track.reference.clone();
+        let download_title = self.track.title.0.clone();
+        let remove_reference = self.track.reference.clone();
+        let show_reference = self.track.reference.clone();
+        let cached = crate::ui::availability::snapshot(cx).is_cached(&show_reference);
+        let downloading = cx
+            .global::<crate::ui::sources::SourceModels>()
+            .downloads
+            .read(cx)
+            .contains_key(&download_reference);
 
         menu()
             .item(
@@ -122,6 +136,54 @@ impl RenderOnce for TrackContextMenu {
                 .disabled(!is_available),
             )
             .item(menu_separator())
+            .when(!can_rescan, |menu| {
+                menu.item(
+                    menu_item(
+                        "track_download",
+                        None::<SharedString>,
+                        if downloading {
+                            tr!("SOURCE_CANCEL_DOWNLOAD", "Cancel download")
+                        } else {
+                            tr!("SOURCE_DOWNLOAD", "Download for offline")
+                        },
+                        move |_, _, cx| {
+                            if downloading {
+                                crate::ui::sources::downloads::cancel(&download_reference, cx);
+                            } else {
+                                crate::ui::sources::downloads::start(
+                                    download_reference.clone(),
+                                    download_title.clone(),
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .disabled(!downloading && !is_available),
+                )
+                .item(
+                    menu_item(
+                        "track_remove_download",
+                        None::<SharedString>,
+                        tr!("SOURCE_REMOVE_DOWNLOAD", "Remove downloaded copy"),
+                        move |_, _, cx| {
+                            crate::ui::sources::downloads::remove(remove_reference.clone(), cx)
+                        },
+                    )
+                    .disabled(!cached),
+                )
+                .item(
+                    menu_item(
+                        "track_show_download",
+                        Some(FOLDER_SEARCH),
+                        tr!("SOURCE_SHOW_DOWNLOAD", "Show downloaded file"),
+                        move |_, _, cx| {
+                            crate::ui::sources::downloads::reveal(show_reference.clone(), cx)
+                        },
+                    )
+                    .disabled(!cached),
+                )
+                .item(menu_separator())
+            })
             .when(self.context.show_go_to_artist, |menu| {
                 menu.item(
                     menu_item(
@@ -156,72 +218,68 @@ impl RenderOnce for TrackContextMenu {
                     {
                         let track_for_reveal = track_for_reveal.clone();
                         move |_, _, cx| {
-                            reveal_path_for_file_manager(track_for_reveal.location.as_path(), cx);
+                            if let Some(path) = track_for_reveal.reference.local_path() {
+                                reveal_path_for_file_manager(path, cx);
+                            }
                         }
                     },
                 )
                 .disabled(!can_reveal_track),
             )
+            .item(
+                menu_item(
+                    "track_rescan",
+                    None::<SharedString>,
+                    tr!("RESCAN_TRACK", "Rescan track"),
+                    move |_, _, cx| {
+                        rescan_track(cx, &track_for_rescan);
+                    },
+                )
+                .disabled(!can_rescan),
+            )
+            .item(menu_separator())
             .item(menu_item(
-                "track_rescan",
-                None::<SharedString>,
-                tr!("RESCAN_TRACK", "Rescan track"),
+                "track_toggle_like",
+                Some(if is_liked.is_some() {
+                    STAR_FILLED
+                } else {
+                    STAR
+                }),
+                if is_liked.is_some() {
+                    tr!("UNLIKE")
+                } else {
+                    tr!("LIKE")
+                },
                 move |_, _, cx| {
-                    rescan_track(cx, &track_for_rescan);
+                    toggle_like_by_id(like_track_id, is_liked, cx);
                 },
             ))
-            .item(menu_separator())
-            .item(
-                menu_item(
-                    "track_toggle_like",
-                    Some(if is_liked.is_some() {
-                        STAR_FILLED
-                    } else {
-                        STAR
-                    }),
-                    if is_liked.is_some() {
-                        tr!("UNLIKE")
-                    } else {
-                        tr!("LIKE")
-                    },
-                    move |_, _, cx| {
-                        toggle_like_by_id(like_track_id, is_liked, cx);
-                    },
-                )
-                .disabled(!is_available),
-            )
-            .item(
-                menu_item(
-                    "track_add_to_playlist",
-                    Some(PLAYLIST_ADD),
-                    tr!("ADD_TO_PLAYLIST", "Add to playlist"),
-                    move |_, _, cx| {
-                        show_add_to.write(cx, true);
-                    },
-                )
-                .disabled(!is_available),
-            )
+            .item(menu_item(
+                "track_add_to_playlist",
+                Some(PLAYLIST_ADD),
+                tr!("ADD_TO_PLAYLIST", "Add to playlist"),
+                move |_, _, cx| {
+                    show_add_to.write(cx, true);
+                },
+            ))
             .when_some(playlist_info, |menu, info| {
                 let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
                 let pool = cx.global::<Pool>().0.clone();
 
-                menu.item(
-                    menu_item(
-                        "track_remove_from_playlist",
-                        Some(PLAYLIST_REMOVE),
-                        tr!("REMOVE_FROM_PLAYLIST", "Remove from playlist"),
-                        move |_, _, cx| {
-                            remove_from_playlist(
-                                info.item_id,
-                                info.id,
-                                pool.clone(),
-                                playlist_tracker.clone(),
-                                cx,
-                            );
-                        },
-                    )
-                    .disabled(!is_available),
-                )
+                menu.item(menu_item(
+                    "track_remove_from_playlist",
+                    Some(PLAYLIST_REMOVE),
+                    tr!("REMOVE_FROM_PLAYLIST", "Remove from playlist"),
+                    move |_, _, cx| {
+                        remove_from_playlist(
+                            info.item_id,
+                            info.id,
+                            pool.clone(),
+                            playlist_tracker.clone(),
+                            cx,
+                        );
+                    },
+                ))
             })
     }
 }

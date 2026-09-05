@@ -110,19 +110,26 @@ pub fn create_settings(path: &PathBuf) -> SettingsLoadOutcome {
 }
 
 pub fn save_settings(cx: &mut App, settings: &Settings) {
-    let playback = cx.global::<PlaybackInterface>();
-    playback.update_settings(settings.playback.clone());
-
-    let scan = cx.global::<ScanInterface>();
-    scan.update_settings(settings.scanning.clone());
-
-    let path = cx.global::<SettingsGlobal>().path.clone();
-
-    let result = File::create(path)
-        .and_then(|file| serde_json::to_writer_pretty(file, settings).map_err(|e| e.into()));
-    if let Err(e) = result {
-        warn!("Failed to save settings file: {e:?}");
+    if let Err(error) = try_save_settings(cx, settings) {
+        warn!("Failed to save settings file: {error:?}");
     }
+}
+
+/// Write a complete document before replacing the previous settings. Callers that
+/// expose a Save action can report failure without applying an unsaved draft.
+pub fn try_save_settings(cx: &mut App, settings: &Settings) -> std::io::Result<()> {
+    let path = cx.global::<SettingsGlobal>().path.clone();
+    let temporary = path.with_extension("json.tmp");
+    {
+        let file = File::create(&temporary)?;
+        serde_json::to_writer_pretty(file, settings)?;
+    }
+    fs::rename(&temporary, &path)?;
+    cx.global::<PlaybackInterface>()
+        .update_settings(settings.playback.clone());
+    cx.global::<ScanInterface>()
+        .update_settings(settings.scanning.clone());
+    Ok(())
 }
 
 pub struct SettingsGlobal {

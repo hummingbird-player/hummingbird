@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc};
+use std::rc::Rc;
 
 use cntp_i18n::tr;
 use gpui::prelude::FluentBuilder;
@@ -21,7 +21,7 @@ use super::{navigate_to_track_album, navigate_to_track_artist, track_show_in_fil
 
 #[derive(IntoElement)]
 pub struct InfoSectionContextMenu {
-    current_path: Option<PathBuf>,
+    current_path: Option<crate::sources::TrackRef>,
     track: Option<Rc<Track>>,
     is_liked: Option<i64>,
     show_add_to: Option<Entity<bool>>,
@@ -29,7 +29,7 @@ pub struct InfoSectionContextMenu {
 
 impl InfoSectionContextMenu {
     pub fn new(
-        current_path: Option<PathBuf>,
+        current_path: Option<crate::sources::TrackRef>,
         track: Option<Rc<Track>>,
         is_liked: Option<i64>,
         show_add_to: Option<Entity<bool>>,
@@ -48,7 +48,8 @@ impl RenderOnce for InfoSectionContextMenu {
         let reveal_path = self.current_path;
         let can_reveal_track = reveal_path
             .as_ref()
-            .is_some_and(|path| is_track_path_available(cx, path.as_path()));
+            .and_then(|reference| reference.local_path())
+            .is_some_and(|path| is_track_path_available(cx, path));
         let track = self.track;
 
         menu()
@@ -88,7 +89,10 @@ impl RenderOnce for InfoSectionContextMenu {
                     Some(FOLDER_SEARCH),
                     track_show_in_file_manager_label(),
                     move |_, _, cx| {
-                        if let Some(path) = reveal_path.as_ref() {
+                        if let Some(path) = reveal_path
+                            .as_ref()
+                            .and_then(|reference| reference.local_path())
+                        {
                             reveal_path_for_file_manager(path, cx);
                         }
                     },

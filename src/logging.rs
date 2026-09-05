@@ -57,6 +57,9 @@ pub fn init() -> anyhow::Result<()> {
     });
 
     let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::filter_fn(
+            allow_network_diagnostic,
+        ))
         .with(stderr_layer)
         .with(file_layer);
 
@@ -65,6 +68,17 @@ pub fn init() -> anyhow::Result<()> {
 
     subscriber.init();
     Ok(())
+}
+
+/// HTTP debug/trace records can include signed URLs and complete headers, even
+/// when our own request/error types are redacted. Apply this globally, after any
+/// user filter's choice of verbosity, so diagnostics cannot persist credentials.
+fn allow_network_diagnostic(metadata: &tracing::Metadata<'_>) -> bool {
+    *metadata.level() <= tracing::Level::INFO
+        || !matches!(
+            metadata.target().split("::").next(),
+            Some("zed_reqwest" | "reqwest" | "hyper" | "hyper_util" | "h2")
+        )
 }
 
 /// Flushes stderr and the active log file.
@@ -384,5 +398,49 @@ mod tests {
 
         let file = fs::read_to_string(&active_path).unwrap();
         assert!(file.contains("integration log test"));
+    }
+
+    #[test]
+    fn verbose_logging_excludes_signed_http_urls_in_tracing_and_log_records() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::filter::filter_fn(
+                allow_network_diagnostic,
+            ))
+            .with(
+                fmt::layer()
+                    .with_writer(TestStderrMakeWriter::capture(buffer.clone()))
+                    .without_time()
+                    .with_filter(tracing_subscriber::EnvFilter::new("trace")),
+            );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "hummingbird::playback", "useful playback diagnostics");
+            tracing::warn!(target: "zed_reqwest::connect", "connection warning");
+            tracing::trace!(target: "hyper::client", "HTTP header private-token");
+            tracing_log::format_trace(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!(
+                        "redirecting to https://server.test/?apiKey=private-token"
+                    ))
+                    .level(tracing_log::log::Level::Debug)
+                    .target("zed_reqwest::async_impl::client")
+                    .build(),
+            )
+            .unwrap();
+            tracing_log::format_trace(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("application log record"))
+                    .level(tracing_log::log::Level::Debug)
+                    .target("hummingbird::playback")
+                    .build(),
+            )
+            .unwrap();
+        });
+        let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("useful playback diagnostics"));
+        assert!(text.contains("application log record"));
+        assert!(text.contains("connection warning"));
+        assert!(!text.contains("private-token"));
+        assert!(!text.contains("server.test"));
     }
 }

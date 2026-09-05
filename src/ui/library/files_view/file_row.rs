@@ -279,7 +279,9 @@ impl Render for FileRowItem {
                 .current_track
                 .read(cx)
                 .as_ref()
-                .is_some_and(|current| current == path.as_ref());
+                .is_some_and(|current| {
+                    current.get_track_ref().local_path() == Some(path.as_path())
+                });
 
         let theme = cx.global::<Theme>();
         let bg = if is_selected {

@@ -20,6 +20,7 @@ use crate::{
     playback::queue::QueueItemData,
     ui::{
         app::Pool,
+        availability::snapshot,
         caching::hummingbird_cache,
         command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
@@ -101,7 +102,7 @@ pub struct PlaylistTrackItem {
     /// Track info for drag data
     track_id: i64,
     album_id: Option<i64>,
-    track_path: std::path::PathBuf,
+    track_path: crate::sources::TrackRef,
     drag_enabled: bool,
 }
 
@@ -117,7 +118,7 @@ impl PlaylistTrackItem {
         list_id: gpui::ElementId,
         track_id: i64,
         album_id: Option<i64>,
-        track_path: std::path::PathBuf,
+        track_path: crate::sources::TrackRef,
         drag_enabled: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -218,9 +219,7 @@ impl PlaylistView {
             cx.subscribe(
                 &playlist_tracker,
                 move |this: &mut Self, _, ev: &PlaylistEvent, cx| {
-                    if let PlaylistEvent::PlaylistUpdated(id) = ev
-                        && *id == this.playlist.id
-                    {
+                    if ev.updates(this.playlist.id) {
                         this.playlist = cx.get_playlist(this.playlist.id).unwrap();
                         this.playlist_track_ids = cx
                             .get_playlist_tracks_sorted(this.playlist.id, this.sort_method)
@@ -231,6 +230,25 @@ impl PlaylistView {
                     }
                 },
             )
+            .detach();
+
+            let library_change = cx.global::<Models>().library_change.clone();
+            let mut completion = library_change.read(cx).completed;
+            cx.observe(&library_change, move |this: &mut Self, change, cx| {
+                if change.read(cx).take_completion(&mut completion) {
+                    if let Ok(playlist) = cx.get_playlist(this.playlist.id) {
+                        this.playlist = playlist;
+                    }
+                    if let Ok(tracks) =
+                        cx.get_playlist_tracks_sorted(this.playlist.id, this.sort_method)
+                    {
+                        this.playlist_track_ids = tracks;
+                    }
+                    this.views = cx.new(|_| FxHashMap::default());
+                    this.render_counter = cx.new(|_| 0);
+                    cx.notify();
+                }
+            })
             .detach();
 
             cx.observe(&drag_drop_manager, |_, _, cx| {
@@ -658,14 +676,16 @@ impl Render for PlaylistView {
                                                         )
                                                         .unwrap_or_default();
 
-                                                     playlist_tracks
+                                                    let availability = snapshot(cx);
+                                                    playlist_tracks
                                                         .iter()
+                                                        .filter(|row| availability.is_indexed_track_available(&row.reference, row.present))
                                                         .map(|row| {
                                                             QueueItemData::new(
                                                                 cx,
-                                                                row.location.clone().into(),
+                                                                row.reference.clone(),
                                                                 Some(row.track_id),
-                                                                Some(row.album_id),
+                                                                row.album_id,
                                                             )
                                                         })
                                                         .collect()
@@ -927,7 +947,7 @@ impl Render for PlaylistView {
                                                         let track = cx.get_track_by_id(track_id).unwrap();
                                                         let track_title: SharedString =
                                                             track.title.clone().into();
-                                                        let track_path = track.location.clone();
+                                                        let track_path = track.reference.clone();
                                                         let album_id = track.album_id;
 
                                                         let track_item = TrackItem::new(
@@ -985,16 +1005,11 @@ impl Render for PlaylistView {
 
 pub fn find_playlist_tracks(cx: &mut App, playlist_id: i64) -> Vec<QueueItemData> {
     let playlist_tracks = cx.get_playlist_tracks(playlist_id).unwrap_or_default();
+    let availability = snapshot(cx);
 
     playlist_tracks
         .iter()
-        .map(|row| {
-            QueueItemData::new(
-                cx,
-                row.location.clone().into(),
-                Some(row.track_id),
-                Some(row.album_id),
-            )
-        })
+        .filter(|row| availability.is_indexed_track_available(&row.reference, row.present))
+        .map(|row| QueueItemData::new(cx, row.reference.clone(), Some(row.track_id), row.album_id))
         .collect()
 }

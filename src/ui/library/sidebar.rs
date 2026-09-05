@@ -51,7 +51,7 @@ impl Sidebar {
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
 
-            let scan_state = cx.global::<Models>().scan_state.clone();
+            let scan_state = cx.global::<Models>().library_change.clone();
 
             cx.observe(&scan_state, |this: &mut Self, _, cx| {
                 this.track_stats = cx.get_track_stats().unwrap();

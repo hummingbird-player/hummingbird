@@ -62,7 +62,7 @@ impl Render for CorruptSettingsDialog {
                 CROSS,
                 tr!("SETTINGS_CORRUPT_DIALOG_QUIT", "Quit"),
                 ButtonIntent::Danger,
-                |_, _, cx| cx.quit(),
+                |_, _, cx| crate::ui::app::request_quit(cx),
             )
             .subtitle(tr!(
                 "SETTINGS_CORRUPT_DIALOG_QUIT_SUBTITLE",

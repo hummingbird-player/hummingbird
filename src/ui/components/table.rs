@@ -2,6 +2,7 @@ mod column_resize_handle;
 pub mod grid_item;
 pub mod table_data;
 
+mod reload;
 mod table_item;
 
 use std::{rc::Rc, sync::Arc};
@@ -52,7 +53,6 @@ pub enum TableViewMode {
     Grid,
 }
 
-#[derive(Clone)]
 pub struct Table<T, C>
 where
     T: TableData<C> + 'static,
@@ -70,6 +70,8 @@ where
     grid_scroll_handle: UniformListScrollHandle,
 
     items: Option<Arc<Vec<T::Identifier>>>,
+    reload: reload::Reload,
+    rows_task: Option<Task<()>>,
     sort_method: Entity<Option<TableSort<C>>>,
     on_select: Option<OnSelectHandler<T, C>>,
     list_vertical_scroll_handle: UniformListScrollHandle,
@@ -140,18 +142,8 @@ where
                     });
             }
 
-            let items = T::get_rows(cx, None).ok().map(Arc::new);
-
-            cx.observe(&sort_method, |this: &mut Table<T, C>, sort, cx| {
-                let sort_method = *sort.read(cx);
-                let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
-                this.grid_views = cx.new(|_| FxHashMap::default());
-                this.items = items;
-
-                cx.notify();
+            cx.observe(&sort_method, |this: &mut Table<T, C>, _, cx| {
+                this.reload_rows(true, cx);
             })
             .detach();
 
@@ -183,20 +175,12 @@ where
 
             cx.subscribe(&cx.entity(), |this, _, event, cx| match event {
                 TableEvent::NewRows => {
-                    let sort_method = *this.sort_method.read(cx);
-                    let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                    this.views = cx.new(|_| FxHashMap::default());
-                    this.render_counter = cx.new(|_| 0);
-                    this.grid_views = cx.new(|_| FxHashMap::default());
-                    this.items = items;
-
-                    cx.notify();
+                    this.reload_rows(false, cx);
                 }
             })
             .detach();
 
-            Self {
+            let mut table = Self {
                 context_menu_context,
                 columns,
                 hidden_column_widths,
@@ -205,13 +189,47 @@ where
                 grid_views,
                 view_mode,
                 grid_scroll_handle,
-                items,
+                items: None,
+                reload: Default::default(),
+                rows_task: None,
                 sort_method,
                 on_select,
                 list_vertical_scroll_handle,
                 list_horizontal_scroll_handle,
-            }
+            };
+            table.reload_rows(false, cx);
+            table
         })
+    }
+
+    fn reload_rows(&mut self, sort_changed: bool, cx: &mut Context<Self>) {
+        let Some(sort_revision) = self.reload.request(sort_changed) else {
+            return;
+        };
+        let sort = *self.sort_method.read(cx);
+        let rows = T::get_rows(cx, sort);
+        self.rows_task = Some(cx.spawn(async move |this, cx| {
+            let result = rows.await;
+            let _ = this.update(cx, |this, cx| {
+                this.rows_task = None;
+                let (install, again) = this.reload.finish(sort_revision);
+                if install {
+                    match result {
+                        Ok(items) => {
+                            this.views = cx.new(|_| FxHashMap::default());
+                            this.render_counter = cx.new(|_| 0);
+                            this.grid_views = cx.new(|_| FxHashMap::default());
+                            this.items = Some(Arc::new(items));
+                            cx.notify();
+                        }
+                        Err(_) => tracing::warn!("Failed to refresh library table rows"),
+                    }
+                }
+                if again {
+                    this.reload_rows(false, cx);
+                }
+            });
+        }));
     }
 
     pub fn get_scroll_offset(&self, cx: &App) -> f32 {

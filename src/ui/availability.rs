@@ -26,24 +26,35 @@ pub fn is_track_path_available<C: AppContext>(cx: &C, path: &Path) -> bool {
     })
 }
 
+pub fn is_reference_available<C: AppContext>(cx: &C, reference: &crate::sources::TrackRef) -> bool {
+    cx.read_global(|models: &Models, app| {
+        models.availability.read(app).is_track_available(reference)
+    })
+}
+
 pub fn is_track_available<C: AppContext>(cx: &C, track: &Track) -> bool {
-    is_track_path_available(cx, &track.location)
+    cx.read_global(|models: &Models, app| {
+        models
+            .availability
+            .read(app)
+            .is_indexed_track_available(&track.reference, track.present)
+    })
 }
 
 pub fn has_available_tracks<C: AppContext>(cx: &C, tracks: &[Track]) -> bool {
     let availability = snapshot(cx);
     tracks
         .iter()
-        .any(|track| availability.is_track_path_available(&track.location))
+        .any(|track| availability.is_indexed_track_available(&track.reference, track.present))
 }
 
 pub fn album_has_available_tracks(cx: &mut App, album_id: i64) -> bool {
     let availability = snapshot(cx);
     cx.list_tracks_in_album(album_id)
         .map(|tracks| {
-            tracks
-                .iter()
-                .any(|track| availability.is_track_path_available(&track.location))
+            tracks.iter().any(|track| {
+                availability.is_indexed_track_available(&track.reference, track.present)
+            })
         })
         .unwrap_or_default()
 }
@@ -52,9 +63,9 @@ pub fn artist_has_available_tracks(cx: &mut App, artist_id: i64) -> bool {
     let availability = snapshot(cx);
     cx.get_all_tracks_by_artist(artist_id)
         .map(|tracks| {
-            tracks
-                .iter()
-                .any(|track| availability.is_track_path_available(&track.location))
+            tracks.iter().any(|track| {
+                availability.is_indexed_track_available(&track.reference, track.present)
+            })
         })
         .unwrap_or_default()
 }

@@ -48,6 +48,7 @@ impl RenderOnce for AlbumContextMenu {
         let album_for_queue = self.album.clone();
         let album_for_artist = self.album.clone();
         let album_for_rescan = self.album.clone();
+        let can_rescan = self.album.source.is_local();
         let show_add_to = self.show_add_to;
         let show_go_to_artist = self.context.show_go_to_artist;
         let is_available = album_has_available_tracks(cx, album.id);
@@ -100,14 +101,17 @@ impl RenderOnce for AlbumContextMenu {
                 },
             ))
             .item(menu_separator())
-            .item(menu_item(
-                "album_rescan",
-                None::<gpui::SharedString>,
-                tr!("RESCAN_ALBUM", "Rescan album"),
-                move |_, _, cx| {
-                    rescan_album(cx, &album_for_rescan);
-                },
-            ));
+            .item(
+                menu_item(
+                    "album_rescan",
+                    None::<gpui::SharedString>,
+                    tr!("RESCAN_ALBUM", "Rescan album"),
+                    move |_, _, cx| {
+                        rescan_album(cx, &album_for_rescan);
+                    },
+                )
+                .disabled(!can_rescan),
+            );
 
         if show_go_to_artist {
             menu.item(menu_separator()).item(menu_item(

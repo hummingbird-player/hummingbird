@@ -22,6 +22,7 @@ fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
         ..
     } = stream.read_metadata()?;
     let ui_data = QueueItemUIData {
+        track_id: None,
         name: name.as_ref().map(Into::into),
         artist_name: artist.as_ref().or(album_artist.as_ref()).map(Into::into),
         source: DataSource::Metadata,
@@ -43,7 +44,11 @@ impl Decode for App {
             let task = crate::RUNTIME.spawn_blocking(move || read_metadata(&path));
             match task.err_into().await.flatten() {
                 Err(err) => error!(parent: span, ?err, "Failed to read metadata: {err}"),
-                Ok(metadata) => entity.update(cx, |m, cx| {
+                Ok(mut metadata) => entity.update(cx, |m, cx| {
+                    if let Some(indexed) = m.as_ref() {
+                        metadata.track_id = indexed.track_id;
+                        metadata.album_id = indexed.album_id;
+                    }
                     *m = Some(metadata);
                     cx.notify();
                 }),

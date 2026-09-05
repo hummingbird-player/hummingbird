@@ -232,7 +232,7 @@ pub fn register_actions(cx: &mut App) {
 
 fn quit(_: &Quit, cx: &mut App) {
     info!("Quitting...");
-    cx.quit();
+    crate::ui::app::request_quit(cx);
 }
 
 fn close_window(_: &CloseWindow, cx: &mut App) {
@@ -254,7 +254,7 @@ fn play_pause(_: &PlayPause, cx: &mut App) {
         PlaybackState::Stopped => {
             interface.play();
         }
-        PlaybackState::Playing => {
+        PlaybackState::Playing | PlaybackState::Buffering => {
             interface.pause();
         }
         PlaybackState::Paused => {
@@ -373,7 +373,7 @@ fn shuffle_all(_: &ShuffleAll, cx: &mut App) {
     if let Ok(tracks) = cx.get_all_tracks() {
         let tracks = tracks
             .into_iter()
-            .map(|v| QueueItemData::new(cx, v.0.into(), Some(v.1), Some(v.2)))
+            .map(|v| QueueItemData::new(cx, v.0, Some(v.1), v.2))
             .collect();
 
         let interface = cx.global::<PlaybackInterface>();

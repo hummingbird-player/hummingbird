@@ -1,3 +1,4 @@
+use crate::sources::TrackRef;
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
 use std::fs::{File, OpenOptions};
 use std::{
@@ -11,7 +12,7 @@ use gpui::{
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
 use tracing::error;
 use tracing::{debug, warn};
@@ -40,8 +41,8 @@ use crate::{
         thread::PlaybackState,
     },
     services::mmb::{
-        MediaMetadataBroadcastService,
         discord::{self, Discord, DiscordRpcStatus},
+        mailbox::Mailbox,
     },
     settings::{
         SettingsGlobal,
@@ -85,6 +86,25 @@ pub enum SettingsHealth {
 // Click position and artist choices for the artist picker overlay
 pub type ArtistPickerState = Option<(Point<Pixels>, Vec<(i64, SharedString)>)>;
 
+/// Database content changed independently of any scanner's progress state.
+/// Partial batches update listings; expensive detail/search caches wait for completion.
+#[derive(Clone, Copy, Default)]
+pub struct LibraryChange {
+    pub completed: u64,
+}
+impl LibraryChange {
+    pub fn record(&mut self, complete: bool) {
+        if complete {
+            self.completed = self.completed.wrapping_add(1);
+        }
+    }
+    pub fn take_completion(&self, observed: &mut u64) -> bool {
+        let changed = *observed != self.completed;
+        *observed = self.completed;
+        changed
+    }
+}
+
 pub struct Models {
     pub metadata: Entity<Metadata>,
     pub albumart: Entity<Option<Arc<RenderImage>>>,
@@ -92,6 +112,7 @@ pub struct Models {
     pub queue: Entity<Queue>,
     pub availability: Entity<AvailabilityState>,
     pub scan_state: Entity<ScanEvent>,
+    pub library_change: Entity<LibraryChange>,
     pub settings_health: Entity<SettingsHealth>,
     pub mmbs: Entity<MMBSList>,
     #[cfg(feature = "proprietary-services")]
@@ -123,26 +144,27 @@ pub struct Models {
 impl Global for Models {}
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
-pub struct CurrentTrack(PathBuf);
+pub struct CurrentTrack(TrackRef);
 
 impl CurrentTrack {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: TrackRef) -> Self {
         CurrentTrack(path)
     }
 
-    pub fn get_path(&self) -> &PathBuf {
+    pub fn get_track_ref(&self) -> &TrackRef {
         &self.0
     }
 }
 
-impl PartialEq<std::path::PathBuf> for CurrentTrack {
-    fn eq(&self, other: &std::path::PathBuf) -> bool {
+impl PartialEq<TrackRef> for CurrentTrack {
+    fn eq(&self, other: &TrackRef) -> bool {
         &self.0 == other
     }
 }
 
 #[derive(Clone)]
 pub struct PlaybackInfo {
+    pub encoded_audio: Entity<Option<crate::media::format::EncodedAudioInfo>>,
     pub position: Entity<u64>,
     pub duration: Entity<u64>,
     pub playback_state: Entity<PlaybackState>,
@@ -171,17 +193,44 @@ pub struct Queue {
 
 impl EventEmitter<(PathBuf, QueueItemUIData)> for Queue {}
 
-#[derive(Clone)]
-pub struct MMBSList(pub FxHashMap<String, Arc<Mutex<dyn MediaMetadataBroadcastService + Send>>>);
-
-#[derive(Clone)]
-pub enum MMBSEvent {
-    NewTrack(PathBuf),
-    MetadataRecieved(Arc<Metadata>),
-    StateChanged(PlaybackState),
-    PositionChanged(u64),
-    DurationChanged(u64),
+#[derive(Clone, Default)]
+pub struct MMBSList(
+    pub FxHashMap<String, Mailbox>,
+    pub crate::services::mmb::mailbox::hub::Hub,
+);
+impl MMBSList {
+    pub fn insert(&mut self, key: String, mailbox: Mailbox, cx: &mut Context<Self>) {
+        let mut failure = mailbox.subscribe_failure();
+        let observed_key = key.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let error = *failure.borrow_and_update();
+                if let Some(error) = error {
+                    let _ = this.update(cx, |list, cx| {
+                    if list.0.get(&observed_key).and_then(Mailbox::failure) != Some(error) {
+                        return;
+                    }
+                    crate::toasts::emit_toast(crate::toasts::Toast::error(cntp_i18n::tr!(
+                        "SERVICE_DELIVERY_STOPPED",
+                        "A service stopped receiving playback updates. Check Services for details."
+                    )));
+                    cx.notify();
+                    });
+                    break;
+                }
+                if failure.changed().await.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        self.1.insert(key.clone(), mailbox.clone());
+        self.0.insert(key, mailbox);
+        cx.notify();
+    }
 }
+
+pub use crate::services::mmb::mailbox::Event as MMBSEvent;
 
 impl EventEmitter<MMBSEvent> for MMBSList {}
 
@@ -191,6 +240,14 @@ pub struct PlaylistInfoTransfer;
 pub enum PlaylistEvent {
     PlaylistUpdated(i64),
     PlaylistDeleted(i64),
+    MembershipChanged,
+}
+
+impl PlaylistEvent {
+    pub fn updates(&self, playlist_id: i64) -> bool {
+        matches!(self, Self::MembershipChanged)
+            || matches!(self, Self::PlaylistUpdated(id) if *id == playlist_id)
+    }
 }
 
 impl EventEmitter<PlaylistEvent> for PlaylistInfoTransfer {}
@@ -229,10 +286,7 @@ fn sync_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
         return;
     };
 
-    crate::RUNTIME.spawn(async move {
-        let mut discord = discord.lock().await;
-        discord.set_enabled(enabled).await;
-    });
+    discord.set_enabled(enabled);
 }
 
 fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitchMessage {
@@ -263,6 +317,41 @@ fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitc
     }
 }
 
+#[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+#[derive(Default)]
+struct ForwardingPolicies {
+    #[cfg(feature = "proprietary-services")]
+    lastfm: Arc<crate::services::mmb::forwarding::Policy>,
+    #[cfg(feature = "libre-services")]
+    listenbrainz: Arc<crate::services::mmb::forwarding::Policy>,
+}
+#[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+impl Global for ForwardingPolicies {}
+#[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+fn sync_forwarding_policies(cx: &App) {
+    let libraries = &cx
+        .global::<SettingsGlobal>()
+        .model
+        .read(cx)
+        .services
+        .libraries;
+    let policies = cx.global::<ForwardingPolicies>();
+    #[cfg(feature = "proprietary-services")]
+    policies.lastfm.configure(
+        libraries
+            .iter()
+            .filter(|source| !source.exclude_lastfm)
+            .map(|source| source.id.clone()),
+    );
+    #[cfg(feature = "libre-services")]
+    policies.listenbrainz.configure(
+        libraries
+            .iter()
+            .filter(|source| !source.exclude_listenbrainz)
+            .map(|source| source.id.clone()),
+    );
+}
+
 pub fn build_models(
     cx: &mut App,
     queue: Queue,
@@ -272,6 +361,11 @@ pub fn build_models(
     initial_repeat: RepeatState,
 ) {
     debug!("Building models");
+    #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+    {
+        cx.set_global(ForwardingPolicies::default());
+        sync_forwarding_policies(cx);
+    }
     let metadata: Entity<Metadata> = cx.new(|_| Metadata::default());
     let albumart: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
     let albumart_original: Entity<Option<Arc<RenderImage>>> = cx.new(|_| None);
@@ -287,12 +381,31 @@ pub fn build_models(
         .collect::<Vec<_>>();
     let availability = cx.new(|_| AvailabilityState::new(availability_roots));
     let scan_state: Entity<ScanEvent> = cx.new(|_| ScanEvent::ScanCompleteIdle);
+    let library_change = cx.new(|_| LibraryChange::default());
+    let changes = library_change.clone();
+    cx.observe(&scan_state, move |event, cx| {
+        let complete = matches!(
+            event.read(cx),
+            ScanEvent::ScanCompleteIdle
+                | ScanEvent::ScanCompleteWatching
+                | ScanEvent::TargetedRescanComplete
+        );
+        let partial =
+            matches!(event.read(cx), ScanEvent::ScanProgress {current,..} if current % 100 == 0);
+        if complete || partial {
+            changes.update(cx, |change, cx| {
+                change.record(complete);
+                cx.notify();
+            });
+        }
+    })
+    .detach();
     let initial_corrupt_path = cx.global::<SettingsGlobal>().initial_corrupt_path.clone();
     let settings_health: Entity<SettingsHealth> = cx.new(|_| match initial_corrupt_path {
         Some(path) => SettingsHealth::Corrupt { path },
         None => SettingsHealth::Ok,
     });
-    let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList(FxHashMap::default()));
+    let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList::default());
     let show_about: Entity<bool> = cx.new(|_| false);
     #[cfg(feature = "proprietary-services")]
     let lastfm: Entity<LastFMState> = cx.new(|cx| {
@@ -384,6 +497,8 @@ pub fn build_models(
     #[cfg(feature = "libre-services")]
     let listenbrainz_sync_mmbs = mmbs.clone();
     cx.observe(&settings_model, move |_, cx| {
+        #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+        sync_forwarding_policies(cx);
         sync_discord_mmbs(cx, &discord_mmbs);
         #[cfg(feature = "proprietary-services")]
         sync_lastfm_mmbs(cx, &lastfm_sync_mmbs, lastfm_enabled(cx));
@@ -463,22 +578,7 @@ pub fn build_models(
     cx.subscribe(&mmbs, |m, ev, cx| {
         let list = m.read(cx);
 
-        // cloning actually is neccesary because of the async move closure
-        #[allow(clippy::unnecessary_to_owned)]
-        for mmbs in list.0.values().cloned() {
-            let ev = ev.clone();
-            crate::RUNTIME.spawn(async move {
-                let mut borrow = mmbs.lock().await;
-                match ev {
-                    MMBSEvent::NewTrack(path) => borrow.new_track(path),
-                    MMBSEvent::MetadataRecieved(metadata) => borrow.metadata_recieved(metadata),
-                    MMBSEvent::StateChanged(state) => borrow.state_changed(state),
-                    MMBSEvent::PositionChanged(position) => borrow.position_changed(position),
-                    MMBSEvent::DurationChanged(duration) => borrow.duration_changed(duration),
-                }
-                .await;
-            });
-        }
+        list.1.send(ev.clone());
     })
     .detach();
 
@@ -559,6 +659,7 @@ pub fn build_models(
         queue,
         availability,
         scan_state,
+        library_change,
         settings_health,
         mmbs,
         #[cfg(feature = "proprietary-services")]
@@ -602,8 +703,10 @@ pub fn build_models(
     let volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let sample_rate: Entity<u32> = cx.new(|_| 0);
+    let encoded_audio = cx.new(|_| None);
 
     cx.set_global(PlaybackInfo {
+        encoded_audio,
         position,
         duration,
         playback_state,
@@ -626,9 +729,14 @@ pub fn create_last_fm_mmbs(
 ) {
     let mut client = LastFMClient::from_global().expect("creds known to be valid at this point");
     client.set_session(session);
-    let mmbs = LastFM::new(client, enabled);
-    mmbs_list.update(cx, |m, _| {
-        m.0.insert(lastfm::MMBS_KEY.to_string(), Arc::new(Mutex::new(mmbs)));
+    let mmbs = LastFM::new(client, enabled)
+        .with_forwarding(cx.global::<ForwardingPolicies>().lastfm.clone());
+    mmbs_list.update(cx, |m, cx| {
+        m.insert(
+            lastfm::MMBS_KEY.to_string(),
+            Mailbox::spawn(mmbs, crate::RUNTIME.handle()),
+            cx,
+        );
     });
 }
 
@@ -639,10 +747,7 @@ pub fn sync_lastfm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: boo
         return;
     };
 
-    crate::RUNTIME.spawn(async move {
-        let mut lastfm = lastfm.lock().await;
-        lastfm.set_enabled(enabled).await;
-    });
+    lastfm.set_enabled(enabled);
 }
 
 #[cfg(feature = "libre-services")]
@@ -653,11 +758,13 @@ pub fn create_listenbrainz_mmbs(
     enabled: bool,
 ) {
     let client = ListenBrainzClient::new(token);
-    let mmbs = ListenBrainz::new(client, enabled);
-    mmbs_list.update(cx, |m, _| {
-        m.0.insert(
+    let mmbs = ListenBrainz::new(client, enabled)
+        .with_forwarding(cx.global::<ForwardingPolicies>().listenbrainz.clone());
+    mmbs_list.update(cx, |m, cx| {
+        m.insert(
             listenbrainz::MMBS_KEY.to_string(),
-            Arc::new(Mutex::new(mmbs)),
+            Mailbox::spawn(mmbs, crate::RUNTIME.handle()),
+            cx,
         );
     });
 }
@@ -669,10 +776,7 @@ pub fn sync_listenbrainz_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enable
         return;
     };
 
-    crate::RUNTIME.spawn(async move {
-        let mut listenbrainz = listenbrainz.lock().await;
-        listenbrainz.set_enabled(enabled).await;
-    });
+    listenbrainz.set_enabled(enabled);
 }
 
 pub fn create_discord_mmbs(
@@ -682,8 +786,12 @@ pub fn create_discord_mmbs(
     status_tx: watch::Sender<DiscordRpcStatus>,
 ) {
     let mmbs = Discord::new(enabled, status_tx);
-    mmbs_list.update(cx, |m, _| {
-        m.0.insert(discord::MMBS_KEY.to_string(), Arc::new(Mutex::new(mmbs)));
+    mmbs_list.update(cx, |m, cx| {
+        m.insert(
+            discord::MMBS_KEY.to_string(),
+            Mailbox::spawn(mmbs, crate::RUNTIME.handle()),
+            cx,
+        );
     });
 }
 
@@ -865,7 +973,7 @@ pub(crate) fn subscribe_liked_updates<E>(
 {
     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
     cx.subscribe(&playlist_tracker, move |this, _, ev, cx| {
-        if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {
+        if !ev.updates(LIKED_SONGS_PLAYLIST_ID) {
             return;
         }
         let new_liked = get_track_id(this).and_then(|id| {

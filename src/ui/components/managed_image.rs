@@ -25,6 +25,7 @@ use crate::{
 
 const SIZE_BUCKETS: [u32; 7] = [128, 192, 256, 384, 512, 768, 1024];
 const MAX_CONCURRENT_IMAGE_DECODES: usize = 4;
+type ImageSource = Arc<OnceLock<(crate::sources::SourceId, Option<(String, bool)>)>>;
 
 // A full-art decode can temporarily hold the encoded image, a 1024px RGBA image, and the
 // resized output. Keep scrolling from starting enough of these at once to inflate the heap.
@@ -97,6 +98,8 @@ impl ManagedImageKey {
     async fn retrieve(
         &self,
         pool: SqlitePool,
+        assets: Arc<crate::sources::assets::Assets>,
+        source: ImageSource,
         thumb: bool,
         max_px: Option<u32>,
     ) -> anyhow::Result<Option<Arc<RenderImage>>> {
@@ -147,10 +150,23 @@ impl ManagedImageKey {
                     }
                     (ManagedImageKey::TrackFile(_), _) => unreachable!(),
                 };
-                let Some((image_encoded,)): Option<(Option<Vec<u8>>,)> =
-                    sqlx::query_as(query).bind(id).fetch_optional(&pool).await?
-                else {
+                let row: Option<(Option<Vec<u8>>, crate::sources::SourceId)> =
+                    sqlx::query_as(query).bind(id).fetch_optional(&pool).await?;
+                let Some((image_encoded, source_id)) = row else {
                     return Ok(None);
+                };
+                let binding = assets.display_binding(&source_id);
+                let _ = source.set((source_id.clone(), binding.clone()));
+                let image_encoded = match image_encoded.filter(|bytes| !bytes.is_empty()) {
+                    Some(bytes) => Some(bytes),
+                    None => {
+                        use crate::sources::assets::ArtworkTarget;
+                        let target = match self {
+                            Self::Album(id) => ArtworkTarget::Album(*id),
+                            _ => ArtworkTarget::Track(*id),
+                        };
+                        assets.artwork(target, thumb).await?
+                    }
                 };
                 let Some(image_encoded) = image_encoded else {
                     return Ok(None);
@@ -165,6 +181,12 @@ impl ManagedImageKey {
                         decode_to_render_image(&image_encoded, max_px).map(Some)
                     })
                     .await??;
+                if !source_id.is_local() && assets.display_binding(&source_id) != binding {
+                    return Err(crate::sources::backend::BackendError::new(
+                        crate::sources::backend::BackendErrorKind::Cancelled,
+                    )
+                    .into());
+                }
 
                 Ok(image)
             }
@@ -181,9 +203,27 @@ struct ManagedImageState {
     image: Option<Arc<RenderImage>>,
     bridge: Option<ImageBridge>,
     retrieval: Option<AbortHandle>,
+    source: ImageSource,
 }
 
 impl ManagedImageState {
+    fn refresh_source(&mut self, force: bool, cx: &mut Context<Self>) {
+        let Some((source, binding)) = self.source.get() else {
+            return;
+        };
+        if source.is_local() {
+            return;
+        }
+        if force
+            || cx
+                .global::<crate::ui::sources::SourceModels>()
+                .assets
+                .display_binding(source)
+                != *binding
+        {
+            self.start_retrieval(cx, self.key.clone(), self.thumb, self.bucket);
+        }
+    }
     fn start_retrieval(
         &mut self,
         cx: &mut Context<Self>,
@@ -195,17 +235,35 @@ impl ManagedImageState {
             retrieval.abort();
         }
 
+        let clear_image = self.key != key
+            || self.source.get().is_some_and(|(source, binding)| {
+                !source.is_local()
+                    && cx
+                        .global::<crate::ui::sources::SourceModels>()
+                        .assets
+                        .account_key(source)
+                        != binding.as_ref().map(|binding| binding.0.clone())
+            });
         self.key = key.clone();
         self.thumb = thumb;
         self.bucket = bucket;
+        if clear_image && let Some(image) = self.image.take() {
+            drop_image_from_app(cx, image);
+        }
 
         let pool = cx.global::<Pool>().0.clone();
+        let assets = cx
+            .global::<crate::ui::sources::SourceModels>()
+            .assets
+            .clone();
         let bridge: ImageBridge = Arc::new(OnceLock::new());
         self.bridge = Some(bridge.clone());
         let task_bridge = bridge.clone();
+        let source: ImageSource = Arc::new(OnceLock::new());
+        self.source = source.clone();
 
         let handle = crate::RUNTIME.spawn(async move {
-            let result = key.retrieve(pool, thumb, bucket).await;
+            let result = key.retrieve(pool, assets, source, thumb, bucket).await;
             let image = match &result {
                 Ok(img) => img.clone(),
                 Err(_) => None,
@@ -247,9 +305,25 @@ impl ManagedImageState {
                     })
                     .ok();
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if this
+                            .bridge
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &bridge))
+                        {
+                            if let Some(image) = this.image.take() {
+                                drop_image_from_app(cx, image);
+                            }
+                            this.retrieval = None;
+                            cx.notify();
+                        }
+                        this.refresh_source(false, cx);
+                    });
+                }
                 Err(e) => {
                     error!("Failed to retrieve image: {:?}", e);
+                    let _ = this.update(cx, |this, cx| this.refresh_source(false, cx));
                 }
             }
         })
@@ -336,7 +410,35 @@ impl Element for ManagedImage {
                 image: None,
                 bridge: None,
                 retrieval: None,
+                source: Arc::new(OnceLock::new()),
             };
+            let status = cx
+                .global::<crate::ui::sources::SourceModels>()
+                .status
+                .clone();
+            cx.observe(&status, |this: &mut ManagedImageState, _, cx| {
+                this.refresh_source(false, cx)
+            })
+            .detach();
+            let settings = cx.global::<crate::settings::SettingsGlobal>().model.clone();
+            cx.observe(&settings, |this: &mut ManagedImageState, _, cx| {
+                this.refresh_source(false, cx)
+            })
+            .detach();
+            let library = cx
+                .global::<crate::ui::models::Models>()
+                .library_change
+                .clone();
+            let mut completed = library.read(cx).completed;
+            cx.observe(
+                &library,
+                move |this: &mut ManagedImageState, library, cx| {
+                    if library.read(cx).take_completion(&mut completed) {
+                        this.refresh_source(true, cx);
+                    }
+                },
+            )
+            .detach();
             state.start_retrieval(cx, key, thumb, bucket);
 
             cx.on_release(|this: &mut ManagedImageState, cx| {

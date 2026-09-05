@@ -261,11 +261,18 @@ impl Storage {
                     .map_err(|e| e.into())
                     .map(|data: StorageData| match &data.current_track {
                         // validate whether path still exists
-                        Some(current_track) if !current_track.get_path().exists() => StorageData {
-                            current_track: None,
-                            // Preserve other settings when invalidating current_track
-                            ..data
-                        },
+                        Some(current_track)
+                            if current_track
+                                .get_track_ref()
+                                .local_path()
+                                .is_some_and(|path| !path.exists()) =>
+                        {
+                            StorageData {
+                                current_track: None,
+                                // Preserve other settings when invalidating current_track
+                                ..data
+                            }
+                        }
                         _ => data,
                     })
             })
@@ -347,7 +354,7 @@ mod tests {
         );
 
         let expected = StorageData {
-            current_track: Some(CurrentTrack::new(track_path.clone())),
+            current_track: Some(CurrentTrack::new(track_path.clone().into())),
             volume: 0.42,
             sidebar_width: 300.0,
             queue_width: 410.0,
@@ -379,8 +386,11 @@ mod tests {
         let loaded = storage.load_or_default();
 
         assert_eq!(
-            loaded.current_track.as_ref().map(CurrentTrack::get_path),
-            Some(&track_path)
+            loaded
+                .current_track
+                .as_ref()
+                .and_then(|track| track.get_track_ref().local_path()),
+            Some(track_path.as_path())
         );
         assert_eq!(loaded.volume, expected.volume);
         assert_eq!(loaded.sidebar_width, expected.sidebar_width);
@@ -426,7 +436,7 @@ mod tests {
         );
 
         let stored = StorageData {
-            current_track: Some(CurrentTrack::new(missing_track)),
+            current_track: Some(CurrentTrack::new(missing_track.into())),
             volume: 0.33,
             sidebar_width: 280.0,
             queue_width: 350.0,

@@ -4,6 +4,8 @@ pub struct LrcLine {
     pub time_ms: u64,
     pub text: String,
 }
+const MAX_TIMED_LINES: usize = 10_000;
+const MAX_EXPANDED_TEXT: usize = 8 * 1024 * 1024;
 
 /// Parse an LRC time tag of the form `mm:ss.xx` or `mm:ss.xxx`.
 /// Returns the time in milliseconds, or `None` if the format is invalid.
@@ -23,7 +25,13 @@ fn parse_time_tag(tag: &str) -> Option<u64> {
         _ => return None,
     };
 
-    Some(minutes * 60_000 + seconds * 1_000 + frac_ms)
+    if seconds >= 60 {
+        return None;
+    }
+    minutes
+        .checked_mul(60_000)?
+        .checked_add(seconds.checked_mul(1_000)?)?
+        .checked_add(frac_ms)
 }
 
 /// Attempt to parse a single line of an LRC file.
@@ -39,6 +47,9 @@ fn parse_lrc_line(line: &str) -> Option<Vec<LrcLine>> {
         rest = &rest[end + 1..];
 
         if let Some(ms) = parse_time_tag(tag) {
+            if timestamps.len() >= MAX_TIMED_LINES {
+                return None;
+            }
             timestamps.push(ms);
         } else {
             // Metadata or unknown tag — stop consuming tags.
@@ -50,13 +61,16 @@ fn parse_lrc_line(line: &str) -> Option<Vec<LrcLine>> {
         return None;
     }
 
-    let text = rest.trim().to_string();
+    let text = rest.trim();
+    if text.len().checked_mul(timestamps.len())? > MAX_EXPANDED_TEXT {
+        return None;
+    }
     Some(
         timestamps
             .into_iter()
             .map(|time_ms| LrcLine {
                 time_ms,
-                text: text.clone(),
+                text: text.to_string(),
             })
             .collect(),
     )
@@ -67,9 +81,16 @@ fn parse_lrc_line(line: &str) -> Option<Vec<LrcLine>> {
 /// Returns `Some(lines)` sorted by timestamp when at least one timed line is found.
 /// Returns `None` when no time tags are present (plain-text).
 pub fn parse_lrc(content: &str) -> Option<Vec<LrcLine>> {
+    if content.len() > 1024 * 1024 {
+        return None;
+    }
     let mut lines: Vec<LrcLine> = Vec::new();
+    let mut expanded_bytes = 0;
 
     for line in content.lines() {
+        if lines.len() >= MAX_TIMED_LINES {
+            return None;
+        }
         let line = line.trim();
         if line.is_empty() {
             if let Some(last) = lines.last() {
@@ -81,6 +102,10 @@ pub fn parse_lrc(content: &str) -> Option<Vec<LrcLine>> {
             continue;
         }
         if let Some(parsed) = parse_lrc_line(line) {
+            expanded_bytes += parsed.iter().map(|line| line.text.len()).sum::<usize>();
+            if expanded_bytes > MAX_EXPANDED_TEXT || lines.len() + parsed.len() > MAX_TIMED_LINES {
+                return None;
+            }
             lines.extend(parsed);
         }
     }
@@ -119,6 +144,8 @@ mod tests {
         assert_eq!(parse_time_tag("01:bb.34"), None);
         assert_eq!(parse_time_tag("01:02.xx"), None);
         assert_eq!(parse_time_tag("01:02."), None);
+        assert_eq!(parse_time_tag("18446744073709551615:01.000"), None);
+        assert_eq!(parse_time_tag("01:60.000"), None);
     }
 
     #[test]
@@ -164,5 +191,11 @@ mod tests {
                 (3_000, "Third".to_string()),
             ]
         );
+    }
+    #[test]
+    fn repeated_time_tags_cannot_expand_text_without_bound() {
+        let hostile = format!("{}{}", "[00:01.00]".repeat(5000), "x".repeat(3000));
+        assert!(parse_lrc(&hostile).is_none());
+        assert!(parse_lrc(&"[00:01.00]text\n".repeat(10_001)).is_none());
     }
 }

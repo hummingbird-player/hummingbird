@@ -66,7 +66,11 @@ impl Textbox {
                         };
                         let on_submit = on_submit.clone();
                         cx.defer(move |cx| {
-                            let value = input.read(cx).content.clone();
+                            let value = if input.read(cx).secret {
+                                "".into()
+                            } else {
+                                input.read(cx).content.clone()
+                            };
                             on_submit(value, cx);
                         });
                     }
@@ -83,16 +87,68 @@ impl Textbox {
         })
     }
 
+    /// Draft form field; password fields never emit their contents to generic
+    /// input observers and are read only by `take_secret` on save/test.
+    pub fn form(cx: &mut App, value: SharedString, secret: bool) -> Entity<Self> {
+        let field = Self::new_with_submit(cx, StyleRefinement::default(), |_| {});
+        field.update(cx, |field, cx| {
+            field.input.update(cx, |input, cx| {
+                input.secret = secret;
+                input.set_value(cx, value);
+            });
+        });
+        field
+    }
+    pub fn form_navigation(
+        &self,
+        cx: &mut App,
+        previous: FocusHandle,
+        next: FocusHandle,
+        submit: impl Fn(&mut App) + 'static,
+    ) {
+        let submit = Rc::new(submit);
+        self.input.update(cx, |input, _| {
+            input.set_form_handler(Box::new(move |action, window, cx| match action {
+                EnrichedInputAction::Next => window.focus(&next, cx),
+                EnrichedInputAction::Previous => window.focus(&previous, cx),
+                EnrichedInputAction::Accept => {
+                    let submit = submit.clone();
+                    cx.defer(move |cx| submit(cx));
+                }
+            }))
+        });
+    }
+    pub fn take_secret(&self, cx: &mut App) -> Option<Arc<crate::sources::credentials::Secret>> {
+        self.input.update(cx, |input, cx| {
+            if !input.secret || input.content.is_empty() {
+                return None;
+            }
+            let secret = Arc::new(crate::sources::credentials::Secret::new(
+                input.content.as_bytes().to_vec(),
+            ));
+            input.reset();
+            cx.notify();
+            Some(secret)
+        })
+    }
     pub fn focus_handle(&self) -> FocusHandle {
         self.handle.clone()
     }
 
     pub fn reset(&self, cx: &mut App) {
-        self.input.update(cx, |input, _| input.reset());
+        self.input.update(cx, |input, cx| {
+            input.reset();
+            cx.notify();
+        });
     }
 
     pub fn value(&self, cx: &App) -> SharedString {
-        self.input.read(cx).content.clone()
+        let input = self.input.read(cx);
+        if input.secret {
+            "".into()
+        } else {
+            input.content.clone()
+        }
     }
 
     pub fn set_value(&self, cx: &mut App, value: SharedString) {

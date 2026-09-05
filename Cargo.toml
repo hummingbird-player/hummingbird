@@ -14,7 +14,7 @@ console = ["dep:console-subscriber", "tokio/tracing"]
 # concurrently with the GPU driver during startup.
 heap-profileable = []
 update = ["dep:semver", "dep:minisign-verify", "dep:winreg", "online"]
-online = ["dep:zed-reqwest"]
+online = ["dep:zed-reqwest", "dep:bytes", "dep:quick-xml"]
 libre-services = ["online"]
 proprietary-services = ["online"]
 default = ["libre-services", "proprietary-services"]
@@ -26,6 +26,7 @@ async-compression = { version = "0.4", features = ["zlib", "tokio"] }
 async-trait = "0.1"
 base64 = "0.23"
 bitflags = "2"
+bytes = { version = "1", optional = true }
 camino = { version = "1", features = ["serde1"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
@@ -56,6 +57,7 @@ nucleo = "0.5"
 open = "5"
 palette = "0.7"
 postcard = { version = "1", features = ["use-std"] }
+quick-xml = { version = "0.41", optional = true }
 rand = "0.10"
 raw-window-handle = "0.6"
 realfft = "3"
@@ -82,6 +84,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 url = "2.5"
 urlencoding = "2"
+zeroize = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = true, features = [
     "json",
@@ -99,6 +102,9 @@ anyhow = "1"
 cntp_i18n_gen = "0.3"
 dotenvy = "0.15"
 vergen = { version = "10", features = ["build"] }
+
+[dev-dependencies]
+tracing-log = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [

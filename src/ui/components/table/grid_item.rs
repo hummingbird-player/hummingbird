@@ -29,6 +29,7 @@ where
     image_key: Option<ManagedImageKey>,
     primary_text: SharedString,
     secondary_text: Option<SharedString>,
+    source_label: Option<SharedString>,
     on_select: Option<OnSelectHandler<T, C>>,
     is_available: bool,
     image_target: Option<Pixels>,
@@ -56,6 +57,12 @@ where
         let availability = cx.global::<Models>().availability.clone();
 
         Some(cx.new(|cx| {
+            crate::ui::sources::labels::observe(cx, |this: &mut Self, cx| {
+                this.source_label = this
+                    .row
+                    .source_id()
+                    .and_then(|id| crate::ui::sources::labels::label(id, cx));
+            });
             cx.observe(&availability, |this: &mut GridItem<T, C>, _, cx| {
                 this.is_available = this.row.is_available(cx);
                 cx.notify();
@@ -63,6 +70,9 @@ where
             .detach();
 
             Self {
+                source_label: row
+                    .source_id()
+                    .and_then(|id| crate::ui::sources::labels::label(id, cx)),
                 context_menu_context,
                 grid_context: context,
                 row,
@@ -182,7 +192,20 @@ where
         }
 
         let content = container
-            .child(img_container)
+            .child(
+                img_container
+                    .relative()
+                    .when_some(self.source_label.clone(), |div, label| {
+                        div.child(
+                            gpui::div()
+                                .absolute()
+                                .left(px(6.0))
+                                .bottom(px(6.0))
+                                .right(px(6.0))
+                                .child(crate::ui::sources::labels::badge(label, theme)),
+                        )
+                    }),
+            )
             .child(
                 div()
                     .mt(px(8.0))
@@ -210,14 +233,12 @@ where
             .w_full()
             .h_full()
             .with(content)
-            .menu_on_open(move |window, cx| {
+            .menu_with_overlay_on_open(move |window, cx| {
                 match row_data.get_context_menu(window, cx, &menu_context, grid_context) {
-                    Some((menu, overlay)) => div()
-                        .bg(menu_bg)
-                        .child(menu)
-                        .when_some(overlay, |this, overlay| this.child(overlay))
-                        .into_any_element(),
-                    None => div().into_any_element(),
+                    Some((menu, overlay)) => {
+                        (div().bg(menu_bg).child(menu).into_any_element(), overlay)
+                    }
+                    None => (div().into_any_element(), None),
                 }
             })
             .into_any_element()

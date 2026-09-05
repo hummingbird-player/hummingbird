@@ -8,7 +8,6 @@ use super::detail_view_padding;
 use crate::{
     library::{
         db::{AlbumMethod, LibraryAccess},
-        scan::ScanEvent,
         types::{
             Album, DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR, DATE_PRECISION_YEAR_MONTH,
             DBString, Track,
@@ -36,7 +35,7 @@ use crate::{
             library_view_header::LibraryViewHeader,
             track_listing::{ArtistNameVisibility, TrackListing},
         },
-        models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
+        models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, toggle_album_like},
         scroll_follow::SmoothScrollFollow,
         theme::Theme,
     },
@@ -115,14 +114,10 @@ impl ReleaseView {
             );
             let availability = cx.global::<Models>().availability.clone();
             cx.observe(&availability, |_, _, cx| cx.notify()).detach();
-            let scan_state = cx.global::<Models>().scan_state.clone();
-            cx.observe(&scan_state, |this: &mut Self, state, cx| {
-                if matches!(
-                    *state.read(cx),
-                    ScanEvent::ScanCompleteIdle
-                        | ScanEvent::ScanCompleteWatching
-                        | ScanEvent::TargetedRescanComplete
-                ) {
+            let scan_state = cx.global::<Models>().library_change.clone();
+            let mut completion = scan_state.read(cx).completed;
+            cx.observe(&scan_state, move |this: &mut Self, state, cx| {
+                if state.read(cx).take_completion(&mut completion) {
                     this.refresh(cx);
                 }
             })
@@ -144,7 +139,7 @@ impl ReleaseView {
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
             cx.subscribe(&playlist_tracker, |this: &mut Self, _, ev, cx| {
-                if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {
+                if !ev.updates(LIKED_SONGS_PLAYLIST_ID) {
                     return;
                 }
                 let new_all_liked = compute_all_liked(cx, &this.tracks);
@@ -308,13 +303,15 @@ impl ReleaseView {
                                             tracks
                                                 .iter()
                                                 .filter(|track| {
-                                                    availability
-                                                        .is_track_path_available(&track.location)
+                                                    availability.is_indexed_track_available(
+                                                        &track.reference,
+                                                        track.present,
+                                                    )
                                                 })
                                                 .map(|track| {
                                                     QueueItemData::new(
                                                         cx,
-                                                        track.location.clone(),
+                                                        track.reference.clone(),
                                                         Some(track.id),
                                                         track.album_id,
                                                     )
@@ -621,8 +618,10 @@ impl Render for ReleaseView {
 
         let theme = cx.global::<Theme>().clone();
 
-        let is_playing =
-            cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let is_playing = matches!(
+            *cx.global::<PlaybackInfo>().playback_state.read(cx),
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
         let availability = snapshot(cx);
         // flag whether current track is part of the album
         let current_track_in_album = cx
@@ -632,8 +631,8 @@ impl Render for ReleaseView {
             .clone()
             .is_some_and(|current_track| {
                 self.tracks.iter().any(|track| {
-                    current_track == track.location
-                        && availability.is_track_path_available(&track.location)
+                    current_track == track.reference
+                        && availability.is_indexed_track_available(&track.reference, track.present)
                 })
             });
         let has_available_tracks = has_available_tracks(cx, self.tracks.as_ref());

@@ -6,6 +6,8 @@ fn default_true() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServicesSettings {
+    #[serde(default)]
+    pub libraries: Vec<crate::sources::config::SourceConfig>,
     #[serde(default = "default_true")]
     pub discord_rpc_enabled: bool,
     #[serde(default = "default_true")]
@@ -17,6 +19,7 @@ pub struct ServicesSettings {
 impl Default for ServicesSettings {
     fn default() -> Self {
         Self {
+            libraries: Vec::new(),
             discord_rpc_enabled: true,
             lastfm_enabled: true,
             listenbrainz_enabled: true,

@@ -7,7 +7,15 @@ use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 actions!(context, [CloseContextMenu]);
 
 type CloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
-type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> (AnyElement, Option<AnyView>)>;
+
+#[derive(Default)]
+struct MenuState {
+    position: Option<Point<Pixels>>,
+    // A menu action can open a dialog that must outlive the popup. Retain only
+    // the latest overlay, created lazily when this context menu is opened.
+    overlay: Option<AnyView>,
+}
 
 #[derive(IntoElement)]
 pub struct ContextMenu {
@@ -28,6 +36,14 @@ impl ContextMenu {
     pub fn menu_on_open(
         mut self,
         builder: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.menu_fn = Some(Rc::new(move |window, cx| (builder(window, cx), None)));
+        self
+    }
+
+    pub fn menu_with_overlay_on_open(
+        mut self,
+        builder: impl Fn(&mut Window, &mut App) -> (AnyElement, Option<AnyView>) + 'static,
     ) -> Self {
         self.menu_fn = Some(Rc::new(builder));
         self
@@ -53,13 +69,13 @@ impl ParentElement for ContextMenu {
 
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.id.clone(), cx, |_, _| None::<Point<Pixels>>);
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, _| MenuState::default());
         let focus_handle = window
             .use_keyed_state((self.id.clone(), "focus"), cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
 
-        let position = *state.read(cx);
+        let position = state.read(cx).position;
 
         let state_open = state.clone();
         let state_click = state.clone();
@@ -73,7 +89,11 @@ impl RenderOnce for ContextMenu {
         let theme = cx.global::<Theme>().clone();
 
         let menu = match self.menu_fn {
-            Some(build) if position.is_some() => Some(div().child(build(window, cx))),
+            Some(build) if position.is_some() => {
+                let (menu, overlay) = build(window, cx);
+                state.update(cx, |state, _| state.overlay = overlay);
+                Some(div().child(menu))
+            }
             Some(_) => None,
             None => self.menu,
         };
@@ -94,7 +114,7 @@ impl RenderOnce for ContextMenu {
                                 on_close(window, cx);
                             }
                             state_click.update(cx, |pos, cx| {
-                                *pos = None;
+                                pos.position = None;
                                 cx.notify();
                             });
                         })
@@ -103,7 +123,7 @@ impl RenderOnce for ContextMenu {
                                 on_close(window, cx);
                             }
                             state_out.update(cx, |pos, cx| {
-                                *pos = None;
+                                pos.position = None;
                                 cx.notify();
                             });
                         })
@@ -112,7 +132,7 @@ impl RenderOnce for ContextMenu {
                                 on_close(window, cx);
                             }
                             state_esc.update(cx, |pos, cx| {
-                                *pos = None;
+                                pos.position = None;
                                 cx.notify();
                             });
                         }),
@@ -127,7 +147,7 @@ impl RenderOnce for ContextMenu {
             .on_aux_click(move |ev, window, cx| {
                 if ev.is_right_click() {
                     state_open.update(cx, |pos, cx| {
-                        *pos = Some(ev.position());
+                        pos.position = Some(ev.position());
                         cx.notify();
                     });
                     focus_open.focus(window, cx);
@@ -135,6 +155,7 @@ impl RenderOnce for ContextMenu {
             })
             .children(self.element)
             .children(overlay)
+            .children(state.read(cx).overlay.clone())
     }
 }
 

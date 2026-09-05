@@ -279,6 +279,7 @@ impl RenderOnce for CheckMenuItem {
 /// A colored status dot shown in place of an icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusDotKind {
+    Pending,
     Success,
     Error,
     Disabled,
@@ -287,6 +288,7 @@ pub enum StatusDotKind {
 impl StatusDotKind {
     fn color(self, theme: &Theme) -> Rgba {
         match self {
+            Self::Pending => theme.text_secondary,
             Self::Success => theme.status_success,
             Self::Error => theme.status_error,
             Self::Disabled => theme.status_disabled,

@@ -6,8 +6,10 @@ pub mod lastfm;
 mod library;
 #[cfg(feature = "libre-services")]
 pub mod listenbrainz;
+mod music_libraries;
 mod playback;
 mod services;
+mod source_editor;
 #[cfg(feature = "update")]
 mod update;
 

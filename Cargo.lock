@@ -3519,6 +3519,7 @@ dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.1",
  "block2 0.6.2",
+ "bytes",
  "camino",
  "chrono",
  "clap",
@@ -3561,6 +3562,7 @@ dependencies = [
  "open",
  "palette",
  "postcard",
+ "quick-xml",
  "rand 0.10.2",
  "raw-window-handle",
  "realfft",
@@ -3583,6 +3585,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "unicode-segmentation",
  "url",
@@ -3595,6 +3598,7 @@ dependencies = [
  "xxhash-rust",
  "zbus",
  "zed-reqwest",
+ "zeroize",
 ]
 
 [[package]]

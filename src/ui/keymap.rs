@@ -107,4 +107,26 @@ mod tests {
             "no keybindings match the current platform"
         );
     }
+
+    #[test]
+    fn form_tab_bindings_do_not_capture_ordinary_inputs_or_dropdowns() {
+        let file = parse_default_keybinds();
+        for (key, action) in [
+            ("tab", "text_input::Next"),
+            ("shift-tab", "text_input::Previous"),
+        ] {
+            let binding = file
+                .bindings
+                .iter()
+                .find(|entry| entry.key == key && entry.action == action)
+                .expect("form navigation binding");
+            let predicate = KeyBindingContextPredicate::parse(
+                binding.context.as_deref().expect("form-only context"),
+            )
+            .unwrap();
+            assert!(predicate.eval(&[gpui::KeyContext::parse("TextInput FormField").unwrap()]));
+            assert!(!predicate.eval(&[gpui::KeyContext::parse("TextInput").unwrap()]));
+            assert!(!predicate.eval(&[gpui::KeyContext::parse("Dropdown").unwrap()]));
+        }
+    }
 }

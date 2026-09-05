@@ -183,10 +183,8 @@ impl AddToPlaylist {
 
                     cx.spawn(async move |cx| {
                         let task = crate::RUNTIME.spawn(async move {
-                            for track_id in &track_ids {
-                                db::add_playlist_item(&pool, playlist_id, *track_id).await?;
-                            }
-                            Ok::<(), sqlx::Error>(())
+                            db::add_tracks_to_playlist_if_missing(&pool, playlist_id, &track_ids)
+                                .await
                         });
 
                         match task.await {

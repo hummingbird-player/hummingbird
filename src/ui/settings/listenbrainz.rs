@@ -148,9 +148,7 @@ pub fn sign_out_listenbrainz(cx: &mut App, state: Entity<ListenBrainzState>) {
     });
 
     if let Some(mmbs) = listenbrainz_mmbs {
-        crate::RUNTIME.spawn(async move {
-            mmbs.lock().await.set_enabled(false).await;
-        });
+        mmbs.set_enabled(false);
     }
 
     let path = paths::data_dir().join("listenbrainz.json");

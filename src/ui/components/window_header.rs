@@ -188,7 +188,7 @@ impl RenderOnce for WindowButton {
             .rounded(px(4.0))
             .on_click(move |_, window, cx| match self {
                 WindowButton::Close(false) => window.remove_window(),
-                WindowButton::Close(true) => cx.quit(),
+                WindowButton::Close(true) => crate::ui::app::request_quit(cx),
                 WindowButton::Minimize => {
                     if !cfg!(target_os = "windows") {
                         window.minimize_window()

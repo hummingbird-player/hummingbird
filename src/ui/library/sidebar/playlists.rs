@@ -381,12 +381,16 @@ impl Render for PlaylistList {
                             let Some(_source_index) = drag_data.source_index else {
                                 return;
                             };
-                            let queue = cx.global::<Models>().queue.read(cx);
-                            let queue_data = queue.data.read().expect("could not read queue");
+                            let queue_data = cx.global::<Models>().queue.read(cx).data.clone();
+                            let queue_data = queue_data.read().expect("could not read queue");
                             let all_indices = drag_data.all_indices();
                             all_indices
                                 .into_iter()
-                                .filter_map(|i| queue_data.get(i).and_then(|item| item.get_db_id()))
+                                .filter_map(|i| {
+                                    queue_data
+                                        .get(i)
+                                        .and_then(|item| item.get_resolved_db_id(cx))
+                                })
                                 .collect()
                         } else {
                             drag_data.track_id.into_iter().collect()

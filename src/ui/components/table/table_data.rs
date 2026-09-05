@@ -88,7 +88,12 @@ where
     /// Retrieves the rows of the table. The rows are returned as a vector of identifiers, which
     /// can be used to retrieve the full row data. The sort parameter can be used to specify the
     /// sorting order of the rows.
-    fn get_rows(cx: &mut App, sort: Option<TableSort<C>>) -> anyhow::Result<Vec<Self::Identifier>>;
+    /// Query work must run outside the UI thread. The table coalesces concurrent
+    /// refresh requests and ignores results from a superseded sort order.
+    fn get_rows(
+        cx: &mut App,
+        sort: Option<TableSort<C>>,
+    ) -> gpui::Task<anyhow::Result<Vec<Self::Identifier>>>;
 
     /// Retrieves a specific row of the table. The row is returned as an Arc to the table data,
     /// which can be used to retrieve the row data as SharedStrings. The id parameter is used to
@@ -97,6 +102,14 @@ where
 
     /// Retrieves a column from the row.
     fn get_column(&self, cx: &mut App, column: C) -> Option<SharedString>;
+
+    /// Optional provenance shown beside the primary text, independent of protocol.
+    fn source_id(&self) -> Option<&crate::sources::SourceId> {
+        None
+    }
+    fn is_source_column(_column: C) -> bool {
+        false
+    }
 
     /// Returns true if the rows may contain images. This is used during the layout phase to
     /// determine if placeholder covers and the header section should be displayed.
@@ -144,7 +157,7 @@ where
         _cx: &mut App,
         _context: &Self::ContextMenuContext,
         _grid_context: GridContext,
-    ) -> Option<(AnyElement, Option<AnyElement>)> {
+    ) -> Option<(AnyElement, Option<gpui::AnyView>)> {
         None
     }
 

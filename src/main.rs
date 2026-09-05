@@ -25,6 +25,7 @@ mod playback;
 mod power;
 mod services;
 mod settings;
+mod sources;
 #[cfg(test)]
 mod test_support;
 mod toasts;

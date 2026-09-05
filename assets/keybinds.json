@@ -66,6 +66,8 @@
     { "key": "enter", "action": "text_input::Accept", "context": "TextInput" },
     { "key": "down", "action": "text_input::Next", "context": "TextInput" },
     { "key": "up", "action": "text_input::Previous", "context": "TextInput" },
+    { "key": "tab", "action": "text_input::Next", "context": "TextInput && FormField" },
+    { "key": "shift-tab", "action": "text_input::Previous", "context": "TextInput && FormField" },
 
     { "key": "cmd-a", "action": "text_input::SelectAll", "platform": "macos", "context": "TextInput" },
     { "key": "cmd-v", "action": "text_input::Paste", "platform": "macos", "context": "TextInput" },

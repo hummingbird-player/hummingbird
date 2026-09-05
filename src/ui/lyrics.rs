@@ -3,7 +3,6 @@ mod lrc;
 use lrc::{LrcLine, parse_lrc};
 
 use crate::{
-    library::db::LibraryAccess,
     playback::{interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
@@ -44,6 +43,9 @@ pub struct Lyrics {
     line_emphasis_target_values: Vec<f32>,
     line_emphasis_started_at: Option<Instant>,
     playback_state: Entity<PlaybackState>,
+    load_generation: u64,
+    load_task: Option<tokio::task::AbortHandle>,
+    source_binding: Option<(String, bool)>,
 }
 
 impl Lyrics {
@@ -54,27 +56,35 @@ impl Lyrics {
             let position = playback_info.position.clone();
 
             let initial_track = current_track.read(cx).clone();
-            let (content, parsed) = Self::load_lyrics(initial_track.as_ref(), cx);
-            let initial_line_count = parsed.as_ref().map_or(0, Vec::len);
+            let content = None;
+            let parsed = None;
+            let initial_line_count = 0;
 
             cx.observe(&current_track, |this: &mut Lyrics, ct, cx| {
                 let track = ct.read(cx).clone();
-                let (content, parsed) = Self::load_lyrics(track.as_ref(), cx);
-                let line_count = parsed.as_ref().map_or(0, Vec::len);
-                this.content = content;
-                this.parsed = parsed;
-                this.last_active_line = None;
-                this.follow_pending = false;
-                this.scroll_follow.cancel();
-                this.last_user_interaction_at = None;
-                this.line_emphasis_started_at = None;
-                this.line_emphasis_start_values = vec![0.0; line_count];
-                this.line_emphasis_target_values = vec![0.0; line_count];
-                this.scroll_handle.set_offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(0.0),
-                });
-                cx.notify();
+                this.load_lyrics(track.as_ref(), cx);
+            })
+            .detach();
+            let source_status = cx
+                .global::<crate::ui::sources::SourceModels>()
+                .status
+                .clone();
+            cx.observe(&source_status, |this: &mut Lyrics, _, cx| {
+                this.refresh_source(cx);
+            })
+            .detach();
+            let settings = cx.global::<SettingsGlobal>().model.clone();
+            cx.observe(&settings, |this: &mut Lyrics, _, cx| {
+                this.refresh_source(cx)
+            })
+            .detach();
+            let library = cx.global::<Models>().library_change.clone();
+            let mut completed = library.read(cx).completed;
+            cx.observe(&library, move |this: &mut Lyrics, library, cx| {
+                if library.read(cx).take_completion(&mut completed) {
+                    let track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
+                    this.load_lyrics(track.as_ref(), cx);
+                }
             })
             .detach();
 
@@ -115,7 +125,7 @@ impl Lyrics {
             })
             .detach();
 
-            Self {
+            let mut view = Self {
                 content,
                 parsed,
                 last_active_line: None,
@@ -128,19 +138,140 @@ impl Lyrics {
                 line_emphasis_target_values: vec![0.0; initial_line_count],
                 line_emphasis_started_at: None,
                 playback_state,
-            }
+                load_generation: 0,
+                load_task: None,
+                source_binding: None,
+            };
+            view.load_lyrics(initial_track.as_ref(), cx);
+            view
         })
     }
 
-    fn load_lyrics(
-        track: Option<&CurrentTrack>,
-        cx: &App,
-    ) -> (Option<String>, Option<Vec<LrcLine>>) {
-        let content = track
-            .and_then(|t| cx.get_track_by_path(t.get_path()).ok().flatten())
-            .and_then(|t| cx.lyrics_for_track(t.id).ok().flatten());
-        let parsed = content.as_ref().and_then(|c| parse_lrc(c));
-        (content, parsed)
+    fn replace_lyrics(&mut self, content: Option<String>, parsed: Option<Vec<LrcLine>>) {
+        let count = parsed.as_ref().map_or(0, Vec::len);
+        self.content = content;
+        self.parsed = parsed;
+        self.last_active_line = None;
+        self.follow_pending = false;
+        self.scroll_follow.cancel();
+        self.last_user_interaction_at = None;
+        self.line_emphasis_started_at = None;
+        self.line_emphasis_start_values = vec![0.0; count];
+        self.line_emphasis_target_values = vec![0.0; count];
+        self.scroll_handle.set_offset(gpui::Point {
+            x: px(0.0),
+            y: px(0.0),
+        });
+    }
+    fn refresh_source(&mut self, cx: &mut Context<Self>) {
+        let track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
+        let binding = track.as_ref().and_then(|track| {
+            cx.global::<crate::ui::sources::SourceModels>()
+                .assets
+                .display_binding(track.get_track_ref().source())
+        });
+        if binding != self.source_binding {
+            self.load_lyrics(track.as_ref(), cx);
+        }
+    }
+    fn load_lyrics(&mut self, track: Option<&CurrentTrack>, cx: &mut Context<Self>) {
+        self.source_binding = track.and_then(|track| {
+            cx.global::<crate::ui::sources::SourceModels>()
+                .assets
+                .display_binding(track.get_track_ref().source())
+        });
+        self.load_generation = self.load_generation.wrapping_add(1);
+        if let Some(task) = self.load_task.take() {
+            task.abort();
+        }
+        self.replace_lyrics(None, None);
+        cx.notify();
+        let Some(track) = track else {
+            return;
+        };
+        let reference = track.get_track_ref().clone();
+        let assets = cx
+            .global::<crate::ui::sources::SourceModels>()
+            .assets
+            .clone();
+        let generation = self.load_generation;
+        let expected_account = self
+            .source_binding
+            .as_ref()
+            .map(|binding| binding.0.clone());
+        let source = reference.source().clone();
+        let task = crate::RUNTIME.spawn(async move {
+            match assets.lyrics(&reference).await? {
+                Some(crate::sources::assets::Lyrics::Text(content)) => {
+                    let parsed = parse_lrc(&content);
+                    Ok::<_, crate::sources::backend::BackendError>((Some(content), parsed))
+                }
+                Some(crate::sources::assets::Lyrics::Structured(document)) => {
+                    let content = document
+                        .lines
+                        .iter()
+                        .map(|line| line.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let parsed = if document
+                        .lines
+                        .first()
+                        .is_some_and(|line| line.start_ms.is_some())
+                    {
+                        Some(
+                            document
+                                .lines
+                                .into_iter()
+                                .filter_map(|line| {
+                                    line.start_ms.map(|time_ms| LrcLine {
+                                        time_ms,
+                                        text: line.text,
+                                    })
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
+                    Ok((Some(content), parsed))
+                }
+                None => Ok((None, None)),
+            }
+        });
+        self.load_task = Some(task.abort_handle());
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok((content, parsed))) = task.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.load_generation != generation {
+                    return;
+                }
+                if cx
+                    .global::<crate::ui::sources::SourceModels>()
+                    .assets
+                    .account_key(&source)
+                    != expected_account
+                {
+                    return;
+                }
+                this.load_task = None;
+                this.replace_lyrics(content, parsed);
+                // A delayed fetch may finish partway through the song. Seed the
+                // active line from the current position instead of waiting for
+                // another playback tick (paused playback may produce none).
+                if let Some(parsed) = &this.parsed {
+                    let position = *cx.global::<PlaybackInfo>().position.read(cx);
+                    this.last_active_line = parsed
+                        .partition_point(|line| line.time_ms <= position)
+                        .checked_sub(1);
+                    this.follow_pending = this.last_active_line.is_some();
+                    this.start_line_emphasis_animation(this.last_active_line, true);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -554,4 +685,12 @@ fn lerp_color(start: Rgba, end: Rgba, progress: f32) -> Rgba {
         lerp(start.blue, end.blue, progress),
         lerp(start.alpha, end.alpha, progress),
     )
+}
+
+impl Drop for Lyrics {
+    fn drop(&mut self) {
+        if let Some(task) = self.load_task.take() {
+            task.abort();
+        }
+    }
 }

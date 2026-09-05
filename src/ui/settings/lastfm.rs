@@ -160,9 +160,7 @@ pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
     });
 
     if let Some(mmbs) = lastfm_mmbs {
-        crate::RUNTIME.spawn(async move {
-            mmbs.lock().await.set_enabled(false).await;
-        });
+        mmbs.set_enabled(false);
     }
 
     let path = paths::data_dir().join("lastfm.json");

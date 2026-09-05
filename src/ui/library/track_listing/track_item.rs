@@ -44,6 +44,7 @@ pub struct TrackItem {
     track_position: Option<SharedString>,
     max_track_num_str: Option<SharedString>,
     is_available: bool,
+    source_label: Option<SharedString>,
     queue_context: Option<Arc<Vec<Track>>>,
     show_go_to_album: bool,
     show_go_to_artist: bool,
@@ -94,6 +95,10 @@ impl TrackItem {
     ) -> Entity<Self> {
         let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
+            crate::ui::sources::labels::observe(cx, |this: &mut Self, cx| {
+                this.source_label =
+                    crate::ui::sources::labels::label(this.track.reference.source(), cx);
+            });
             let track_id = track.id;
             let track_position = format_track_position(
                 number_display_mode,
@@ -111,6 +116,7 @@ impl TrackItem {
             .detach();
 
             Self {
+                source_label: crate::ui::sources::labels::label(track.reference.source(), cx),
                 hover_group: format!("track-{}", track.id).into(),
                 is_liked: cx
                     .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
@@ -320,7 +326,7 @@ impl Render for TrackItem {
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
 
-        let track_location_for_drag = self.track.location.clone();
+        let track_location_for_drag = self.track.reference.clone();
         let album_id = self.track.album_id;
         let track_title_for_drag: SharedString = self.track.title.clone().into();
 
@@ -419,7 +425,7 @@ impl Render for TrackItem {
                                         )
                                     })
                                     .when_some(current_track, |this, track| {
-                                        this.bg(if track == self.track.location {
+                                        this.bg(if track == self.track.reference {
                                             theme.list_item_current
                                         } else if self.index % 2 == 1 {
                                             theme.list_item_alternate
@@ -437,6 +443,14 @@ impl Render for TrackItem {
                                         this.child(self.render_album_art(&theme))
                                     })
                                     .child(self.render_title())
+                                    .when_some(self.source_label.clone(), |div, label| {
+                                        div.child(
+                                            crate::ui::sources::labels::badge(label, &theme)
+                                                .max_w(px(100.0))
+                                                .ml(px(6.0))
+                                                .my_auto(),
+                                        )
+                                    })
                                     .child(self.render_artist(&theme, show_artist_name))
                                     .child(self.render_like_button(
                                         &theme,

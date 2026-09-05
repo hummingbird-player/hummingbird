@@ -22,6 +22,8 @@ mod right_sidebar;
 mod scroll_follow;
 mod search;
 mod settings;
+pub(crate) mod source_credentials;
+pub mod sources;
 mod theme;
 mod toasts;
 mod troubleshooting;

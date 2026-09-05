@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{App, AppContext, Context, Entity, EventEmitter, IntoElement, Render, Window};
 use nucleo::Utf32String;
@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use tracing::debug;
 
 use crate::{
-    library::{db, scan::ScanEvent},
+    library::db,
     ui::{
         app::Pool,
         availability::snapshot,
@@ -41,10 +41,10 @@ async fn load_search_items(
     let availability: HashMap<i64, bool> = {
         let mut available_albums = HashMap::new();
 
-        for (album_id, path) in paths {
+        for (album_id, path, present) in paths {
             let available = available_albums.entry(album_id).or_insert(false);
             if !*available {
-                *available = availability.is_track_path_available(Path::new(&path));
+                *available = availability.is_indexed_track_available(&path, present);
             }
         }
 
@@ -141,16 +141,13 @@ impl SearchModel {
             })
             .detach();
 
-            let scan_status = cx.global::<Models>().scan_state.clone();
+            let scan_status = cx.global::<Models>().library_change.clone();
+            let mut completion = scan_status.read(cx).completed;
 
             cx.observe(&scan_status, move |this, scan_event, cx| {
                 let state = scan_event.read(cx);
 
-                if (*state == ScanEvent::ScanCompleteIdle
-                    || *state == ScanEvent::ScanCompleteWatching
-                    || *state == ScanEvent::TargetedRescanComplete)
-                    && *this.show.read(cx)
-                {
+                if state.take_completion(&mut completion) && *this.show.read(cx) {
                     debug!("Scan complete, refreshing search items");
                     this.reload(cx);
                 }

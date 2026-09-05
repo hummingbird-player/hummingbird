@@ -355,6 +355,51 @@ fn ensure_main_window(
     Ok(window)
 }
 
+struct QuitInProgress;
+impl Global for QuitInProgress {}
+
+fn shutdown_task(cx: &App) -> Option<tokio::task::JoinHandle<bool>> {
+    let playback = cx.try_global::<PlaybackInterface>()?.shutdown();
+    let broadcasts = cx.global::<Models>().mmbs.read(cx).1.clone();
+    let sources = cx.global::<super::sources::SourceModels>().service.clone();
+    let durable = cx
+        .global::<super::sources::SourceModels>()
+        .reporting
+        .clone();
+    Some(crate::RUNTIME.spawn(async move {
+        let persistence = durable.clone();
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(8), async move {
+            let audio = playback.await;
+            let reporting = broadcasts.shutdown().await;
+            persistence.shutdown().await;
+            audio && reporting
+        })
+        .await
+        .unwrap_or(false);
+        durable.abort();
+        sources.shutdown();
+        completed
+    }))
+}
+
+/// Normal quit actions can flush without blocking the UI event loop. The native
+/// termination hook below provides the same bounded barrier when the OS quits us.
+pub fn request_quit(cx: &mut App) {
+    if cx.has_global::<QuitInProgress>() {
+        return;
+    }
+    cx.set_global(QuitInProgress);
+    let Some(shutdown) = shutdown_task(cx) else {
+        cx.quit();
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let _ = shutdown.await;
+        let _ = cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
 pub fn run() -> anyhow::Result<()> {
     let toast_receiver = toasts::init();
     let data_dir = paths::data_dir();
@@ -412,7 +457,7 @@ pub fn run() -> anyhow::Result<()> {
             .filter(|position| *position < playback_session.queue.len());
         let initial_track = initial_position
             .and_then(|position| playback_session.queue.get(position))
-            .map(|item| CurrentTrack::new(item.get_path().clone()));
+            .map(|item| CurrentTrack::new(item.get_track_ref().clone()));
 
         let queue: Arc<RwLock<Vec<QueueItemData>>> =
             Arc::new(RwLock::new(playback_session.queue.clone()));
@@ -449,6 +494,7 @@ pub fn run() -> anyhow::Result<()> {
             initial_repeat,
         );
 
+        super::sources::initialize(cx);
         super::keymap::load_default_keymap(cx);
 
         cx.set_global(modal::ModalActive(AtomicBool::new(false)));
@@ -535,6 +581,8 @@ pub fn run() -> anyhow::Result<()> {
             last_volume,
             playback_session,
             queue_tx,
+            cx.global::<super::sources::SourceModels>().media.clone(),
+            cx.global::<Models>().mmbs.read(cx).1.clone(),
         );
         playback_interface.start_broadcast(cx);
 
@@ -557,6 +605,16 @@ pub fn run() -> anyhow::Result<()> {
             move |cx| {
                 let data = StorageData::new(cx);
                 let storage = storage.clone();
+                // GPUI allows only 200 ms for quit futures. Native termination
+                // needs a host-only barrier before that budget; normal Quit has
+                // already completed this asynchronously through request_quit.
+                if let Some(shutdown) = shutdown_task(cx) {
+                    if !crate::RUNTIME.block_on(shutdown).unwrap_or(false) {
+                        tracing::warn!(
+                            "Playback/reporting shutdown did not finish within its deadline"
+                        );
+                    }
+                }
 
                 cx.background_executor().spawn(async move {
                     storage.save(&data);

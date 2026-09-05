@@ -3,10 +3,7 @@ use std::rc::Rc;
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    library::{
-        scan::ScanEvent,
-        types::{Album, table::AlbumColumn},
-    },
+    library::types::{Album, table::AlbumColumn},
     ui::{
         components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
         library::{context_menus::AlbumContextMenuContext, table_view_header::TableViewHeader},
@@ -29,7 +26,7 @@ impl AlbumView {
         initial_scroll_offset: Option<f32>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let state = cx.global::<Models>().scan_state.clone();
+            let state = cx.global::<Models>().library_change.clone();
 
             let table_settings = cx.global::<Models>().table_settings.clone();
             let initial_settings = table_settings
@@ -54,19 +51,8 @@ impl AlbumView {
 
             let table_clone = table.clone();
 
-            cx.observe(&state, move |_: &mut AlbumView, e, cx| {
-                let value = e.read(cx);
-                match value {
-                    ScanEvent::ScanCompleteIdle
-                    | ScanEvent::ScanCompleteWatching
-                    | ScanEvent::TargetedRescanComplete => {
-                        table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
-                    }
-                    ScanEvent::ScanProgress { current, .. } if current % 100 == 0 => {
-                        table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
-                    }
-                    _ => {}
-                }
+            cx.observe(&state, move |_, _, cx| {
+                table_clone.update(cx, |_, cx| cx.emit(TableEvent::NewRows));
             })
             .detach();
 

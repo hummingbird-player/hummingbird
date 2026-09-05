@@ -8,7 +8,6 @@ use rustc_hash::FxHashMap;
 use crate::{
     library::{
         db::{LibraryAccess, LikedTrackSortMethod},
-        scan::ScanEvent,
         types::{Album, DBString, Track, table::AlbumColumn},
     },
     media::numbering::NumberDisplayMode,
@@ -38,7 +37,7 @@ use crate::{
                 track_item::{TrackItem, TrackItemLeftField},
             },
         },
-        models::{Models, PlaybackInfo, PlaylistEvent},
+        models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo},
         theme::Theme,
         util::{create_or_retrieve_view, prune_views},
     },
@@ -138,7 +137,7 @@ impl ArtistDetailView {
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
             cx.subscribe(&playlist_tracker, move |this: &mut Self, _, ev, cx| {
-                if let PlaylistEvent::PlaylistUpdated(1) = ev {
+                if ev.updates(LIKED_SONGS_PLAYLIST_ID) {
                     let liked_tracks = cx
                         .get_liked_tracks_by_artist(artist_id, this.liked_sort)
                         .unwrap_or_else(|_| Arc::new(Vec::new()));
@@ -149,14 +148,10 @@ impl ArtistDetailView {
             .detach();
             let availability = cx.global::<Models>().availability.clone();
             cx.observe(&availability, |_, _, cx| cx.notify()).detach();
-            let scan_state = cx.global::<Models>().scan_state.clone();
-            cx.observe(&scan_state, |this: &mut Self, state, cx| {
-                if matches!(
-                    *state.read(cx),
-                    ScanEvent::ScanCompleteIdle
-                        | ScanEvent::ScanCompleteWatching
-                        | ScanEvent::TargetedRescanComplete
-                ) {
+            let scan_state = cx.global::<Models>().library_change.clone();
+            let mut completion = scan_state.read(cx).completed;
+            cx.observe(&scan_state, move |this: &mut Self, state, cx| {
+                if state.read(cx).take_completion(&mut completion) {
                     this.refresh(cx);
                 }
             })
@@ -429,8 +424,10 @@ impl Render for ArtistDetailView {
         let grid_render_counter = self.grid_render_counter.clone();
         let nav_model = self.nav_model.clone();
 
-        let is_playing =
-            cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let is_playing = matches!(
+            *cx.global::<PlaybackInfo>().playback_state.read(cx),
+            PlaybackState::Playing | PlaybackState::Buffering
+        );
         let availability = snapshot(cx);
 
         let current_track_in_artist = cx
@@ -440,8 +437,8 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.all_tracks.iter().any(|track| {
-                    current_track == track.location
-                        && availability.is_track_path_available(&track.location)
+                    current_track == track.reference
+                        && availability.is_indexed_track_available(&track.reference, track.present)
                 })
             });
         let has_available_artist_tracks = has_available_tracks(cx, self.all_tracks.as_ref());
@@ -453,8 +450,8 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.liked_tracks.iter().any(|track| {
-                    current_track == track.location
-                        && availability.is_track_path_available(&track.location)
+                    current_track == track.reference
+                        && availability.is_indexed_track_available(&track.reference, track.present)
                 })
             });
         let has_available_liked_tracks = has_available_tracks(cx, self.liked_tracks.as_ref());
@@ -466,8 +463,8 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.standalone_tracks.iter().any(|track| {
-                    current_track == track.location
-                        && availability.is_track_path_available(&track.location)
+                    current_track == track.reference
+                        && availability.is_indexed_track_available(&track.reference, track.present)
                 })
             });
         let has_available_standalone_tracks =
@@ -510,13 +507,15 @@ impl Render for ArtistDetailView {
                                             liked_tracks
                                                 .iter()
                                                 .filter(|track| {
-                                                    availability
-                                                        .is_track_path_available(&track.location)
+                                                    availability.is_indexed_track_available(
+                                                        &track.reference,
+                                                        track.present,
+                                                    )
                                                 })
                                                 .map(|track| {
                                                     QueueItemData::new(
                                                         cx,
-                                                        track.location.clone(),
+                                                        track.reference.clone(),
                                                         Some(track.id),
                                                         track.album_id,
                                                     )
@@ -628,13 +627,15 @@ impl Render for ArtistDetailView {
                                         standalone_tracks
                                             .iter()
                                             .filter(|track| {
-                                                availability
-                                                    .is_track_path_available(&track.location)
+                                                availability.is_indexed_track_available(
+                                                    &track.reference,
+                                                    track.present,
+                                                )
                                             })
                                             .map(|track| {
                                                 QueueItemData::new(
                                                     cx,
-                                                    track.location.clone(),
+                                                    track.reference.clone(),
                                                     Some(track.id),
                                                     track.album_id,
                                                 )
@@ -767,14 +768,15 @@ impl Render for ArtistDetailView {
                                                     all_tracks
                                                         .iter()
                                                         .filter(|track| {
-                                                            availability.is_track_path_available(
-                                                                &track.location,
+                                                            availability.is_indexed_track_available(
+                                                                &track.reference,
+                                                                track.present,
                                                             )
                                                         })
                                                         .map(|track| {
                                                             QueueItemData::new(
                                                                 cx,
-                                                                track.location.clone(),
+                                                                track.reference.clone(),
                                                                 Some(track.id),
                                                                 track.album_id,
                                                             )
