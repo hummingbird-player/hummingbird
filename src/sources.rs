@@ -22,10 +22,6 @@ pub mod subsonic;
 pub mod sync;
 pub use identity::{SourceId, TrackLocation, TrackRef};
 
-/// Reveal connection creation only when streaming and reporting are integrated.
-/// Existing indexed sources/configurations remain readable during development.
-pub const SOURCE_UI_READY: bool = false;
-
 /// Local input availability. Remote resolution is supplied by the source registry.
 /// Call only on workers: unlike the UI availability snapshot this probes the disk.
 pub fn is_playable(reference: &TrackRef) -> bool {

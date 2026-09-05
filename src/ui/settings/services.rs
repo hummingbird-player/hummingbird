@@ -23,7 +23,7 @@ use crate::{
 };
 
 pub struct ServicesSettings {
-    libraries: Option<Entity<super::music_libraries::MusicLibraries>>,
+    libraries: Entity<super::music_libraries::MusicLibraries>,
     settings: Entity<Settings>,
     #[cfg(feature = "proprietary-services")]
     lastfm: Entity<LastFMState>,
@@ -76,8 +76,7 @@ impl ServicesSettings {
             cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
 
             Self {
-                libraries: crate::sources::SOURCE_UI_READY
-                    .then(|| super::music_libraries::MusicLibraries::new(cx)),
+                libraries: super::music_libraries::MusicLibraries::new(cx),
                 settings,
                 #[cfg(feature = "proprietary-services")]
                 lastfm,
@@ -120,7 +119,7 @@ impl Render for ServicesSettings {
             .flex_col()
             .gap(px(12.0))
             .child(section_header(tr!("SERVICES")))
-            .children(self.libraries.clone());
+            .child(self.libraries.clone());
 
         #[cfg(feature = "proprietary-services")]
         if lastfm::is_available() {

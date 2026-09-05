@@ -66,4 +66,3 @@ BEGIN
         WHERE track.album_id = OLD.album_id
     );
 END;
-

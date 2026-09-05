@@ -1,8 +1,7 @@
 # Library sources
 
 Subsonic sources share Hummingbird's library database, search, playlists, queue,
-metadata views, and audio engine. Connection creation is currently hidden behind
-`src/sources.rs::SOURCE_UI_READY` while the implementation is being simplified.
+metadata views, and audio engine.
 
 ## Connection and playback behavior
 
