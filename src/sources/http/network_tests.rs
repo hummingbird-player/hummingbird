@@ -195,6 +195,26 @@ async fn redirects_cannot_send_authentication_to_another_origin() {
     );
     server.await.unwrap();
 }
+
+#[test]
+fn only_credential_free_bandcamp_cdn_redirects_cross_origins() {
+    let origin =
+        url::Url::parse("https://bandcamp.com/api/subsonic/rest/stream.view?u=user&t=token&s=salt")
+            .unwrap();
+    let cdn = url::Url::parse("https://t4.bcbits.com/stream/file.mp3?token=media").unwrap();
+    assert!(redirect_allowed(std::slice::from_ref(&origin), &cdn));
+
+    for target in [
+        "http://t4.bcbits.com/stream/file.mp3",
+        "https://evil.example/stream/file.mp3",
+        "https://notbcbits.com/stream/file.mp3",
+        "https://t4.bcbits.com/stream/file.mp3?u=user&t=token",
+        "https://user:password@t4.bcbits.com/stream/file.mp3",
+    ] {
+        let target = url::Url::parse(target).unwrap();
+        assert!(!redirect_allowed(std::slice::from_ref(&origin), &target));
+    }
+}
 #[tokio::test]
 async fn stalled_media_read_times_out_and_dropping_it_closes_the_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

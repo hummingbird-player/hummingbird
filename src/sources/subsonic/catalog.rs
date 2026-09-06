@@ -98,6 +98,7 @@ impl SubsonicBackend {
     }
     async fn page(&self, request: CatalogRequest) -> BackendResult<CatalogPage> {
         let info = self.connection()?;
+        let bandcamp = info.server_name.eq_ignore_ascii_case("BandcampServer");
         let mut folders = request.folder_ids;
         folders.sort();
         folders.dedup();
@@ -130,17 +131,21 @@ impl SubsonicBackend {
             let queue = folders
                 .iter()
                 .flat_map(|folder| {
-                    [
-                        Step::AlbumList {
-                            folder: folder.clone(),
-                            offset: 0,
-                        },
-                        Step::Roots {
+                    let mut steps = vec![Step::AlbumList {
+                        folder: folder.clone(),
+                        offset: 0,
+                    }];
+                    // Bandcamp exposes its synthetic Collection folder for client
+                    // compatibility, but its catalog is album-based and does not
+                    // reliably implement the legacy directory traversal endpoints.
+                    if !bandcamp {
+                        steps.push(Step::Roots {
                             folder: folder.clone(),
                             offset: 0,
                             signature: None,
-                        },
-                    ]
+                        });
+                    }
+                    steps
                 })
                 .collect();
             Cursor {
@@ -205,12 +210,14 @@ impl SubsonicBackend {
                                 if !cursor.album_pages.insert(digest(&key)?) {
                                     return Err(malformed());
                                 }
-                                cursor.queue.push_front(Step::AlbumList {
-                                    folder,
-                                    offset: offset
-                                        .checked_add(albums.len() as u32)
-                                        .ok_or_else(limit)?,
-                                });
+                                if !bandcamp || albums.len() == ALBUM_BATCH {
+                                    cursor.queue.push_front(Step::AlbumList {
+                                        folder,
+                                        offset: offset
+                                            .checked_add(albums.len() as u32)
+                                            .ok_or_else(limit)?,
+                                    });
+                                }
                                 for album in albums.iter().rev() {
                                     cursor.queue.push_front(Step::Album {
                                         id: id(album)?,

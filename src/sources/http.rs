@@ -151,13 +151,8 @@ impl NetworkTransport {
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(read_timeout)
             .redirect_policy(zed_reqwest::redirect::Policy::custom(|attempt| {
-                // A redirect may retain an authenticated query. Never cross origins,
-                // including HTTPS -> HTTP, even if the host spelling is unchanged.
                 if attempt.previous().len() >= 5
-                    || attempt
-                        .previous()
-                        .first()
-                        .is_some_and(|origin| origin.origin() != attempt.url().origin())
+                    || !redirect_allowed(attempt.previous(), attempt.url())
                 {
                     attempt.stop()
                 } else {
@@ -252,6 +247,37 @@ impl NetworkTransport {
             }),
         })
     }
+}
+
+fn redirect_allowed(previous: &[url::Url], target: &url::Url) -> bool {
+    let Some(origin) = previous.first() else {
+        return false;
+    };
+    if origin.origin() == target.origin() {
+        return true;
+    }
+
+    // Bandcamp's Subsonic binary endpoints redirect to its HTTPS media CDN.
+    // Keep the exception narrow, and reject a Location which copied any actual
+    // Subsonic credential into the destination URL.
+    if origin.scheme() != "https"
+        || origin.host_str() != Some("bandcamp.com")
+        || target.scheme() != "https"
+        || !target
+            .host_str()
+            .is_some_and(|host| host == "bcbits.com" || host.ends_with(".bcbits.com"))
+        || !target.username().is_empty()
+        || target.password().is_some()
+    {
+        return false;
+    }
+    let target_pairs: Vec<_> = target.query_pairs().collect();
+    !origin.query_pairs().any(|(key, value)| {
+        matches!(key.as_ref(), "u" | "p" | "t" | "apiKey")
+            && target_pairs
+                .iter()
+                .any(|(target_key, target_value)| target_key == &key && target_value == &value)
+    })
 }
 struct NetworkBody {
     response: zed_reqwest::Response,

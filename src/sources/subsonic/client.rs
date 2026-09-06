@@ -148,6 +148,15 @@ pub(super) fn malformed() -> BackendError {
 
 pub fn decode_envelope(body: &[u8]) -> BackendResult<Value> {
     let mut value: Value = serde_json::from_slice(body).map_err(|_| malformed())?;
+    // Bandcamp falls through to a private API error document for Subsonic
+    // endpoints it does not implement. Treat only that exact, known response as
+    // endpoint absence so optional protocol fallbacks can continue.
+    if value.get("error").and_then(Value::as_bool) == Some(true)
+        && value.get("error_message").and_then(Value::as_str) == Some("bad version")
+        && value.as_object().is_some_and(|object| object.len() == 2)
+    {
+        return Err(BackendError::unsupported());
+    }
     let response = value
         .get_mut("subsonic-response")
         .ok_or_else(malformed)?
@@ -238,6 +247,19 @@ mod tests {
             client
                 .request("ping", &[("u", "override".into())], 1024)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn bandcamp_private_api_fallthrough_is_an_unsupported_endpoint() {
+        let error =
+            decode_envelope(br#"{"error":true,"error_message":"bad version"}"#).unwrap_err();
+        assert_eq!(error.kind, BackendErrorKind::Unsupported);
+        assert_eq!(
+            decode_envelope(br#"{"error":true,"error_message":"different"}"#)
+                .unwrap_err()
+                .kind,
+            BackendErrorKind::MalformedResponse
         );
     }
 }

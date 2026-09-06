@@ -8,12 +8,14 @@ use crate::sources::{
     sync::SourceHost,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct Wire {
     requests: Mutex<Vec<String>>,
     indexed: bool,
     indexes: bool,
     forbidden: bool,
+    bandcamp: AtomicBool,
 }
 #[async_trait]
 impl HttpTransport for Wire {
@@ -29,7 +31,9 @@ impl HttpTransport for Wire {
         self.requests.lock().unwrap().push(endpoint.clone());
         let params: std::collections::HashMap<_, _> = request.url.query_pairs().collect();
         let response = match endpoint.as_str() {
-            "ping" => json!({"type":"Fixture","serverVersion":"1"}),
+            "ping" => {
+                json!({"type":if self.bandcamp.load(Ordering::Relaxed) {"BandcampServer"} else {"Fixture"},"serverVersion":"1"})
+            }
             "getOpenSubsonicExtensions" => {
                 json!({"openSubsonicExtensions":[{"name":"apiKeyAuthentication","versions":[1]},{"name":"future","versions":[2]}]})
             }
@@ -84,6 +88,7 @@ fn backend(indexed: bool, indexes: bool, forbidden: bool) -> (Arc<SubsonicBacken
         indexed,
         indexes,
         forbidden,
+        bandcamp: AtomicBool::new(false),
     });
     let client = SubsonicClient::new(
         "https://example.test/proxy",
@@ -96,6 +101,40 @@ fn backend(indexed: bool, indexes: bool, forbidden: bool) -> (Arc<SubsonicBacken
     )
     .unwrap();
     (Arc::new(SubsonicBackend::new(client)), wire)
+}
+
+#[tokio::test]
+async fn bandcamp_uses_its_album_catalog_without_legacy_directory_traversal() {
+    let (backend, wire) = backend(true, false, false);
+    wire.bandcamp.store(true, Ordering::Relaxed);
+    backend.connect().await.unwrap();
+    let mut cursor = None;
+    let completion;
+    loop {
+        let page = backend
+            .catalog_page(CatalogRequest {
+                cursor,
+                folder_ids: vec![],
+                limit: 256,
+            })
+            .await
+            .unwrap();
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            completion = page.completion;
+            break;
+        }
+    }
+    assert_eq!(completion, SnapshotCompletion::Authoritative);
+    let requests = wire.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|endpoint| endpoint.as_str() == "getAlbumList2")
+            .count(),
+        1
+    );
+    assert!(!requests.iter().any(|endpoint| endpoint == "getIndexes"));
 }
 #[tokio::test]
 async fn complete_enumeration_splits_albums_and_includes_loose_songs_without_cycles() {
