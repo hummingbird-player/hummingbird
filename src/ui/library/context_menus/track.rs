@@ -72,7 +72,10 @@ impl RenderOnce for TrackContextMenu {
                 .artist_ids_for_track(track_for_artist.id)
                 .is_ok_and(|ids| !ids.is_empty());
         let can_go_to_album = track_for_album.album_id.is_some();
-        let can_reveal_track = is_track_path_available(cx, track_for_reveal.location.as_path());
+        let can_reveal_track = track_for_reveal
+            .local_path()
+            .is_some_and(|path| is_track_path_available(cx, path));
+        let can_rescan = track_for_rescan.source.is_local();
         let show_add_to = self.show_add_to;
         let play_from_here = self.context.play_from_here.clone();
         let playlist_info = self.playlist_info;
@@ -156,20 +159,25 @@ impl RenderOnce for TrackContextMenu {
                     {
                         let track_for_reveal = track_for_reveal.clone();
                         move |_, _, cx| {
-                            reveal_path_for_file_manager(track_for_reveal.location.as_path(), cx);
+                            if let Some(path) = track_for_reveal.local_path() {
+                                reveal_path_for_file_manager(path, cx);
+                            }
                         }
                     },
                 )
                 .disabled(!can_reveal_track),
             )
-            .item(menu_item(
-                "track_rescan",
-                None::<SharedString>,
-                tr!("RESCAN_TRACK", "Rescan track"),
-                move |_, _, cx| {
-                    rescan_track(cx, &track_for_rescan);
-                },
-            ))
+            .item(
+                menu_item(
+                    "track_rescan",
+                    None::<SharedString>,
+                    tr!("RESCAN_TRACK", "Rescan track"),
+                    move |_, _, cx| {
+                        rescan_track(cx, &track_for_rescan);
+                    },
+                )
+                .disabled(!can_rescan),
+            )
             .item(menu_separator())
             .item(
                 menu_item(

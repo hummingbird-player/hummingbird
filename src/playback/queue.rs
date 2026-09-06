@@ -4,7 +4,10 @@ use std::sync::{Arc, RwLock};
 use gpui::{App, AppContext, Entity, SharedString};
 use std::path::PathBuf;
 
-use crate::{library::db::LibraryAccess, ui::data::Decode};
+use crate::{
+    library::{db::LibraryAccess, source::TrackRef, types::Track},
+    ui::data::Decode,
+};
 
 #[derive(Clone, Debug)]
 pub struct QueueItemData {
@@ -18,8 +21,8 @@ pub struct QueueItemData {
     db_id: Option<i64>,
     /// The database ID of album the item is from, if it exists.
     db_album_id: Option<i64>,
-    /// The path to the track file.
-    path: PathBuf,
+    /// The local path or remote source and ID of the track.
+    track: TrackRef,
 }
 
 impl serde::Serialize for QueueItemData {
@@ -31,7 +34,7 @@ impl serde::Serialize for QueueItemData {
         let mut state = serializer.serialize_struct("QueueItemData", 3)?;
         state.serialize_field("db_id", &self.db_id)?;
         state.serialize_field("db_album_id", &self.db_album_id)?;
-        state.serialize_field("path", &self.path)?;
+        state.serialize_field("track", &self.track)?;
         state.end()
     }
 }
@@ -45,7 +48,10 @@ impl<'de> serde::Deserialize<'de> for QueueItemData {
         struct QueueItemDataRaw {
             db_id: Option<i64>,
             db_album_id: Option<i64>,
-            path: PathBuf,
+            #[serde(default)]
+            path: Option<PathBuf>,
+            #[serde(default)]
+            track: Option<TrackRef>,
         }
 
         let raw = QueueItemDataRaw::deserialize(deserializer)?;
@@ -53,14 +59,17 @@ impl<'de> serde::Deserialize<'de> for QueueItemData {
             data: Arc::new(RwLock::new(None)),
             db_id: raw.db_id,
             db_album_id: raw.db_album_id,
-            path: raw.path,
+            track: raw
+                .track
+                .or_else(|| raw.path.map(TrackRef::Local))
+                .ok_or_else(|| serde::de::Error::custom("queue item has no track"))?,
         })
     }
 }
 
 impl Display for QueueItemData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.path.to_str().unwrap_or("invalid path"))
+        self.track.fmt(f)
     }
 }
 
@@ -90,15 +99,28 @@ impl PartialEq for QueueItemData {
     fn eq(&self, other: &Self) -> bool {
         self.db_id == other.db_id
             && self.db_album_id == other.db_album_id
-            && self.path == other.path
+            && self.track == other.track
     }
 }
 
 impl QueueItemData {
     /// Creates a new `QueueItemData` instance with the given information.
     pub fn new(cx: &mut App, path: PathBuf, db_id: Option<i64>, db_album_id: Option<i64>) -> Self {
+        Self::from_reference(cx, TrackRef::Local(path), db_id, db_album_id)
+    }
+
+    pub fn from_track(cx: &mut App, track: &Track) -> Self {
+        Self::from_reference(cx, track.reference(), Some(track.id), track.album_id)
+    }
+
+    pub fn from_reference(
+        cx: &mut App,
+        track: TrackRef,
+        db_id: Option<i64>,
+        db_album_id: Option<i64>,
+    ) -> Self {
         QueueItemData {
-            path,
+            track,
             db_id,
             db_album_id,
             data: Arc::new(RwLock::new(Some(cx.new(|_| None)))),
@@ -132,8 +154,7 @@ impl QueueItemData {
             .unwrap()
             .clone();
         let track_id = self.db_id;
-        let album_id = self.db_album_id;
-        let path = self.path.clone();
+        let path = self.local_path().cloned();
         model.update(cx, move |m, cx| {
             // if we already have the data, exit the function
             if m.is_some() {
@@ -147,24 +168,22 @@ impl QueueItemData {
                 duration: None,
             });
 
-            // if the database ids are known we can get the data from the database
-            if let (Some(track_id), Some(album_id)) = (track_id, album_id) {
-                let album =
-                    cx.get_album_by_id(album_id, crate::library::db::AlbumMethod::Thumbnail);
-                let track = cx.get_track_by_id(track_id);
-
-                if let (Ok(track), Ok(album)) = (track, album) {
-                    m.as_mut().unwrap().name = Some(track.title.clone().into());
-                    m.as_mut().unwrap().album_id = Some(album.id);
-                    m.as_mut().unwrap().duration = Some(track.duration);
-
-                    if let Some(artist_name) = track.artist_names.clone() {
-                        m.as_mut().unwrap().artist_name = Some(artist_name.0);
-                    } else if let Some(artist_name) = album.artist_display_override.clone() {
-                        m.as_mut().unwrap().artist_name = Some(artist_name.0);
-                    }
+            // we can use the track's metadata even if it doesn't have an album
+            if let Some(track_id) = track_id
+                && let Ok(track) = cx.get_track_by_id(track_id)
+            {
+                let data = m.as_mut().unwrap();
+                data.name = Some(track.title.clone().into());
+                data.album_id = track.album_id;
+                data.duration = Some(track.duration);
+                data.artist_name = track.artist_names.clone().map(|name| name.0);
+                if data.artist_name.is_none()
+                    && let Some(album_id) = track.album_id
+                    && let Ok(album) =
+                        cx.get_album_by_id(album_id, crate::library::db::AlbumMethod::Thumbnail)
+                {
+                    data.artist_name = album.artist_display_override.clone().map(|name| name.0);
                 }
-
                 cx.notify();
             }
 
@@ -174,7 +193,9 @@ impl QueueItemData {
 
             // vital information left blank, try retriving the metadata from disk
             // much slower, especially on windows
-            cx.read_metadata(path, cx.entity()).detach();
+            if let Some(path) = path {
+                cx.read_metadata(path, cx.entity()).detach();
+            }
         });
 
         model
@@ -191,9 +212,13 @@ impl QueueItemData {
         }
     }
 
-    /// Returns the file path of the queue item.
-    pub fn get_path(&self) -> &PathBuf {
-        &self.path
+    pub fn reference(&self) -> &TrackRef {
+        &self.track
+    }
+
+    /// Returns the file path, or `None` for a remote track.
+    pub fn local_path(&self) -> Option<&PathBuf> {
+        self.track.local_path()
     }
 
     /// Returns the album ID of the queue item, if it exists.

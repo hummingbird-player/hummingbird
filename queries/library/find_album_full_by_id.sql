@@ -1,5 +1,6 @@
 SELECT
     album.id,
+    album.source,
     album.title,
     album.title_sortable,
     NULLIF(album.artist_display_override, '') AS artist_display_override,

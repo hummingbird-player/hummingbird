@@ -412,7 +412,8 @@ pub fn run() -> anyhow::Result<()> {
             .filter(|position| *position < playback_session.queue.len());
         let initial_track = initial_position
             .and_then(|position| playback_session.queue.get(position))
-            .map(|item| CurrentTrack::new(item.get_path().clone()));
+            .and_then(|item| item.local_path().cloned())
+            .map(CurrentTrack::new);
 
         let queue: Arc<RwLock<Vec<QueueItemData>>> =
             Arc::new(RwLock::new(playback_session.queue.clone()));

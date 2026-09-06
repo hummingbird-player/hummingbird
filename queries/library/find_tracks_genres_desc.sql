@@ -2,7 +2,8 @@ SELECT
     track.id,
     track.title_sortable,
     track.album_id,
-    track.location
+    track.location,
+    track.source
 FROM track
 LEFT JOIN (
     SELECT DISTINCT

@@ -168,7 +168,7 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
     if this
         .current_track_path
         .as_ref()
-        .is_none_or(|path| path != item.get_path())
+        .is_none_or(|path| item.local_path() != Some(path))
     {
         return;
     }

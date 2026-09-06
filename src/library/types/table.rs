@@ -418,7 +418,7 @@ impl TableData<TrackColumn> for Track {
         Ok(cx
             .list_tracks(track_table_sort(sort))?
             .into_iter()
-            .map(|(id, _, _, _)| id)
+            .map(|row| row.id)
             .collect())
     }
 
@@ -514,7 +514,7 @@ impl TableData<TrackColumn> for Track {
         Some(TableDragData::Track(TrackDragData::from_track(
             self.id,
             self.album_id,
-            self.location.clone(),
+            self.reference(),
             self.title.0.clone(),
         )))
     }

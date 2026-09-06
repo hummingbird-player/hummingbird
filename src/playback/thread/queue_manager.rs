@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     mem::take,
-    path::PathBuf,
     sync::{Arc, RwLock},
 };
 
@@ -9,6 +8,7 @@ use rand::{rng, seq::SliceRandom};
 use smallvec::{SmallVec, smallvec};
 
 use crate::{
+    library::source::TrackRef,
     playback::{events::RepeatState, queue::QueueItemData, session_storage::PlaybackSessionData},
     settings::playback::PlaybackSettings,
 };
@@ -30,11 +30,11 @@ pub enum QueueNavigationResult {
     /// The queue position changed.
     Changed {
         index: usize,
-        path: PathBuf,
+        path: TrackRef,
         reshuffled: Reshuffled,
     },
     /// The current track should repeat (RepeatOne mode).
-    Unchanged { path: PathBuf },
+    Unchanged { path: TrackRef },
     /// End of queue reached.
     EndOfQueue,
 }
@@ -46,7 +46,7 @@ pub enum DequeueResult {
     /// The currently playing item was removed.
     RemovedCurrent {
         /// The path of the next track to play, if any.
-        new_path: Option<PathBuf>,
+        new_path: Option<TrackRef>,
     },
     /// Nothing changed (index out of bounds).
     Unchanged,
@@ -57,7 +57,7 @@ pub enum DequeueManyResult {
     /// Items were removed, queue position adjusted.
     Removed { new_position: usize },
     /// The currently playing item was removed.
-    RemovedCurrent { new_path: Option<PathBuf> },
+    RemovedCurrent { new_path: Option<TrackRef> },
     /// Nothing changed (indices empty or all out of bounds).
     Unchanged,
 }
@@ -111,7 +111,7 @@ pub enum ReplaceResult {
 
 #[derive(Debug, Clone)]
 pub enum JumpResult {
-    Jumped { path: PathBuf },
+    Jumped { path: TrackRef },
     OutOfBounds,
 }
 
@@ -170,7 +170,7 @@ pub enum UndoResult {
     /// The last action was undone successfully. Contains the current index and path.
     Ok {
         current_idx: usize,
-        current_path: PathBuf,
+        current_path: TrackRef,
         shuffle: bool,
     },
     /// The last action was undone successfully, but no current track is selected.
@@ -233,7 +233,7 @@ impl QueueManager {
         {
             UndoResult::Ok {
                 current_idx,
-                current_path: queue[current_idx].get_path().clone(),
+                current_path: queue[current_idx].reference().clone(),
                 shuffle,
             }
         } else {
@@ -253,7 +253,7 @@ impl QueueManager {
     }
 
     fn item_is_playable(item: &QueueItemData) -> bool {
-        item.get_path().exists()
+        item.local_path().is_some_and(|path| path.exists())
     }
 
     fn first_playable_index(queue: &[QueueItemData]) -> Option<usize> {
@@ -551,7 +551,7 @@ impl QueueManager {
                 && Self::item_is_playable(path)
             {
                 return QueueNavigationResult::Unchanged {
-                    path: path.get_path().clone(),
+                    path: path.reference().clone(),
                 };
             }
 
@@ -559,7 +559,7 @@ impl QueueManager {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].reference().clone(),
                     reshuffled: Reshuffled::NotReshuffled,
                 }
             } else if self.repeat == RepeatState::Repeating {
@@ -570,7 +570,7 @@ impl QueueManager {
                     self.queue_next = index + 1;
                     QueueNavigationResult::Changed {
                         index,
-                        path: queue[index].get_path().clone(),
+                        path: queue[index].reference().clone(),
                         reshuffled: if self.shuffle {
                             Reshuffled::Reshuffled
                         } else {
@@ -607,7 +607,7 @@ impl QueueManager {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].reference().clone(),
                     reshuffled: Reshuffled::NotReshuffled,
                 }
             } else if self.repeat == RepeatState::Repeating
@@ -622,7 +622,7 @@ impl QueueManager {
                 self.queue_next = index + 1;
                 QueueNavigationResult::Changed {
                     index,
-                    path: queue[index].get_path().clone(),
+                    path: queue[index].reference().clone(),
                     reshuffled: if self.shuffle {
                         Reshuffled::Reshuffled
                     } else {
@@ -650,7 +650,7 @@ impl QueueManager {
         let queue = self.queue.read().expect("poisoned queue lock");
 
         if index < queue.len() && Self::item_is_playable(&queue[index]) {
-            let path = queue[index].get_path().clone();
+            let path = queue[index].reference().clone();
             drop(queue);
             self.queue_next = index + 1;
             self.persist_session_state();
@@ -873,7 +873,7 @@ impl QueueManager {
         let res = if index == current {
             let new_path = Self::next_playable_from(&queue, current)
                 .and_then(|idx| queue.get(idx))
-                .map(|v| v.get_path().clone());
+                .map(|v| v.reference().clone());
             DequeueResult::RemovedCurrent { new_path }
         } else if index < current {
             self.queue_next -= 1;
@@ -943,7 +943,7 @@ impl QueueManager {
             let current = current.expect("removed_current implies current is Some");
             let new_path = Self::next_playable_from(&queue, current - items_before_current)
                 .and_then(|idx| queue.get(idx))
-                .map(|v| v.get_path().clone());
+                .map(|v| v.reference().clone());
             DequeueManyResult::RemovedCurrent { new_path }
         } else if self.queue_next > 0 {
             self.queue_next -= items_before_current;
@@ -1337,6 +1337,38 @@ mod tests {
             "path": format!("/tmp/hummingbird-undo-{id}.flac"),
         }))
         .expect("valid queue item")
+    }
+
+    #[test]
+    fn navigation_preserves_remote_items_without_opening_them_as_local_paths() {
+        use super::{JumpResult, QueueNavigationResult};
+        use crate::library::source::{SourceId, TrackRef};
+
+        let dir = crate::test_support::TestDir::new("source-queue");
+        let path = dir.join("song.flac");
+        std::fs::write(&path, b"local").unwrap();
+        let local: QueueItemData = serde_json::from_value(json!({
+            "db_id": 1, "db_album_id": null, "path": path,
+        }))
+        .unwrap();
+        let remote: QueueItemData = serde_json::from_value(json!({
+            "db_id": 2, "db_album_id": null,
+            "track": TrackRef::from_location(SourceId("server".into()), path.to_str().unwrap().into()),
+        })).unwrap();
+        let mut manager = manager_with_queue(vec![remote.clone(), local.clone(), remote.clone()]);
+        assert!(matches!(manager.jump(0), JumpResult::OutOfBounds));
+        assert!(matches!(
+            manager.next(true),
+            QueueNavigationResult::Changed { index: 1, .. }
+        ));
+        assert!(matches!(
+            manager.next(true),
+            QueueNavigationResult::EndOfQueue
+        ));
+        assert_eq!(queue_ids(&manager), vec![2, 1, 2]);
+        let before = snapshot(&manager);
+        manager.insert_item(0, remote);
+        assert_undo_round_trip(&mut manager, before);
     }
 
     fn items(count: usize, start_id: i64) -> Vec<QueueItemData> {

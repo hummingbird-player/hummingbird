@@ -1,1 +1,1 @@
-DELETE FROM track WHERE location = $1;
+DELETE FROM track WHERE source = 'local' AND location = $1;

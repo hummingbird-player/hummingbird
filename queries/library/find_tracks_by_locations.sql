@@ -5,4 +5,4 @@ SELECT
     pi.id
 FROM track t
 LEFT JOIN playlist_item pi ON pi.track_id = t.id AND pi.playlist_id = ?
-WHERE t.location IN ({})
+WHERE t.source = 'local' AND t.location IN ({})

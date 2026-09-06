@@ -4,4 +4,4 @@ SELECT
 FROM
     track
 WHERE
-    album_id IS NOT NULL;
+    source = 'local' AND album_id IS NOT NULL;

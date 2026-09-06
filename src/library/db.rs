@@ -14,7 +14,10 @@ use crate::{
     ui::app::Pool,
 };
 
-use super::types::{Album, Artist, Track};
+use super::{
+    source::{SourceId, TrackRef},
+    types::{Album, Artist, Track},
+};
 
 pub async fn create_pool(path: impl AsRef<Path>) -> sqlx::Result<SqlitePool> {
     debug!("Creating database pool at {:?}", path.as_ref());
@@ -270,7 +273,7 @@ pub async fn list_albums(
 pub async fn list_tracks(
     pool: &SqlitePool,
     sort_method: TrackSortMethod,
-) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
+) -> sqlx::Result<Vec<TrackListing>> {
     let query = match sort_method {
         TrackSortMethod::TitleAsc => {
             include_str!("../../queries/library/find_tracks_title_asc.sql")
@@ -310,7 +313,7 @@ pub async fn list_tracks(
         }
     };
 
-    let tracks = sqlx::query_as::<_, (i64, String, Option<i64>, String)>(query)
+    let tracks = sqlx::query_as::<_, TrackListing>(query)
         .fetch_all(pool)
         .await?;
 
@@ -523,10 +526,18 @@ pub async fn get_track_by_id(pool: &SqlitePool, track_id: i64) -> sqlx::Result<A
 }
 
 pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
-    let query = include_str!("../../queries/library/find_track_by_path.sql");
+    get_track_by_reference(pool, &TrackRef::Local(path.to_path_buf())).await
+}
+
+pub async fn get_track_by_reference(
+    pool: &SqlitePool,
+    track: &TrackRef,
+) -> sqlx::Result<Option<Arc<Track>>> {
+    let query = include_str!("../../queries/library/find_track_by_reference.sql");
 
     let mut track = sqlx::query_as(query)
-        .bind(path.to_string_lossy().as_ref())
+        .bind(track.source())
+        .bind(track.location())
         .fetch_optional(pool)
         .await?;
     if let Some(track) = track.as_mut() {
@@ -654,12 +665,33 @@ pub async fn get_playlist(pool: &SqlitePool, playlist_id: i64) -> sqlx::Result<A
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TrackListing {
+    pub id: i64,
+    pub album_id: Option<i64>,
+    pub location: String,
+    pub source: SourceId,
+}
+
+impl TrackListing {
+    pub fn reference(&self) -> TrackRef {
+        TrackRef::from_location(self.source.clone(), self.location.clone())
+    }
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PlaylistTrackRow {
     #[sqlx(rename = "id")]
     pub playlist_item_id: i64,
     pub track_id: i64,
-    pub album_id: i64,
+    pub album_id: Option<i64>,
     pub location: String,
+    pub source: SourceId,
+}
+
+impl PlaylistTrackRow {
+    pub fn reference(&self) -> TrackRef {
+        TrackRef::from_location(self.source.clone(), self.location.clone())
+    }
 }
 
 pub async fn get_playlist_tracks(
@@ -921,10 +953,10 @@ pub async fn artist_ids_for_track(
     Ok(artists)
 }
 
-pub async fn get_all_tracks(pool: &SqlitePool) -> sqlx::Result<Vec<(String, i64, i64)>> {
+pub async fn get_all_tracks(pool: &SqlitePool) -> sqlx::Result<Vec<TrackListing>> {
     let query = include_str!("../../queries/library/get_all_tracks.sql");
 
-    let tracks: Vec<(String, i64, i64)> = sqlx::query_as(query).fetch_all(pool).await?;
+    let tracks = sqlx::query_as(query).fetch_all(pool).await?;
 
     Ok(tracks)
 }
@@ -952,10 +984,7 @@ pub trait LibraryAccess {
     fn list_albums(&self, sort_method: AlbumSortMethod) -> sqlx::Result<Vec<(u32, String)>>;
     // TODO: handle this better
     #[allow(clippy::type_complexity)]
-    fn list_tracks(
-        &self,
-        sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>>;
+    fn list_tracks(&self, sort_method: TrackSortMethod) -> sqlx::Result<Vec<TrackListing>>;
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn get_album_by_id(&self, album_id: i64, method: AlbumMethod) -> sqlx::Result<Arc<Album>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
@@ -998,7 +1027,7 @@ pub trait LibraryAccess {
     fn get_all_tracks_by_artist(&self, artist_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn artist_ids_for_album(&self, album_id: i64) -> sqlx::Result<Vec<(i64, String)>>;
     fn artist_ids_for_track(&self, track_id: i64) -> sqlx::Result<Vec<(i64, String)>>;
-    fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>>;
+    fn get_all_tracks(&self) -> sqlx::Result<Vec<TrackListing>>;
     fn list_album_paths(&self, album_id: i64) -> sqlx::Result<Vec<String>>;
     fn lyrics_for_track(&self, track_id: i64) -> sqlx::Result<Option<String>>;
 }
@@ -1009,10 +1038,7 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(list_albums(&pool.0, sort_method))
     }
 
-    fn list_tracks(
-        &self,
-        sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
+    fn list_tracks(&self, sort_method: TrackSortMethod) -> sqlx::Result<Vec<TrackListing>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_tracks(&pool.0, sort_method))
     }
@@ -1175,7 +1201,7 @@ impl LibraryAccess for App {
         crate::RUNTIME.block_on(artist_ids_for_track(&pool.0, track_id))
     }
 
-    fn get_all_tracks(&self) -> sqlx::Result<Vec<(String, i64, i64)>> {
+    fn get_all_tracks(&self) -> sqlx::Result<Vec<TrackListing>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_all_tracks(&pool.0))
     }

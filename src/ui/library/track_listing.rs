@@ -105,6 +105,7 @@ mod tests {
 
     fn track(number: Option<i32>, section: Option<i32>, disc: Option<i32>) -> Track {
         Track {
+            source: Default::default(),
             id: 0,
             title: DBString::default(),
             title_sortable: DBString::default(),

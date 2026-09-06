@@ -320,7 +320,7 @@ impl Render for TrackItem {
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
 
-        let track_location_for_drag = self.track.location.clone();
+        let track_location_for_drag = self.track.reference();
         let album_id = self.track.album_id;
         let track_title_for_drag: SharedString = self.track.title.clone().into();
 
@@ -419,13 +419,17 @@ impl Render for TrackItem {
                                         )
                                     })
                                     .when_some(current_track, |this, track| {
-                                        this.bg(if track == self.track.location {
-                                            theme.list_item_current
-                                        } else if self.index % 2 == 1 {
-                                            theme.list_item_alternate
-                                        } else {
-                                            theme.list_item
-                                        })
+                                        this.bg(
+                                            if self.track.local_path()
+                                                == Some(track.get_path().as_path())
+                                            {
+                                                theme.list_item_current
+                                            } else if self.index % 2 == 1 {
+                                                theme.list_item_alternate
+                                            } else {
+                                                theme.list_item
+                                            },
+                                        )
                                     })
                                     .max_w_full()
                                     .when(self.left_field == TrackItemLeftField::TrackNum, |this| {

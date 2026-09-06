@@ -8,7 +8,6 @@ mod submission_timing;
 mod worker_tests;
 
 use std::{
-    path::Path,
     sync::{Arc, RwLock},
     thread::park_timeout,
 };
@@ -21,6 +20,7 @@ use tokio::sync::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    library::source::TrackRef,
     media::errors::PlaybackStartError,
     playback::{
         commands, dsp::spectrum::spectrum_tap, events::RepeatState,
@@ -280,6 +280,7 @@ impl PlaybackThread {
                 PlaybackCommand::Pause => self.pause(),
                 PlaybackCommand::TogglePlayPause => self.toggle_play_pause(),
                 PlaybackCommand::Open(path) => {
+                    let path = TrackRef::Local(path);
                     self.set_stop_after_current(false);
                     if let Err(err) = self.open(&path) {
                         error!(path = %path.display(), ?err, "Failed to open media: {err}");
@@ -362,7 +363,7 @@ impl PlaybackThread {
         if current_state == PlaybackState::Stopped
             && let Some((first, index)) = self.queue.first_with_index()
         {
-            let path = first.get_path().clone();
+            let path = first.reference().clone();
 
             if let Err(err) = self.open(&path) {
                 error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -373,15 +374,20 @@ impl PlaybackThread {
     }
 
     /// Open a media file and prepare it for playback.
-    fn open(&mut self, path: &Path) -> Result<(), PlaybackStartError> {
+    fn open(&mut self, path: &TrackRef) -> Result<(), PlaybackStartError> {
         self.open_with_resampler(path, false)
     }
 
     fn open_with_resampler(
         &mut self,
-        path: &Path,
+        track: &TrackRef,
         preserve_resampler: bool,
     ) -> Result<(), PlaybackStartError> {
+        let path = track.local_path().ok_or_else(|| {
+            PlaybackStartError::MediaError(
+                "This library source is not available for playback".into(),
+            )
+        })?;
         info!("Opening track '{}'", path.display());
 
         self.last_track_gain = None;
@@ -533,7 +539,7 @@ impl PlaybackThread {
         // Handle stopped state - start playing from the last track
         if self.state() == PlaybackState::Stopped {
             if let Some((last, _)) = self.queue.last_with_index() {
-                let path = last.get_path().clone();
+                let path = last.reference().clone();
 
                 if let Err(err) = self.open(&path) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -579,12 +585,12 @@ impl PlaybackThread {
         self.refresh_rg_auto_hint();
 
         if self.state() == PlaybackState::Stopped {
-            if !item.get_path().exists() {
+            if !item.reference().is_local_file_present() {
                 self.send_event(PlaybackEvent::QueueUpdated);
                 return;
             }
 
-            let path = item.get_path();
+            let path = item.reference();
 
             if let Err(err) = self.open(path) {
                 error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -608,7 +614,7 @@ impl PlaybackThread {
         let first = items
             .iter()
             .enumerate()
-            .find(|(_, item)| item.get_path().exists())
+            .find(|(_, item)| item.reference().is_local_file_present())
             .map(|(idx, item)| (idx, item.clone()));
         let first_index = self.queue.queue_items(items);
         self.refresh_rg_auto_hint();
@@ -617,7 +623,7 @@ impl PlaybackThread {
         if self.state() == PlaybackState::Stopped
             && let Some((relative_idx, first)) = first
         {
-            let path = first.get_path();
+            let path = first.reference();
 
             if let Err(err) = self.open(path) {
                 error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -673,7 +679,8 @@ impl PlaybackThread {
                 self.refresh_rg_auto_hint();
 
                 if previous_state != PlaybackState::Stopped {
-                    let should_reopen = self.engine.current_path() != Some(current_path.as_path());
+                    let should_reopen = self.engine.current_path()
+                        != current_path.local_path().map(|path| path.as_path());
 
                     if should_reopen {
                         if let Err(err) = self.open(&current_path) {
@@ -791,12 +798,12 @@ impl PlaybackThread {
                 self.refresh_rg_auto_hint();
                 // If stopped, start playing the inserted item
                 if self.state() == PlaybackState::Stopped {
-                    if !item.get_path().exists() {
+                    if !item.reference().is_local_file_present() {
                         self.send_event(PlaybackEvent::QueueUpdated);
                         return;
                     }
 
-                    let path = item.get_path();
+                    let path = item.reference();
 
                     if let Err(err) = self.open(path) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -814,12 +821,12 @@ impl PlaybackThread {
 
                 // If stopped, start playing the inserted item
                 if self.state() == PlaybackState::Stopped {
-                    if !item.get_path().exists() {
+                    if !item.reference().is_local_file_present() {
                         self.send_event(PlaybackEvent::QueueUpdated);
                         return;
                     }
 
-                    let path = item.get_path();
+                    let path = item.reference();
 
                     if let Err(err) = self.open(path) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -850,7 +857,7 @@ impl PlaybackThread {
         let first = items
             .iter()
             .enumerate()
-            .find(|(_, item)| item.get_path().exists())
+            .find(|(_, item)| item.reference().is_local_file_present())
             .map(|(idx, item)| (idx, item.clone()));
 
         match self.queue.insert_items(position, items) {
@@ -860,7 +867,7 @@ impl PlaybackThread {
                 if self.state() == PlaybackState::Stopped
                     && let Some((relative_idx, first)) = first
                 {
-                    let path = first.get_path();
+                    let path = first.reference();
 
                     if let Err(err) = self.open(path) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");
@@ -881,7 +888,7 @@ impl PlaybackThread {
                 if self.state() == PlaybackState::Stopped
                     && let Some((relative_idx, first)) = first
                 {
-                    let path = first.get_path();
+                    let path = first.reference();
 
                     if let Err(err) = self.open(path) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");

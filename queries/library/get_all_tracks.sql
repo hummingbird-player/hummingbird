@@ -1,1 +1,1 @@
-SELECT location, id, album_id FROM track;
+SELECT id, album_id, location, source FROM track;

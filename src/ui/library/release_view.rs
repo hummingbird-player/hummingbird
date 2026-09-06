@@ -308,17 +308,9 @@ impl ReleaseView {
                                             tracks
                                                 .iter()
                                                 .filter(|track| {
-                                                    availability
-                                                        .is_track_path_available(&track.location)
+                                                    availability.is_track_available(track)
                                                 })
-                                                .map(|track| {
-                                                    QueueItemData::new(
-                                                        cx,
-                                                        track.location.clone(),
-                                                        Some(track.id),
-                                                        track.album_id,
-                                                    )
-                                                })
+                                                .map(|track| QueueItemData::from_track(cx, track))
                                                 .collect()
                                         }
                                     },
@@ -632,8 +624,8 @@ impl Render for ReleaseView {
             .clone()
             .is_some_and(|current_track| {
                 self.tracks.iter().any(|track| {
-                    current_track == track.location
-                        && availability.is_track_path_available(&track.location)
+                    track.local_path() == Some(current_track.get_path().as_path())
+                        && availability.is_track_available(track)
                 })
             });
         let has_available_tracks = has_available_tracks(cx, self.tracks.as_ref());

@@ -373,7 +373,7 @@ fn shuffle_all(_: &ShuffleAll, cx: &mut App) {
     if let Ok(tracks) = cx.get_all_tracks() {
         let tracks = tracks
             .into_iter()
-            .map(|v| QueueItemData::new(cx, v.0.into(), Some(v.1), Some(v.2)))
+            .map(|v| QueueItemData::from_reference(cx, v.reference(), Some(v.id), v.album_id))
             .collect();
 
         let interface = cx.global::<PlaybackInterface>();

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 pub mod table;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use gpui::{IntoElement, RenderImage, SharedString};
@@ -192,6 +192,7 @@ pub const DATE_PRECISION_YEAR_MONTH: i32 = 2;
 #[derive(sqlx::FromRow, Clone)]
 pub struct Album {
     pub id: i64,
+    pub source: super::source::SourceId,
     pub title: DBString,
     pub title_sortable: DBString,
     /// Raw album artist tag, shown in place of the linked artists' names.
@@ -222,6 +223,7 @@ pub struct Album {
 #[derive(sqlx::FromRow, Clone, Debug)]
 pub struct Track {
     pub id: i64,
+    pub source: super::source::SourceId,
     pub title: DBString,
     pub title_sortable: DBString,
     #[sqlx(default)]
@@ -238,8 +240,7 @@ pub struct Track {
     pub genres: Vec<DBString>,
     #[sqlx(skip)]
     pub tags: Option<Vec<DBString>>,
-    #[sqlx(try_from = "String")]
-    pub location: PathBuf,
+    pub location: String,
     pub artist_names: Option<DBString>,
     #[sqlx(default)]
     pub rg_track_gain: Option<f64>,
@@ -256,6 +257,16 @@ pub struct Track {
     #[sqlx(default)]
     /// Date precision: 0 = year only, 1 = full date, 2 = year + month. None if no date info.
     pub date_precision: Option<i32>,
+}
+
+impl Track {
+    pub fn reference(&self) -> super::source::TrackRef {
+        super::source::TrackRef::from_location(self.source.clone(), self.location.clone())
+    }
+
+    pub fn local_path(&self) -> Option<&Path> {
+        self.source.is_local().then(|| Path::new(&self.location))
+    }
 }
 
 #[derive(sqlx::Type, Clone, Copy, Debug, PartialEq)]

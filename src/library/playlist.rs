@@ -66,6 +66,18 @@ async fn write_m3u(mut w: BufWriter<File>, pool: &SqlitePool, pl_id: i64) -> any
 }
 
 pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Result<()> {
+    // remote track IDs aren't paths we can put in an m3u file
+    // check before asking for a file so we don't create or overwrite one
+    let has_remote: bool = crate::RUNTIME.block_on(
+        sqlx::query_scalar(include_str!("../../queries/playlist/has_remote_tracks.sql"))
+            .bind(pl_id)
+            .fetch_one(&cx.global::<Pool>().0),
+    )?;
+    anyhow::ensure!(
+        !has_remote,
+        "Exporting playlists containing remote tracks is not supported yet"
+    );
+
     let path_future = cx.prompt_for_new_path(
         directories::UserDirs::new()
             .context("Failed to get user directories")?

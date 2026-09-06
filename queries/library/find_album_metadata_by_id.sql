@@ -1,5 +1,6 @@
 SELECT
     id,
+    source,
     title,
     title_sortable,
     NULLIF(artist_display_override, '') AS artist_display_override,

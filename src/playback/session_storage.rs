@@ -95,6 +95,57 @@ mod tests {
     }
 
     #[test]
+    fn legacy_nonempty_session_loads_as_local_and_round_trips_with_remote_items() {
+        use crate::library::source::{SourceId, TrackRef};
+        use crate::playback::queue::QueueItemData;
+        use serde_json::json;
+
+        let dir = create_test_dir();
+        let path = dir.join("session.json");
+        let local_path = dir.join("song.flac");
+        let old_item = json!({
+            "db_id": 1, "db_album_id": null, "path": local_path,
+        });
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "queue": [old_item.clone()],
+                "original_queue": [old_item],
+                "queue_position": 0,
+                "shuffle": true,
+                "repeat": "Repeating",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = PlaybackSessionStorageWorker::load(&path);
+        assert_eq!(session.queue.len(), 1);
+        assert_eq!(session.queue[0].local_path(), Some(&local_path));
+        assert_eq!(session.original_queue[0], session.queue[0]);
+        assert_eq!(session.queue_position, Some(0));
+
+        for source in ["server-a", "server-b"] {
+            let reference = TrackRef::from_location(SourceId(source.into()), "song//id?x=1".into());
+            let item: QueueItemData = serde_json::from_value(json!({
+                "db_id": null, "db_album_id": null, "track": reference,
+            }))
+            .unwrap();
+            assert!(item.local_path().is_none());
+            session.queue.push(item.clone());
+            session.original_queue.push(item);
+        }
+        assert_ne!(session.queue[1], session.queue[2]);
+        let saved = serde_json::to_vec(&session).unwrap();
+        fs::write(&path, &saved).unwrap();
+        let loaded = PlaybackSessionStorageWorker::load(&path);
+        assert_eq!(loaded.queue, session.queue);
+        assert_eq!(loaded.original_queue, session.original_queue);
+        assert_eq!(loaded.repeat, session.repeat);
+        assert!(loaded.shuffle);
+        assert!(!String::from_utf8(saved).unwrap().contains("\"path\""));
+    }
+
+    #[test]
     fn load_returns_default_when_file_is_missing() {
         let dir = create_test_dir();
         let path = dir.join("session.json");

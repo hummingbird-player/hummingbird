@@ -153,7 +153,7 @@ pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemDa
     let playback_interface = cx.global::<PlaybackInterface>();
     if let Some(index) = queue_items
         .iter()
-        .position(|item| item.get_path() == &track.location)
+        .position(|item| item.reference() == &track.reference())
     {
         playback_interface.replace_queue_with_index(queue_items, index);
     } else {
@@ -171,8 +171,8 @@ pub fn play_from_track_listing(
     let queue_items = if let Some(tracks) = queue_context {
         tracks
             .iter()
-            .filter(|item| availability.is_track_path_available(&item.location))
-            .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
+            .filter(|item| availability.is_track_available(item))
+            .map(|item| QueueItemData::from_track(cx, item))
             .collect()
     } else if let Some(playlist_id) = playlist_id {
         let tracks = cx
@@ -181,30 +181,20 @@ pub fn play_from_track_listing(
 
         tracks
             .iter()
-            .filter(|row| availability.is_track_path_available(Path::new(&row.location)))
+            .filter(|row| availability.is_reference_available(&row.reference()))
             .map(|row| {
-                QueueItemData::new(
-                    cx,
-                    row.location.clone().into(),
-                    Some(row.track_id),
-                    Some(row.album_id),
-                )
+                QueueItemData::from_reference(cx, row.reference(), Some(row.track_id), row.album_id)
             })
             .collect()
     } else if let Some(album_id) = track.album_id {
         cx.list_tracks_in_album(album_id)
             .expect("Failed to retrieve tracks")
             .iter()
-            .filter(|item| availability.is_track_path_available(&item.location))
-            .map(|item| QueueItemData::new(cx, item.location.clone(), Some(item.id), item.album_id))
+            .filter(|item| availability.is_track_available(item))
+            .map(|item| QueueItemData::from_track(cx, item))
             .collect()
     } else {
-        vec![QueueItemData::new(
-            cx,
-            track.location.clone(),
-            Some(track.id),
-            track.album_id,
-        )]
+        vec![QueueItemData::from_track(cx, track)]
     };
 
     play_from_track(cx, track, queue_items);
@@ -319,17 +309,17 @@ pub(crate) fn queue_items(cx: &mut App, items: impl IntoIterator<Item = QueueIte
 }
 
 fn play_track_now(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::from_track(cx, track);
     play_now(cx, data);
 }
 
 pub fn play_track_next(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::from_track(cx, track);
     play_next(cx, data);
 }
 
 fn queue_track(cx: &mut App, track: &Track) {
-    let data = QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id);
+    let data = QueueItemData::from_track(cx, track);
     queue_item(cx, data);
 }
 
@@ -404,8 +394,8 @@ fn available_album_queue_items(cx: &mut App, album: &Album) -> Vec<QueueItemData
     cx.list_tracks_in_album(album.id)
         .unwrap_or_else(|_| Arc::new(Vec::new()))
         .iter()
-        .filter(|track| availability.is_track_path_available(&track.location))
-        .map(|track| QueueItemData::new(cx, track.location.clone(), Some(track.id), track.album_id))
+        .filter(|track| availability.is_track_available(track))
+        .map(|track| QueueItemData::from_track(cx, track))
         .collect()
 }
 
@@ -462,7 +452,10 @@ pub(crate) fn rescan_album(cx: &App, album: &Album) {
 }
 
 pub(crate) fn rescan_track(cx: &App, track: &Track) {
-    let path = match Utf8PathBuf::from_path_buf(track.location.clone()) {
+    let Some(path) = track.local_path() else {
+        return;
+    };
+    let path = match Utf8PathBuf::from_path_buf(path.to_path_buf()) {
         Ok(path) => path,
         Err(path) => {
             tracing::error!("cannot rescan track with non-UTF-8 path: {:?}", path);

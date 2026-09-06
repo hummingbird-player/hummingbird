@@ -241,7 +241,8 @@ impl Render for QueueItem {
         let is_available = self
             .item
             .as_ref()
-            .is_some_and(|queue_item| is_track_path_available(cx, queue_item.get_path()));
+            .and_then(|queue_item| queue_item.local_path())
+            .is_some_and(|path| is_track_path_available(cx, path));
         let is_selected = self.selection.read(cx).contains(self.idx);
 
         if let Some(item) = ui_data.as_ref() {
@@ -256,7 +257,8 @@ impl Render for QueueItem {
             let image_key = track_id.map(ManagedImageKey::Track).or_else(|| {
                 self.item
                     .as_ref()
-                    .map(|i| ManagedImageKey::TrackFile(i.get_path().to_path_buf()))
+                    .and_then(|i| i.local_path())
+                    .map(|path| ManagedImageKey::TrackFile(path.clone()))
             });
             let idx = self.idx;
             let current = self.current;
@@ -367,7 +369,7 @@ impl Render for QueueItem {
                             let path_for_drag = self
                                 .item
                                 .as_ref()
-                                .map(|i| i.get_path().to_path_buf())
+                                .and_then(|i| i.local_path().cloned())
                                 .unwrap_or_default();
                             let mut drag_data = if let Some(tid) = self.track_id {
                                 TrackDragData::from_track(
@@ -977,9 +979,9 @@ impl Render for Queue {
                                     },
                                 );
                             } else {
-                                let queue_item = QueueItemData::new(
+                                let queue_item = QueueItemData::from_reference(
                                     cx,
-                                    drag_data.path.clone(),
+                                    drag_data.track.clone(),
                                     drag_data.track_id,
                                     drag_data.album_id,
                                 );
@@ -1011,14 +1013,7 @@ impl Render for Queue {
                             if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
                                 let queue_items: Vec<QueueItemData> = tracks
                                     .iter()
-                                    .map(|track| {
-                                        QueueItemData::new(
-                                            cx,
-                                            track.location.clone(),
-                                            Some(track.id),
-                                            Some(drag_data.album_id),
-                                        )
-                                    })
+                                    .map(|track| QueueItemData::from_track(cx, track))
                                     .collect();
 
                                 let drop_target = this.drag_drop_manager.read(cx).state.drop_target;

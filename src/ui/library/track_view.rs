@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use tracing::debug;
 
@@ -156,9 +152,9 @@ fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Ve
         Ok(rows) => {
             let availability = snapshot(cx);
             rows.into_iter()
-                .filter(|(_, _, _, path)| availability.is_track_path_available(Path::new(path)))
-                .map(|(id, _, album_id, path)| {
-                    QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
+                .filter(|row| availability.is_reference_available(&row.reference()))
+                .map(|row| {
+                    QueueItemData::from_reference(cx, row.reference(), Some(row.id), row.album_id)
                 })
                 .collect()
         }

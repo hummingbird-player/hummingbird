@@ -101,7 +101,7 @@ pub struct PlaylistTrackItem {
     /// Track info for drag data
     track_id: i64,
     album_id: Option<i64>,
-    track_path: std::path::PathBuf,
+    track_ref: crate::library::source::TrackRef,
     drag_enabled: bool,
 }
 
@@ -117,7 +117,7 @@ impl PlaylistTrackItem {
         list_id: gpui::ElementId,
         track_id: i64,
         album_id: Option<i64>,
-        track_path: std::path::PathBuf,
+        track_ref: crate::library::source::TrackRef,
         drag_enabled: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -135,7 +135,7 @@ impl PlaylistTrackItem {
                 list_id,
                 track_id,
                 album_id,
-                track_path,
+                track_ref,
                 drag_enabled,
             }
         })
@@ -167,7 +167,7 @@ impl Render for PlaylistTrackItem {
             let drag_data = TrackDragData::from_track(
                 self.track_id,
                 self.album_id,
-                self.track_path.clone(),
+                self.track_ref.clone(),
                 self.track_title.clone(),
             )
             .with_reorder_info(self.list_id.clone(), idx);
@@ -661,11 +661,11 @@ impl Render for PlaylistView {
                                                      playlist_tracks
                                                         .iter()
                                                         .map(|row| {
-                                                            QueueItemData::new(
+                                                            QueueItemData::from_reference(
                                                                 cx,
-                                                                row.location.clone().into(),
+                                                                row.reference(),
                                                                 Some(row.track_id),
-                                                                Some(row.album_id),
+                                                                row.album_id,
                                                             )
                                                         })
                                                         .collect()
@@ -927,7 +927,7 @@ impl Render for PlaylistView {
                                                         let track = cx.get_track_by_id(track_id).unwrap();
                                                         let track_title: SharedString =
                                                             track.title.clone().into();
-                                                        let track_path = track.location.clone();
+                                                        let track_ref = track.reference();
                                                         let album_id = track.album_id;
 
                                                         let track_item = TrackItem::new(
@@ -958,7 +958,7 @@ impl Render for PlaylistView {
                                                             list_id,
                                                             track_id,
                                                             album_id,
-                                                            track_path,
+                                                            track_ref,
                                                             is_custom_sort,
                                                         )
                                                     },
@@ -989,12 +989,7 @@ pub fn find_playlist_tracks(cx: &mut App, playlist_id: i64) -> Vec<QueueItemData
     playlist_tracks
         .iter()
         .map(|row| {
-            QueueItemData::new(
-                cx,
-                row.location.clone().into(),
-                Some(row.track_id),
-                Some(row.album_id),
-            )
+            QueueItemData::from_reference(cx, row.reference(), Some(row.track_id), row.album_id)
         })
         .collect()
 }

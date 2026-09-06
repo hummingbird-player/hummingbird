@@ -291,6 +291,18 @@ impl AvailabilityState {
 }
 
 impl AvailabilitySnapshot {
+    pub fn is_track_available(&self, track: &super::types::Track) -> bool {
+        track
+            .local_path()
+            .is_some_and(|path| self.is_track_path_available(path))
+    }
+
+    pub fn is_reference_available(&self, track: &super::source::TrackRef) -> bool {
+        track
+            .local_path()
+            .is_some_and(|path| self.is_track_path_available(path))
+    }
+
     pub fn is_path_available(&self, path: &Path) -> bool {
         is_path_available(
             &self.roots,

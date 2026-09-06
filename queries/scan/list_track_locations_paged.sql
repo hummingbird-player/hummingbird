@@ -1,5 +1,5 @@
 SELECT id, location
 FROM track
-WHERE id > $1
+WHERE source = 'local' AND id > $1
 ORDER BY id ASC
 LIMIT $2;
