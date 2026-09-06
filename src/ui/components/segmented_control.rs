@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 
 use crate::ui::{
     components::{icons::icon, tooltip::build_tooltip},
+    constants::{INNER_CONTROL_ROUNDING, MAIN_CONTROL_ROUNDING},
     theme::Theme,
 };
 
@@ -84,7 +85,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for SegmentedControl<T> {
         let mut row = div()
             .flex()
             .when(!self.fit_content, |this| this.w_full())
-            .rounded(px(4.0))
+            .rounded(MAIN_CONTROL_ROUNDING)
             .gap(px(2.0))
             .p(px(2.0))
             .border_1()
@@ -108,7 +109,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for SegmentedControl<T> {
                 .pb(px(2.0))
                 .text_xs()
                 .cursor_pointer()
-                .rounded(px(3.0))
+                .rounded(INNER_CONTROL_ROUNDING)
                 .when(is_selected, |this| {
                     this.bg(theme.button_primary)
                         .text_color(theme.button_primary_text)

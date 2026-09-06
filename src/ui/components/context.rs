@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 
 actions!(context, [CloseContextMenu]);
 
@@ -84,7 +84,7 @@ impl RenderOnce for ContextMenu {
                     menu.occlude()
                         .border_1()
                         .shadow_sm()
-                        .rounded(px(6.0))
+                        .rounded(MAIN_CONTROL_ROUNDING)
                         .border_color(theme.elevated_border_color)
                         .bg(theme.elevated_background)
                         .id("menu")

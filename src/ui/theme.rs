@@ -7,7 +7,10 @@ use std::{
 };
 
 use crate::settings::SettingsGlobal;
-use gpui::{App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, rgb, rgba};
+use gpui::{
+    App, AppContext, AsyncApp, Entity, EventEmitter, Global, Rgba, WindowBackgroundAppearance, rgb,
+    rgba,
+};
 use notify::{Event, RecursiveMode, Watcher};
 use serde::{
     Deserialize, Deserializer,
@@ -80,12 +83,15 @@ fn parse_hex_color(value: &str) -> Result<Rgba, String> {
 
 #[derive(Clone)]
 pub struct Theme {
+    pub window_background: WindowBackgroundAppearance,
+
     pub frame_background: Rgba,
     pub background_primary: Rgba,
     pub background_secondary: Rgba,
     pub background_tertiary: Rgba,
 
     pub border_color: Rgba,
+    pub inner_border_color: Rgba,
 
     pub album_art_background: Rgba,
 
@@ -263,6 +269,14 @@ impl<'de> Deserialize<'de> for Theme {
                 let mut theme = Theme::default();
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
+                        "window_background" => {
+                            theme.window_background = match map.next_value::<String>()?.as_str() {
+                                "opaque" => WindowBackgroundAppearance::Opaque,
+                                "transparent" => WindowBackgroundAppearance::Transparent,
+                                "blurred" => WindowBackgroundAppearance::Blurred,
+                                _ => WindowBackgroundAppearance::Opaque,
+                            }
+                        }
                         "frame_background" => {
                             theme.frame_background = map.next_value::<ColorHex>()?.0
                         }
@@ -624,17 +638,20 @@ impl<'de> Deserialize<'de> for Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
+            window_background: WindowBackgroundAppearance::Opaque,
+
             frame_background: rgb(0x010102),
             background_primary: rgb(0x121213),
             background_secondary: rgb(0x242425),
             background_tertiary: rgb(0x303032),
 
-            border_color: rgb(0x282829),
+            border_color: rgba(0x282829AC),
+            inner_border_color: rgba(0x545459AC),
 
             album_art_background: rgb(0x313135),
 
-            text: rgb(0xE8E9F2),
-            text_secondary: rgb(0xA0A1AD),
+            text: rgb(0xF1F2F4),
+            text_secondary: rgb(0xB1B3B9),
             text_disabled: rgb(0x676771),
             text_link: rgb(0x647ADB),
 
@@ -981,7 +998,20 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
 
     cx.subscribe(&theme_transmitter, |_, theme, cx| {
         cx.set_global(theme.clone());
-        cx.refresh_windows();
+        let theme = theme.clone();
+        cx.defer(move |cx| {
+            let windows = cx.windows();
+            for window in windows {
+                let Err(e) = cx.update_window(window, |_, window, _| {
+                    window.set_background_appearance(theme.window_background);
+                    window.refresh();
+                }) else {
+                    continue;
+                };
+
+                error!("Failed to set background appearance: {e}")
+            }
+        })
     })
     .detach();
 

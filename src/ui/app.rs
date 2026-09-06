@@ -42,6 +42,7 @@ use crate::{
         library::missing_folder_dialog::MissingFolderDialog,
         models::WindowInformation,
         settings::corrupt_settings_dialog::CorruptSettingsDialog,
+        theme::Theme,
         toasts::ToastLayer,
     },
 };
@@ -236,18 +237,21 @@ fn main_window_bounds(cx: &mut App) -> WindowBounds {
     }
 }
 
-fn main_window_options(window_bounds: WindowBounds) -> WindowOptions {
+fn main_window_options(
+    window_bounds: WindowBounds,
+    window_background: WindowBackgroundAppearance,
+) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(window_bounds),
-        window_background: WindowBackgroundAppearance::Opaque,
+        window_background,
         window_decorations: Some(WindowDecorations::Client),
         window_min_size: Some(size(px(800.0), px(600.0))),
         titlebar: Some(TitlebarOptions {
             title: Some(tr!("APP_NAME").into()),
             appears_transparent: true,
             traffic_light_position: Some(Point {
-                x: px(12.0),
-                y: px(11.0),
+                x: px(14.0),
+                y: px(14.0),
             }),
         }),
         app_id: Some("org.mailliw.hummingbird".to_string()),
@@ -340,8 +344,10 @@ fn ensure_main_window(
         return Ok(window);
     }
 
+    let window_background = cx.global::<Theme>().window_background;
+
     let bounds = main_window_bounds(cx);
-    let options = main_window_options(bounds);
+    let options = main_window_options(bounds, window_background);
     let window = cx.open_window(options, |window, cx| {
         build_main_window(window, cx, toast_layer)
     })?;

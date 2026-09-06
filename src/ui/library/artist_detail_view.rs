@@ -29,6 +29,7 @@ use crate::{
             tooltip::build_tooltip,
             uniform_grid::uniform_grid,
         },
+        constants::REGULAR_BUTTON_ICON_SIZE,
         library::{
             context_menus::AlbumContextMenuContext,
             library_view_header::LibraryViewHeader,
@@ -43,7 +44,7 @@ use crate::{
     },
 };
 
-use super::ViewSwitchMessage;
+use super::{ViewSwitchMessage, detail_view_padding};
 
 type GridHandler = dyn Fn(&mut App, &u32) + 'static;
 
@@ -417,6 +418,7 @@ impl Render for ArtistDetailView {
             .model
             .read(cx);
         let full_width = settings.interface.effective_full_width();
+        let padding = detail_view_padding(cx);
         let grid_min_item_width = crate::settings::interface::clamp_grid_min_item_width(
             settings.interface.grid_min_item_width,
         );
@@ -477,7 +479,7 @@ impl Render for ArtistDetailView {
                     div()
                         .border_t_1()
                         .border_color(theme.border_color)
-                        .px(px(18.0))
+                        .px(padding)
                         .pt(px(10.0))
                         .pb(px(5.0))
                         .flex()
@@ -527,7 +529,7 @@ impl Render for ArtistDetailView {
                                     div()
                                         .flex()
                                         .gap(px(12.0))
-                                        .items_stretch()
+                                        .items_center()
                                         .child(
                                             button()
                                                 .id("artist-liked-sort-direction-button")
@@ -544,7 +546,7 @@ impl Render for ArtistDetailView {
                                                         SORT_ASCENDING
                                                     })
                                                     .text_color(theme.text_secondary)
-                                                    .size(px(16.0)),
+                                                    .size(REGULAR_BUTTON_ICON_SIZE),
                                                 )
                                                 .tooltip(if Self::is_descending(self.liked_sort) {
                                                     build_tooltip(tr!(
@@ -594,7 +596,8 @@ impl Render for ArtistDetailView {
                 div()
                     .border_t_1()
                     .border_color(theme.border_color)
-                    .px(px(18.0))
+                    .pl(padding)
+                    .pr(px(12.0))
                     .pt(px(10.0))
                     .pb(px(5.0))
                     .flex()
@@ -644,11 +647,11 @@ impl Render for ArtistDetailView {
                                 div()
                                     .flex()
                                     .gap(px(12.0))
-                                    .items_stretch()
+                                    .items_center()
                                     .child(
                                         button()
-                                            .id("artist-standalone-sort-direction-button")
                                             .size(ButtonSize::Large)
+                                            .id("artist-standalone-sort-direction-button")
                                             .on_click(cx.listener(
                                                 |this: &mut ArtistDetailView, _, _, cx| {
                                                     this.toggle_standalone_sort_order(cx);
@@ -663,7 +666,7 @@ impl Render for ArtistDetailView {
                                                     },
                                                 )
                                                 .text_color(theme.text_secondary)
-                                                .size(px(16.0)),
+                                                .size(REGULAR_BUTTON_ICON_SIZE),
                                             )
                                             .tooltip(
                                                 if Self::is_descending(self.standalone_sort) {
@@ -723,14 +726,18 @@ impl Render for ArtistDetailView {
                             .id("artist-detail-view")
                             .overflow_y_scroll()
                             .track_scroll(&scroll_handle)
-                            .pb(px(18.0))
+                            .pb(px(12.0))
                             .w_full()
                             .flex_shrink(1.0)
                             .overflow_x_hidden()
                             .child(
                                 div()
-                                    .pt(px(48.0))
-                                    .px(px(18.0))
+                                    // 48px clears the floating header bar; the rest
+                                    // keeps the heading's top gap square with the
+                                    // horizontal padding.
+                                    .pt(px(48.0) + padding)
+                                    .pl(padding)
+                                    .pr(px(12.0))
                                     .w_full()
                                     .relative()
                                     .child(LibraryViewHeader::detail("artist_detail_close"))
@@ -748,7 +755,7 @@ impl Render for ArtistDetailView {
                                             }),
                                     )
                                     .when(!self.all_tracks.is_empty(), |this| {
-                                        this.child(div().pb(px(18.0)).child(playback_controls(
+                                        this.child(div().pb(padding).child(playback_controls(
                                             "artist",
                                             has_available_artist_tracks,
                                             current_track_in_artist,
@@ -790,64 +797,74 @@ impl Render for ArtistDetailView {
                                     div()
                                         .border_t_1()
                                         .border_color(theme.border_color)
-                                        .px(px(18.0))
+                                        .pl(padding)
+                                        .pr(px(12.0))
                                         .pt(px(10.0))
                                         .font_weight(FontWeight::BOLD)
                                         .text_size(px(18.0))
                                         .child(tr!("ARTIST_ALBUMS", "Albums")),
                                 )
                                 .child(
-                                    div().px(px(10.0)).pt(px(2.0)).pb(px(10.0)).w_full().child(
-                                        uniform_grid(
-                                            "artist-albums-grid",
-                                            album_count,
-                                            None,
-                                            move |idx, item_width, _, cx| {
-                                                prune_views(
-                                                    &grid_views_model,
-                                                    &grid_render_counter,
-                                                    idx,
-                                                    cx,
-                                                );
+                                    // Grid items have 8px of internal padding, so this
+                                    // wrapper keeps the album art aligned with the
+                                    // section header above it.
+                                    div()
+                                        .pl(padding - px(8.0))
+                                        .pr(px(4.0))
+                                        .pt(px(2.0))
+                                        .pb(px(10.0))
+                                        .w_full()
+                                        .child(
+                                            uniform_grid(
+                                                "artist-albums-grid",
+                                                album_count,
+                                                None,
+                                                move |idx, item_width, _, cx| {
+                                                    prune_views(
+                                                        &grid_views_model,
+                                                        &grid_render_counter,
+                                                        idx,
+                                                        cx,
+                                                    );
 
-                                                let item_id = album_ids[idx].0;
+                                                    let item_id = album_ids[idx].0;
 
-                                                let view = create_or_retrieve_view(
-                                                    &grid_views_model,
-                                                    idx,
-                                                    |cx| {
-                                                        GridItem::<Album, AlbumColumn>::new(
-                                                            cx,
-                                                            item_id,
-                                                            handler.clone(),
-                                                            AlbumContextMenuContext {
-                                                                show_go_to_artist: false,
-                                                            },
-                                                            GridContext::Standalone,
-                                                        )
-                                                        .unwrap()
-                                                    },
-                                                    cx,
-                                                );
+                                                    let view = create_or_retrieve_view(
+                                                        &grid_views_model,
+                                                        idx,
+                                                        |cx| {
+                                                            GridItem::<Album, AlbumColumn>::new(
+                                                                cx,
+                                                                item_id,
+                                                                handler.clone(),
+                                                                AlbumContextMenuContext {
+                                                                    show_go_to_artist: false,
+                                                                },
+                                                                GridContext::Standalone,
+                                                            )
+                                                            .unwrap()
+                                                        },
+                                                        cx,
+                                                    );
 
-                                                view.update(cx, |item, cx| {
-                                                    item.set_image_target(item_width, cx);
-                                                });
+                                                    view.update(cx, |item, cx| {
+                                                        item.set_image_target(item_width, cx);
+                                                    });
 
-                                                div()
-                                                    .image_cache(hummingbird_cache(
-                                                        ("artist-album-grid", idx + 1),
-                                                        1,
-                                                    ))
-                                                    .size_full()
-                                                    .child(view)
-                                                    .into_any_element()
-                                            },
-                                        )
-                                        .min_item_width(px(grid_min_item_width))
-                                        .gap(px(0.0))
-                                        .auto_height(),
-                                    ),
+                                                    div()
+                                                        .image_cache(hummingbird_cache(
+                                                            ("artist-album-grid", idx + 1),
+                                                            1,
+                                                        ))
+                                                        .size_full()
+                                                        .child(view)
+                                                        .into_any_element()
+                                                },
+                                            )
+                                            .min_item_width(px(grid_min_item_width))
+                                            .gap(px(0.0))
+                                            .auto_height(),
+                                        ),
                                 )
                             })
                             .when_some(liked_track_header, |this, header| {

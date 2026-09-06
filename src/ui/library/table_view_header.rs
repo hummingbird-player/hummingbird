@@ -53,7 +53,6 @@ where
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
                     .child(
                         nav_button("list_toggle", if !is_grid { LIST } else { LIST_INACTIVE })
                             .on_click(move |_, _, cx| {

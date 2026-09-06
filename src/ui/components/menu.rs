@@ -5,6 +5,7 @@ use crate::ui::{
         icons::{CHECK, LOCK, icon},
         tooltip::build_tooltip,
     },
+    constants::INNER_CONTROL_ROUNDING,
     theme::Theme,
 };
 
@@ -34,6 +35,8 @@ struct BaseMenuItem {
     non_interactive: bool,
     tooltip: Option<SharedString>,
     text_color: Option<Rgba>,
+    highlighted: bool,
+    truncate_text: bool,
 }
 
 impl BaseMenuItem {
@@ -50,6 +53,8 @@ impl BaseMenuItem {
             non_interactive: false,
             tooltip: None,
             text_color: None,
+            highlighted: false,
+            truncate_text: false,
         }
     }
 
@@ -73,6 +78,16 @@ impl BaseMenuItem {
         self
     }
 
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
+    }
+
+    pub fn truncate_text(mut self) -> Self {
+        self.truncate_text = true;
+        self
+    }
+
     pub fn render(
         self,
         theme: &Theme,
@@ -87,24 +102,30 @@ impl BaseMenuItem {
         };
         let base = div()
             .id(self.id)
-            .rounded(px(4.0))
+            .rounded(INNER_CONTROL_ROUNDING)
             .flex()
             .items_center()
-            .px(px(6.0))
-            .pt(px(5.0))
+            .px(px(5.0))
+            .pt(px(4.0))
             .pb(px(5.0))
-            .line_height(rems(1.25))
+            .line_height(rems(1.1))
             .min_w_full()
             .bg(theme.menu_item)
             .border_1()
             .text_sm()
-            .font_weight(FontWeight::MEDIUM)
+            .when(self.highlighted, |this| {
+                this.bg(theme.menu_item_hover)
+                    .border_color(theme.menu_item_border_hover)
+            })
             .child(icon_slot)
             .child(
                 div()
                     .ml(px(2.0))
                     .child(self.name)
                     .flex_1()
+                    .when(self.truncate_text, |this| {
+                        this.overflow_hidden().text_ellipsis()
+                    })
                     .when_some(text_color, |this, color| this.text_color(color)),
             )
             .when_some(right_element, |this, el| {
@@ -217,6 +238,16 @@ impl CheckMenuItem {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
+        self
+    }
+
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.base = self.base.highlighted(highlighted);
+        self
+    }
+
+    pub fn truncate_text(mut self) -> Self {
+        self.base = self.base.truncate_text();
         self
     }
 }
@@ -373,12 +404,19 @@ pub fn menu_separator() -> MenuSeparator {
 pub struct Menu {
     items: Vec<AnyElement>,
     div: Div,
+    full_width: bool,
 }
 
 impl Menu {
     /// Adds an item to the menu.
     pub fn item(mut self, item: impl IntoElement) -> Self {
         self.items.push(item.into_any_element());
+        self
+    }
+
+    /// Fills the available width instead of enforcing the context-menu minimum.
+    pub fn full_width(mut self) -> Self {
+        self.full_width = true;
         self
     }
 }
@@ -392,11 +430,13 @@ impl Styled for Menu {
 impl RenderOnce for Menu {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         self.div
-            .min_w(px(200.0))
-            .px(px(3.0))
-            .py(px(3.0))
+            .when(self.full_width, |this| this.w_full())
+            .when(!self.full_width, |this| this.min_w(px(200.0)))
+            .px(px(2.0))
+            .py(px(2.0))
             .flex()
             .flex_col()
+            .gap(px(1.0))
             .children(self.items)
     }
 }
@@ -406,5 +446,6 @@ pub fn menu() -> Menu {
     Menu {
         items: vec![],
         div: div(),
+        full_width: false,
     }
 }

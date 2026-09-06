@@ -201,7 +201,7 @@ impl Render for InterfaceSettings {
         div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
+            .gap(px(18.0))
             .child(section_header(tr!("INTERFACE")))
             .child(
                 label("language-selector", tr!("LANGUAGE", "Language"))

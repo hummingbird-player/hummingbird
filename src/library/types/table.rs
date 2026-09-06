@@ -110,6 +110,10 @@ impl Column for AlbumColumn {
     fn is_hideable(&self) -> bool {
         !matches!(self, AlbumColumn::Title)
     }
+
+    fn is_primary(&self) -> bool {
+        matches!(self, AlbumColumn::Title)
+    }
 }
 
 impl TableData<AlbumColumn> for Album {
@@ -305,6 +309,13 @@ impl TableData<AlbumColumn> for Album {
     fn is_available(&self, cx: &mut App) -> bool {
         album_has_available_tracks(cx, self.id)
     }
+
+    fn default_sort() -> Option<TableSort<AlbumColumn>> {
+        Some(TableSort {
+            column: AlbumColumn::Artist,
+            ascending: true,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -331,6 +342,10 @@ impl Column for TrackColumn {
 
     fn is_hideable(&self) -> bool {
         !matches!(self, TrackColumn::Title)
+    }
+
+    fn is_primary(&self) -> bool {
+        matches!(self, TrackColumn::Title)
     }
 }
 
@@ -532,6 +547,13 @@ impl TableData<TrackColumn> for Track {
     ) {
         play_track_next(cx, self);
     }
+
+    fn default_sort() -> Option<TableSort<TrackColumn>> {
+        Some(TableSort {
+            column: TrackColumn::Artist,
+            ascending: true,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -552,6 +574,10 @@ impl Column for ArtistColumn {
 
     fn is_hideable(&self) -> bool {
         !matches!(self, ArtistColumn::Name)
+    }
+
+    fn is_primary(&self) -> bool {
+        matches!(self, ArtistColumn::Name)
     }
 }
 
@@ -641,6 +667,13 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         columns.insert(ArtistColumn::Albums, 150.0);
         columns.insert(ArtistColumn::Tracks, 150.0);
         columns
+    }
+
+    fn default_sort() -> Option<TableSort<ArtistColumn>> {
+        Some(TableSort {
+            column: ArtistColumn::Name,
+            ascending: true,
+        })
     }
 }
 

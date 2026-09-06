@@ -7,6 +7,7 @@ use gpui::{
 
 use crate::ui::{
     components::input::{EnrichedInputAction, TextInput},
+    constants::MAIN_CONTROL_ROUNDING,
     theme::Theme,
 };
 
@@ -117,7 +118,7 @@ impl Render for Textbox {
             .border_1()
             .text_sm()
             .border_color(theme.textbox_border)
-            .rounded(px(4.0))
+            .rounded(MAIN_CONTROL_ROUNDING)
             .bg(theme.textbox_background)
             .px(px(8.0))
             .py(px(6.0))

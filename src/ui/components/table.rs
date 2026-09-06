@@ -17,7 +17,7 @@ use crate::{
         components::{
             context::context,
             drag_drop::DragPreview,
-            icons::{CHEVRON_DOWN, CHEVRON_UP, icon},
+            icons::{CHEVRON_DOWN, CHEVRON_UP, SELECTOR, icon},
             menu::{menu, menu_check_item},
             scrollbar::{ScrollbarAxis, floating_scrollbar},
             table::table_data::TABLE_HEADER_HEIGHT,
@@ -33,8 +33,7 @@ use gpui::{prelude::FluentBuilder, *};
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use table_data::{
-    Column, ColumnReorderDrag, GridContext, TABLE_HEADER_GROUP, TABLE_IMAGE_COLUMN_WIDTH,
-    TableData, TableSort,
+    Column, ColumnReorderDrag, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableSort,
 };
 use table_item::TableItem;
 
@@ -117,7 +116,7 @@ where
             let view_mode = cx.new(|_| initial_view_mode);
             let grid_scroll_handle = UniformListScrollHandle::new();
 
-            let sort_method = cx.new(|_| None);
+            let sort_method = cx.new(|_| T::default_sort());
             let list_vertical_scroll_handle = UniformListScrollHandle::new();
             let list_horizontal_scroll_handle = ScrollHandle::new();
 
@@ -475,7 +474,8 @@ where
             .w_full()
             .flex()
             .id("table-header-inner")
-            .group(SharedString::from(TABLE_HEADER_GROUP));
+            .border_b_1()
+            .border_color(theme.border_color);
 
         if T::has_images() {
             header = header.child(
@@ -487,10 +487,7 @@ where
                     .py(px(2.0))
                     .text_sm()
                     .flex_shrink_0()
-                    .text_ellipsis()
-                    .border_color(theme.border_color)
-                    .border_b_1()
-                    .border_color(theme.border_color),
+                    .text_ellipsis(),
             );
         }
 
@@ -505,6 +502,17 @@ where
                 .copied()
                 .unwrap_or(base_width);
 
+            // if the column is the current sort column, use its sort order for the arrow
+            let sort_ascending_if_this_col = if let Some(method) = sort_method.as_ref() {
+                if method.column == *column.0 {
+                    Some(method.ascending)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             header = header.child(
                 div()
                     .overflow_hidden()
@@ -512,14 +520,13 @@ where
                     .when(!is_last, |this| this.w(px(base_width)))
                     .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
                     .h(px(TABLE_HEADER_HEIGHT))
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .when(!T::has_images() && i == 0, |div| div.pl(px(18.0)))
+                    .pl(px(12.0))
+                    .pr(px(8.0))
+                    .items_center()
+                    .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
                     .text_sm()
                     .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(theme.border_color)
-                    .font_weight(FontWeight::BOLD)
+                    .font_weight(FontWeight::SEMIBOLD)
                     .child(
                         div()
                             .flex_shrink(1.0)
@@ -527,21 +534,20 @@ where
                             .text_ellipsis()
                             .child(column_id.get_column_name()),
                     )
-                    .when_some(sort_method.as_ref(), |this, method| {
-                        this.when(method.column == column_id, |this| {
-                            this.child(
-                                icon(if method.ascending {
-                                    CHEVRON_UP
-                                } else {
-                                    CHEVRON_DOWN
-                                })
-                                .size(px(14.0))
-                                .ml(px(4.0))
-                                .flex_shrink_0()
-                                .my_auto(),
-                            )
+                    .child(
+                        icon(match sort_ascending_if_this_col {
+                            Some(true) => CHEVRON_UP,
+                            Some(false) => CHEVRON_DOWN,
+                            None => SELECTOR,
                         })
-                    })
+                        .when(!sort_ascending_if_this_col.is_some(), |this| {
+                            this.text_color(theme.text_disabled)
+                        })
+                        .size(px(14.0))
+                        .ml_auto()
+                        .flex_shrink_0()
+                        .my_auto(),
+                    )
                     .id(i)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.sort_method.update(cx, move |this, cx| {
@@ -671,7 +677,7 @@ where
 
         let grid_canvas = {
             let gap = 0.0;
-            let grid_padding = 10.0;
+            let grid_padding = 4.0;
 
             div()
                 .relative()

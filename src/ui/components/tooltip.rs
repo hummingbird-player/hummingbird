@@ -2,13 +2,13 @@ use std::rc::Rc;
 
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 
 /// Shared styling for all tooltip containers.
 pub fn tooltip_container(theme: &Theme) -> Div {
     div()
         .text_sm()
-        .rounded(px(6.0))
+        .rounded(MAIN_CONTROL_ROUNDING)
         .border_1()
         .font_family("Inter")
         .border_color(theme.elevated_border_color)

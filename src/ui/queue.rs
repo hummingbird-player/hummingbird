@@ -47,7 +47,7 @@ use super::{
 /// The list identifier for queue drag-drop operations
 const QUEUE_LIST_ID: &str = "queue";
 /// Height of each queue item in pixels
-const QUEUE_ITEM_HEIGHT: f32 = 56.0;
+const QUEUE_ITEM_HEIGHT: f32 = 60.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
@@ -304,8 +304,8 @@ impl Render for QueueItem {
                         .overflow_x_hidden()
                         .gap(px(11.0))
                         .h(px(QUEUE_ITEM_HEIGHT))
-                        .px(px(17.0))
-                        .py(px(10.0))
+                        .px(px(14.0))
+                        .py(px(12.0))
                         .bg(theme.list_item)
                         .when(self.idx % 2 == 1, |this| this.bg(theme.list_item_alternate))
                         // add extra padding when the scrollbar is always drawn
@@ -443,7 +443,7 @@ impl Render for QueueItem {
                                     div()
                                         .w_full()
                                         .text_ellipsis()
-                                        .font_weight(FontWeight::EXTRA_BOLD)
+                                        .font_weight(FontWeight::BOLD)
                                         .child(
                                             item.name
                                                 .clone()
@@ -452,6 +452,7 @@ impl Render for QueueItem {
                                 )
                                 .child(
                                     div()
+                                        .mt(px(1.0))
                                         .overflow_x_hidden()
                                         .flex()
                                         .w_full()
@@ -460,8 +461,10 @@ impl Render for QueueItem {
                                         .child(
                                             div()
                                                 .text_ellipsis()
+                                                .text_sm()
                                                 .overflow_x_hidden()
                                                 .flex_shrink(1.0)
+                                                .text_color(theme.text_secondary)
                                                 .child(item.artist_name.clone().unwrap_or_else(
                                                     || tr!("UNKNOWN_ARTIST").into(),
                                                 )),
@@ -469,9 +472,9 @@ impl Render for QueueItem {
                                         .when_some(item.duration, |child, duration| {
                                             child.child(
                                                 div()
+                                                    .text_sm()
                                                     .flex_shrink_0()
                                                     .ml(px(6.0))
-                                                    .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(theme.text_secondary)
                                                     .child(format_duration(duration, true)),
                                             )

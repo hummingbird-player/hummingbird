@@ -395,7 +395,7 @@ impl Render for InfoSection {
                         e.child(
                             div()
                                 .line_height(rems(1.0))
-                                .font_weight(FontWeight::EXTRA_BOLD)
+                                .font_weight(FontWeight::BOLD)
                                 .text_size(px(15.0))
                                 .flex()
                                 .h_full()
@@ -426,7 +426,7 @@ impl Render for InfoSection {
                                 .child(
                                     div()
                                         .id("info-section-track-name")
-                                        .font_weight(FontWeight::EXTRA_BOLD)
+                                        .font_weight(FontWeight::BOLD)
                                         .text_ellipsis()
                                         .w_full()
                                         .when_some(album_navigation_track, |this, track| {
@@ -442,6 +442,9 @@ impl Render for InfoSection {
                                     div()
                                         .id("info-section-artist-name")
                                         .text_ellipsis()
+                                        .text_sm()
+                                        .mt(px(1.0))
+                                        .text_color(theme.text_secondary)
                                         .w_full()
                                         .when_some(artist_navigation_track, |this, track| {
                                             this.cursor_pointer().on_click(move |ev, _, cx| {

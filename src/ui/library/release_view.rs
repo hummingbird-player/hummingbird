@@ -4,6 +4,7 @@ use cntp_i18n::tr;
 use gpui::*;
 use prelude::FluentBuilder;
 
+use super::detail_view_padding;
 use crate::{
     library::{
         db::{AlbumMethod, LibraryAccess},
@@ -42,6 +43,7 @@ use crate::{
 };
 
 const RELEASE_SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(250);
+pub const RELEASE_ARTWORK_SIZE: Pixels = px(140.0);
 
 fn compute_all_liked(cx: &App, tracks: &[Track]) -> bool {
     if tracks.is_empty() {
@@ -214,32 +216,33 @@ impl ReleaseView {
         is_playing: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
+        padding: Pixels,
     ) -> impl IntoElement {
         let availability = snapshot(cx);
+
         div()
-            .pt(px(64.0))
-            .flex_shrink(1.0)
+            .pt(px(49.0))
+            .flex_shrink_0()
             .flex()
             .overflow_x_hidden()
-            .px(px(18.0))
+            .pr(padding)
             .w_full()
             .relative()
             .child(LibraryViewHeader::detail("release_close"))
             .child(
                 div()
+                    .m(padding)
                     .rounded(px(10.0))
                     .bg(theme.album_art_background)
                     .shadow_sm()
-                    .w(px(160.0))
-                    .h(px(160.0))
+                    .w(RELEASE_ARTWORK_SIZE)
+                    .h(RELEASE_ARTWORK_SIZE)
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(
                         img(self.img_path.clone())
-                            .min_w(px(160.0))
-                            .min_h(px(160.0))
-                            .max_w(px(160.0))
-                            .max_h(px(160.0))
+                            .w(RELEASE_ARTWORK_SIZE)
+                            .h(RELEASE_ARTWORK_SIZE)
                             .overflow_hidden()
                             .flex()
                             // TODO: Ideally this should be ObjectFit::Cover, but this
@@ -251,8 +254,9 @@ impl ReleaseView {
             )
             .child(
                 div()
-                    .ml(px(18.0))
-                    .mt_auto()
+                    .h_full()
+                    .justify_end()
+                    .pb(padding)
                     .flex_shrink(1.0)
                     .flex()
                     .flex_col()
@@ -262,8 +266,11 @@ impl ReleaseView {
                         div()
                             .id(("release_view_artist", self.album.id as usize))
                             .text_ellipsis()
-                            .overflow_x_hidden()
                             .cursor_pointer()
+                            .text_size(px(15.0))
+                            .text_color(theme.text_secondary)
+                            .line_height(px(15.0))
+                            .mb(px(5.0))
                             .on_click({
                                 let album_id = self.album.id;
                                 move |ev, _, cx| {
@@ -277,18 +284,10 @@ impl ReleaseView {
                             .font_weight(FontWeight::EXTRA_BOLD)
                             .text_size(rems(2.5))
                             .line_height(rems(2.75))
-                            .overflow_x_hidden()
-                            .pb(px(10.0))
+                            .mb(px(11.0))
                             .w_full()
                             .text_ellipsis()
                             .child(self.album.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .pb(px(10.0))
-                            .text_sm()
-                            .text_color(theme.text_secondary)
-                            .child(self.collection_summary.clone()),
                     )
                     .child(
                         div()
@@ -327,7 +326,14 @@ impl ReleaseView {
                                 .show_add_to_queue(false)
                                 .trailing(self.render_menu_button(window, cx)),
                             )
-                            .child(self.render_like_button(theme)),
+                            .child(self.render_like_button(theme))
+                            .child(
+                                div()
+                                    .ml_auto()
+                                    .text_sm()
+                                    .text_color(theme.text_secondary)
+                                    .child(self.collection_summary.clone()),
+                            ),
                     ),
             )
     }
@@ -429,62 +435,72 @@ impl ReleaseView {
         div().child(menu_btn).child(add_to).into_any_element()
     }
 
-    fn render_footer(&self, theme: &Theme) -> impl IntoElement {
+    fn render_footer(&self, theme: &Theme, padding: Pixels) -> impl IntoElement {
         div()
+            // Fill unused viewport space without compressing the footer when scrolling.
+            .flex_grow(1.0)
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(theme.border_color)
             .flex()
-            .flex_col()
-            .text_sm()
-            .ml(px(18.0))
-            .pt(px(12.0))
-            .pb(px(12.0))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme.text_secondary)
-            .when_some(self.release_info.clone(), |this, release_info| {
-                this.child(div().child(release_info))
-            })
-            .when_some(
-                self.album
-                    .release_date
-                    .as_ref()
-                    .zip(self.album.date_precision),
-                |this, (date, precision)| match precision {
-                    DATE_PRECISION_FULL_DATE | DATE_PRECISION_YEAR_MONTH => {
-                        if let Ok(nd) =
-                            chrono::NaiveDate::parse_from_str(date.0.as_str(), "%Y-%m-%d")
-                        {
-                            let dt = nd.and_hms_opt(0, 0, 0).unwrap();
-                            let utc = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
-                                dt,
-                                chrono::Utc,
-                            );
+            .w_full()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .text_sm()
+                    .ml(padding)
+                    .pt(px(11.0))
+                    .pb(px(12.0))
+                    .text_color(theme.text_secondary)
+                    .when_some(self.release_info.clone(), |this, release_info| {
+                        this.child(div().child(release_info))
+                    })
+                    .when_some(
+                        self.album
+                            .release_date
+                            .as_ref()
+                            .zip(self.album.date_precision),
+                        |this, (date, precision)| match precision {
+                            DATE_PRECISION_FULL_DATE | DATE_PRECISION_YEAR_MONTH => {
+                                if let Ok(nd) =
+                                    chrono::NaiveDate::parse_from_str(date.0.as_str(), "%Y-%m-%d")
+                                {
+                                    let dt = nd.and_hms_opt(0, 0, 0).unwrap();
+                                    let utc =
+                                        chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                                            dt,
+                                            chrono::Utc,
+                                        );
 
-                            this.child(if precision == DATE_PRECISION_FULL_DATE {
-                                tr!(
-                                    "RELEASED_DATE",
-                                    "Released {{date}}",
-                                    date:date("YMD", length="long")=utc
-                                )
-                            } else {
-                                tr!(
-                                    "RELEASED_DATE",
-                                    date:date("YM", length="long")=utc
-                                )
-                            })
-                        } else {
-                            this
-                        }
-                    }
-                    DATE_PRECISION_YEAR => this.child(tr!(
-                        "RELEASED_YEAR",
-                        "Released {{year}}",
-                        year = date.0.as_str()[..4]
-                    )),
-                    _ => this,
-                },
+                                    this.child(if precision == DATE_PRECISION_FULL_DATE {
+                                        tr!(
+                                            "RELEASED_DATE",
+                                            "Released {{date}}",
+                                            date:date("YMD", length="long")=utc
+                                        )
+                                    } else {
+                                        tr!(
+                                            "RELEASED_DATE",
+                                            date:date("YM", length="long")=utc
+                                        )
+                                    })
+                                } else {
+                                    this
+                                }
+                            }
+                            DATE_PRECISION_YEAR => this.child(tr!(
+                                "RELEASED_YEAR",
+                                "Released {{year}}",
+                                year = date.0.as_str()[..4]
+                            )),
+                            _ => this,
+                        },
+                    )
+                    .when_some(self.album.isrc.as_ref(), |this, isrc| {
+                        this.child(div().child(isrc.clone()))
+                    }),
             )
-            .when_some(self.album.isrc.as_ref(), |this, isrc| {
-                this.child(div().child(isrc.clone()))
-            })
     }
 
     fn schedule_scroll_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -585,6 +601,8 @@ enum FollowTarget {
 
 impl Render for ReleaseView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let padding = detail_view_padding(cx);
+
         let settings = cx
             .global::<crate::settings::SettingsGlobal>()
             .model
@@ -632,6 +650,7 @@ impl Render for ReleaseView {
             .flex()
             .flex_col()
             .w_full()
+            .h_full()
             .max_h_full()
             .relative()
             .overflow_hidden()
@@ -639,9 +658,13 @@ impl Render for ReleaseView {
             .child(
                 div()
                     .id("release-view")
+                    .flex()
+                    .flex_col()
                     .overflow_y_scroll()
                     .track_scroll(&scroll_handle)
                     .w_full()
+                    .h_full()
+                    .min_h(px(0.0))
                     .flex_shrink(1.0)
                     .overflow_x_hidden()
                     .child(self.render_header(
@@ -651,13 +674,14 @@ impl Render for ReleaseView {
                         is_playing,
                         window,
                         cx,
+                        padding,
                     ))
                     .children(self.track_listing.track_elements())
                     .when(
                         self.release_info.is_some()
                             || self.album.release_date.is_some()
                             || self.album.isrc.is_some(),
-                        |this| this.child(self.render_footer(&theme)),
+                        |this| this.child(self.render_footer(&theme, padding)),
                     ),
             )
             .child(floating_scrollbar("release_scrollbar", scroll_handle).right(px(4.0)))

@@ -4,8 +4,8 @@ use gpui::*;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
-use super::table_data::{COLUMN_MIN_WIDTH, COLUMN_RESIZE_HANDLE_WIDTH, Column, TABLE_HEADER_GROUP};
-use crate::ui::theme::Theme;
+use super::table_data::{COLUMN_MIN_WIDTH, COLUMN_RESIZE_HANDLE_WIDTH, Column};
+use crate::ui::{components::table::table_data::TABLE_HEADER_HEIGHT, theme::Theme};
 
 #[derive(Default)]
 struct ResizeState {
@@ -80,23 +80,14 @@ where
         let mut element = div()
             .id(self.id.clone())
             .w(px(COLUMN_RESIZE_HANDLE_WIDTH))
-            .h(px(36.0)) // Match header height
+            .h(px(TABLE_HEADER_HEIGHT))
             .flex_shrink_0()
             .cursor_col_resize()
             .ml(px(-COLUMN_RESIZE_HANDLE_WIDTH / 2.0))
             .mr(px(-COLUMN_RESIZE_HANDLE_WIDTH / 2.0))
             .flex()
             .justify_center()
-            .child(
-                div()
-                    .w(px(1.0))
-                    .h_full()
-                    .bg(border_color)
-                    .invisible()
-                    .group_hover(SharedString::from(TABLE_HEADER_GROUP), |this| {
-                        this.visible()
-                    }),
-            )
+            .child(div().w(px(1.0)).h_full().bg(border_color))
             .into_any_element();
 
         let layout_id = element.request_layout(window, cx);

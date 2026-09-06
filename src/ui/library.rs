@@ -60,6 +60,30 @@ mod update_playlist;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
+/// The left padding used by the detail views (release, artist detail, playlist)
+/// and the track rows within them.
+pub const DETAIL_VIEW_PADDING_SINGLE_COLUMN: Pixels = px(12.0);
+pub const DETAIL_VIEW_PADDING_TWO_COLUMN: Pixels = px(18.0);
+
+/// Left padding for detail views and the track listings inside them.
+///
+/// In single-column mode this is 12px so the content aligns with the back
+/// button in the header; in two-column mode it is 18px instead.
+pub fn detail_view_padding(cx: &App) -> Pixels {
+    let two_column = cx
+        .global::<crate::settings::SettingsGlobal>()
+        .model
+        .read(cx)
+        .interface
+        .two_column_library;
+
+    if two_column {
+        DETAIL_VIEW_PADDING_TWO_COLUMN
+    } else {
+        DETAIL_VIEW_PADDING_SINGLE_COLUMN
+    }
+}
+
 /// The navigation history + a cursor noting what the current message is.
 #[derive(Debug)]
 pub struct NavigationHistory {

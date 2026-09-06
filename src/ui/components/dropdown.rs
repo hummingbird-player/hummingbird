@@ -4,15 +4,17 @@ use cntp_i18n::tr;
 use gpui::{
     Anchor, App, Div, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
     RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions,
-    anchored, deferred, div, prelude::FluentBuilder, px,
+    anchored, deferred, div, px,
 };
 use smallvec::SmallVec;
 
 use crate::ui::{
     components::{
-        icons::{CHECK, CHEVRON_DOWN, icon},
+        icons::{CHEVRON_DOWN, icon},
+        menu::{menu, menu_check_item},
         segmented_control::ChangeHandler,
     },
+    constants::MAIN_CONTROL_ROUNDING,
     theme::Theme,
 };
 
@@ -90,6 +92,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
             .id(self.id)
             .child(
                 div()
+                    .px(px(8.0))
+                    .py(px(6.0))
                     .flex_grow(1.0)
                     .flex_shrink(1.0)
                     .text_sm()
@@ -100,10 +104,17 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                     .child(display_text),
             )
             .child(
-                icon(CHEVRON_DOWN)
-                    .size(px(16.0))
-                    .flex_shrink_0()
-                    .text_color(theme.text_secondary),
+                div()
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .border_l_1()
+                    .border_color(theme.inner_border_color)
+                    .child(
+                        icon(CHEVRON_DOWN)
+                            .size(px(16.0))
+                            .flex_shrink_0()
+                            .text_color(theme.text_secondary),
+                    ),
             )
             .hover(|this| {
                 this.bg(theme.button_secondary_hover)
@@ -142,6 +153,37 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 .and_then(|i| self.options.iter().position(|(v, _)| v == &i));
             let highlighted = *highlighted_index.read(cx);
 
+            let option_menu = options.iter().cloned().enumerate().fold(
+                menu().full_width(),
+                |menu, (idx, option)| {
+                    let is_selected = selected_index.is_some_and(|v| v == idx);
+                    let is_highlighted = highlighted.is_some_and(|v| v == idx);
+
+                    menu.item(
+                        menu_check_item(
+                            ElementId::Name(format!("option-{}", idx).into()),
+                            is_selected,
+                            option.1,
+                            {
+                                let highlighted = highlighted_index.clone();
+                                let on_change = self.on_change.clone();
+                                let is_open = is_open.clone();
+
+                                move |_, window, cx| {
+                                    highlighted.write(cx, Some(idx));
+                                    if let Some(on_change) = &on_change {
+                                        (on_change)(&option.0, window, cx);
+                                    }
+                                    is_open.write(cx, false);
+                                }
+                            },
+                        )
+                        .highlighted(is_highlighted)
+                        .truncate_text(),
+                    )
+                },
+            );
+
             let popup_content = div()
                 .id("dropdown-popup")
                 .occlude()
@@ -153,7 +195,6 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 .border_color(theme.elevated_border_color)
                 .rounded(px(6.0))
                 .shadow_md()
-                .p(px(3.0))
                 .mt(px(4.0))
                 .track_focus(focus_handle)
                 .key_context("Dropdown")
@@ -234,63 +275,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                         is_open.write(cx, false);
                     }
                 })
-                .children(options.iter().cloned().enumerate().map(|(idx, option)| {
-                    let is_selected = selected_index.is_some_and(|v| v == idx);
-                    let is_highlighted = highlighted.is_some_and(|v| v == idx);
-                    let label = option.1.clone();
-
-                    div()
-                        .id(ElementId::Name(format!("option-{}", idx).into()))
-                        .px(px(6.0))
-                        .py(px(5.0))
-                        .rounded(px(4.0))
-                        .cursor_pointer()
-                        .flex()
-                        .items_center()
-                        .gap(px(7.0))
-                        .text_sm()
-                        .when(is_highlighted, |this| {
-                            this.bg(theme.menu_item_hover)
-                                .border_1()
-                                .border_color(theme.menu_item_border_hover)
-                        })
-                        .when(!is_highlighted, |this| this.border_1())
-                        .child(
-                            div()
-                                .w(px(18.0))
-                                .h(px(18.0))
-                                .pt(px(0.5))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .when(is_selected, |this| {
-                                    this.child(
-                                        icon(CHECK).size(px(18.0)).text_color(theme.text_secondary),
-                                    )
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex_grow(1.0)
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .text_color(theme.text)
-                                .child(label),
-                        )
-                        .on_click({
-                            let highlighted = highlighted_index.clone();
-                            let on_change = self.on_change.clone();
-                            let is_open = is_open.clone();
-
-                            move |_, window, cx| {
-                                highlighted.write(cx, Some(idx));
-                                if let Some(on_change) = &on_change {
-                                    (on_change)(&option.0, window, cx);
-                                }
-                                is_open.write(cx, false);
-                            }
-                        })
-                }));
+                .child(option_menu);
 
             Some(
                 anchored()
@@ -316,11 +301,9 @@ pub fn dropdown<T: Clone + PartialEq + 'static>(id: impl Into<ElementId>) -> Dro
         selected: None,
         on_change: None,
         div: div()
-            .px(px(10.0))
-            .py(px(8.0))
             .text_sm()
             .border_1()
-            .rounded(px(4.0))
+            .rounded(MAIN_CONTROL_ROUNDING)
             .cursor_pointer()
             .flex()
             .items_center()

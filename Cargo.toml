@@ -40,7 +40,7 @@ file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
 gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim" }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", features = ["wayland", "x11", "font-kit"] }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"

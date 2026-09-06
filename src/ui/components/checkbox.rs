@@ -1,6 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::ui::components::icons::{CHECK, icon};
+use crate::ui::constants::INNER_CONTROL_ROUNDING;
 use crate::ui::theme::Theme;
 
 #[derive(IntoElement)]
@@ -25,7 +26,7 @@ impl RenderOnce for Checkbox {
         div()
             .flex_shrink_0()
             .id(self.id)
-            .rounded(px(4.0))
+            .rounded(INNER_CONTROL_ROUNDING)
             .flex()
             .w(px(20.0))
             .h(px(20.0))
@@ -68,9 +69,8 @@ impl RenderOnce for Checkbox {
             .when(self.checked, |this| {
                 this.child(
                     icon(CHECK)
-                        .size(px(16.0))
-                        .text_color(theme.checkbox_checked)
-                        .mr(px(1.0)),
+                        .size(px(14.0))
+                        .text_color(theme.checkbox_checked),
                 )
             })
     }

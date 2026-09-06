@@ -213,7 +213,7 @@ impl Render for Lyrics {
                         .cursor_pointer()
                         .max_w(px(width))
                         .overflow_x_hidden()
-                        .px(px(20.0))
+                        .px(px(14.0))
                         .py(px(lerp(
                             LYRICS_BASE_VERTICAL_PADDING,
                             LYRICS_ACTIVE_VERTICAL_PADDING,
@@ -261,7 +261,7 @@ impl Render for Lyrics {
                         .id("lyrics-scroll")
                         .h_full()
                         .w_full()
-                        .py(px(9.0))
+                        .py(px(5.0))
                         .flex()
                         .flex_col()
                         .overflow_y_scroll()
@@ -299,8 +299,8 @@ impl Render for Lyrics {
                         .w_full()
                         .overflow_y_scroll()
                         .track_scroll(&scroll_handle)
-                        .px(px(16.0))
-                        .py(px(14.0))
+                        .px(px(14.0))
+                        .py(px(12.0))
                         .text_size(px(20.0))
                         .line_height(rems(1.6))
                         .font_weight(FontWeight::BOLD)

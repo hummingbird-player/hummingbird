@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 
 use super::styling::AdditionalStyleUtil;
 
@@ -33,8 +33,8 @@ impl ButtonStyle {
         let div = dest.cursor_pointer().flex();
 
         match self {
-            ButtonStyle::Regular => div.shadow_md().rounded(px(4.0)).border_1(),
-            ButtonStyle::Minimal => div.background_opacity(0.0).rounded(px(4.0)),
+            ButtonStyle::Regular => div.shadow_md().rounded(MAIN_CONTROL_ROUNDING).border_1(),
+            ButtonStyle::Minimal => div.background_opacity(0.0).rounded(MAIN_CONTROL_ROUNDING),
         }
     }
 
@@ -72,8 +72,8 @@ impl ButtonSize {
                 .gap(px(6.0))
                 .line_height(px(12.0)),
             ButtonSize::Regular => dest
-                .px(px(10.0))
-                .py(px(8.0))
+                .px(px(8.0))
+                .py(px(6.0))
                 .text_sm()
                 .gap(px(8.0))
                 .line_height(px(14.0)),

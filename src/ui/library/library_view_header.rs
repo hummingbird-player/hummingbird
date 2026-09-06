@@ -6,7 +6,7 @@ use crate::{
     settings::SettingsGlobal,
     ui::{
         components::{icons::CROSS, nav_button::nav_button, tooltip::build_tooltip},
-        constants::{INNER_PANEL_GAP, INNER_PANEL_ROUNDING},
+        constants::{INNER_PANEL_GAP, INNER_PANEL_PADDING, INNER_PANEL_ROUNDING},
         theme::Theme,
     },
 };
@@ -85,7 +85,9 @@ impl RenderOnce for LibraryViewHeader {
                 .w_full()
                 .flex()
                 .gap(INNER_PANEL_GAP)
-                .p(INNER_PANEL_GAP);
+                .p(INNER_PANEL_PADDING)
+                .border_b_1()
+                .border_color(theme.border_color);
 
             if two_column {
                 header = header.child(
@@ -93,7 +95,6 @@ impl RenderOnce for LibraryViewHeader {
                         .flex()
                         .ml_auto()
                         .items_center()
-                        .p(px(4.0))
                         .rounded(INNER_PANEL_ROUNDING)
                         .bg(theme.background_secondary)
                         .child(
@@ -109,7 +110,6 @@ impl RenderOnce for LibraryViewHeader {
                     div()
                         .flex()
                         .items_center()
-                        .p(px(4.0))
                         .rounded(INNER_PANEL_ROUNDING)
                         .bg(theme.background_secondary)
                         .child(nav_buttons()),
@@ -124,11 +124,10 @@ impl RenderOnce for LibraryViewHeader {
         let navigation = (show_navigation && !always_show_forward).then(|| {
             div()
                 .absolute()
-                .top(INNER_PANEL_GAP)
-                .left(INNER_PANEL_GAP)
+                .top(INNER_PANEL_PADDING)
+                .left(INNER_PANEL_PADDING)
                 .flex()
                 .items_center()
-                .p(px(4.0))
                 .rounded(INNER_PANEL_ROUNDING)
                 .bg(theme.background_secondary)
                 .child(nav_buttons())
@@ -139,24 +138,25 @@ impl RenderOnce for LibraryViewHeader {
             .flex()
             .w_full()
             .gap(INNER_PANEL_GAP)
-            .p(INNER_PANEL_GAP)
+            .p(INNER_PANEL_PADDING)
+            .border_b_1()
+            .border_color(theme.border_color)
             .when(show_navigation && always_show_forward, |header| {
                 header.child(
                     div()
                         .flex()
                         .items_center()
-                        .p(px(4.0))
                         .rounded(INNER_PANEL_ROUNDING)
                         .bg(theme.background_secondary)
                         .child(nav_buttons()),
                 )
             })
             .when(show_navigation && !always_show_forward, |header| {
-                header.child(div().size(px(36.0)).flex_shrink_0())
+                header.child(div().size(px(28.0)).flex_shrink_0())
             })
             .when_some(self.title, |header, title| {
                 header.child(
-                    div().flex().flex_1().items_center().pl(px(11.0)).child(
+                    div().flex().flex_1().items_center().pl(px(5.0)).child(
                         div()
                             .line_height(px(28.0))
                             .font_weight(FontWeight::SEMIBOLD)
@@ -174,7 +174,6 @@ impl RenderOnce for LibraryViewHeader {
                             .when(index == 0, |section| section.ml_auto())
                             .flex()
                             .items_center()
-                            .p(px(4.0))
                             .rounded(INNER_PANEL_ROUNDING)
                             .bg(theme.background_secondary)
                             .child(controls)

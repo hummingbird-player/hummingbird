@@ -42,7 +42,9 @@ impl Render for Header {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let mut header = header().main_window(true);
 
-        header = header.left(icon(HUMMINGBIRD).size(px(18.0)).ml(px(7.0)).mr(px(18.0)));
+        if cfg!(not(target_os = "macos")) {
+            header = header.left(icon(HUMMINGBIRD).size(px(18.0)).ml(px(7.0)).mr(px(18.0)));
+        }
 
         if let Some(menu_bar) = self.menu_bar.clone() {
             header = header.left(menu_bar);

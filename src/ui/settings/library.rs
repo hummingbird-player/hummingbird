@@ -37,6 +37,7 @@ use crate::{
             label::label,
             section_header::section_header,
         },
+        constants::REGULAR_BUTTON_ICON_SIZE,
         theme::Theme,
     },
 };
@@ -227,7 +228,7 @@ impl Render for LibrarySettings {
                             div()
                                 .flex()
                                 .gap(px(6.0))
-                                .child(icon(CIRCLE_PLUS).my_auto().size(px(14.0)))
+                                .child(icon(CIRCLE_PLUS).my_auto().size(REGULAR_BUTTON_ICON_SIZE))
                                 .child(tr!("SCANNING_ADD_FOLDERS", "Add Folders")),
                         )
                         .id("library-settings-add-folder")

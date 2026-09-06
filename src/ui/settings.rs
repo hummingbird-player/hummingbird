@@ -15,8 +15,8 @@ use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, TitlebarOptions,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle, WindowKind,
-    WindowOptions, div, prelude::FluentBuilder, px,
+    Window, WindowBounds, WindowDecorations, WindowHandle, WindowKind, WindowOptions, div,
+    prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -71,22 +71,24 @@ fn open_or_focus_settings_window(cx: &mut App, section: Option<SettingsSectionKi
     let section = section.unwrap_or(SettingsSectionKind::Interface);
     let bounds = WindowBounds::Windowed(gpui::Bounds::centered(
         None,
-        gpui::size(px(900.0), px(600.0)),
+        gpui::size(px(1024.0), px(700.0)),
         cx,
     ));
+
+    let window_background = cx.global::<Theme>().window_background;
 
     cx.open_window(
         WindowOptions {
             window_bounds: Some(bounds),
-            window_background: WindowBackgroundAppearance::Opaque,
+            window_background,
             window_decorations: Some(WindowDecorations::Client),
             window_min_size: Some(gpui::size(px(640.0), px(420.0))),
             titlebar: Some(TitlebarOptions {
                 title: Some(SharedString::from(tr!("SETTINGS", "Settings"))),
                 appears_transparent: true,
                 traffic_light_position: Some(gpui::Point {
-                    x: px(12.0),
-                    y: px(11.0),
+                    x: px(14.0),
+                    y: px(14.0),
                 }),
             }),
             kind: WindowKind::Normal,

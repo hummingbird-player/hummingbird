@@ -63,13 +63,17 @@ A `theme.json` for the default theme is provided here.
 
 ```json
 {
+  "window_background": "opaque", // "opaque", "transparent", "blurred"
+
   "frame_background": "#000000",
   "background_primary": "#0D0E12",
   "background_secondary": "#161720",
   "background_tertiary": "#1A1D26",
-  "border_color": "#202233",
   "album_art_background": "#303246",
 
+  "border_color": "#202233",
+  "inner_border_color": "#545459AC",
+  
   "text": "#E8E9F2",
   "text_secondary": "#A0A1AD",
   "text_disabled": "#5F5F71",

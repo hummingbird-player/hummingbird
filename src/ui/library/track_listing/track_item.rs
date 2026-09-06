@@ -17,6 +17,7 @@ use crate::ui::util::format_duration;
 
 use crate::library::{db::LibraryAccess, types::Track};
 use crate::media::numbering::{NumberDisplayMode, format_track_position, side_letter};
+use crate::ui::library::detail_view_padding;
 use crate::ui::{
     availability::is_track_available,
     components::context::context,
@@ -54,7 +55,7 @@ pub enum TrackItemLeftField {
     Art,
 }
 
-fn measure_track_number_width(window: &mut Window, text: &SharedString) -> Pixels {
+pub fn measure_track_number_width(window: &mut Window, text: &SharedString) -> Pixels {
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
 
@@ -136,6 +137,168 @@ impl TrackItem {
     }
 }
 
+impl TrackItem {
+    fn render_disc_header(
+        &self,
+        theme: &Theme,
+        track_num_width: Pixels,
+        padding: Pixels,
+    ) -> impl IntoElement + use<> {
+        div()
+            .w_full()
+            .flex()
+            .border_b_1()
+            .border_color(theme.border_color)
+            .child(div().pl(track_num_width + padding))
+            .child(
+                div()
+                    .text_color(theme.text_secondary)
+                    .line_height(px(14.0))
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .pl(px(13.0))
+                    .w_full()
+                    .mt(px(12.0))
+                    .pb(px(12.0))
+                    .text_ellipsis()
+                    .when_some(self.track.disc_number, |this, num| {
+                        if self.number_display_mode != NumberDisplayMode::Standard {
+                            this.child(tr!(
+                                "TRACK_SIDE",
+                                "Side {{side}}",
+                                side = side_letter(num).unwrap_or_else(|| num.to_string())
+                            ))
+                        } else if let Some(subtitle) = &self.track.disc_subtitle {
+                            this.child(tr!(
+                                "TRACK_DISC_SUBTITLE",
+                                "Disc {{num}} - {{subtitle}}",
+                                num = num,
+                                subtitle = subtitle.0.as_str()
+                            ))
+                        } else {
+                            this.child(tr!("TRACK_DISC", "Disc {{num}}", num = num))
+                        }
+                    }),
+            )
+    }
+
+    fn render_track_number(
+        &self,
+        theme: &Theme,
+        track_num_width: Pixels,
+    ) -> impl IntoElement + use<> {
+        div()
+            .min_w(track_num_width)
+            .flex_shrink_0()
+            .text_align(TextAlign::Right)
+            .mr(px(12.0))
+            .text_color(theme.text_secondary)
+            .child(self.track_position.clone().unwrap_or_default())
+    }
+
+    fn render_album_art(&self, theme: &Theme) -> impl IntoElement + use<> {
+        div()
+            .w(px(22.0))
+            .h(px(22.0))
+            .mr(px(12.0))
+            .my_auto()
+            .rounded(px(3.0))
+            .bg(theme.album_art_background)
+            .when_some(self.album_art.clone(), |this, art| {
+                this.child(img(art).w(px(22.0)).h(px(22.0)).rounded(px(3.0)))
+            })
+    }
+
+    fn render_title(&self) -> impl IntoElement + use<> {
+        div()
+            .font_weight(FontWeight::SEMIBOLD)
+            .overflow_x_hidden()
+            .text_ellipsis()
+            .mr_auto()
+            .child(self.track.title.clone())
+    }
+
+    fn render_artist(&self, theme: &Theme, show_artist_name: bool) -> impl IntoElement + use<> {
+        div()
+            .font_weight(FontWeight::LIGHT)
+            .text_sm()
+            .my_auto()
+            .text_color(theme.text_secondary)
+            .text_ellipsis()
+            .overflow_x_hidden()
+            .flex_shrink(1.0)
+            .ml(px(12.0))
+            .when(show_artist_name, |this| {
+                this.when_some(self.track.artist_names.clone(), |this, v| this.child(v.0))
+            })
+    }
+
+    fn render_like_button(
+        &self,
+        theme: &Theme,
+        track_id: i64,
+        is_available: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        div()
+            .id("like")
+            .ml(px(10.0))
+            .my(px(-6.0))
+            .py(px(6.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .group(format!("track-like-{track_id}"))
+            .when(is_available, |this| {
+                this.on_click(cx.listener(move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    toggle_like(track_id, cx.entity().clone(), cx);
+                }))
+            })
+            .child(
+                div()
+                    .id("like-visual")
+                    .h_full()
+                    .aspect_ratio(1.0)
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(is_available, |this| {
+                        this.group_hover(format!("track-like-{track_id}"), |this| {
+                            this.bg(theme.button_secondary_hover)
+                        })
+                        .active(|this| this.bg(theme.button_secondary_active))
+                    })
+                    .child(
+                        icon(if self.is_liked.is_some() {
+                            STAR_FILLED
+                        } else {
+                            STAR
+                        })
+                        .size(px(14.0))
+                        .text_color(if self.is_liked.is_some() {
+                            theme.liked_song
+                        } else {
+                            theme.text_secondary
+                        }),
+                    ),
+            )
+    }
+
+    fn render_duration(&self, theme: &Theme) -> impl IntoElement + use<> {
+        div()
+            .ml(px(10.0))
+            .flex_shrink_0()
+            .min_w(px(60.0))
+            .border_l_1()
+            .pl(px(10.0))
+            .border_color(theme.border_color)
+            .text_align(TextAlign::Right)
+            .child(format_duration(self.track.duration, false))
+    }
+}
+
 impl Render for TrackItem {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let track_id = self.track.id;
@@ -146,13 +309,14 @@ impl Render for TrackItem {
             cx,
         );
 
-        let theme = cx.global::<Theme>();
+        let theme = cx.global::<Theme>().clone();
 
         let track_num_width = self
             .max_track_num_str
             .as_ref()
             .map(|max_num_str| measure_track_number_width(window, max_num_str))
             .unwrap_or(px(22.0));
+        let padding = detail_view_padding(cx);
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
 
@@ -184,6 +348,9 @@ impl Render for TrackItem {
                             .flex_col()
                             .w_full()
                             .id(self.track.id as usize)
+                            .when(self.is_start, |this| {
+                                this.border_t_1().border_color(theme.border_color)
+                            })
                             .when(is_available, |this| {
                                 this.on_click({
                                     let track = self.track.clone();
@@ -208,47 +375,12 @@ impl Render for TrackItem {
                                 })
                             })
                             .when(!is_available, |this| this.cursor_default().opacity(0.5))
-                            .when(self.is_start, |this| {
-                                this.child(
-                                    div()
-                                        .text_color(theme.text_secondary)
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        // 22px (from track # width) + 18 + 11
-                                        .px(px(track_num_width.to_f64() as f32 + 18.0 + 13.0))
-                                        .border_b_1()
-                                        .w_full()
-                                        .border_color(theme.border_color)
-                                        .mt(px(18.0))
-                                        .pb(px(6.0))
-                                        .text_ellipsis()
-                                        .when_some(self.track.disc_number, |this, num| {
-                                            if self.number_display_mode != NumberDisplayMode::Standard {
-                                                this.child(tr!(
-                                                    "TRACK_SIDE",
-                                                    "Side {{side}}",
-                                                    side = side_letter(num)
-                                                        .unwrap_or_else(|| num.to_string())
-                                                ))
-                                            } else if let Some(subtitle) = &self.track.disc_subtitle
-                                            {
-                                                let subtitle = subtitle.0.as_str();
-
-                                                this.child(tr!(
-                                                    "TRACK_DISC_SUBTITLE",
-                                                    "Disc {{num}} - {{subtitle}}",
-                                                    num = num,
-                                                    subtitle = subtitle
-                                                ))
-                                            } else {
-                                                this.child(tr!(
-                                                    "TRACK_DISC",
-                                                    "Disc {{num}}",
-                                                    num = num
-                                                ))
-                                            }
-                                        }),
-                                )
+                            .when(self.is_start && self.track.disc_number.is_some(), |this| {
+                                this.child(self.render_disc_header(
+                                    &theme,
+                                    track_num_width,
+                                    padding,
+                                ))
                             })
                             .child(
                                 div()
@@ -260,7 +392,7 @@ impl Render for TrackItem {
                                     .border_color(theme.border_color)
                                     .when(is_available, |this| this.cursor_pointer())
                                     .when(!is_available, |this| this.cursor_default())
-                                    .px(px(18.0))
+                                    .px(padding)
                                     .py(px(6.0))
                                     .group(self.hover_group.clone())
                                     .bg(theme.list_item)
@@ -298,123 +430,21 @@ impl Render for TrackItem {
                                     .max_w_full()
                                     .when(self.left_field == TrackItemLeftField::TrackNum, |this| {
                                         this.child(
-                                            div()
-                                                .min_w(track_num_width)
-                                                .flex_shrink_0()
-                                                .text_align(TextAlign::Right)
-                                                .mr(px(13.0))
-                                                .text_color(theme.text_secondary)
-                                                .child(
-                                                    self.track_position.clone().unwrap_or_default(),
-                                                ),
+                                            self.render_track_number(&theme, track_num_width),
                                         )
                                     })
                                     .when(self.left_field == TrackItemLeftField::Art, |this| {
-                                        this.child(
-                                            div()
-                                                .w(px(22.0))
-                                                .h(px(22.0))
-                                                .mr(px(12.0))
-                                                .my_auto()
-                                                .rounded(px(3.0))
-                                                .bg(theme.album_art_background)
-                                                .when_some(self.album_art.clone(), |this, art| {
-                                                    this.child(
-                                                        img(art)
-                                                            .w(px(22.0))
-                                                            .h(px(22.0))
-                                                            .rounded(px(3.0)),
-                                                    )
-                                                }),
-                                        )
+                                        this.child(self.render_album_art(&theme))
                                     })
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .overflow_x_hidden()
-                                            .text_ellipsis()
-                                            .mr_auto()
-                                            .child(self.track.title.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::LIGHT)
-                                            .text_sm()
-                                            .my_auto()
-                                            .text_color(theme.text_secondary)
-                                            .text_ellipsis()
-                                            .overflow_x_hidden()
-                                            .flex_shrink(1.0)
-                                            .ml(px(12.0))
-                                            .when(show_artist_name, |this| {
-                                                this.when_some(
-                                                    self.track.artist_names.clone(),
-                                                    |this, v| this.child(v.0),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("like")
-                                            .ml(px(10.0))
-                                            .my(px(-6.0))
-                                            .py(px(6.0))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .group(format!("track-like-{track_id}"))
-                                            .when(is_available, |this| {
-                                                this.on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    toggle_like(track_id, cx.entity().clone(), cx);
-                                                }))
-                                            })
-                                            .child(
-                                                div()
-                                                    .id("like-visual")
-                                                    .h_full()
-                                                    .aspect_ratio(1.0)
-                                                    .rounded_sm()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .when(is_available, |this| {
-                                                        this.group_hover(
-                                                            format!("track-like-{track_id}"),
-                                                            |this| {
-                                                                this.bg(theme.button_secondary_hover)
-                                                            },
-                                                        )
-                                                        .active(|this| {
-                                                            this.bg(theme.button_secondary_active)
-                                                        })
-                                                    })
-                                                    .child(
-                                                        icon(if self.is_liked.is_some() {
-                                                            STAR_FILLED
-                                                        } else {
-                                                            STAR
-                                                        })
-                                                        .size(px(14.0))
-                                                        .text_color(if self.is_liked.is_some() {
-                                                            theme.liked_song
-                                                        } else {
-                                                            theme.text_secondary
-                                                        }),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .ml(px(10.0))
-                                            .flex_shrink_0()
-                                            .min_w(px(60.0))
-                                            .border_l_1()
-                                            .pl(px(10.0))
-                                            .border_color(theme.border_color)
-                                            .text_align(TextAlign::Right)
-                                            .child(format_duration(self.track.duration, false)),
-                                    ),
+                                    .child(self.render_title())
+                                    .child(self.render_artist(&theme, show_artist_name))
+                                    .child(self.render_like_button(
+                                        &theme,
+                                        track_id,
+                                        is_available,
+                                        cx,
+                                    ))
+                                    .child(self.render_duration(&theme)),
                             ),
                     )
                     .child(

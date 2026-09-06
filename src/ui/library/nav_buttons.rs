@@ -22,7 +22,7 @@ pub struct NavButtons {}
 
 const NAV_BUTTONS_HOVER_GROUP: &str = "library-nav-buttons";
 const FORWARD_PEEK_DURATION: Duration = Duration::from_millis(500);
-const FORWARD_OVERLAY_WIDTH: f32 = 34.0;
+const FORWARD_OVERLAY_WIDTH: f32 = 32.0;
 
 fn forward_peek_progress(delta: f32) -> f32 {
     if delta < 0.35 {
@@ -87,9 +87,8 @@ impl RenderOnce for NavButtons {
 
         let forward = div()
             .absolute()
-            .top(px(-4.0))
-            .left(px(28.0))
-            .h(px(36.0))
+            .left(px(24.0))
+            .h(px(28.0))
             .w(px(FORWARD_OVERLAY_WIDTH))
             .overflow_hidden()
             .invisible()
@@ -102,7 +101,7 @@ impl RenderOnce for NavButtons {
                     .h_full()
                     .w(px(FORWARD_OVERLAY_WIDTH))
                     .items_center()
-                    .pl(px(2.0))
+                    .pl(px(4.0))
                     .rounded_r(INNER_PANEL_ROUNDING)
                     .bg(theme.background_secondary)
                     .child(
@@ -139,6 +138,7 @@ impl RenderOnce for NavButtons {
             .mr(px(-30.0))
             .occlude()
             .group(NAV_BUTTONS_HOVER_GROUP)
+            .child(forward)
             .child(
                 nav_button("back", ARROW_LEFT)
                     .disabled(!can_go_back)
@@ -151,7 +151,6 @@ impl RenderOnce for NavButtons {
                         }
                     }),
             )
-            .child(forward)
             .into_any_element()
     }
 }
