@@ -78,122 +78,81 @@ impl ScrobbleReducer {
     }
 
     pub fn event(&mut self, event: SessionEvent) -> SmallVec<[Work; 2]> {
-        let mut work = SmallVec::new();
         if !self.enabled {
-            return work;
+            return SmallVec::new();
         }
-        if let SessionEventKind::Started {
-            reference,
-            started_at_ms,
-            ..
-        } = event.kind
-        {
-            if event.sequence != 1
-                || self
-                    .records
-                    .iter()
-                    .any(|r| r.listen.session == event.session)
-                || self.finished.contains(&event.session)
-            {
-                return work;
-            }
-            // The playback producer permits at most 64 simultaneous owners.
-            // Reject malformed excess starts rather than evicting an active
-            // listen or allocating without a bound.
-            if self.records.len() == MAX_SESSIONS {
-                tracing::warn!("Scrobble session limit exceeded");
-                return work;
-            }
-            self.current = Some(event.session);
-            self.records.push_back(Record {
-                listen: Listen {
-                    session: event.session,
-                    reference,
-                    started_at_ms,
-                    metadata: Default::default(),
-                    duration_ms: None,
-                },
-                sequence: event.sequence,
-                played_ms: 0,
-                state: PlaybackState::Playing,
-                submitted: false,
-                displayed: None,
-            });
-            work.push(Work::NowPlaying(None));
-            return work;
+        if matches!(event.kind, SessionEventKind::Started { .. }) {
+            return self.start(event);
         }
+
         let Some(index) = self
             .records
             .iter()
             .position(|r| r.listen.session == event.session)
         else {
             // Never infer a missing start from metadata/progress after enabling.
-            return work;
+            return SmallVec::new();
         };
+        self.advance(index, event)
+    }
+
+    fn start(&mut self, event: SessionEvent) -> SmallVec<[Work; 2]> {
+        let SessionEventKind::Started {
+            reference,
+            started_at_ms,
+            ..
+        } = event.kind
+        else {
+            unreachable!()
+        };
+        if event.sequence != 1
+            || self
+                .records
+                .iter()
+                .any(|record| record.listen.session == event.session)
+            || self.finished.contains(&event.session)
+        {
+            return SmallVec::new();
+        }
+        // The playback producer permits at most 64 simultaneous owners.
+        // Reject malformed excess starts rather than evicting an active listen.
+        if self.records.len() == MAX_SESSIONS {
+            tracing::warn!("Scrobble session limit exceeded");
+            return SmallVec::new();
+        }
+        self.current = Some(event.session);
+        self.records.push_back(Record {
+            listen: Listen {
+                session: event.session,
+                reference,
+                started_at_ms,
+                metadata: Default::default(),
+                duration_ms: None,
+            },
+            sequence: event.sequence,
+            played_ms: 0,
+            state: PlaybackState::Playing,
+            submitted: false,
+            displayed: None,
+        });
+        let mut work = SmallVec::new();
+        work.push(Work::NowPlaying(None));
+        work
+    }
+
+    fn advance(&mut self, index: usize, event: SessionEvent) -> SmallVec<[Work; 2]> {
+        let is_current = self.current == Some(event.session);
         let record = &mut self.records[index];
         if event.sequence <= record.sequence {
-            return work;
+            return SmallVec::new();
         }
         record.sequence = event.sequence;
-        let mut ended = false;
-        let progress: Option<Progress> = match event.kind {
-            SessionEventKind::Metadata { metadata } => {
-                record.listen.metadata = metadata;
-                None
-            }
-            SessionEventKind::Duration { duration_ms } => {
-                record.listen.duration_ms = duration_ms.filter(|v| *v > 0);
-                None
-            }
-            SessionEventKind::State { state, progress } => {
-                record.state = state;
-                Some(progress)
-            }
-            SessionEventKind::Progress { progress } | SessionEventKind::Seek { progress } => {
-                Some(progress)
-            }
-            SessionEventKind::Ended { progress, .. } => {
-                ended = true;
-                Some(progress)
-            }
-            SessionEventKind::Started { .. } => unreachable!(),
-        };
-        if let Some(progress) = progress {
-            // Cumulative totals permit coalescing and seek jumps without adding
-            // wall time, position differences, or duplicate deliveries.
-            record.played_ms = record.played_ms.max(progress.played_ms);
-        }
-        let metadata = &record.listen.metadata;
-        let has_metadata = metadata
-            .artist
-            .as_ref()
-            .is_some_and(|v| !v.trim().is_empty())
-            && metadata
-                .title
-                .as_ref()
-                .is_some_and(|v| !v.trim().is_empty());
-        if self.current == Some(event.session) {
-            if ended || record.state != PlaybackState::Playing || !has_metadata {
-                if record.displayed.take().is_some() {
-                    work.push(Work::NowPlaying(None));
-                }
-            } else if record.displayed.as_ref().is_none_or(|(old, duration)| {
-                old != metadata || *duration != record.listen.duration_ms
-            }) {
-                record.displayed = Some((metadata.clone(), record.listen.duration_ms));
-                work.push(Work::NowPlaying(Some(record.listen.clone())));
-            }
-        }
-        if !record.submitted
-            && has_metadata
-            && eligible(record.listen.duration_ms, record.played_ms)
-        {
-            record.submitted = true;
-            work.push(Work::Submit(record.listen.clone()));
-        }
+        let ended = apply_transition(record, event.kind);
+        let work = derive_work(record, is_current, ended);
+
         if ended {
             self.records.remove(index);
-            if self.current == Some(event.session) {
+            if is_current {
                 self.current = None;
             }
             if self.finished.len() == MAX_SESSIONS {
@@ -203,6 +162,69 @@ impl ScrobbleReducer {
         }
         work
     }
+}
+
+fn apply_transition(record: &mut Record, transition: SessionEventKind) -> bool {
+    let progress: Option<Progress> = match transition {
+        SessionEventKind::Metadata { metadata } => {
+            record.listen.metadata = metadata;
+            None
+        }
+        SessionEventKind::Duration { duration_ms } => {
+            record.listen.duration_ms = duration_ms.filter(|value| *value > 0);
+            None
+        }
+        SessionEventKind::State { state, progress } => {
+            record.state = state;
+            Some(progress)
+        }
+        SessionEventKind::Progress { progress } | SessionEventKind::Seek { progress } => {
+            Some(progress)
+        }
+        SessionEventKind::Ended { progress, .. } => {
+            record.played_ms = record.played_ms.max(progress.played_ms);
+            return true;
+        }
+        SessionEventKind::Started { .. } => unreachable!(),
+    };
+    if let Some(progress) = progress {
+        // Cumulative totals permit coalescing and seek jumps without adding
+        // wall time, position differences, or duplicate deliveries.
+        record.played_ms = record.played_ms.max(progress.played_ms);
+    }
+    false
+}
+
+fn derive_work(record: &mut Record, is_current: bool, ended: bool) -> SmallVec<[Work; 2]> {
+    let mut work = SmallVec::new();
+    let metadata = &record.listen.metadata;
+    let has_metadata = metadata
+        .artist
+        .as_ref()
+        .is_some_and(|v| !v.trim().is_empty())
+        && metadata
+            .title
+            .as_ref()
+            .is_some_and(|v| !v.trim().is_empty());
+    if is_current {
+        if ended || record.state != PlaybackState::Playing || !has_metadata {
+            if record.displayed.take().is_some() {
+                work.push(Work::NowPlaying(None));
+            }
+        } else if record
+            .displayed
+            .as_ref()
+            .is_none_or(|(old, duration)| old != metadata || *duration != record.listen.duration_ms)
+        {
+            record.displayed = Some((metadata.clone(), record.listen.duration_ms));
+            work.push(Work::NowPlaying(Some(record.listen.clone())));
+        }
+    }
+    if !record.submitted && has_metadata && eligible(record.listen.duration_ms, record.played_ms) {
+        record.submitted = true;
+        work.push(Work::Submit(record.listen.clone()));
+    }
+    work
 }
 
 #[cfg(test)]

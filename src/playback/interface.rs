@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use cntp_i18n::tr;
 use gpui::App;
@@ -13,7 +13,7 @@ use crate::{
     playback::{dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
     power::PowerManager,
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
-    ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
+    ui::models::{CurrentTrack, ImageEvent, Models, PlaybackInfo},
 };
 
 use super::{
@@ -214,7 +214,6 @@ impl PlaybackInterface {
         let albumart_model = app.global::<Models>().albumart.clone();
         let albumart_original_model = app.global::<Models>().albumart_original.clone();
         let queue_model = app.global::<Models>().queue.clone();
-        let mmbs_model = app.global::<Models>().mmbs.clone();
 
         let playback_info = app.global::<PlaybackInfo>().clone();
         let power_manager = app.global::<PowerManager>().clone();
@@ -232,8 +231,8 @@ impl PlaybackInterface {
                             cx.notify();
                         });
                     }
-                    // Session services receive these directly from the host,
-                    // including when this UI task is no longer being polled.
+                    // MMBS transitions are delivered directly from playback so
+                    // service ordering is independent of UI polling.
                     PlaybackEvent::Session(_) => {}
                     PlaybackEvent::PlaybackError(message) => {
                         crate::toasts::emit_toast(crate::toasts::Toast::error(tr!(
@@ -243,15 +242,9 @@ impl PlaybackInterface {
                         )));
                     }
                     PlaybackEvent::MetadataUpdate(v) => {
-                        let metadata = Arc::new(*v.clone());
-
                         metadata_model.update(cx, |m, cx| {
                             *m = *v;
                             cx.notify()
-                        });
-
-                        mmbs_model.update(cx, |_, cx| {
-                            cx.emit(MMBSEvent::MetadataRecieved(metadata));
                         });
                     }
                     PlaybackEvent::AlbumArtUpdate(v) => {
@@ -288,18 +281,11 @@ impl PlaybackInterface {
                         }
 
                         power_manager.set_state(cx, v);
-
-                        mmbs_model.update(cx, |_, cx| {
-                            cx.emit(MMBSEvent::StateChanged(v));
-                        });
                     }
                     PlaybackEvent::PositionChanged(v) => {
                         playback_info.position.update(cx, |m, cx| {
                             *m = v;
                             cx.notify()
-                        });
-                        mmbs_model.update(cx, |_, cx| {
-                            cx.emit(MMBSEvent::PositionChanged(v / 1_000));
                         });
                     }
                     PlaybackEvent::DurationChanged(v) => {
@@ -307,17 +293,11 @@ impl PlaybackInterface {
                             *m = v;
                             cx.notify()
                         });
-                        mmbs_model.update(cx, |_, cx| {
-                            cx.emit(MMBSEvent::DurationChanged(v / 1_000));
-                        });
                     }
                     PlaybackEvent::SongChanged(path) => {
                         playback_info.current_track.update(cx, |m, cx| {
                             *m = Some(CurrentTrack::new(path.clone()));
                             cx.notify()
-                        });
-                        mmbs_model.update(cx, |_, cx| {
-                            cx.emit(MMBSEvent::NewTrack(path));
                         });
                     }
                     PlaybackEvent::QueueUpdated => {

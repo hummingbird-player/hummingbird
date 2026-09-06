@@ -158,37 +158,8 @@ impl MediaResolver {
         {
             self.registry.connect(&lease).await?;
         }
-        let (formats, decode_profiles) = {
-            let providers = LOOKUP_TABLE.read().await;
-            let formats = providers
-                .iter()
-                .filter(|provider| {
-                    provider
-                        .supported_features()
-                        .contains(MediaProviderFeatures::PROVIDES_DECODER)
-                })
-                .flat_map(|provider| {
-                    provider
-                        .supported_extensions()
-                        .iter()
-                        .map(|extension| extension.to_ascii_lowercase())
-                })
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            let profiles = providers
-                .iter()
-                .filter(|provider| {
-                    provider
-                        .supported_features()
-                        .contains(MediaProviderFeatures::PROVIDES_DECODER)
-                })
-                .flat_map(|provider| provider.audio_decode_profiles())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            (formats, profiles)
-        };
+        let (formats, decode_profiles) =
+            decoder_support(MediaProviderFeatures::PROVIDES_DECODER).await;
         let resource = Arc::new(
             HostResource::resolve(
                 lease,
@@ -270,6 +241,33 @@ impl MediaResolver {
         self.prepare_attempt(reference, position_ms, None, binding)
             .await
     }
+    async fn cached_media(
+        &self,
+        reference: &TrackRef,
+        quality: &QualityPolicy,
+        force_transcode: bool,
+    ) -> (
+        Option<Arc<super::cache::MediaCache>>,
+        Option<super::cache::CachedMedia>,
+    ) {
+        // Cache failures must not prevent an otherwise available network stream.
+        let cache = self.cache().await.ok();
+        if force_transcode {
+            return (cache, None);
+        }
+        let Some(store) = &cache else {
+            return (None, None);
+        };
+        let mut cached = store.lookup(reference, quality, None).await.ok().flatten();
+        if cached.is_none() && *quality == QualityPolicy::Automatic {
+            cached = store
+                .lookup(reference, &QualityPolicy::Original, None)
+                .await
+                .ok()
+                .flatten();
+        }
+        (cache, cached)
+    }
     async fn prepare_attempt(
         &self,
         reference: TrackRef,
@@ -298,28 +296,9 @@ impl MediaResolver {
             .unwrap_or_default();
         let online = config.as_ref().is_some_and(|config| config.enabled)
             && self.registry.can_resolve_media(reference.source());
-        // Cache failures must not prevent an otherwise available network stream.
-        let cache = self.cache().await.ok();
-        let mut cached = if force_transcode {
-            None
-        } else if let Some(cache) = &cache {
-            cache
-                .lookup(&reference, &quality, None)
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
-        if !force_transcode && cached.is_none() && quality == QualityPolicy::Automatic {
-            if let Some(cache) = &cache {
-                cached = cache
-                    .lookup(&reference, &QualityPolicy::Original, None)
-                    .await
-                    .ok()
-                    .flatten();
-            }
-        }
+        let (cache, cached) = self
+            .cached_media(&reference, &quality, force_transcode)
+            .await;
         let location = reference.remote_id().ok_or_else(unavailable)?.to_owned();
         let (seed, duration) = indexed_metadata(&self.pool, &reference, cached.is_some()).await?;
         if let Some(update) = seed_update {
@@ -359,25 +338,10 @@ impl MediaResolver {
                 return Err(source_error(error));
             }
         }
-        let (formats, decode_profiles) = {
-            let providers = LOOKUP_TABLE.read().await;
-            let mut formats = std::collections::BTreeSet::new();
-            let mut profiles = std::collections::BTreeSet::new();
-            for provider in providers.iter().filter(|provider| {
-                provider.supported_features().contains(
-                    MediaProviderFeatures::PROVIDES_DECODER | MediaProviderFeatures::ACCEPTS_INPUT,
-                )
-            }) {
-                profiles.extend(provider.audio_decode_profiles());
-                for extension in provider.supported_extensions() {
-                    formats.insert(extension.to_ascii_lowercase());
-                }
-            }
-            (
-                formats.into_iter().collect(),
-                profiles.into_iter().collect(),
-            )
-        };
+        let (formats, decode_profiles) = decoder_support(
+            MediaProviderFeatures::PROVIDES_DECODER | MediaProviderFeatures::ACCEPTS_INPUT,
+        )
+        .await;
         if force_transcode && retry_binding != self.preparation_key(&reference) {
             return Err(unavailable());
         }
@@ -417,85 +381,158 @@ impl MediaResolver {
             }
         }
         drop(cached);
-        let extension = resource.descriptor().format.clone();
-        let time_offset = resource.descriptor().seek == SeekSupport::TimeOffset;
-        let origin_ms = resource.descriptor().timeline_offset_ms;
-        let seekable = time_offset || resource.descriptor().seek == SeekSupport::ByteRange;
-        if time_offset && position_ms.saturating_sub(origin_ms) > 30_000 {
-            return Err(PlaybackStartError::MediaError(
-                "Server returned an invalid seek origin".into(),
-            ));
-        }
-        if position_ms != 0 && !seekable {
-            return Err(PlaybackStartError::MediaError("The requested position is not cached and this server does not support byte seeking".into()));
-        }
-        let capture = if origin_ms == 0 && cache_budget > 0 {
-            if let Some(cache) = &cache {
-                cache
-                    .stream(&reference, &quality, resource.clone(), cache_budget)
-                    .await
-                    .ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let directory = self.directory.clone();
-        let runtime = tokio::runtime::Handle::current();
-        let input = tokio::task::spawn_blocking(move || {
-            if let Some((file, reservation)) = capture {
-                return BufferedInput::capturing(
-                    file,
-                    reservation,
-                    resource,
-                    runtime,
-                    ACTIVE_DISK_WINDOW,
-                );
-            }
-            std::fs::create_dir_all(&directory)?;
-            let path = directory.join(format!("{:032x}.part", rand::random::<u128>()));
-            let mut options = std::fs::OpenOptions::new();
-            options.read(true).write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let file = options.open(&path)?;
-            BufferedInput::temporary(file, path, resource, runtime, ACTIVE_DISK_WINDOW)
+        open_remote_decoder(RemoteDecoder {
+            directory: self.directory.clone(),
+            reference,
+            quality,
+            cache,
+            cache_budget,
+            resource,
+            permit,
+            position_ms,
+            seed,
+            duration,
+            lease: current_lease,
         })
         .await
-        .map_err(|_| unavailable())?
-        .map_err(|_| PlaybackStartError::MediaError("Unable to create media buffer".into()))?;
-        let accepted = input.clone();
-        let cancel = input.clone();
-        let pending = PendingDecoder::spawn_guarded(
-            move || {
-                try_open_input(
-                    extension.as_deref().map(OsStr::new),
-                    MediaProviderFeatures::PROVIDES_DECODER,
-                    || Ok(Box::new(input.clone())),
-                )
-                .map_err(decoder_open_error)?
-                .ok_or(PlaybackStartError::Undecodable)
-            },
-            move || cancel.cancel(),
-            Some(Box::new(permit)),
-            (position_ms > 0 && !time_offset).then_some(position_ms as f64 / 1000.0),
-        )?;
-        let mut stream = pending.ready().await?;
-        current_lease.check_current().map_err(source_error)?;
-        stream.set_source_validity(move || current_lease.check_current().is_ok(), seekable);
-        stream.seed_metadata(seed, duration);
-        if time_offset {
-            stream.set_timeline(origin_ms, position_ms, duration);
-        }
-        stream.prepare_audio().await?;
-        accepted.accept_cache();
-        Ok(stream)
     }
 }
+struct RemoteDecoder {
+    directory: PathBuf,
+    reference: TrackRef,
+    quality: QualityPolicy,
+    cache: Option<Arc<super::cache::MediaCache>>,
+    cache_budget: u64,
+    resource: Arc<HostResource>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    position_ms: u64,
+    seed: Metadata,
+    duration: Option<u64>,
+    lease: super::registry::SourceLease,
+}
+
+async fn open_remote_decoder(request: RemoteDecoder) -> Result<WorkerStream, PlaybackStartError> {
+    let RemoteDecoder {
+        directory,
+        reference,
+        quality,
+        cache,
+        cache_budget,
+        resource,
+        permit,
+        position_ms,
+        seed,
+        duration,
+        lease,
+    } = request;
+    let extension = resource.descriptor().format.clone();
+    let time_offset = resource.descriptor().seek == SeekSupport::TimeOffset;
+    let origin_ms = resource.descriptor().timeline_offset_ms;
+    let seekable = time_offset || resource.descriptor().seek == SeekSupport::ByteRange;
+    if time_offset && position_ms.saturating_sub(origin_ms) > 30_000 {
+        return Err(PlaybackStartError::MediaError(
+            "Server returned an invalid seek origin".into(),
+        ));
+    }
+    if position_ms != 0 && !seekable {
+        return Err(PlaybackStartError::MediaError(
+            "The requested position is not cached and this server does not support byte seeking"
+                .into(),
+        ));
+    }
+    let capture = if origin_ms == 0 && cache_budget > 0 {
+        if let Some(cache) = &cache {
+            cache
+                .stream(&reference, &quality, resource.clone(), cache_budget)
+                .await
+                .ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let runtime = tokio::runtime::Handle::current();
+    let input = tokio::task::spawn_blocking(move || {
+        if let Some((file, reservation)) = capture {
+            return BufferedInput::capturing(
+                file,
+                reservation,
+                resource,
+                runtime,
+                ACTIVE_DISK_WINDOW,
+            );
+        }
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(format!("{:032x}.part", rand::random::<u128>()));
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
+        BufferedInput::temporary(file, path, resource, runtime, ACTIVE_DISK_WINDOW)
+    })
+    .await
+    .map_err(|_| unavailable())?
+    .map_err(|_| PlaybackStartError::MediaError("Unable to create media buffer".into()))?;
+    let accepted = input.clone();
+    let cancel = input.clone();
+    let pending = PendingDecoder::spawn_guarded(
+        move || {
+            try_open_input(
+                extension.as_deref().map(OsStr::new),
+                MediaProviderFeatures::PROVIDES_DECODER,
+                || Ok(Box::new(input.clone())),
+            )
+            .map_err(decoder_open_error)?
+            .ok_or(PlaybackStartError::Undecodable)
+        },
+        move || cancel.cancel(),
+        Some(Box::new(permit)),
+        (position_ms > 0 && !time_offset).then_some(position_ms as f64 / 1000.0),
+    )?;
+    let mut stream = pending.ready().await?;
+    lease.check_current().map_err(source_error)?;
+    stream.set_source_validity(move || lease.check_current().is_ok(), seekable);
+    stream.seed_metadata(seed, duration);
+    if time_offset {
+        stream.set_timeline(origin_ms, position_ms, duration);
+    }
+    stream.prepare_audio().await?;
+    accepted.accept_cache();
+    Ok(stream)
+}
+
+async fn decoder_support(
+    required: MediaProviderFeatures,
+) -> (
+    Vec<String>,
+    Vec<crate::media::capabilities::AudioDecodeProfile>,
+) {
+    let providers = LOOKUP_TABLE.read().await;
+    let mut formats = std::collections::BTreeSet::new();
+    let mut profiles = std::collections::BTreeSet::new();
+    for provider in providers
+        .iter()
+        .filter(|provider| provider.supported_features().contains(required))
+    {
+        profiles.extend(provider.audio_decode_profiles());
+        formats.extend(
+            provider
+                .supported_extensions()
+                .iter()
+                .map(|extension| extension.to_ascii_lowercase()),
+        );
+    }
+    (
+        formats.into_iter().collect(),
+        profiles.into_iter().collect(),
+    )
+}
+
 fn decoder_open_error(error: anyhow::Error) -> PlaybackStartError {
     if matches!(
         error.downcast_ref::<crate::media::errors::OpenError>(),

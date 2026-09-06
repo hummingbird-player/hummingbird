@@ -190,13 +190,10 @@ impl<C: Client> MediaMetadataBroadcastService for DirectScrobbler<C> {
     fn admission_policy(&self) -> Option<Arc<dyn super::admission::Policy>> {
         Some(self.forwarding.clone())
     }
-    fn uses_session_events(&self) -> bool {
-        true
-    }
     fn delivery_permit(&mut self, permit: DeliveryPermit) {
         self.permit = permit;
     }
-    async fn session_event(&mut self, event: SessionEvent) {
+    async fn transition(&mut self, event: SessionEvent) {
         let session = event.session;
         let was_known = self.reducer.contains(session);
         let work = self.reducer.event(event);

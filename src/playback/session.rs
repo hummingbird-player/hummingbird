@@ -1,5 +1,10 @@
-//! In-process playback events and the reducer which produces them.
-//! Codec lookahead and UI position notifications never contribute listening time.
+//! The playback-to-MMBS state machine.
+//!
+//! A selected decoder is pending until its first frame is rendered. Rendering
+//! activates the session; metadata, playback state, seeks, and cumulative
+//! progress then update it until the final buffered frame produces `Ended`.
+//! Multiple sessions can briefly be active while a gapless tail drains. Codec
+//! lookahead and UI position notifications never contribute listening time.
 use crate::{media::metadata::Metadata, sources::TrackRef};
 use std::collections::VecDeque;
 

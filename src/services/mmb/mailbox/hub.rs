@@ -1,5 +1,5 @@
 //! Host routing independent of UI lifetime. Session delivery and final shutdown
-//! use the same ordered mailboxes as ordinary display updates.
+//! use the same ordered mailboxes for every service.
 use super::{Event, Mailbox};
 use std::{
     collections::BTreeMap,
@@ -41,9 +41,6 @@ impl Hub {
             state.services.values().cloned().collect()
         };
         for service in &services {
-            service.send(Event::StateChanged(
-                crate::playback::thread::PlaybackState::Stopped,
-            ));
             service.close();
         }
         let mut jobs = tokio::task::JoinSet::new();

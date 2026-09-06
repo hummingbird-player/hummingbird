@@ -230,10 +230,6 @@ impl MMBSList {
     }
 }
 
-pub use crate::services::mmb::mailbox::Event as MMBSEvent;
-
-impl EventEmitter<MMBSEvent> for MMBSList {}
-
 pub struct PlaylistInfoTransfer;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -574,13 +570,6 @@ pub fn build_models(
         })
         .detach();
     }
-
-    cx.subscribe(&mmbs, |m, ev, cx| {
-        let list = m.read(cx);
-
-        list.1.send(ev.clone());
-    })
-    .detach();
 
     let startup_view = resolve_startup_view(
         cx,

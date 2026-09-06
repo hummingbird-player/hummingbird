@@ -21,8 +21,7 @@ pub(super) fn retained_bytes(event: &Event) -> usize {
     let fixed = 512;
     fixed
         + match event {
-            Event::NewTrack(reference) => reference_bytes(reference),
-            Event::Session(event) => match &event.kind {
+            Event::Transition(event) => match &event.kind {
                 SessionEventKind::Started { reference, .. } => reference_bytes(reference),
                 SessionEventKind::Metadata { metadata: m } => {
                     strings([
@@ -41,34 +40,6 @@ pub(super) fn retained_bytes(event: &Event) -> usize {
                 | SessionEventKind::Progress { .. }
                 | SessionEventKind::Ended { .. } => 0,
             },
-            Event::MetadataRecieved(m) => {
-                size_of::<crate::media::metadata::Metadata>()
-                    + strings([
-                        &m.name,
-                        &m.artist,
-                        &m.album_artist,
-                        &m.artist_sort,
-                        &m.album_artist_sort,
-                        &m.original_artist,
-                        &m.composer,
-                        &m.album,
-                        &m.sort_album,
-                        &m.grouping,
-                        &m.disc_subtitle,
-                        &m.label,
-                        &m.catalog,
-                        &m.isrc,
-                        &m.mbid_album,
-                        &m.lyrics,
-                    ])
-                    + [&m.artists, &m.album_artist_keys, &m.genres]
-                        .into_iter()
-                        .map(|values| {
-                            values.capacity() * size_of::<String>()
-                                + values.iter().map(String::capacity).sum::<usize>()
-                        })
-                        .sum::<usize>()
-            }
-            _ => 0,
+            Event::SetEnabled(_) => 0,
         }
 }

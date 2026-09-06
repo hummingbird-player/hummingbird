@@ -1,4 +1,8 @@
 use super::*;
+use crate::{
+    playback::session::{Progress, SessionEvent, SessionEventKind, SessionId, SessionMetadata},
+    sources::TrackRef,
+};
 use async_trait::async_trait;
 use std::sync::Mutex;
 use tokio::sync::{Semaphore, oneshot};
@@ -20,7 +24,7 @@ async fn network_work_retains_its_delivery_generation_across_disable() {
     }
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let mailbox = Mailbox::spawn(Capture(sender), &tokio::runtime::Handle::current());
-    mailbox.send(Event::PositionChanged(1));
+    mailbox.send(progress(1));
     let old = receiver.recv().await.unwrap();
     assert!(old.is_valid());
     mailbox.set_enabled(false);
@@ -40,21 +44,24 @@ impl Fixture {
 }
 #[async_trait]
 impl MediaMetadataBroadcastService for Fixture {
-    async fn new_track(&mut self, reference: TrackRef) {
-        self.gate.acquire().await.unwrap().forget();
-        self.record(format!("track:{}", reference.remote_id().unwrap()));
-    }
-    async fn metadata_recieved(&mut self, metadata: Arc<Metadata>) {
-        self.record(format!("metadata:{}", metadata.name.as_deref().unwrap()));
-    }
-    async fn state_changed(&mut self, state: PlaybackState) {
-        self.record(format!("state:{state:?}"));
-    }
-    async fn position_changed(&mut self, position: u64) {
-        self.record(format!("position:{position}"));
-    }
-    async fn duration_changed(&mut self, duration: u64) {
-        self.record(format!("duration:{duration}"));
+    async fn transition(&mut self, event: SessionEvent) {
+        match event.kind {
+            SessionEventKind::Started { reference, .. } => {
+                self.gate.acquire().await.unwrap().forget();
+                self.record(format!("track:{}", reference.remote_id().unwrap()));
+            }
+            SessionEventKind::Metadata { metadata } => {
+                self.record(format!("metadata:{}", metadata.title.as_deref().unwrap()));
+            }
+            SessionEventKind::State { state, .. } => self.record(format!("state:{state:?}")),
+            SessionEventKind::Progress { progress } => {
+                self.record(format!("position:{}", progress.position_ms));
+            }
+            SessionEventKind::Duration { duration_ms } => {
+                self.record(format!("duration:{}", duration_ms.unwrap()));
+            }
+            SessionEventKind::Seek { .. } | SessionEventKind::Ended { .. } => {}
+        }
     }
     async fn set_enabled(&mut self, enabled: bool) {
         self.record(format!("enabled:{enabled}"));
@@ -85,29 +92,100 @@ fn fixture() -> (
     );
     (mailbox, events, gate, finished)
 }
-fn track(id: &str) -> Event {
-    Event::NewTrack(TrackRef::from_database(
-        crate::sources::SourceId::new("source"),
-        id.into(),
-    ))
+fn event(id: u8, sequence: u64, kind: SessionEventKind) -> Event {
+    Event::Transition(Box::new(SessionEvent {
+        session: SessionId([id; 16]),
+        sequence,
+        kind,
+    }))
+}
+fn track(id: u8, location: &str) -> Event {
+    event(
+        id,
+        1,
+        SessionEventKind::Started {
+            reference: TrackRef::from_database(
+                crate::sources::SourceId::new("source"),
+                location.into(),
+            ),
+            database_id: None,
+            started_at_ms: 0,
+            position_ms: 0,
+        },
+    )
+}
+fn progress(sequence: u64) -> Event {
+    event(
+        1,
+        sequence,
+        SessionEventKind::Progress {
+            progress: Progress {
+                position_ms: sequence,
+                played_ms: sequence,
+            },
+        },
+    )
+}
+fn seek(sequence: u64) -> Event {
+    event(
+        1,
+        sequence,
+        SessionEventKind::Seek {
+            progress: Progress {
+                position_ms: sequence,
+                played_ms: sequence,
+            },
+        },
+    )
 }
 
 #[tokio::test]
 async fn queued_events_and_enable_changes_keep_order_while_a_service_is_busy() {
     let (mailbox, events, gate, finished) = fixture();
-    mailbox.send(track("a"));
-    mailbox.send(Event::MetadataRecieved(Arc::new(Metadata {
-        name: Some("A".into()),
-        ..Default::default()
-    })));
-    mailbox.send(Event::DurationChanged(90));
-    mailbox.send(Event::StateChanged(PlaybackState::Playing));
-    for position in [0, 0, 0, 1, 1, 2] {
-        mailbox.send(Event::PositionChanged(position));
+    mailbox.send(track(1, "a"));
+    mailbox.send(event(
+        1,
+        2,
+        SessionEventKind::Metadata {
+            metadata: SessionMetadata {
+                title: Some("A".into()),
+                ..Default::default()
+            },
+        },
+    ));
+    mailbox.send(event(
+        1,
+        3,
+        SessionEventKind::Duration {
+            duration_ms: Some(90),
+        },
+    ));
+    mailbox.send(event(
+        1,
+        4,
+        SessionEventKind::State {
+            state: crate::playback::thread::PlaybackState::Playing,
+            progress: Progress {
+                position_ms: 0,
+                played_ms: 0,
+            },
+        },
+    ));
+    for sequence in [5, 6, 7] {
+        mailbox.send(progress(sequence));
     }
     mailbox.set_enabled(true);
-    mailbox.send(track("b"));
-    mailbox.send(Event::PositionChanged(0));
+    mailbox.send(track(2, "b"));
+    mailbox.send(event(
+        2,
+        2,
+        SessionEventKind::Progress {
+            progress: Progress {
+                position_ms: 0,
+                played_ms: 0,
+            },
+        },
+    ));
     assert!(events.lock().unwrap().is_empty());
     drop(mailbox);
     gate.add_permits(2);
@@ -122,9 +200,7 @@ async fn queued_events_and_enable_changes_keep_order_while_a_service_is_busy() {
             "metadata:A",
             "duration:90",
             "state:Playing",
-            "position:0",
-            "position:1",
-            "position:2",
+            "position:7",
             "enabled:true",
             "track:b",
             "position:0",
@@ -136,10 +212,10 @@ async fn queued_events_and_enable_changes_keep_order_while_a_service_is_busy() {
 #[tokio::test]
 async fn busy_service_does_not_delay_other_services_or_block_publishers() {
     let (slow, slow_events, slow_gate, slow_finished) = fixture();
-    slow.send(track("slow"));
+    slow.send(track(1, "slow"));
     let (fast, fast_events, fast_gate, fast_finished) = fixture();
     fast_gate.add_permits(1);
-    fast.send(track("fast"));
+    fast.send(track(1, "fast"));
     drop(fast);
     tokio::time::timeout(Duration::from_secs(2), fast_finished)
         .await
@@ -158,15 +234,11 @@ async fn busy_service_does_not_delay_other_services_or_block_publishers() {
 #[tokio::test]
 async fn disabling_invalidates_old_queued_updates_before_reenabling() {
     let (mailbox, events, gate, finished) = fixture();
-    mailbox.send(track("old"));
-    mailbox.send(Event::MetadataRecieved(Arc::new(Metadata {
-        name: Some("old".into()),
-        ..Default::default()
-    })));
-    mailbox.send(Event::PositionChanged(100));
+    mailbox.send(track(1, "old"));
+    mailbox.send(progress(2));
     mailbox.set_enabled(false);
     mailbox.set_enabled(true);
-    mailbox.send(track("new"));
+    mailbox.send(track(2, "new"));
     // No worker has run on this current-thread test runtime before the policy
     // change. Only the new generation is eligible for dispatch.
     gate.add_permits(1);
@@ -192,16 +264,13 @@ async fn forwarding_grants_are_captured_before_a_busy_worker_receives_the_start(
     }
     #[async_trait::async_trait]
     impl MediaMetadataBroadcastService for Capture {
-        fn uses_session_events(&self) -> bool {
-            true
-        }
         fn admission_policy(&self) -> Option<Arc<dyn crate::services::mmb::admission::Policy>> {
             Some(self.policy.clone())
         }
         fn delivery_permit(&mut self, permit: DeliveryPermit) {
             self.sent.send(permit).unwrap();
         }
-        async fn session_event(&mut self, _: SessionEvent) {
+        async fn transition(&mut self, _: SessionEvent) {
             self.gate.acquire().await.unwrap().forget();
         }
     }
@@ -219,7 +288,7 @@ async fn forwarding_grants_are_captured_before_a_busy_worker_receives_the_start(
         &tokio::runtime::Handle::current(),
     );
     let start = |id, reference| {
-        Event::Session(Box::new(SessionEvent {
+        Event::Transition(Box::new(SessionEvent {
             session: SessionId([id; 16]),
             sequence: 1,
             kind: SessionEventKind::Started {
@@ -250,16 +319,16 @@ async fn forwarding_grants_are_captured_before_a_busy_worker_receives_the_start(
 async fn explicit_close_drains_accepted_events_even_while_publishers_still_exist() {
     let (mailbox, events, gate, finished) = fixture();
     let publisher = mailbox.clone();
-    mailbox.send(track("final"));
-    mailbox.send(Event::PositionChanged(17));
+    mailbox.send(track(1, "final"));
+    mailbox.send(progress(2));
     mailbox.close();
-    publisher.send(Event::PositionChanged(99));
+    publisher.send(progress(3));
     gate.add_permits(1);
     assert!(mailbox.wait_closed().await);
     finished.await.unwrap();
     assert_eq!(
         *events.lock().unwrap(),
-        ["track:final", "position:17", "shutdown"]
+        ["track:final", "position:2", "shutdown"]
     );
 }
 
@@ -273,13 +342,13 @@ async fn closing_a_stalled_service_has_a_deadline_and_drops_its_worker() {
     }
     #[async_trait]
     impl MediaMetadataBroadcastService for Stalled {
-        async fn position_changed(&mut self, _: u64) {
+        async fn transition(&mut self, _: SessionEvent) {
             std::future::pending::<()>().await;
         }
     }
     let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mailbox = Mailbox::spawn(Stalled(dropped.clone()), &tokio::runtime::Handle::current());
-    mailbox.send(Event::PositionChanged(1));
+    mailbox.send(progress(1));
     mailbox.close();
     assert!(
         !tokio::time::timeout(Duration::from_secs(7), mailbox.wait_closed())
@@ -303,10 +372,7 @@ async fn progress_backlog_stays_small_and_preserves_transitions_and_scrobble_eli
     }
     #[async_trait]
     impl MediaMetadataBroadcastService for Capture {
-        fn uses_session_events(&self) -> bool {
-            true
-        }
-        async fn session_event(&mut self, event: SessionEvent) {
+        async fn transition(&mut self, event: SessionEvent) {
             self.events.lock().unwrap().push(event.clone());
             for work in self.reducer.event(event) {
                 if let Work::Submit(listen) = work {
@@ -340,7 +406,7 @@ async fn progress_backlog_stays_small_and_preserves_transitions_and_scrobble_eli
                 expected.push(listen);
             }
         }
-        mailbox.send(Event::Session(Box::new(event)));
+        mailbox.send(Event::Transition(Box::new(event)));
     };
     send(Kind::Started {
         reference: TrackRef::local("track"),
@@ -432,7 +498,7 @@ async fn interleaved_sessions_keep_their_own_progress_slots_and_control_boundari
         pending
             .push((
                 DeliveryPermit::default(),
-                Event::Session(Box::new(SessionEvent {
+                Event::Transition(Box::new(SessionEvent {
                     session: SessionId([id; 16]),
                     sequence,
                     kind,
@@ -461,7 +527,7 @@ async fn interleaved_sessions_keep_their_own_progress_slots_and_control_boundari
     let mut actual = Vec::new();
     while let Some((_, event)) = receiver.recv().await {
         match event {
-            Event::Session(event) => {
+            Event::Transition(event) => {
                 let Kind::Progress { progress } = event.kind else {
                     panic!()
                 };
@@ -483,7 +549,7 @@ async fn replacing_pending_progress_does_not_allocate_queue_storage_or_reduce_li
     let pending = Arc::new(pending::Pending::default());
     let mut receiver = pending::Receiver(pending.clone());
     let event = |sequence, played_ms| {
-        Event::Session(Box::new(SessionEvent {
+        Event::Transition(Box::new(SessionEvent {
             session: SessionId([1; 16]),
             sequence,
             kind: Kind::Progress {
@@ -503,7 +569,7 @@ async fn replacing_pending_progress_does_not_allocate_queue_storage_or_reduce_li
     result.unwrap();
     assert_eq!(allocations, 0);
     assert_eq!(pending.len(), 1);
-    let (_, Event::Session(event)) = receiver.recv().await.unwrap() else {
+    let (_, Event::Transition(event)) = receiver.recv().await.unwrap() else {
         panic!()
     };
     assert_eq!(event.sequence, 5);
@@ -530,7 +596,7 @@ async fn draining_transitions_yields_to_other_runtime_work() {
     let other_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mailbox = Mailbox::spawn(Fair(other_ran.clone()), &tokio::runtime::Handle::current());
     for position in 0..pending::MAX_EVENTS {
-        mailbox.send(Event::PositionChanged(position as u64));
+        mailbox.send(seek(position as u64));
     }
     mailbox.close();
     tokio::spawn(async move {
@@ -544,8 +610,11 @@ async fn overload_preserves_accepted_order_reports_failure_and_isolates_other_se
     struct Capture(Arc<Mutex<Vec<u64>>>);
     #[async_trait]
     impl MediaMetadataBroadcastService for Capture {
-        async fn position_changed(&mut self, position: u64) {
-            self.0.lock().unwrap().push(position);
+        async fn transition(&mut self, event: SessionEvent) {
+            let SessionEventKind::Seek { progress } = event.kind else {
+                return;
+            };
+            self.0.lock().unwrap().push(progress.position_ms);
         }
     }
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -555,19 +624,17 @@ async fn overload_preserves_accepted_order_reports_failure_and_isolates_other_se
     );
     let mut failures = mailbox.subscribe_failure();
     for position in 0..pending::MAX_EVENTS {
-        mailbox
-            .try_send(Event::PositionChanged(position as u64))
-            .unwrap();
+        mailbox.try_send(seek(position as u64)).unwrap();
     }
     assert_eq!(
-        mailbox.try_send(Event::PositionChanged(pending::MAX_EVENTS as u64)),
+        mailbox.try_send(seek(pending::MAX_EVENTS as u64)),
         Err(SendError::Failed(Failure::Capacity))
     );
     failures.changed().await.unwrap();
     assert_eq!(*failures.borrow_and_update(), Some(Failure::Capacity));
     for position in 50_000..60_000 {
         assert_eq!(
-            mailbox.try_send(Event::PositionChanged(position)),
+            mailbox.try_send(seek(position)),
             Err(SendError::Failed(Failure::Capacity))
         );
     }
@@ -584,7 +651,7 @@ async fn overload_preserves_accepted_order_reports_failure_and_isolates_other_se
         Capture(received.clone()),
         &tokio::runtime::Handle::current(),
     );
-    healthy.try_send(Event::PositionChanged(99_999)).unwrap();
+    healthy.try_send(seek(99_999)).unwrap();
     healthy.close();
     assert!(healthy.wait_closed().await);
     assert_eq!(received.lock().unwrap().last(), Some(&99_999));
@@ -595,11 +662,17 @@ async fn payload_budget_counts_allocated_capacity_and_releases_drained_metadata(
     let pending = Arc::new(pending::Pending::default());
     let mut receiver = pending::Receiver(pending.clone());
     let metadata = || {
-        Event::MetadataRecieved(Arc::new(Metadata {
-            // Empty length still retains the allocation while queued.
-            lyrics: Some(String::with_capacity(1024 * 1024)),
-            ..Default::default()
-        }))
+        event(
+            1,
+            2,
+            SessionEventKind::Metadata {
+                metadata: SessionMetadata {
+                    // Empty length still retains the allocation while queued.
+                    title: Some(String::with_capacity(1024 * 1024)),
+                    ..Default::default()
+                },
+            },
+        )
     };
     for _ in 0..32 {
         pending
@@ -631,14 +704,11 @@ async fn progress_coalesces_at_capacity_before_rejecting_a_transition() {
     let mut receiver = pending::Receiver(pending.clone());
     for position in 0..pending::MAX_EVENTS - 1 {
         pending
-            .push((
-                DeliveryPermit::default(),
-                Event::PositionChanged(position as u64),
-            ))
+            .push((DeliveryPermit::default(), seek(position as u64)))
             .unwrap();
     }
     let event = |sequence, kind| {
-        Event::Session(Box::new(SessionEvent {
+        Event::Transition(Box::new(SessionEvent {
             session: SessionId([9; 16]),
             sequence,
             kind,
@@ -680,7 +750,7 @@ async fn progress_coalesces_at_capacity_before_rejecting_a_transition() {
     while let Some((_, event)) = receiver.recv().await {
         last = Some(event);
     }
-    let Some(Event::Session(last)) = last else {
+    let Some(Event::Transition(last)) = last else {
         panic!()
     };
     assert_eq!(last.sequence, 99);
@@ -697,13 +767,13 @@ async fn a_panicking_service_publishes_failure_without_needing_another_event() {
     struct Panics;
     #[async_trait]
     impl MediaMetadataBroadcastService for Panics {
-        async fn position_changed(&mut self, _: u64) {
+        async fn transition(&mut self, _: SessionEvent) {
             panic!("fixture callback failed");
         }
     }
     let mailbox = Mailbox::spawn(Panics, &tokio::runtime::Handle::current());
     let mut failures = mailbox.subscribe_failure();
-    mailbox.send(Event::PositionChanged(1));
+    mailbox.send(seek(1));
     tokio::time::timeout(Duration::from_secs(1), failures.changed())
         .await
         .unwrap()
@@ -711,7 +781,7 @@ async fn a_panicking_service_publishes_failure_without_needing_another_event() {
     assert_eq!(*failures.borrow(), Some(Failure::Unavailable));
     assert!(!mailbox.wait_closed().await);
     assert_eq!(
-        mailbox.try_send(Event::PositionChanged(1)),
+        mailbox.try_send(seek(1)),
         Err(SendError::Failed(Failure::Unavailable))
     );
 }
@@ -727,10 +797,10 @@ async fn disabling_an_overloaded_service_still_revokes_accepted_work() {
     }
     let (sent, mut received) = mpsc::unbounded_channel();
     let mailbox = Mailbox::spawn(Capture(sent), &tokio::runtime::Handle::current());
-    mailbox.send(Event::PositionChanged(0));
+    mailbox.send(seek(0));
     let permit = received.recv().await.unwrap();
     for position in 1..=pending::MAX_EVENTS + 1 {
-        mailbox.send(Event::PositionChanged(position as u64));
+        mailbox.send(seek(position as u64));
     }
     assert_eq!(mailbox.failure(), Some(Failure::Capacity));
     assert!(permit.is_valid());

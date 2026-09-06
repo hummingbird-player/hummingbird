@@ -782,10 +782,7 @@ fn shutdown_delivers_final_rendered_session_directly_to_services_without_ui_poll
     struct Sink(Arc<std::sync::Mutex<Vec<SessionEvent>>>);
     #[async_trait::async_trait]
     impl MediaMetadataBroadcastService for Sink {
-        fn uses_session_events(&self) -> bool {
-            true
-        }
-        async fn session_event(&mut self, event: SessionEvent) {
+        async fn transition(&mut self, event: SessionEvent) {
             self.0.lock().unwrap().push(event);
         }
     }

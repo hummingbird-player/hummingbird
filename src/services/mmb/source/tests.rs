@@ -29,7 +29,7 @@ fn event(id: u8, sequence: u64, kind: SessionEventKind) -> SessionEvent {
 }
 async fn start(adapter: &mut SourceReporting, config: &SourceConfig, id: u8) {
     adapter
-        .session_event(event(
+        .transition(event(
             id,
             1,
             SessionEventKind::Started {
@@ -41,7 +41,7 @@ async fn start(adapter: &mut SourceReporting, config: &SourceConfig, id: u8) {
         ))
         .await;
     adapter
-        .session_event(event(
+        .transition(event(
             id,
             2,
             SessionEventKind::Duration {
@@ -78,7 +78,7 @@ async fn qualified_remote_listens_use_source_ids_without_metadata_and_local_file
     for (config, id) in [(&a, 1), (&b, 2)] {
         start(&mut adapter, config, id).await;
         adapter
-            .session_event(event(
+            .transition(event(
                 id,
                 3,
                 SessionEventKind::Ended {
@@ -92,7 +92,7 @@ async fn qualified_remote_listens_use_source_ids_without_metadata_and_local_file
             .await;
     }
     adapter
-        .session_event(event(
+        .transition(event(
             3,
             1,
             SessionEventKind::Started {
@@ -104,7 +104,7 @@ async fn qualified_remote_listens_use_source_ids_without_metadata_and_local_file
         ))
         .await;
     adapter
-        .session_event(event(
+        .transition(event(
             3,
             2,
             SessionEventKind::Duration {
@@ -113,7 +113,7 @@ async fn qualified_remote_listens_use_source_ids_without_metadata_and_local_file
         ))
         .await;
     adapter
-        .session_event(event(
+        .transition(event(
             3,
             3,
             SessionEventKind::Ended {
@@ -147,7 +147,7 @@ async fn seeks_and_pause_do_not_qualify_but_final_totals_and_repeats_do() {
     let (_dir, pool, mut adapter) = setup(&[config.clone()]).await;
     start(&mut adapter, &config, 1).await;
     adapter
-        .session_event(event(
+        .transition(event(
             1,
             3,
             SessionEventKind::Seek {
@@ -159,7 +159,7 @@ async fn seeks_and_pause_do_not_qualify_but_final_totals_and_repeats_do() {
         ))
         .await;
     adapter
-        .session_event(event(
+        .transition(event(
             1,
             4,
             SessionEventKind::State {
@@ -183,12 +183,12 @@ async fn seeks_and_pause_do_not_qualify_but_final_totals_and_repeats_do() {
             },
         },
     );
-    adapter.session_event(end.clone()).await;
-    adapter.session_event(end).await;
+    adapter.transition(end.clone()).await;
+    adapter.transition(end).await;
     assert_eq!(count(&pool).await, 1);
     start(&mut adapter, &config, 2).await;
     adapter
-        .session_event(event(
+        .transition(event(
             2,
             3,
             SessionEventKind::Progress {
@@ -215,7 +215,7 @@ async fn privacy_changes_revoke_accumulating_sessions_before_the_async_writer_ru
     // Even if the settings watch coalesces disable/re-enable, its synchronous
     // scope revocation prevents the old listen from including disabled time.
     adapter
-        .session_event(event(
+        .transition(event(
             1,
             3,
             SessionEventKind::Progress {
@@ -228,7 +228,7 @@ async fn privacy_changes_revoke_accumulating_sessions_before_the_async_writer_ru
         .await;
     start(&mut adapter, &config, 2).await;
     adapter
-        .session_event(event(
+        .transition(event(
             2,
             3,
             SessionEventKind::Progress {
@@ -261,21 +261,18 @@ async fn queued_starts_cannot_cross_privacy_or_account_changes_before_reduction(
     }
     #[async_trait]
     impl MediaMetadataBroadcastService for Held {
-        fn uses_session_events(&self) -> bool {
-            true
-        }
         fn admission_policy(&self) -> Option<Arc<dyn admission::Policy>> {
             self.inner.admission_policy()
         }
         fn delivery_permit(&mut self, permit: DeliveryPermit) {
             self.inner.delivery_permit(permit);
         }
-        async fn session_event(&mut self, event: SessionEvent) {
+        async fn transition(&mut self, event: SessionEvent) {
             if let Some(entered) = self.entered.take() {
                 let _ = entered.send(());
                 self.gate.acquire().await.unwrap().forget();
             }
-            self.inner.session_event(event).await;
+            self.inner.transition(event).await;
         }
         async fn shutdown(&mut self) {
             self.inner.shutdown().await;
@@ -325,7 +322,7 @@ async fn queued_starts_cannot_cross_privacy_or_account_changes_before_reduction(
                 },
             ),
         ] {
-            mailbox.send(Event::Session(Box::new(event(id, sequence, kind))));
+            mailbox.send(Event::Transition(Box::new(event(id, sequence, kind))));
         }
     };
     publish(0, TrackRef::local("hold-the-reducer"));

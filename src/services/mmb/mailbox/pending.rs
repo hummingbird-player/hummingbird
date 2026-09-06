@@ -49,12 +49,12 @@ impl Pending {
         if matches!(delivery.1, Event::SetEnabled(_)) {
             state.progress.clear();
         }
-        if let Event::Session(next) = &delivery.1
+        if let Event::Transition(next) = &delivery.1
             && let SessionEventKind::Progress { progress } = &next.kind
             && let Some(sequence) = state.progress.get(&next.session).copied()
-            && let Some((permit, Event::Session(old))) =
+            && let Some((permit, Event::Transition(old))) =
                 state.events.iter_mut().rev().find(|(_, event)| {
-                    matches!(event, Event::Session(event)
+                    matches!(event, Event::Transition(event)
                     if event.session == next.session && event.sequence == sequence)
                 })
             && permit.generation == delivery.0.generation
@@ -84,7 +84,7 @@ impl Pending {
             self.ready.notify_one();
             return Err(PushError::Capacity);
         }
-        if let Event::Session(next) = &delivery.1 {
+        if let Event::Transition(next) = &delivery.1 {
             if matches!(next.kind, SessionEventKind::Progress { .. }) {
                 state.progress.insert(next.session, next.sequence);
             } else {
@@ -117,7 +117,7 @@ impl Receiver {
                 let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(delivery) = state.events.pop_front() {
                     state.bytes -= super::budget::retained_bytes(&delivery.1);
-                    if let Event::Session(event) = &delivery.1 {
+                    if let Event::Transition(event) = &delivery.1 {
                         if state.progress.get(&event.session) == Some(&event.sequence) {
                             state.progress.remove(&event.session);
                         }

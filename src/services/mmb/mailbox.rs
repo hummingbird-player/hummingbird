@@ -1,11 +1,10 @@
 //! Service delivery is ordered independently of Tokio task scheduling. The UI
 //! only enqueues; one worker owns each reducer and its shutdown lifecycle.
 use super::MediaMetadataBroadcastService;
-use crate::{media::metadata::Metadata, playback::thread::PlaybackState, sources::TrackRef};
 use futures::FutureExt;
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -29,12 +28,7 @@ pub enum SendError {
 }
 #[derive(Clone)]
 pub enum Event {
-    Session(Box<crate::playback::session::SessionEvent>),
-    NewTrack(TrackRef),
-    MetadataRecieved(Arc<Metadata>),
-    StateChanged(PlaybackState),
-    PositionChanged(u64),
-    DurationChanged(u64),
+    Transition(Box<crate::playback::session::SessionEvent>),
     SetEnabled(bool),
 }
 
@@ -46,9 +40,7 @@ struct Publisher {
     pending: Arc<pending::Pending>,
     closing: watch::Sender<bool>,
     finished: watch::Receiver<Option<bool>>,
-    position: Mutex<Option<u64>>,
     privacy_generation: Arc<AtomicU64>,
-    session_events: bool,
     admission: Option<Arc<dyn super::admission::Policy>>,
     failure: watch::Sender<Option<Failure>>,
 }
@@ -84,7 +76,6 @@ impl Mailbox {
         let pending = Arc::new(pending::Pending::default());
         let receiver = pending::Receiver(pending.clone());
         let privacy_generation = Arc::new(AtomicU64::new(0));
-        let session_events = service.uses_session_events();
         let admission = service.admission_policy();
         let (closing, mut closing_rx) = watch::channel(false);
         let (finished_tx, finished) = watch::channel(None);
@@ -112,9 +103,7 @@ impl Mailbox {
                 pending,
                 closing,
                 finished,
-                position: Mutex::new(None),
                 privacy_generation,
-                session_events,
                 admission,
                 failure,
             }),
@@ -132,21 +121,6 @@ impl Mailbox {
     /// Returns rejection explicitly; the host also publishes a sticky failure
     /// for UI/status adapters. A failed mailbox requires service replacement.
     pub fn try_send(&self, event: Event) -> Result<(), SendError> {
-        match &event {
-            Event::SetEnabled(_) => {}
-            Event::Session(_) if !self.publisher.session_events => return Ok(()),
-            Event::Session(_) => {}
-            _ if self.publisher.session_events => return Ok(()),
-            _ => {}
-        }
-        // The UI publishes positions in milliseconds but the legacy contract
-        // uses seconds. Avoid retaining 30 duplicate messages per second behind
-        // a slow network operation. Distinct seconds and transitions are retained.
-        let mut position = self
-            .publisher
-            .position
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         if let Some(failure) = self.failure() {
             if matches!(event, Event::SetEnabled(false)) {
                 self.publisher
@@ -154,12 +128,6 @@ impl Mailbox {
                     .fetch_add(1, Ordering::AcqRel);
             }
             return Err(SendError::Failed(failure));
-        }
-        match &event {
-            Event::PositionChanged(value) if *position == Some(*value) => return Ok(()),
-            Event::PositionChanged(value) => *position = Some(*value),
-            Event::NewTrack(_) | Event::SetEnabled(_) => *position = None,
-            _ => {}
         }
         if matches!(event, Event::SetEnabled(false)) {
             // A privacy change invalidates unsent old updates, even if a request
@@ -171,7 +139,7 @@ impl Mailbox {
         }
         let generation = self.publisher.privacy_generation.load(Ordering::Acquire);
         let source_grant = match &event {
-            Event::Session(event) => match &event.kind {
+            Event::Transition(event) => match &event.kind {
                 crate::playback::session::SessionEventKind::Started { reference, .. } => self
                     .publisher
                     .admission
@@ -236,33 +204,14 @@ async fn run(
     mut receiver: pending::Receiver,
     privacy_generation: Arc<AtomicU64>,
 ) -> bool {
-    // Compatibility callbacks retain distinct seconds. Session consumers only
-    // receive cumulative rendered totals and ordered session transitions.
-    let mut last_position = None;
     while let Some((permit, event)) = receiver.recv().await {
         if permit.generation != privacy_generation.load(Ordering::Acquire) {
             continue;
         }
         service.delivery_permit(permit);
         match event {
-            Event::Session(event) => service.session_event(*event).await,
-            Event::NewTrack(reference) => {
-                last_position = None;
-                service.new_track(reference).await;
-            }
-            Event::MetadataRecieved(metadata) => service.metadata_recieved(metadata).await,
-            Event::StateChanged(state) => service.state_changed(state).await,
-            Event::PositionChanged(position) => {
-                if last_position != Some(position) {
-                    service.position_changed(position).await;
-                    last_position = Some(position);
-                }
-            }
-            Event::DurationChanged(duration) => service.duration_changed(duration).await,
-            Event::SetEnabled(enabled) => {
-                last_position = None;
-                service.set_enabled(enabled).await;
-            }
+            Event::Transition(event) => service.transition(*event).await,
+            Event::SetEnabled(enabled) => service.set_enabled(enabled).await,
         }
     }
     if tokio::time::timeout(Duration::from_secs(5), service.shutdown())

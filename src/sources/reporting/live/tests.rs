@@ -532,11 +532,11 @@ async fn stalled_live_request_cannot_block_mmbs_eligibility_or_durable_persisten
     .await;
     let reporting = super::super::delivery::Reporting::start(service.clone(), pool.clone());
     let mut adapter = SourceReporting::new(service, reporting.clone());
-    adapter.session_event(started(&config, 1)).await;
+    adapter.transition(started(&config, 1)).await;
     let (_, held) = request(&mut requests).await;
     tokio::time::timeout(Duration::from_millis(500), async {
         adapter
-            .session_event(event(
+            .transition(event(
                 1,
                 2,
                 SessionEventKind::Duration {
@@ -545,7 +545,7 @@ async fn stalled_live_request_cannot_block_mmbs_eligibility_or_durable_persisten
             ))
             .await;
         adapter
-            .session_event(event(
+            .transition(event(
                 1,
                 3,
                 SessionEventKind::Ended {

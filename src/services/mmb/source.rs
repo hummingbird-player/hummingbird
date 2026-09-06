@@ -104,10 +104,7 @@ impl MediaMetadataBroadcastService for SourceReporting {
     fn delivery_permit(&mut self, permit: DeliveryPermit) {
         self.permit = permit;
     }
-    fn uses_session_events(&self) -> bool {
-        true
-    }
-    async fn session_event(&mut self, event: SessionEvent) {
+    async fn transition(&mut self, event: SessionEvent) {
         self.live.event(&event, &self.permit);
         if !self.permit.is_valid() {
             return;

@@ -28,10 +28,10 @@ fn start(id: u8) -> SessionEvent {
 async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
     // Disabled transport keeps the exact reducer behavior testable without IPC.
     let mut service = Discord::new(false, watch::channel(Default::default()).0);
-    service.session_event(start(1)).await;
-    service.session_event(start(2)).await;
+    service.transition(start(1)).await;
+    service.transition(start(2)).await;
     service
-        .session_event(event(
+        .transition(event(
             2,
             2,
             SessionEventKind::Metadata {
@@ -44,7 +44,7 @@ async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
         ))
         .await;
     service
-        .session_event(event(
+        .transition(event(
             1,
             20,
             SessionEventKind::Metadata {
@@ -56,7 +56,7 @@ async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
         ))
         .await;
     service
-        .session_event(event(
+        .transition(event(
             1,
             21,
             SessionEventKind::Ended {
@@ -83,7 +83,7 @@ async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
     );
     assert_eq!(service.last_state, PlaybackState::Playing);
     service
-        .session_event(event(
+        .transition(event(
             2,
             3,
             SessionEventKind::State {
@@ -98,7 +98,7 @@ async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
     assert_eq!(service.last_state, PlaybackState::Buffering);
     assert_eq!(service.last_position, 15);
     service
-        .session_event(event(
+        .transition(event(
             2,
             4,
             SessionEventKind::Ended {
@@ -118,9 +118,9 @@ async fn presence_follows_current_session_and_ignores_old_gapless_updates() {
 #[tokio::test]
 async fn seeks_duration_unknown_and_stale_sequences_preserve_presence_state() {
     let mut service = Discord::new(false, watch::channel(Default::default()).0);
-    service.session_event(start(1)).await;
+    service.transition(start(1)).await;
     service
-        .session_event(event(
+        .transition(event(
             1,
             2,
             SessionEventKind::Duration {
@@ -130,7 +130,7 @@ async fn seeks_duration_unknown_and_stale_sequences_preserve_presence_state() {
         .await;
     assert_eq!(service.last_duration, Some(90));
     service
-        .session_event(event(
+        .transition(event(
             1,
             3,
             SessionEventKind::Seek {
@@ -143,14 +143,14 @@ async fn seeks_duration_unknown_and_stale_sequences_preserve_presence_state() {
         .await;
     assert_eq!(service.last_position, 80);
     service
-        .session_event(event(
+        .transition(event(
             1,
             4,
             SessionEventKind::Duration { duration_ms: None },
         ))
         .await;
     service
-        .session_event(event(
+        .transition(event(
             1,
             2,
             SessionEventKind::Duration {

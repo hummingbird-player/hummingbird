@@ -967,7 +967,7 @@
   },
   "PLAYBACK_FAILED": {
     "context": "interface.rs",
-    "definedIn": "src/playback/interface.rs:240",
+    "definedIn": "src/playback/interface.rs:239",
     "plural": false,
     "description": null
   },
@@ -1201,7 +1201,7 @@
   },
   "SAVE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:465",
+    "definedIn": "src/ui/settings/source_editor.rs:555",
     "plural": false,
     "description": null
   },
@@ -1669,7 +1669,7 @@
   },
   "SOURCE_ACCOUNT_SECRET": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:195",
+    "definedIn": "src/ui/settings/source_editor.rs:210",
     "plural": false,
     "description": null
   },
@@ -1681,37 +1681,31 @@
   },
   "SOURCE_ALLOW_HTTP": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:328",
-    "plural": false,
-    "description": null
-  },
-  "SOURCE_ALL_FOLDERS": {
-    "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:389",
+    "definedIn": "src/ui/settings/source_editor.rs:348",
     "plural": false,
     "description": null
   },
   "SOURCE_API_KEY": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:325",
+    "definedIn": "src/ui/settings/source_editor.rs:345",
     "plural": false,
     "description": null
   },
   "SOURCE_AUTOMATIC": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:355",
+    "definedIn": "src/ui/settings/source_editor.rs:375",
     "plural": false,
     "description": null
   },
   "SOURCE_BITRATE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:381",
+    "definedIn": "src/ui/settings/source_editor.rs:434",
     "plural": false,
     "description": null
   },
   "SOURCE_CACHE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:330",
+    "definedIn": "src/ui/settings/source_editor.rs:350",
     "plural": false,
     "description": null
   },
@@ -1795,19 +1789,19 @@
   },
   "SOURCE_CUSTOM_QUALITY": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:362",
+    "definedIn": "src/ui/settings/source_editor.rs:382",
     "plural": false,
     "description": null
   },
   "SOURCE_DIFFERENT_LIBRARY": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:343",
+    "definedIn": "src/ui/settings/source_editor.rs:363",
     "plural": false,
     "description": null
   },
   "SOURCE_DIFFERENT_LIBRARY_NOTE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:344",
+    "definedIn": "src/ui/settings/source_editor.rs:364",
     "plural": false,
     "description": null
   },
@@ -1933,13 +1927,13 @@
   },
   "SOURCE_EXCLUDE_LASTFM": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:383",
+    "definedIn": "src/ui/settings/source_editor.rs:439",
     "plural": false,
     "description": null
   },
   "SOURCE_EXCLUDE_LISTENBRAINZ": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:384",
+    "definedIn": "src/ui/settings/source_editor.rs:440",
     "plural": false,
     "description": null
   },
@@ -1955,9 +1949,21 @@
     "plural": false,
     "description": null
   },
+  "SOURCE_FOLDERS": {
+    "context": "source_editor.rs",
+    "definedIn": "src/ui/settings/source_editor.rs:457",
+    "plural": false,
+    "description": null
+  },
+  "SOURCE_FOLDERS_SUBTITLE": {
+    "context": "source_editor.rs",
+    "definedIn": "src/ui/settings/source_editor.rs:452",
+    "plural": false,
+    "description": null
+  },
   "SOURCE_FOLDER_REQUIRED": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:431",
+    "definedIn": "src/ui/settings/source_editor.rs:505",
     "plural": false,
     "description": null
   },
@@ -1969,25 +1975,25 @@
   },
   "SOURCE_FORMAT": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:380",
+    "definedIn": "src/ui/settings/source_editor.rs:410",
     "plural": false,
     "description": null
   },
   "SOURCE_FORWARDING_NOTE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:382",
+    "definedIn": "src/ui/settings/source_editor.rs:438",
     "plural": false,
     "description": null
   },
   "SOURCE_HTTP_WARNING": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:328",
+    "definedIn": "src/ui/settings/source_editor.rs:348",
     "plural": false,
     "description": null
   },
   "SOURCE_IDENTITY_REQUIRED": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:187",
+    "definedIn": "src/ui/settings/source_editor.rs:202",
     "plural": false,
     "description": null
   },
@@ -1999,7 +2005,7 @@
   },
   "SOURCE_INTERVAL": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:329",
+    "definedIn": "src/ui/settings/source_editor.rs:349",
     "plural": false,
     "description": null
   },
@@ -2023,13 +2029,13 @@
   },
   "SOURCE_NAME": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:322",
+    "definedIn": "src/ui/settings/source_editor.rs:342",
     "plural": false,
     "description": null
   },
   "SOURCE_NEW_SECRET": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:212",
+    "definedIn": "src/ui/settings/source_editor.rs:227",
     "plural": false,
     "description": null
   },
@@ -2041,7 +2047,7 @@
   },
   "SOURCE_ORIGINAL": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:351",
+    "definedIn": "src/ui/settings/source_editor.rs:371",
     "plural": false,
     "description": null
   },
@@ -2089,7 +2095,7 @@
   },
   "SOURCE_REPORTING": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:382",
+    "definedIn": "src/ui/settings/source_editor.rs:438",
     "plural": false,
     "description": null
   },
@@ -2113,31 +2119,31 @@
   },
   "SOURCE_SAME_LIBRARY": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:339",
+    "definedIn": "src/ui/settings/source_editor.rs:359",
     "plural": false,
     "description": null
   },
   "SOURCE_SAME_LIBRARY_NOTE": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:340",
+    "definedIn": "src/ui/settings/source_editor.rs:360",
     "plural": false,
     "description": null
   },
   "SOURCE_SECRET": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:326",
+    "definedIn": "src/ui/settings/source_editor.rs:346",
     "plural": false,
     "description": null
   },
   "SOURCE_SECURE_STORAGE_FAILED": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:281",
+    "definedIn": "src/ui/settings/source_editor.rs:301",
     "plural": false,
     "description": null
   },
   "SOURCE_SESSION_ONLY": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:327",
+    "definedIn": "src/ui/settings/source_editor.rs:347",
     "plural": false,
     "description": null
   },
@@ -2150,6 +2156,12 @@
   "SOURCE_SIGN_IN": {
     "context": "sources.rs",
     "definedIn": "src/ui/sources.rs:294",
+    "plural": false,
+    "description": null
+  },
+  "SOURCE_SINGLE_FOLDER": {
+    "context": "source_editor.rs",
+    "definedIn": "src/ui/settings/source_editor.rs:446",
     "plural": false,
     "description": null
   },
@@ -2167,19 +2179,19 @@
   },
   "SOURCE_TEST": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:456",
+    "definedIn": "src/ui/settings/source_editor.rs:546",
     "plural": false,
     "description": null
   },
   "SOURCE_TEST_CHANGED": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:266",
+    "definedIn": "src/ui/settings/source_editor.rs:286",
     "plural": false,
     "description": null
   },
   "SOURCE_TEST_OK": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:265",
+    "definedIn": "src/ui/settings/source_editor.rs:284",
     "plural": false,
     "description": null
   },
@@ -2191,19 +2203,19 @@
   },
   "SOURCE_URL": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:323",
+    "definedIn": "src/ui/settings/source_editor.rs:343",
     "plural": false,
     "description": null
   },
   "SOURCE_USER": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:324",
+    "definedIn": "src/ui/settings/source_editor.rs:344",
     "plural": false,
     "description": null
   },
   "SOURCE_WORKING": {
     "context": "source_editor.rs",
-    "definedIn": "src/ui/settings/source_editor.rs:463",
+    "definedIn": "src/ui/settings/source_editor.rs:553",
     "plural": false,
     "description": null
   },

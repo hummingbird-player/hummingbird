@@ -1363,7 +1363,7 @@ fn publish_session(
     tx: &UnboundedSender<PlaybackEvent>,
     event: super::session::SessionEvent,
 ) {
-    hub.send(crate::services::mmb::mailbox::Event::Session(Box::new(
+    hub.send(crate::services::mmb::mailbox::Event::Transition(Box::new(
         event.clone(),
     )));
     let _ = tx.send(PlaybackEvent::Session(Box::new(event)));

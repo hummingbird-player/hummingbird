@@ -27,7 +27,7 @@ fn event(id: u8, sequence: u64, kind: SessionEventKind) -> SessionEvent {
 }
 async fn ready(service: &mut DirectScrobbler<Fixture>, id: u8) {
     service
-        .session_event(event(
+        .transition(event(
             id,
             1,
             SessionEventKind::Started {
@@ -39,7 +39,7 @@ async fn ready(service: &mut DirectScrobbler<Fixture>, id: u8) {
         ))
         .await;
     service
-        .session_event(event(
+        .transition(event(
             id,
             2,
             SessionEventKind::Duration {
@@ -48,7 +48,7 @@ async fn ready(service: &mut DirectScrobbler<Fixture>, id: u8) {
         ))
         .await;
     service
-        .session_event(event(
+        .transition(event(
             id,
             3,
             SessionEventKind::Metadata {
@@ -97,7 +97,7 @@ async fn slow_request_does_not_block_session_reduction_and_only_latest_display_s
     // The request is now deliberately blocked. All these reducers must finish.
     tokio::time::timeout(Duration::from_secs(2), async {
         service
-            .session_event(event(
+            .transition(event(
                 1,
                 4,
                 SessionEventKind::Ended {
@@ -111,7 +111,7 @@ async fn slow_request_does_not_block_session_reduction_and_only_latest_display_s
             .await;
         ready(&mut service, 2).await;
         service
-            .session_event(event(
+            .transition(event(
                 2,
                 4,
                 SessionEventKind::Ended {
@@ -153,34 +153,11 @@ async fn slow_request_does_not_block_session_reduction_and_only_latest_display_s
 }
 
 #[tokio::test]
-async fn legacy_preparation_callbacks_cannot_start_or_submit_a_listen() {
-    let (mut service, mut sent, _) = fixture();
-    service.new_track(TrackRef::local("prepared")).await;
-    service
-        .metadata_recieved(Arc::new(crate::media::metadata::Metadata {
-            name: Some("Prepared".into()),
-            artist: Some("Artist".into()),
-            ..Default::default()
-        }))
-        .await;
-    service.duration_changed(60).await;
-    for position in 0..100 {
-        service.position_changed(position).await;
-    }
-    service
-        .state_changed(crate::playback::thread::PlaybackState::Playing)
-        .await;
-    service.shutdown().await;
-    assert!(service.network.is_none());
-    assert!(sent.try_recv().is_err());
-}
-
-#[tokio::test]
 async fn shutdown_flushes_a_qualified_listen_without_an_end_or_pause_callback() {
     let (mut service, mut sent, gate) = fixture();
     ready(&mut service, 1).await;
     service
-        .session_event(event(
+        .transition(event(
             1,
             4,
             SessionEventKind::Progress {
@@ -205,7 +182,7 @@ async fn disabling_revokes_queued_submissions_even_after_reenable() {
     ready(&mut service, 1).await;
     receive(&mut sent).await; // This already-sent request cannot be recalled.
     service
-        .session_event(event(
+        .transition(event(
             1,
             4,
             SessionEventKind::Progress {
@@ -273,10 +250,10 @@ fn publish_listen(
             },
         ),
     ] {
-        mailbox.send(Event::Session(Box::new(event(id, sequence, kind))));
+        mailbox.send(Event::Transition(Box::new(event(id, sequence, kind))));
     }
     if end {
-        mailbox.send(Event::Session(Box::new(event(
+        mailbox.send(Event::Transition(Box::new(event(
             id,
             4,
             SessionEventKind::Ended {
@@ -363,7 +340,7 @@ async fn source_exclusion_revokes_queued_listens_across_reenable_without_revokin
     );
     assert_eq!(receive(&mut sent).await.0.session, SessionId([1; 16]));
     // Its start was admitted; a slow HTTP request holds all subsequent sends.
-    mailbox.send(Event::Session(Box::new(event(
+    mailbox.send(Event::Transition(Box::new(event(
         1,
         4,
         SessionEventKind::Ended {

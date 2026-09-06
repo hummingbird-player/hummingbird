@@ -314,111 +314,28 @@ impl Discord {
             PlaybackState::Playing => {}
         }
     }
-}
 
-#[async_trait]
-impl MediaMetadataBroadcastService for Discord {
-    fn uses_session_events(&self) -> bool {
-        true
-    }
-
-    async fn session_event(&mut self, event: SessionEvent) {
-        if let SessionEventKind::Started {
-            reference,
-            position_ms,
-            ..
-        } = event.kind
-        {
-            if event.sequence != 1 || self.session == Some(event.session) {
-                return;
-            }
-            self.session = Some(event.session);
-            self.sequence = event.sequence;
-            self.new_track(reference).await;
-            self.last_position = position_ms / 1000;
-            self.state_changed(PlaybackState::Playing).await;
-            return;
-        }
-        // A previous gapless session may end after the new one starts. It must
-        // never clear the current presence or overwrite its metadata/timestamps.
-        if self.session != Some(event.session) || event.sequence <= self.sequence {
-            return;
-        }
-        self.sequence = event.sequence;
-        match event.kind {
-            SessionEventKind::Metadata { metadata } => {
-                self.metadata_recieved(Arc::new(Metadata {
-                    name: metadata.title,
-                    artist: metadata.artist,
-                    artists: metadata.artists.into_iter().collect(),
-                    album: metadata.album,
-                    album_artist: metadata.album_artist,
-                    mbid_album: metadata.album_mbid,
-                    track_current: metadata.track_number,
-                    isrc: metadata.isrc,
-                    ..Default::default()
-                }))
-                .await;
-            }
-            SessionEventKind::Duration { duration_ms } => {
-                if let Some(duration) = duration_ms.filter(|v| *v > 0) {
-                    self.duration_changed(duration / 1000).await;
-                } else {
-                    self.last_duration = None;
-                    self.mark_dirty();
-                }
-            }
-            SessionEventKind::State { state, progress } => {
-                self.last_position = progress.position_ms / 1000;
-                self.state_changed(state).await;
-            }
-            SessionEventKind::Seek { progress } => {
-                self.mark_dirty();
-                self.position_changed(progress.position_ms / 1000).await;
-            }
-            SessionEventKind::Progress { progress } => {
-                self.position_changed(progress.position_ms / 1000).await
-            }
-            SessionEventKind::Ended { .. } => {
-                self.state_changed(PlaybackState::Stopped).await;
-                self.session = None;
-                self.last_path = None;
-                self.metadata = None;
-                self.last_duration = None;
-                self.last_position = 0;
-                self.needs_update_time = None;
-            }
-            SessionEventKind::Started { .. } => unreachable!(),
-        }
-    }
-
-    async fn new_track(&mut self, file_path: TrackRef) {
+    fn apply_new_track(&mut self, file_path: TrackRef) {
         self.metadata = None;
         self.start_time = None;
         self.last_duration = None;
         self.last_position = 0;
         self.last_path = Some(file_path);
 
-        if !self.enabled {
-            return;
-        }
-
-        self.mark_dirty();
-    }
-
-    async fn metadata_recieved(&mut self, info: Arc<Metadata>) {
-        self.metadata = Some(info);
-
-        if !self.enabled {
-            return;
-        }
-
-        if self.last_state == PlaybackState::Playing {
+        if self.enabled {
             self.mark_dirty();
         }
     }
 
-    async fn state_changed(&mut self, state: PlaybackState) {
+    fn apply_metadata(&mut self, info: Arc<Metadata>) {
+        self.metadata = Some(info);
+
+        if self.enabled && self.last_state == PlaybackState::Playing {
+            self.mark_dirty();
+        }
+    }
+
+    fn apply_state(&mut self, state: PlaybackState) {
         self.last_state = state;
 
         if !self.enabled {
@@ -436,7 +353,7 @@ impl MediaMetadataBroadcastService for Discord {
         }
     }
 
-    async fn position_changed(&mut self, position: u64) {
+    fn apply_position(&mut self, position: u64) {
         let last_position = self.last_position;
         self.last_position = position;
 
@@ -449,18 +366,16 @@ impl MediaMetadataBroadcastService for Discord {
         if (position > last_position + 1 || position < last_position)
             && self.last_state == PlaybackState::Playing
         {
-            // we scrubbed, discord needs new timestamps
+            // We scrubbed, so Discord needs new timestamps.
             self.mark_dirty();
         }
 
         let current_time = SystemTime::now();
-
         let Ok(time_since_needs) =
             current_time.duration_since(self.needs_update_time.unwrap_or(current_time))
         else {
             return;
         };
-
         let Ok(time_since_last_update) =
             current_time.duration_since(self.last_update_time.unwrap_or(current_time))
         else {
@@ -478,7 +393,7 @@ impl MediaMetadataBroadcastService for Discord {
         }
     }
 
-    async fn duration_changed(&mut self, duration: u64) {
+    fn apply_duration(&mut self, duration: u64) {
         self.last_duration = Some(duration);
 
         if !self.enabled {
@@ -486,9 +401,80 @@ impl MediaMetadataBroadcastService for Discord {
         }
 
         self.update_start_time();
-
         if self.last_state == PlaybackState::Playing {
             self.needs_update_time = Some(SystemTime::now());
+        }
+    }
+}
+
+#[async_trait]
+impl MediaMetadataBroadcastService for Discord {
+    async fn transition(&mut self, event: SessionEvent) {
+        if let SessionEventKind::Started {
+            reference,
+            position_ms,
+            ..
+        } = event.kind
+        {
+            if event.sequence != 1 || self.session == Some(event.session) {
+                return;
+            }
+            self.session = Some(event.session);
+            self.sequence = event.sequence;
+            self.apply_new_track(reference);
+            self.last_position = position_ms / 1000;
+            self.apply_state(PlaybackState::Playing);
+            return;
+        }
+        // A previous gapless session may end after the new one starts. It must
+        // never clear the current presence or overwrite its metadata/timestamps.
+        if self.session != Some(event.session) || event.sequence <= self.sequence {
+            return;
+        }
+        self.sequence = event.sequence;
+        match event.kind {
+            SessionEventKind::Metadata { metadata } => {
+                self.apply_metadata(Arc::new(Metadata {
+                    name: metadata.title,
+                    artist: metadata.artist,
+                    artists: metadata.artists.into_iter().collect(),
+                    album: metadata.album,
+                    album_artist: metadata.album_artist,
+                    mbid_album: metadata.album_mbid,
+                    track_current: metadata.track_number,
+                    isrc: metadata.isrc,
+                    ..Default::default()
+                }));
+            }
+            SessionEventKind::Duration { duration_ms } => {
+                if let Some(duration) = duration_ms.filter(|v| *v > 0) {
+                    self.apply_duration(duration / 1000);
+                } else {
+                    self.last_duration = None;
+                    self.mark_dirty();
+                }
+            }
+            SessionEventKind::State { state, progress } => {
+                self.last_position = progress.position_ms / 1000;
+                self.apply_state(state);
+            }
+            SessionEventKind::Seek { progress } => {
+                self.mark_dirty();
+                self.apply_position(progress.position_ms / 1000);
+            }
+            SessionEventKind::Progress { progress } => {
+                self.apply_position(progress.position_ms / 1000)
+            }
+            SessionEventKind::Ended { .. } => {
+                self.apply_state(PlaybackState::Stopped);
+                self.session = None;
+                self.last_path = None;
+                self.metadata = None;
+                self.last_duration = None;
+                self.last_position = 0;
+                self.needs_update_time = None;
+            }
+            SessionEventKind::Started { .. } => unreachable!(),
         }
     }
 

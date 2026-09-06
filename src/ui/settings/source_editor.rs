@@ -4,11 +4,20 @@ use crate::sources::{
     credentials::{CredentialRef, Secret},
 };
 use crate::ui::{
-    components::{button::button, checkbox::checkbox, label::label, textbox::Textbox},
+    components::{
+        button::button,
+        checkbox::checkbox,
+        icons::{FOLDER_SEARCH, icon},
+        label::label,
+        section_header::section_header,
+        segmented_control::segmented_control,
+        textbox::Textbox,
+    },
     sources::{SourceModels, error_text, update_configurations},
     theme::Theme,
 };
 use cntp_i18n::tr;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::{sync::Arc, time::Duration};
 
@@ -25,7 +34,6 @@ pub struct SourceEditor {
     secret: Entity<Textbox>,
     interval: Entity<Textbox>,
     cache: Entity<Textbox>,
-    format: Entity<Textbox>,
     bitrate: Entity<Textbox>,
     pending_secret: Option<Arc<Secret>>,
     discovered: Option<BackendInfo>,
@@ -43,6 +51,8 @@ impl EventEmitter<EditorFinished> for SourceEditor {}
 impl SourceEditor {
     pub fn new(cx: &mut App, config: SourceConfig) -> Entity<Self> {
         cx.new(|cx| {
+            let original = config.clone();
+            let mut config = config;
             let name = Textbox::form(cx, config.name.clone().into(), false);
             let endpoint = Textbox::form(cx, config.endpoint.clone().into(), false);
             let username = Textbox::form(cx, config.username.clone().into(), false);
@@ -53,17 +63,13 @@ impl SourceEditor {
                 (config.cache_bytes / (1024 * 1024)).to_string().into(),
                 false,
             );
-            let (format, bitrate) = match &config.quality {
-                QualityPolicy::Transcode {
-                    format,
-                    bitrate_kbps,
-                } => (format.clone(), *bitrate_kbps),
-                _ => ("opus".into(), 192),
+            let bitrate = match &config.quality {
+                QualityPolicy::Transcode { bitrate_kbps, .. } => *bitrate_kbps,
+                _ => 192,
             };
-            let format = Textbox::form(cx, format.into(), false);
             let bitrate = Textbox::form(cx, bitrate.to_string().into(), false);
             let fields = [
-                &name, &endpoint, &username, &secret, &interval, &cache, &format, &bitrate,
+                &name, &endpoint, &username, &secret, &interval, &cache, &bitrate,
             ];
             let handles: Vec<_> = fields
                 .iter()
@@ -85,6 +91,12 @@ impl SourceEditor {
                 .read(cx)
                 .get(&config.id)
                 .and_then(|status| status.info.clone());
+            if discovered
+                .as_ref()
+                .is_some_and(|info| info.folders.len() == 1)
+            {
+                config.folders.clear();
+            }
             Self {
                 existing: cx
                     .global::<crate::settings::SettingsGlobal>()
@@ -95,7 +107,7 @@ impl SourceEditor {
                     .iter()
                     .any(|saved| saved.id == config.id),
                 identity_choice: None,
-                original: config.clone(),
+                original,
                 operation: None,
                 config,
                 name,
@@ -104,7 +116,6 @@ impl SourceEditor {
                 secret,
                 interval,
                 cache,
-                format,
                 bitrate,
                 pending_secret: None,
                 discovered,
@@ -143,8 +154,12 @@ impl SourceEditor {
             .and_then(|value| value.checked_mul(1024 * 1024))
             .ok_or_else(invalid)?;
         if matches!(config.quality, QualityPolicy::Transcode { .. }) {
+            let format = match &config.quality {
+                QualityPolicy::Transcode { format, .. } => format.clone(),
+                _ => unreachable!(),
+            };
             config.quality = QualityPolicy::Transcode {
-                format: self.format.read(cx).value(cx).trim().to_lowercase(),
+                format,
                 bitrate_kbps: self
                     .bitrate
                     .read(cx)
@@ -262,7 +277,12 @@ impl SourceEditor {
                 this.operation=None;this.busy=false;
                 match result {
                     Ok((config,Some(info)))=>{
-                        if this.draft(cx).is_ok_and(|draft|draft.connection_key()==config.connection_key()) {this.discovered=Some(info);this.message=Some(tr!("SOURCE_TEST_OK","Connection succeeded. Choose folders, then save.").into());}
+                        if this.draft(cx).is_ok_and(|draft|draft.connection_key()==config.connection_key()) {
+                            if info.folders.len() == 1 {
+                                this.config.folders.clear();
+                            }
+                            this.discovered=Some(info);this.message=Some(tr!("SOURCE_TEST_OK","Connection succeeded. Choose folders, then save.").into());
+                        }
                         else {this.discovered=None;this.message=Some(tr!("SOURCE_TEST_CHANGED","The draft changed during the connection test. Test it again before choosing folders.").into());}
                     },
                     Ok((config,None))=>{
@@ -376,34 +396,88 @@ impl Render for SourceEditor {
                     .child(checkbox(("source-quality-check", index), selected)),
             );
         }
-        // Keep the numeric fields mounted so Tab/Shift-Tab have a stable order.
-        body=body.child(field("source-format",tr!("SOURCE_FORMAT","Custom format (for example opus or mp3)").into(),self.format.clone()))
-            .child(field("source-bitrate",tr!("SOURCE_BITRATE","Custom bitrate in kbps").into(),self.bitrate.clone()))
-            .child(label("source-reporting",tr!("SOURCE_REPORTING","Send playback statistics to this server")).subtext(tr!("SOURCE_FORWARDING_NOTE","Some servers forward listens to Last.fm or ListenBrainz. Exclude direct forwarding below to avoid duplicates.")).on_click(cx.listener(|this,_,_,cx|{if !this.busy{this.config.send_playback_statistics=!this.config.send_playback_statistics;cx.notify();}})).child(checkbox("source-reporting-check",self.config.send_playback_statistics)))
+        if let QualityPolicy::Transcode { format, .. } = &self.config.quality {
+            let selected = format.to_lowercase();
+            let editor = cx.entity().downgrade();
+            body = body
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(label(
+                            "source-format",
+                            tr!("SOURCE_FORMAT", "Transcode format"),
+                        ))
+                        .child(
+                            segmented_control("source-format-options")
+                                .option("opus".to_owned(), "Opus")
+                                .option("mp3".to_owned(), "MP3")
+                                .option("aac".to_owned(), "AAC")
+                                .option("flac".to_owned(), "FLAC")
+                                .selected(selected)
+                                .on_change(move |format, _, cx| {
+                                    let _ = editor.update(cx, |this, cx| {
+                                        if let QualityPolicy::Transcode {
+                                            format: selected, ..
+                                        } = &mut this.config.quality
+                                        {
+                                            *selected = format.clone();
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                        ),
+                )
+                .child(field(
+                    "source-bitrate",
+                    tr!("SOURCE_BITRATE", "Custom bitrate in kbps").into(),
+                    self.bitrate.clone(),
+                ));
+        }
+        body=body.child(label("source-reporting",tr!("SOURCE_REPORTING","Send playback statistics to this server")).subtext(tr!("SOURCE_FORWARDING_NOTE","Some servers forward listens to Last.fm or ListenBrainz. Exclude direct forwarding below to avoid duplicates.")).on_click(cx.listener(|this,_,_,cx|{if !this.busy{this.config.send_playback_statistics=!this.config.send_playback_statistics;cx.notify();}})).child(checkbox("source-reporting-check",self.config.send_playback_statistics)))
             .child(label("source-exclude-lastfm",tr!("SOURCE_EXCLUDE_LASTFM","Exclude this source from direct Last.fm scrobbling")).on_click(cx.listener(|this,_,_,cx|{if !this.busy{this.config.exclude_lastfm=!this.config.exclude_lastfm;cx.notify();}})).child(checkbox("source-exclude-lastfm-check",self.config.exclude_lastfm)))
             .child(label("source-exclude-listenbrainz",tr!("SOURCE_EXCLUDE_LISTENBRAINZ","Exclude this source from direct ListenBrainz scrobbling")).on_click(cx.listener(|this,_,_,cx|{if !this.busy{this.config.exclude_listenbrainz=!this.config.exclude_listenbrainz;cx.notify();}})).child(checkbox("source-exclude-listenbrainz-check",self.config.exclude_listenbrainz)));
-        if let Some(info) = &self.discovered {
-            body = body.child(
-                label(
-                    "source-all-folders",
-                    tr!("SOURCE_ALL_FOLDERS", "All accessible music folders"),
+        if let Some(info) = &self.discovered
+            && !info.folders.is_empty()
+        {
+            let subtitle = if let [folder] = info.folders.as_slice() {
+                tr!(
+                    "SOURCE_SINGLE_FOLDER",
+                    "Tracks from {{folder}} will be added to your library.",
+                    folder = folder.name.clone()
                 )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if !this.busy {
-                        this.config.folders.clear();
-                        cx.notify();
-                    }
-                }))
-                .child(checkbox(
-                    "source-all-folders-check",
-                    self.config.folders.is_empty(),
-                )),
-            );
-            for (index, folder) in info.folders.iter().enumerate() {
+            } else {
+                tr!(
+                    "SOURCE_FOLDERS_SUBTITLE",
+                    "Choose which server folders are added to your library."
+                )
+            };
+            body = body
+                .child(section_header(tr!("SOURCE_FOLDERS", "Music folders")).subtitle(subtitle));
+            let folder_count = info.folders.len();
+            let mut folders = div().flex().flex_col();
+            for (index, folder) in info.folders.iter().enumerate().filter(|_| folder_count > 1) {
                 let id = folder.id.clone();
                 let selected = self.config.folders.is_empty() || self.config.folders.contains(&id);
-                body = body.child(
-                    label(("source-folder", index), folder.name.clone())
+                folders = folders.child(
+                    div()
+                        .id(("source-folder", index))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .pl(px(12.))
+                        .pr(px(8.))
+                        .py(px(8.))
+                        .border_1()
+                        .border_b_0()
+                        .when(index == 0, |this| this.rounded_t(px(6.)))
+                        .when(index == folder_count - 1, |this| {
+                            this.rounded_b(px(6.)).border_b_1()
+                        })
+                        .border_color(cx.global::<Theme>().border_color)
+                        .bg(cx.global::<Theme>().background_secondary)
+                        .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if this.busy {
                                 return;
@@ -438,8 +512,24 @@ impl Render for SourceEditor {
                             }
                             cx.notify();
                         }))
+                        .child(
+                            icon(FOLDER_SEARCH)
+                                .size(px(16.))
+                                .text_color(cx.global::<Theme>().text_secondary),
+                        )
+                        .child(
+                            div()
+                                .flex_grow(1.0)
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_sm()
+                                .child(folder.name.clone()),
+                        )
                         .child(checkbox(("source-folder-check", index), selected)),
                 );
+            }
+            if folder_count > 1 {
+                body = body.child(folders);
             }
         }
         if let Some(message) = &self.message {
