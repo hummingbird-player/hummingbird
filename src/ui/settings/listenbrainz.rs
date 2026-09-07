@@ -141,17 +141,9 @@ pub fn sign_out_listenbrainz(cx: &mut App, state: Entity<ListenBrainzState>) {
     });
 
     let mmbs_list = cx.global::<Models>().mmbs.clone();
-    let listenbrainz_mmbs = mmbs_list.read(cx).0.get(listenbrainz::MMBS_KEY).cloned();
-
     mmbs_list.update(cx, |m, _| {
-        m.0.remove(listenbrainz::MMBS_KEY);
+        m.remove(listenbrainz::MMBS_KEY);
     });
-
-    if let Some(mmbs) = listenbrainz_mmbs {
-        crate::RUNTIME.spawn(async move {
-            mmbs.lock().await.set_enabled(false).await;
-        });
-    }
 
     let path = paths::data_dir().join("listenbrainz.json");
     if let Err(err) = std::fs::remove_file(&path)
@@ -176,7 +168,7 @@ pub fn toggle_listenbrainz(
 
     if new_enabled {
         let mmbs = cx.global::<Models>().mmbs.clone();
-        let has_mmbs = mmbs.read(cx).0.contains_key(listenbrainz::MMBS_KEY);
+        let has_mmbs = mmbs.read(cx).contains(listenbrainz::MMBS_KEY);
         if !has_mmbs && let ListenBrainzState::Connected(session) = listenbrainz.read(cx) {
             let token = session.token.clone();
             create_listenbrainz_mmbs(cx, &mmbs, token, true);

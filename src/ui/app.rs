@@ -558,9 +558,13 @@ pub fn run() -> anyhow::Result<()> {
             move |cx| {
                 let data = StorageData::new(cx);
                 let storage = storage.clone();
+                let mmbs = cx.global::<Models>().mmbs.clone();
+                let finish_services = mmbs.update(cx, |m, _| m.finish());
+                let finish_services = crate::RUNTIME.spawn(finish_services);
 
                 cx.background_executor().spawn(async move {
                     storage.save(&data);
+                    let _ = finish_services.await;
                     crate::logging::flush();
                 })
             }

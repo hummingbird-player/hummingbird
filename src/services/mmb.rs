@@ -4,38 +4,45 @@ pub mod lastfm;
 #[cfg(feature = "libre-services")]
 pub mod listenbrainz;
 
-use std::{path::PathBuf, sync::Arc};
+#[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
+mod progress;
+pub mod worker;
 
-use crate::{media::metadata::Metadata, playback::thread::PlaybackState};
+#[cfg(all(
+    test,
+    any(feature = "libre-services", feature = "proprietary-services")
+))]
+mod test_server;
+
+use std::sync::Arc;
+
+use crate::{
+    library::source::TrackRef, media::metadata::Metadata, playback::thread::PlaybackState,
+};
 use async_trait::async_trait;
 
-/// MediaMetadataBroadcastService is a trait that can be implemented by services that wish to
-/// display information about the currently playing track. When the currently playing track
-/// changes, the service will be provided with the track's metadata, duration, and current
-/// playback position.
+/// A playback update for metadata displays and scrobbling services.
+#[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::enum_variant_names)]
+pub enum MediaEvent {
+    /// Selects a new listen, including when the same track repeats.
+    TrackChanged(TrackRef),
+    /// Updates the metadata of the current track.
+    MetadataChanged(Arc<Metadata>),
+    /// Updates playback state. Stopped ends the current listen.
+    StateChanged(PlaybackState),
+    /// Updates the position in whole seconds.
+    PositionChanged(u64),
+    /// Updates the duration in whole seconds.
+    DurationChanged(u64),
+}
+
+/// A service that displays or records information about the current track.
 ///
-/// The service is responsible for displaying this information in the appropriate manner. For
-/// example, a service providing desktop integration should update immediately, while a service
-/// that provides scrobbling functionality might want to wait some time before recording the
-/// scrobble.
-///
-/// Note that MMBS operations can be performed on the UI thread, and thus services should not
-/// perform substantial blocking operations in their MMBS implementations. If, for example, a
-/// network request is needed, use an async function to perform the request.
+/// Each service runs in its own worker and receives events in order. Handlers can await
+/// network requests, but must not block the runtime. Enabling and disabling a service is
+/// handled by the host, which starts or cancels its worker.
 #[async_trait]
-pub trait MediaMetadataBroadcastService {
-    /// Called when a new track is played.
-    async fn new_track(&mut self, file_path: PathBuf);
-    /// Called when new metadata is recieved from the codec.
-    async fn metadata_recieved(&mut self, info: Arc<Metadata>);
-    /// Called when the playback state changes. This includes pausing, unpausing, and stopping.
-    async fn state_changed(&mut self, state: PlaybackState);
-    /// Called when the position of the currently playing track changes, or when a new track is
-    /// played. Time is in seconds.
-    async fn position_changed(&mut self, position: u64);
-    /// Called when the duration of the currently playing track changes, or when a new track is
-    /// played. Time is in seconds.
-    async fn duration_changed(&mut self, duration: u64);
-    /// Enable or disable the service.
-    async fn set_enabled(&mut self, _enabled: bool) {}
+pub trait MediaMetadataBroadcastService: Send {
+    async fn on_event(&mut self, event: MediaEvent);
 }

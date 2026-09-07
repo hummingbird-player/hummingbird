@@ -61,8 +61,9 @@ fn no_progress_backoff(cycles: u32) -> std::time::Duration {
     std::time::Duration::from_millis(ms)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
+    #[default]
     Stopped,
     Playing,
     Paused,

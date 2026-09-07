@@ -24,6 +24,11 @@ impl ListenBrainzClient {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn set_endpoint(&mut self, endpoint: url::Url) {
+        self.endpoint = endpoint;
+    }
+
     fn auth(&self, req: zed_reqwest::RequestBuilder) -> zed_reqwest::RequestBuilder {
         req.header("Authorization", format!("Token {}", self.token))
     }

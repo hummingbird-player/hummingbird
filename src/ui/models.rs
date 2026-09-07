@@ -11,7 +11,7 @@ use gpui::{
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
 use tracing::error;
 use tracing::{debug, warn};
@@ -35,13 +35,15 @@ use crate::{
     },
     media::metadata::Metadata,
     playback::{
-        events::RepeatState,
+        events::{PlaybackEvent, RepeatState},
+        interface::media_events::MediaProjection,
         queue::{QueueItemData, QueueItemUIData},
         thread::PlaybackState,
     },
     services::mmb::{
         MediaMetadataBroadcastService,
         discord::{self, Discord, DiscordRpcStatus},
+        worker::MediaWorker,
     },
     settings::{
         SettingsGlobal,
@@ -171,19 +173,147 @@ pub struct Queue {
 
 impl EventEmitter<(PathBuf, QueueItemUIData)> for Queue {}
 
-#[derive(Clone)]
-pub struct MMBSList(pub FxHashMap<String, Arc<Mutex<dyn MediaMetadataBroadcastService + Send>>>);
-
-#[derive(Clone)]
-pub enum MMBSEvent {
-    NewTrack(PathBuf),
-    MetadataRecieved(Arc<Metadata>),
-    StateChanged(PlaybackState),
-    PositionChanged(u64),
-    DurationChanged(u64),
+#[derive(Default)]
+pub struct MMBSList {
+    workers: FxHashMap<&'static str, MediaWorker>,
+    playback: MediaProjection,
 }
 
-impl EventEmitter<MMBSEvent> for MMBSList {}
+impl MMBSList {
+    pub fn contains(&self, key: &str) -> bool {
+        // a failed worker stays registered until disabled or reconnected
+        self.workers.contains_key(key)
+    }
+
+    pub fn remove(&mut self, key: &str) {
+        self.workers.remove(key);
+    }
+
+    fn register(
+        &mut self,
+        key: &'static str,
+        create: impl FnOnce() -> Box<dyn MediaMetadataBroadcastService> + Send + 'static,
+    ) {
+        self.remove(key);
+        let worker = MediaWorker::new(key, create);
+        // this runs in the same app update as forwarding, so live events can't get ahead
+        for event in self.playback.bootstrap() {
+            worker.send(event);
+        }
+        self.workers.insert(key, worker);
+    }
+
+    pub fn forward(&mut self, event: &PlaybackEvent) {
+        if let Some(event) = self.playback.project(event) {
+            for worker in self.workers.values() {
+                worker.send(event.clone());
+            }
+        }
+    }
+
+    pub fn finish(&mut self) -> impl Future<Output = ()> + Send + use<> {
+        let workers = std::mem::take(&mut self.workers);
+        async move {
+            futures::future::join_all(workers.into_values().map(MediaWorker::finish)).await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod media_tests {
+    use super::*;
+    use crate::{library::source::TrackRef, services::mmb::MediaEvent};
+    use async_trait::async_trait;
+    use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+
+    struct Recorder(UnboundedSender<MediaEvent>);
+
+    #[async_trait]
+    impl MediaMetadataBroadcastService for Recorder {
+        async fn on_event(&mut self, event: MediaEvent) {
+            self.0.send(event).unwrap();
+        }
+    }
+
+    async fn received(rx: &mut UnboundedReceiver<MediaEvent>) -> Option<MediaEvent> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn registration_bootstraps_before_live_delivery() {
+        let mut services = MMBSList::default();
+        let metadata = Arc::new(Metadata::default());
+        for event in [
+            PlaybackEvent::SongChanged("song.flac".into()),
+            PlaybackEvent::DurationChanged(200_000),
+            PlaybackEvent::MetadataUpdate(Box::new((*metadata).clone())),
+            PlaybackEvent::PositionChanged(120_000),
+            PlaybackEvent::StateChanged(PlaybackState::Playing),
+        ] {
+            services.forward(&event);
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        services.register("test", move || Box::new(Recorder(tx)));
+        services.forward(&PlaybackEvent::PositionChanged(121_000));
+        for expected in [
+            MediaEvent::TrackChanged(TrackRef::Local("song.flac".into())),
+            MediaEvent::MetadataChanged(metadata),
+            MediaEvent::DurationChanged(200),
+            MediaEvent::PositionChanged(120),
+            MediaEvent::StateChanged(PlaybackState::Playing),
+            MediaEvent::PositionChanged(121),
+        ] {
+            assert_eq!(received(&mut rx).await, Some(expected));
+        }
+        assert!(services.contains("test"));
+    }
+
+    #[tokio::test]
+    async fn disable_and_account_replacement_drop_old_workers() {
+        let mut services = MMBSList::default();
+        let (tx, mut old) = mpsc::unbounded_channel();
+        services.register("test", move || Box::new(Recorder(tx)));
+        assert_eq!(
+            received(&mut old).await,
+            Some(MediaEvent::StateChanged(PlaybackState::Stopped))
+        );
+        services.remove("test");
+        assert!(!services.contains("test"));
+        assert_eq!(received(&mut old).await, None);
+        services.forward(&PlaybackEvent::SongChanged("song.flac".into()));
+        services.forward(&PlaybackEvent::PositionChanged(70_000));
+
+        let (tx, mut first_account) = mpsc::unbounded_channel();
+        services.register("test", move || Box::new(Recorder(tx)));
+        assert!(matches!(
+            received(&mut first_account).await,
+            Some(MediaEvent::TrackChanged(_))
+        ));
+        assert_eq!(
+            received(&mut first_account).await,
+            Some(MediaEvent::PositionChanged(70))
+        );
+
+        let (tx, mut second_account) = mpsc::unbounded_channel();
+        services.register("test", move || Box::new(Recorder(tx)));
+        assert_eq!(received(&mut first_account).await, None);
+        assert!(matches!(
+            received(&mut second_account).await,
+            Some(MediaEvent::TrackChanged(_))
+        ));
+        assert_eq!(
+            received(&mut second_account).await,
+            Some(MediaEvent::PositionChanged(70))
+        );
+        services.forward(&PlaybackEvent::StateChanged(PlaybackState::Playing));
+        assert_eq!(
+            received(&mut second_account).await,
+            Some(MediaEvent::StateChanged(PlaybackState::Playing))
+        );
+    }
+}
 
 pub struct PlaylistInfoTransfer;
 
@@ -221,18 +351,19 @@ fn listenbrainz_enabled(cx: &App) -> bool {
         .listenbrainz_enabled
 }
 
-fn sync_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
+fn sync_discord_mmbs(
+    cx: &mut App,
+    mmbs_list: &Entity<MMBSList>,
+    status_tx: &watch::Sender<DiscordRpcStatus>,
+) {
     let enabled = discord_rpc_enabled(cx);
     debug!(enabled, "syncing discord MMBS state");
-    let discord = mmbs_list.read(cx).0.get(discord::MMBS_KEY).cloned();
-    let Some(discord) = discord else {
-        return;
-    };
-
-    crate::RUNTIME.spawn(async move {
-        let mut discord = discord.lock().await;
-        discord.set_enabled(enabled).await;
-    });
+    if !enabled {
+        mmbs_list.update(cx, |m, _| m.remove(discord::MMBS_KEY));
+        status_tx.send_replace(DiscordRpcStatus::Disabled);
+    } else if !mmbs_list.read(cx).contains(discord::MMBS_KEY) {
+        create_discord_mmbs(cx, mmbs_list, true, status_tx.clone());
+    }
 }
 
 fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitchMessage {
@@ -292,7 +423,7 @@ pub fn build_models(
         Some(path) => SettingsHealth::Corrupt { path },
         None => SettingsHealth::Ok,
     });
-    let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList(FxHashMap::default()));
+    let mmbs: Entity<MMBSList> = cx.new(|_| MMBSList::default());
     let show_about: Entity<bool> = cx.new(|_| false);
     #[cfg(feature = "proprietary-services")]
     let lastfm: Entity<LastFMState> = cx.new(|cx| {
@@ -362,7 +493,7 @@ pub fn build_models(
         cx,
         &discord_mmbs,
         discord_rpc_enabled(cx),
-        discord_status_tx,
+        discord_status_tx.clone(),
     );
 
     let discord_rpc_model = discord_rpc.clone();
@@ -384,7 +515,7 @@ pub fn build_models(
     #[cfg(feature = "libre-services")]
     let listenbrainz_sync_mmbs = mmbs.clone();
     cx.observe(&settings_model, move |_, cx| {
-        sync_discord_mmbs(cx, &discord_mmbs);
+        sync_discord_mmbs(cx, &discord_mmbs, &discord_status_tx);
         #[cfg(feature = "proprietary-services")]
         sync_lastfm_mmbs(cx, &lastfm_sync_mmbs, lastfm_enabled(cx));
         #[cfg(feature = "libre-services")]
@@ -459,28 +590,6 @@ pub fn build_models(
         })
         .detach();
     }
-
-    cx.subscribe(&mmbs, |m, ev, cx| {
-        let list = m.read(cx);
-
-        // cloning actually is neccesary because of the async move closure
-        #[allow(clippy::unnecessary_to_owned)]
-        for mmbs in list.0.values().cloned() {
-            let ev = ev.clone();
-            crate::RUNTIME.spawn(async move {
-                let mut borrow = mmbs.lock().await;
-                match ev {
-                    MMBSEvent::NewTrack(path) => borrow.new_track(path),
-                    MMBSEvent::MetadataRecieved(metadata) => borrow.metadata_recieved(metadata),
-                    MMBSEvent::StateChanged(state) => borrow.state_changed(state),
-                    MMBSEvent::PositionChanged(position) => borrow.position_changed(position),
-                    MMBSEvent::DurationChanged(duration) => borrow.duration_changed(duration),
-                }
-                .await;
-            });
-        }
-    })
-    .detach();
 
     let startup_view = resolve_startup_view(
         cx,
@@ -624,25 +733,28 @@ pub fn create_last_fm_mmbs(
     session: String,
     enabled: bool,
 ) {
-    let mut client = LastFMClient::from_global().expect("creds known to be valid at this point");
-    client.set_session(session);
-    let mmbs = LastFM::new(client, enabled);
     mmbs_list.update(cx, |m, _| {
-        m.0.insert(lastfm::MMBS_KEY.to_string(), Arc::new(Mutex::new(mmbs)));
+        m.remove(lastfm::MMBS_KEY);
+        if enabled {
+            m.register(lastfm::MMBS_KEY, move || {
+                let mut client =
+                    LastFMClient::from_global().expect("creds known to be valid at this point");
+                client.set_session(session);
+                Box::new(LastFM::new(client))
+            });
+        }
     });
 }
 
 #[cfg(feature = "proprietary-services")]
 pub fn sync_lastfm_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: bool) {
-    let lastfm = mmbs_list.read(cx).0.get(lastfm::MMBS_KEY).cloned();
-    let Some(lastfm) = lastfm else {
-        return;
-    };
-
-    crate::RUNTIME.spawn(async move {
-        let mut lastfm = lastfm.lock().await;
-        lastfm.set_enabled(enabled).await;
-    });
+    if !enabled {
+        mmbs_list.update(cx, |m, _| m.remove(lastfm::MMBS_KEY));
+    } else if !mmbs_list.read(cx).contains(lastfm::MMBS_KEY)
+        && let LastFMState::Connected(session) = cx.global::<Models>().lastfm.read(cx)
+    {
+        create_last_fm_mmbs(cx, mmbs_list, session.key.clone(), true);
+    }
 }
 
 #[cfg(feature = "libre-services")]
@@ -652,27 +764,25 @@ pub fn create_listenbrainz_mmbs(
     token: String,
     enabled: bool,
 ) {
-    let client = ListenBrainzClient::new(token);
-    let mmbs = ListenBrainz::new(client, enabled);
     mmbs_list.update(cx, |m, _| {
-        m.0.insert(
-            listenbrainz::MMBS_KEY.to_string(),
-            Arc::new(Mutex::new(mmbs)),
-        );
+        m.remove(listenbrainz::MMBS_KEY);
+        if enabled {
+            m.register(listenbrainz::MMBS_KEY, move || {
+                Box::new(ListenBrainz::new(ListenBrainzClient::new(token)))
+            });
+        }
     });
 }
 
 #[cfg(feature = "libre-services")]
 pub fn sync_listenbrainz_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>, enabled: bool) {
-    let listenbrainz = mmbs_list.read(cx).0.get(listenbrainz::MMBS_KEY).cloned();
-    let Some(listenbrainz) = listenbrainz else {
-        return;
-    };
-
-    crate::RUNTIME.spawn(async move {
-        let mut listenbrainz = listenbrainz.lock().await;
-        listenbrainz.set_enabled(enabled).await;
-    });
+    if !enabled {
+        mmbs_list.update(cx, |m, _| m.remove(listenbrainz::MMBS_KEY));
+    } else if !mmbs_list.read(cx).contains(listenbrainz::MMBS_KEY)
+        && let ListenBrainzState::Connected(session) = cx.global::<Models>().listenbrainz.read(cx)
+    {
+        create_listenbrainz_mmbs(cx, mmbs_list, session.token.clone(), true);
+    }
 }
 
 pub fn create_discord_mmbs(
@@ -681,9 +791,12 @@ pub fn create_discord_mmbs(
     enabled: bool,
     status_tx: watch::Sender<DiscordRpcStatus>,
 ) {
-    let mmbs = Discord::new(enabled, status_tx);
     mmbs_list.update(cx, |m, _| {
-        m.0.insert(discord::MMBS_KEY.to_string(), Arc::new(Mutex::new(mmbs)));
+        m.remove(discord::MMBS_KEY);
+        if enabled {
+            status_tx.send_replace(DiscordRpcStatus::Disconnected { error: None });
+            m.register(discord::MMBS_KEY, move || Box::new(Discord::new(status_tx)));
+        }
     });
 }
 

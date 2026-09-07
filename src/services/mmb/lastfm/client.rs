@@ -35,6 +35,11 @@ impl LastFMClient {
         self.auth_session = Some(session);
     }
 
+    #[cfg(test)]
+    pub(super) fn set_endpoint(&mut self, endpoint: url::Url) {
+        self.endpoint = endpoint;
+    }
+
     fn get<'a>(
         &'a self,
         params: impl IntoIterator<Item = (&'a str, &'a str)>,

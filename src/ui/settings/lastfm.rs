@@ -153,17 +153,9 @@ pub fn sign_out_lastfm(cx: &mut App, state: Entity<LastFMState>) {
     });
 
     let mmbs_list = cx.global::<Models>().mmbs.clone();
-    let lastfm_mmbs = mmbs_list.read(cx).0.get(lastfm::MMBS_KEY).cloned();
-
     mmbs_list.update(cx, |m, _| {
-        m.0.remove(lastfm::MMBS_KEY);
+        m.remove(lastfm::MMBS_KEY);
     });
-
-    if let Some(mmbs) = lastfm_mmbs {
-        crate::RUNTIME.spawn(async move {
-            mmbs.lock().await.set_enabled(false).await;
-        });
-    }
 
     let path = paths::data_dir().join("lastfm.json");
     if let Err(err) = std::fs::remove_file(&path)
@@ -221,7 +213,7 @@ pub fn toggle_lastfm(
 
     if new_enabled {
         let mmbs = cx.global::<Models>().mmbs.clone();
-        let has_mmbs = mmbs.read(cx).0.contains_key(lastfm::MMBS_KEY);
+        let has_mmbs = mmbs.read(cx).contains(lastfm::MMBS_KEY);
         if !has_mmbs && let LastFMState::Connected(session) = lastfm.read(cx) {
             let key = session.key.clone();
             create_last_fm_mmbs(cx, &mmbs, key, true);
