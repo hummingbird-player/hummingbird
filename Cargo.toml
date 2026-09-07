@@ -15,7 +15,7 @@ console = ["dep:console-subscriber", "tokio/tracing"]
 heap-profileable = []
 update = ["dep:semver", "dep:minisign-verify", "dep:winreg", "online"]
 online = ["dep:zed-reqwest"]
-libre-services = ["online"]
+libre-services = ["online", "dep:zeroize"]
 proprietary-services = ["online"]
 default = ["libre-services", "proprietary-services"]
 
@@ -89,6 +89,7 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = tr
     # this was native-roots, but this caused intermittent issues on Windows
     "rustls-tls-webpki-roots",
 ] }
+zeroize = { version = "1", optional = true }
 notify-debouncer-full = "0.7.0"
 
 [patch.crates-io]

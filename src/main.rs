@@ -25,6 +25,8 @@ mod playback;
 mod power;
 mod services;
 mod settings;
+#[cfg(feature = "libre-services")]
+mod sources;
 #[cfg(test)]
 mod test_support;
 mod toasts;

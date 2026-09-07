@@ -393,6 +393,8 @@ pub fn run() -> anyhow::Result<()> {
         }
     });
     application.run(move |cx: &mut App| {
+        cx.set_keyring_label("Hummingbird");
+
         // Fontconfig isn't read currently so fall back to the most "okay" font rendering
         // option - I'm sure people will disagree with this but Grayscale font rendering
         // results in text that is at least displayed correctly on all screens, unlike
