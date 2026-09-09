@@ -116,8 +116,8 @@ where
         None
     }
 
-    fn is_remote_source(&self) -> bool {
-        false
+    fn source_id(&self) -> Option<&str> {
+        None
     }
 
     /// Retrieves the associated image for the row.

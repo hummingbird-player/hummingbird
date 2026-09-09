@@ -118,7 +118,7 @@ impl TrackItem {
                 is_liked: cx
                     .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
                     .unwrap_or_default(),
-                album_art: Some(match track.album_id {
+                album_art: track.source.is_local().then(|| match track.album_id {
                     Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
                     None => format!("!db://track/{}/thumb", track.id).into(),
                 }),
@@ -445,23 +445,24 @@ impl Render for TrackItem {
                                     })
                                     .child(self.render_title())
                                     .child(self.render_artist(&theme, show_artist_name))
-                                    .child(self.render_like_button(
-                                        &theme,
-                                        track_id,
-                                        is_available,
-                                        cx,
-                                    ))
                                     .child(
                                         source_indicator_slot(
                                             ("track-source", track_id as usize),
                                             source_origin(
-                                                !self.track.source.is_local(),
+                                                cx,
+                                                Some(&self.track.source.0),
                                                 track_id as usize,
                                             ),
                                             theme.text_secondary,
                                         )
                                         .ml(px(10.0)),
                                     )
+                                    .child(self.render_like_button(
+                                        &theme,
+                                        track_id,
+                                        is_available,
+                                        cx,
+                                    ))
                                     .child(self.render_duration(&theme)),
                             ),
                     )

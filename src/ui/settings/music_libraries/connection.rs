@@ -14,40 +14,58 @@ use crate::ui::{
     },
     theme::Theme,
 };
+#[cfg(feature = "libre-services")]
+use crate::{
+    library::{
+        scan::{ScanEvent, database::remove_remote_source},
+        source::SourceId,
+    },
+    sources::{
+        LibraryBackend,
+        credentials::{CredentialRef, CredentialStore, Credentials, OsCredentialStore, Secret},
+        import_catalog,
+        subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
+    },
+    ui::{app::Pool, models::Models},
+};
 
 use super::{
     connection_fields::{AuthenticationMode, ConnectionFields, render_connection_fields},
-    model::{LibraryFixture, LibraryStatus},
+    model::{LibraryStatus, MusicLibrary, address_error, secret_error, username_error},
 };
 
 pub(super) enum ConnectionEvent {
     Cancel,
-    Connected(LibraryFixture),
+    Connected(MusicLibrary),
 }
 
 pub(super) struct MusicLibraryConnection {
     fields: ConnectionFields,
     authentication: AuthenticationMode,
     validation_error: Option<SharedString>,
+    connecting: bool,
+    fixture_mode: bool,
     scroll_handle: ScrollHandle,
 }
 
 impl MusicLibraryConnection {
-    pub(super) fn new(authentication: AuthenticationMode, cx: &mut App) -> Self {
+    pub(super) fn new(
+        authentication: AuthenticationMode,
+        fixture_mode: bool,
+        cx: &mut App,
+    ) -> Self {
         Self {
             fields: ConnectionFields::new(cx),
             authentication,
             validation_error: None,
+            connecting: false,
+            fixture_mode,
             scroll_handle: ScrollHandle::new(),
         }
     }
 
     fn address_error() -> SharedString {
-        tr!(
-            "MUSIC_LIBRARY_ADDRESS_ERROR",
-            "Enter a complete server address, including https://."
-        )
-        .into()
+        address_error()
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
@@ -66,33 +84,168 @@ impl MusicLibraryConnection {
             return;
         };
         if self.authentication == AuthenticationMode::Password && username.trim().is_empty() {
-            self.validation_error =
-                Some(tr!("MUSIC_LIBRARY_USERNAME_ERROR", "Enter your username.").into());
+            self.validation_error = Some(username_error());
             cx.notify();
             return;
         }
         if secret.trim().is_empty() {
-            self.validation_error = Some(
-                if self.authentication == AuthenticationMode::ApiKey {
-                    tr!("MUSIC_LIBRARY_API_KEY_ERROR", "Enter your API key.")
-                } else {
-                    tr!("MUSIC_LIBRARY_PASSWORD_ERROR", "Enter your password.")
-                }
-                .into(),
-            );
+            self.validation_error = Some(secret_error(self.authentication));
             cx.notify();
             return;
         }
 
-        let host: SharedString = host.to_owned().into();
-        cx.emit(ConnectionEvent::Connected(LibraryFixture {
-            name: host.clone(),
-            host,
-            username,
-            enabled: true,
-            status: LibraryStatus::Connecting,
-            error: None,
-        }));
+        if self.fixture_mode {
+            let host: SharedString = host.to_owned().into();
+            cx.emit(ConnectionEvent::Connected(MusicLibrary {
+                id: "fixture-new".into(),
+                name: host.clone(),
+                address,
+                host,
+                username,
+                authentication: self.authentication,
+                credential_reference: "hummingbird-source-00000000000000000000000000000000".into(),
+                enabled: true,
+                report_playback: true,
+                status: LibraryStatus::Connecting,
+                error: None,
+            }));
+            return;
+        }
+
+        self.connect(address, host.to_owned(), username, secret, cx);
+    }
+
+    #[cfg(feature = "libre-services")]
+    fn connect(
+        &mut self,
+        address: SharedString,
+        host: String,
+        username: SharedString,
+        secret: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(server) = ServerUrl::parse(address.as_ref(), HttpPolicy::HttpsOnly) else {
+            self.validation_error = Some(Self::address_error());
+            cx.notify();
+            return;
+        };
+        let source = SourceId(format!("subsonic-{:032x}", rand::random::<u128>()));
+        let credentials = match self.authentication {
+            AuthenticationMode::Password => Credentials::Password {
+                username: username.to_string(),
+                password: Secret::new(secret.to_string()),
+            },
+            AuthenticationMode::ApiKey => Credentials::ApiKey(Secret::new(secret.to_string())),
+        };
+        let reference = CredentialRef::new();
+        let backend = SubsonicBackend::new(source.clone(), server, credentials.clone())
+            .expect("validated source and server");
+        let pool = cx.global::<Pool>().0.clone();
+        let cleanup_pool = pool.clone();
+        let cleanup_source = source.clone();
+        let authentication = self.authentication;
+
+        self.connecting = true;
+        self.validation_error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let backend = crate::RUNTIME
+                    .spawn(async move {
+                        backend.connect().await.map_err(|error| error.to_string())?;
+                        Ok::<_, String>(backend)
+                    })
+                    .await
+                    .map_err(|_| "The connection task stopped unexpectedly.".to_string())??;
+                cx.update(|cx| OsCredentialStore(cx).write(&reference, &credentials))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let import_result = crate::RUNTIME
+                    .spawn(async move {
+                        import_catalog(&backend, &pool, |_| {})
+                            .await
+                            .map_err(|error| error.to_string())
+                    })
+                    .await
+                    .map_err(|_| "The import task stopped unexpectedly.".to_string())
+                    .and_then(|result| result);
+                if let Err(error) = import_result {
+                    if let Err(delete_error) = cx
+                        .update(|cx| OsCredentialStore(cx).delete(&reference))
+                        .await
+                    {
+                        tracing::warn!(
+                            ?delete_error,
+                            "failed to clean up credentials after import failure"
+                        );
+                    }
+                    match crate::RUNTIME
+                        .spawn(async move {
+                            remove_remote_source(&cleanup_pool, &cleanup_source).await
+                        })
+                        .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(cleanup_error)) => tracing::warn!(
+                            ?cleanup_error,
+                            "failed to clean up source after import failure"
+                        ),
+                        Err(cleanup_error) => tracing::warn!(
+                            ?cleanup_error,
+                            "source cleanup task stopped after import failure"
+                        ),
+                    }
+                    return Err(error);
+                }
+                Ok::<_, String>(())
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.connecting = false;
+                match result {
+                    Ok(()) => {
+                        let scan_state = cx.global::<Models>().scan_state.clone();
+                        scan_state.update(cx, |state, cx| {
+                            *state = ScanEvent::ScanCompleteIdle;
+                            cx.notify();
+                        });
+                        cx.emit(ConnectionEvent::Connected(MusicLibrary {
+                            id: source.0.into(),
+                            name: host.clone().into(),
+                            address,
+                            host: host.into(),
+                            username,
+                            authentication,
+                            credential_reference: String::from(reference).into(),
+                            enabled: true,
+                            report_playback: true,
+                            status: LibraryStatus::Updated,
+                            error: None,
+                        }));
+                    }
+                    Err(error) => {
+                        this.validation_error = Some(error.into());
+                        cx.notify();
+                    }
+                }
+            })
+        })
+        .detach();
+    }
+
+    #[cfg(not(feature = "libre-services"))]
+    fn connect(
+        &mut self,
+        _address: SharedString,
+        _host: String,
+        _username: SharedString,
+        _secret: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        self.validation_error =
+            Some("This build does not include support for remote music libraries.".into());
+        cx.notify();
     }
 }
 
@@ -102,6 +255,7 @@ impl Render for MusicLibraryConnection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>().clone();
         let using_key = self.authentication == AuthenticationMode::ApiKey;
+        let connecting = self.connecting;
         let scroll_handle = self.scroll_handle.clone();
 
         let body = div()
@@ -175,8 +329,14 @@ impl Render for MusicLibraryConnection {
                     .id("music-library-submit")
                     .size(ButtonSize::Large)
                     .intent(ButtonIntent::Primary)
-                    .child(tr!("MUSIC_LIBRARY_CONNECT", "Connect"))
-                    .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
+                    .child(if connecting {
+                        LibraryStatus::Connecting.text()
+                    } else {
+                        tr!("MUSIC_LIBRARY_CONNECT", "Connect").into()
+                    })
+                    .when(!connecting, |button| {
+                        button.on_click(cx.listener(|this, _, _, cx| this.submit(cx)))
+                    }),
             );
 
         div()

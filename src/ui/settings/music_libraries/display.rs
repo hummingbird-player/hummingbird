@@ -19,12 +19,15 @@ use crate::ui::{
 
 use super::{
     actions_menu::library_actions_menu,
-    model::{LibraryFixture, LibraryStatus},
+    model::{LibraryStatus, MusicLibrary},
 };
 
 pub(super) enum DisplayEvent {
     Add,
     Edit(usize),
+    Refresh(usize),
+    Remove(usize),
+    Changed { index: usize, library: MusicLibrary },
 }
 
 #[derive(Clone, Copy)]
@@ -34,13 +37,13 @@ enum Confirmation {
 }
 
 pub(super) struct MusicLibrariesDisplay {
-    libraries: Vec<LibraryFixture>,
+    libraries: Vec<MusicLibrary>,
     menu_open: Option<usize>,
     confirmation: Option<Confirmation>,
 }
 
 impl MusicLibrariesDisplay {
-    pub(super) fn new(libraries: Vec<LibraryFixture>) -> Self {
+    pub(super) fn new(libraries: Vec<MusicLibrary>) -> Self {
         Self {
             libraries,
             menu_open: None,
@@ -48,11 +51,11 @@ impl MusicLibrariesDisplay {
         }
     }
 
-    pub(super) fn library(&self, index: usize) -> Option<LibraryFixture> {
+    pub(super) fn library(&self, index: usize) -> Option<MusicLibrary> {
         self.libraries.get(index).cloned()
     }
 
-    pub(super) fn add_library(&mut self, library: LibraryFixture, cx: &mut Context<Self>) {
+    pub(super) fn add_library(&mut self, library: MusicLibrary, cx: &mut Context<Self>) {
         self.libraries.push(library);
         cx.notify();
     }
@@ -60,7 +63,7 @@ impl MusicLibrariesDisplay {
     pub(super) fn replace_library(
         &mut self,
         index: usize,
-        library: LibraryFixture,
+        library: MusicLibrary,
         cx: &mut Context<Self>,
     ) {
         if let Some(current) = self.libraries.get_mut(index) {
@@ -79,6 +82,21 @@ impl MusicLibrariesDisplay {
     pub(super) fn mark_importing(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(library) = self.libraries.get_mut(index) {
             library.status = LibraryStatus::Importing;
+            cx.notify();
+        }
+    }
+
+    #[cfg(feature = "libre-services")]
+    pub(super) fn set_status(
+        &mut self,
+        id: &str,
+        status: LibraryStatus,
+        error: Option<gpui::SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(library) = self.libraries.iter_mut().find(|library| library.id == id) {
+            library.status = status;
+            library.error = error;
             cx.notify();
         }
     }
@@ -140,6 +158,7 @@ impl MusicLibrariesDisplay {
                                     .update(cx, |this, cx| {
                                         this.mark_importing(index, cx);
                                         this.close_menu(cx);
+                                        cx.emit(DisplayEvent::Refresh(index));
                                     })
                                     .ok();
                             },
@@ -207,8 +226,8 @@ impl MusicLibrariesDisplay {
                     move |_, _, cx| {
                         remove_entity
                             .update(cx, |this, cx| {
-                                this.remove_library(index, cx);
                                 this.confirmation = None;
+                                cx.emit(DisplayEvent::Remove(index));
                             })
                             .ok();
                     },
@@ -326,7 +345,9 @@ impl Render for MusicLibrariesDisplay {
                                     } else {
                                         LibraryStatus::Disabled
                                     };
+                                    let library = library.clone();
                                     cx.notify();
+                                    cx.emit(DisplayEvent::Changed { index, library });
                                 }
                             }))
                             .child(checkbox(

@@ -205,7 +205,7 @@ where
                     )
                     .when_some(
                         T::has_source_indicators()
-                            .then(|| source_origin(self.row.is_remote_source(), 0))
+                            .then(|| source_origin(cx, self.row.source_id(), 0))
                             .flatten(),
                         |this, origin| {
                             this.child(source_indicator(

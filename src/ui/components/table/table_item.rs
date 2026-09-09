@@ -212,7 +212,8 @@ where
                 let source_position = T::source_indicator_position(*col.0);
                 let origin = source_position.and_then(|_| {
                     source_origin(
-                        self.row.as_ref().is_some_and(|row| row.is_remote_source()),
+                        cx,
+                        self.row.as_ref().and_then(|row| row.source_id()),
                         self.index,
                     )
                 });

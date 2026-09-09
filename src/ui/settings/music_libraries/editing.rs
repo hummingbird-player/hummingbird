@@ -22,7 +22,7 @@ use crate::ui::{
 use super::{
     actions_menu::library_actions_menu,
     connection_fields::{AuthenticationMode, ConnectionFields, render_connection_fields},
-    model::{LibraryFixture, LibraryStatus},
+    model::{LibraryStatus, MusicLibrary, address_error, secret_error, username_error},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +50,8 @@ pub(super) enum EditingEvent {
     Cancel,
     Save {
         index: usize,
-        library: LibraryFixture,
+        library: MusicLibrary,
+        replacement_secret: Option<SharedString>,
     },
     Remove(usize),
     Refresh(usize),
@@ -58,7 +59,7 @@ pub(super) enum EditingEvent {
 
 pub(super) struct MusicLibraryEditor {
     pub(super) index: usize,
-    pub(super) library: LibraryFixture,
+    pub(super) library: MusicLibrary,
     pub(super) fields: ConnectionFields,
     pub(super) name: Entity<Textbox>,
     pub(super) authentication: AuthenticationMode,
@@ -75,11 +76,12 @@ pub(super) struct MusicLibraryEditor {
     pub(super) more_open: bool,
     pub(super) validation_error: Option<SharedString>,
     pub(super) confirmation: Option<Confirmation>,
+    saving: bool,
     scroll_handle: ScrollHandle,
 }
 
 impl MusicLibraryEditor {
-    pub(super) fn new(index: usize, library: LibraryFixture, expanded: bool, cx: &mut App) -> Self {
+    pub(super) fn new(index: usize, library: MusicLibrary, expanded: bool, cx: &mut App) -> Self {
         let fields = ConnectionFields::new(cx);
         fields.load(&library, cx);
         let name = Textbox::new_with_submit(cx, Default::default(), |_| {});
@@ -90,6 +92,8 @@ impl MusicLibraryEditor {
             );
             this.set_value(cx, library.name.clone());
         });
+        let authentication = library.authentication;
+        let report_playback = library.report_playback;
 
         Self {
             index,
@@ -97,11 +101,11 @@ impl MusicLibraryEditor {
             library,
             fields,
             name,
-            authentication: AuthenticationMode::Password,
+            authentication,
             quality: AudioQuality::Original,
             format: CustomFormat::Opus,
             bitrate: 192.0,
-            report_playback: true,
+            report_playback,
             connection_expanded: expanded,
             advanced_expanded: expanded,
             refresh_frequency: 2.0,
@@ -110,6 +114,7 @@ impl MusicLibraryEditor {
             audiobooks_folder_enabled: false,
             more_open: false,
             confirmation: None,
+            saving: false,
             scroll_handle: ScrollHandle::new(),
         }
     }
@@ -174,20 +179,64 @@ impl MusicLibraryEditor {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
-        let name = self.name.read(cx).value(cx);
-        if !name.trim().is_empty() {
-            self.library.name = name;
+        if self.saving {
+            return;
         }
-        self.library.error = None;
-        self.library.status = if self.library.enabled {
+        let name = self.name.read(cx).value(cx);
+        let address = self.fields.address.read(cx).value(cx);
+        let username = self.fields.username.read(cx).value(cx);
+        let secret = self.fields.secret.read(cx).value(cx);
+        let Ok(url) = url::Url::parse(address.as_ref()) else {
+            self.validation_error = Some(address_error());
+            cx.notify();
+            return;
+        };
+        let Some(host) = url.host_str().map(str::to_owned) else {
+            self.validation_error = Some(address_error());
+            cx.notify();
+            return;
+        };
+        if self.authentication == AuthenticationMode::Password && username.trim().is_empty() {
+            self.validation_error = Some(username_error());
+            cx.notify();
+            return;
+        }
+        let connection_changed = address != self.library.address
+            || username != self.library.username
+            || self.authentication != self.library.authentication;
+        if connection_changed && secret.trim().is_empty() {
+            self.validation_error = Some(secret_error(self.authentication));
+            cx.notify();
+            return;
+        }
+        let replacement_secret = (!secret.trim().is_empty()).then_some(secret);
+        let mut library = self.library.clone();
+        if !name.trim().is_empty() {
+            library.name = name;
+        }
+        library.address = address;
+        library.host = host.into();
+        library.username = username;
+        library.authentication = self.authentication;
+        library.report_playback = self.report_playback;
+        library.error = None;
+        library.status = if library.enabled {
             LibraryStatus::Updated
         } else {
             LibraryStatus::Disabled
         };
+        self.saving = replacement_secret.is_some();
         cx.emit(EditingEvent::Save {
             index: self.index,
-            library: self.library.clone(),
+            library,
+            replacement_secret,
         });
+    }
+
+    pub(super) fn finish_save(&mut self, error: Option<SharedString>, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.validation_error = error;
+        cx.notify();
     }
 
     fn close_menu(&mut self, cx: &mut Context<Self>) {
@@ -286,6 +335,7 @@ impl Render for MusicLibraryEditor {
         let advanced_expanded = self.advanced_expanded;
         let report_playback = self.report_playback;
         let scroll_handle = self.scroll_handle.clone();
+        let saving = self.saving;
 
         let body = div()
             .w_full()
@@ -397,7 +447,9 @@ impl Render for MusicLibraryEditor {
                     .size(ButtonSize::Large)
                     .intent(ButtonIntent::Primary)
                     .child(tr!("SAVE", "Save"))
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                    .when(!saving, |this| {
+                        this.on_click(cx.listener(|this, _, _, cx| this.save(cx)))
+                    }),
             );
 
         div()

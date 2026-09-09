@@ -170,6 +170,49 @@ fn failed(code: u32) -> Reply {
     }}))
 }
 
+fn album_list(ids: &[&str]) -> Reply {
+    Reply::json(json!({"subsonic-response": {
+        "status": "ok", "version": "1.16.1",
+        "albumList2": {"album": ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>()}
+    }}))
+}
+
+fn album_detail(id: &str) -> Reply {
+    Reply::json(json!({"subsonic-response": {
+        "status": "ok", "version": "1.16.1",
+        "album": {
+            "id": id,
+            "name": "Server Album",
+            "sortName": "Album, Server",
+            "artist": "Album Artist",
+            "year": 2024,
+            "musicBrainzId": "album-mbid",
+            "genre": "Electronic",
+            "genres": [{"name": "Ambient"}],
+            "albumArtists": [{"name": "Album Artist"}],
+            "song": [
+                {
+                    "id": "song-1",
+                    "title": "First Song",
+                    "album": "Server Album",
+                    "artist": "Track Artist",
+                    "albumArtist": "Album Artist",
+                    "artistSort": "Artist, Track",
+                    "year": 2024,
+                    "track": 1,
+                    "discNumber": 2,
+                    "duration": 183,
+                    "genres": [{"name": "Electronic"}],
+                    "artists": [{"name": "Track Artist"}],
+                    "albumArtists": [{"name": "Album Artist"}]
+                },
+                {"id": "directory", "title": "Directory", "isDir": true},
+                {"id": "video", "title": "Video", "isVideo": true}
+            ]
+        }
+    }}))
+}
+
 fn query(url: &Url) -> BTreeMap<String, String> {
     url.query_pairs().into_owned().collect()
 }
@@ -281,19 +324,17 @@ async fn missing_optional_fields_and_missing_discovery_are_compatible() {
 }
 
 #[tokio::test]
-async fn discovery_errors_do_not_silently_downgrade_a_server() {
-    for (reply, expected) in [
-        (Reply::status(503), BackendError::Unavailable),
-        (failed(40), BackendError::Authentication),
-        (
-            Reply::json(json!({"subsonic-response": {"status": "ok", "version": "1.16.1"}})),
-            BackendError::MalformedResponse,
-        ),
+async fn optional_discovery_errors_do_not_block_password_connections() {
+    for reply in [
+        Reply::status(503),
+        failed(40),
+        Reply::json(json!({"subsonic-response": {"status": "ok", "version": "1.16.1"}})),
     ] {
         let server = Server::new(vec![ping(true), reply]).await;
         let backend = server.backend(password());
-        assert_eq!(backend.connect().await, Err(expected));
-        assert!(backend.cached_info().is_none());
+        assert!(backend.connect().await.is_ok());
+        assert!(backend.cached_info().is_some());
+        assert!(!backend.supports_api_key());
     }
 }
 
@@ -518,6 +559,88 @@ async fn connections_to_the_same_server_do_not_share_credentials_or_capabilities
             md5::compute(format!("other-password{}", request["s"]))
         )
     );
+}
+
+#[tokio::test]
+async fn catalog_pagination_and_album_details_use_authenticated_subsonic_endpoints() {
+    let mut server = Server::new(vec![
+        album_list(&["album-1", "album-2"]),
+        album_detail("album-1"),
+    ])
+    .await;
+    let backend = server.backend(password());
+
+    let page = backend
+        .catalog_page(CatalogRequest {
+            cursor: Some("200".into()),
+            page_size: 2,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        page.albums,
+        vec![
+            RemoteAlbumRef {
+                location: "album-1".into()
+            },
+            RemoteAlbumRef {
+                location: "album-2".into()
+            }
+        ]
+    );
+    assert_eq!(page.next_cursor.as_deref(), Some("202"));
+    let page_request = server.request().await;
+    assert_eq!(page_request.path(), "/proxy/music/rest/getAlbumList2.view");
+    let page_query = query(&page_request);
+    assert_eq!(page_query["type"], "alphabeticalByName");
+    assert_eq!(page_query["size"], "2");
+    assert_eq!(page_query["offset"], "200");
+    assert_eq!(page_query["u"], "name & ü");
+
+    let album = backend.album(&page.albums[0]).await.unwrap();
+    assert_eq!(album.location, "album-1");
+    assert_eq!(album.metadata.album.as_deref(), Some("Server Album"));
+    assert_eq!(album.metadata.sort_album.as_deref(), Some("Album, Server"));
+    assert_eq!(album.metadata.year, Some(2024));
+    assert_eq!(album.metadata.genres.as_slice(), ["Electronic", "Ambient"]);
+    assert_eq!(album.tracks.len(), 1);
+    let track = &album.tracks[0];
+    assert_eq!(track.location, "song-1");
+    assert_eq!(track.duration_seconds, 183);
+    assert_eq!(track.metadata.name.as_deref(), Some("First Song"));
+    assert_eq!(track.metadata.track_current, Some(1));
+    assert_eq!(track.metadata.disc_current, Some(2));
+    assert_eq!(track.metadata.artists.as_slice(), ["Track Artist"]);
+
+    let detail_request = server.request().await;
+    assert_eq!(detail_request.path(), "/proxy/music/rest/getAlbum.view");
+    let detail_query = query(&detail_request);
+    assert_eq!(detail_query["id"], "album-1");
+    assert_eq!(detail_query["u"], "name & ü");
+}
+
+#[tokio::test]
+async fn malformed_catalog_cursors_and_mismatched_album_ids_are_rejected() {
+    let server = Server::new(vec![album_detail("different-album")]).await;
+    let backend = server.backend(password());
+
+    assert!(matches!(
+        backend
+            .catalog_page(CatalogRequest {
+                cursor: Some("not-an-offset".into()),
+                page_size: 100,
+            })
+            .await,
+        Err(BackendError::InvalidRequest)
+    ));
+    assert!(matches!(
+        backend
+            .album(&RemoteAlbumRef {
+                location: "expected-album".into(),
+            })
+            .await,
+        Err(BackendError::MalformedResponse)
+    ));
 }
 
 #[test]

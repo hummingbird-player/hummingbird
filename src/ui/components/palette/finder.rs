@@ -36,8 +36,8 @@ pub trait PaletteItem {
     fn supports_source_indicator(&self) -> bool {
         false
     }
-    fn has_remote_source(&self) -> bool {
-        false
+    fn source_id(&self) -> Option<&str> {
+        None
     }
     fn is_enabled(&self, _cx: &App) -> bool {
         true
@@ -937,7 +937,7 @@ where
             .when(T::has_source_indicator_slot(), |div_outer| {
                 let origin = self.item_data.as_ref().and_then(|item| {
                     item.supports_source_indicator()
-                        .then(|| source_origin(item.has_remote_source(), self.idx))
+                        .then(|| source_origin(cx, item.source_id(), self.idx))
                         .flatten()
                 });
                 div_outer.child(

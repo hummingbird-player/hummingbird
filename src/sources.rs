@@ -1,16 +1,56 @@
 //! Remote library connections and credential handling.
 
-// these connections aren't exposed in settings yet
-#![allow(dead_code)]
-
 pub mod credentials;
+mod import;
 pub mod subsonic;
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::library::source::SourceId;
+use crate::{library::source::SourceId, media::metadata::Metadata};
+
+pub use import::import_catalog;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogRequest {
+    pub cursor: Option<String>,
+    pub page_size: usize,
+}
+
+impl CatalogRequest {
+    pub fn first(page_size: usize) -> Self {
+        Self {
+            cursor: None,
+            page_size,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CatalogPage {
+    pub albums: Vec<RemoteAlbumRef>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteAlbumRef {
+    pub location: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteAlbum {
+    pub location: String,
+    pub metadata: Metadata,
+    pub tracks: Vec<RemoteTrack>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteTrack {
+    pub location: String,
+    pub duration_seconds: u64,
+    pub metadata: Metadata,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendInfo {
@@ -61,6 +101,8 @@ pub enum BackendError {
 pub trait LibraryBackend: Send + Sync {
     fn source_id(&self) -> &SourceId;
     async fn connect(&self) -> Result<BackendInfo, BackendError>;
+    async fn catalog_page(&self, request: CatalogRequest) -> Result<CatalogPage, BackendError>;
+    async fn album(&self, album: &RemoteAlbumRef) -> Result<RemoteAlbum, BackendError>;
 }
 
 #[cfg(test)]
@@ -80,6 +122,20 @@ mod tests {
                 server_name: Some("test library".into()),
                 server_version: None,
             })
+        }
+
+        async fn catalog_page(
+            &self,
+            _request: CatalogRequest,
+        ) -> Result<CatalogPage, BackendError> {
+            Ok(CatalogPage {
+                albums: Vec::new(),
+                next_cursor: None,
+            })
+        }
+
+        async fn album(&self, _album: &RemoteAlbumRef) -> Result<RemoteAlbum, BackendError> {
+            Err(BackendError::NotFound)
         }
     }
 

@@ -2,16 +2,19 @@ use std::sync::LazyLock;
 
 use cntp_i18n::tr;
 use gpui::{
-    Div, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
+    AppContext, Div, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
 };
 
-use crate::ui::{
-    components::{
-        icons::{CLOUD, icon},
-        tooltip::build_complex_tooltip,
+use crate::{
+    settings::SettingsGlobal,
+    ui::{
+        components::{
+            icons::{CLOUD, icon},
+            tooltip::build_complex_tooltip,
+        },
+        theme::Theme,
     },
-    theme::Theme,
 };
 
 #[derive(Clone, Copy)]
@@ -53,12 +56,32 @@ impl SourceOrigin {
         tr!("MUSIC_LIBRARY_FIXTURE_NAME", "Home music").into()
     }
 
-    pub fn remote_library() -> Self {
-        Self {
+    fn remote_library<C: AppContext>(source_id: &str, cx: &C) -> Self {
+        cx.read_global(|settings: &SettingsGlobal, app| {
+            settings
+                .model
+                .read(app)
+                .services
+                .music_libraries
+                .iter()
+                .find(|library| library.id == source_id)
+                .map(|library| {
+                    let description = url::Url::parse(&library.address)
+                        .ok()
+                        .and_then(|url| url.host_str().map(str::to_owned))
+                        .map(|host| format!("Subsonic · {host}").into());
+                    Self {
+                        name: library.name.clone().into(),
+                        description,
+                        detail: None,
+                    }
+                })
+        })
+        .unwrap_or_else(|| Self {
             name: tr!("REMOTE_LIBRARY", "Remote library").into(),
             description: None,
             detail: None,
-        }
+        })
     }
 
     fn fixture_library() -> Self {
@@ -84,7 +107,11 @@ impl SourceOrigin {
     }
 }
 
-pub fn source_origin(is_remote: bool, fixture_key: usize) -> Option<SourceOrigin> {
+pub fn source_origin<C: AppContext>(
+    cx: &C,
+    source_id: Option<&str>,
+    fixture_key: usize,
+) -> Option<SourceOrigin> {
     let fixture = match *SOURCE_FIXTURE {
         SourceFixture::None => None,
         SourceFixture::Mixed if fixture_key.is_multiple_of(2) => {
@@ -95,7 +122,11 @@ pub fn source_origin(is_remote: bool, fixture_key: usize) -> Option<SourceOrigin
         SourceFixture::Streaming => Some(SourceOrigin::fixture_stream()),
     };
 
-    fixture.or_else(|| is_remote.then(SourceOrigin::remote_library))
+    fixture.or_else(|| {
+        source_id
+            .filter(|source_id| *source_id != "local")
+            .map(|source_id| SourceOrigin::remote_library(source_id, cx))
+    })
 }
 
 pub fn source_indicator(
@@ -145,6 +176,9 @@ pub fn source_indicator_slot(
         .size(px(16.0))
         .flex()
         .flex_shrink_0()
+        .my_auto()
+        .items_center()
+        .justify_center()
         .when_some(origin, |this, origin| {
             this.child(source_indicator(id, origin, color))
         })

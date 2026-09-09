@@ -255,17 +255,21 @@ impl Render for QueueItem {
                     && scroll_handle.should_draw_vertical_scrollbar()
             };
             let is_current = self.current == self.idx;
-            let image_key = track_id.map(ManagedImageKey::Track).or_else(|| {
-                self.item
-                    .as_ref()
-                    .and_then(|i| i.local_path())
-                    .map(|path| ManagedImageKey::TrackFile(path.clone()))
-            });
-            let idx = self.idx;
-            let is_remote = self
+            let source_id = self
                 .item
                 .as_ref()
-                .is_some_and(|item| !item.reference().source().is_local());
+                .map(|item| item.reference().source().0.clone());
+            let is_remote = source_id.as_deref().is_some_and(|source| source != "local");
+            let image_key = (!is_remote)
+                .then(|| track_id.map(ManagedImageKey::Track))
+                .flatten()
+                .or_else(|| {
+                    self.item
+                        .as_ref()
+                        .and_then(|i| i.local_path())
+                        .map(|path| ManagedImageKey::TrackFile(path.clone()))
+                });
+            let idx = self.idx;
             let current = self.current;
             let selection = self.selection.clone();
             let selection_for_drag = selection.clone();
@@ -479,7 +483,7 @@ impl Render for QueueItem {
                                         .child(
                                             source_indicator_slot(
                                                 ("queue-source", idx),
-                                                source_origin(is_remote, idx),
+                                                source_origin(cx, source_id.as_deref(), idx),
                                                 theme.text_secondary,
                                             )
                                             .ml(px(6.0)),

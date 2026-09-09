@@ -5,7 +5,7 @@ use gpui::{
 
 use crate::ui::components::{label::label, textbox::Textbox};
 
-use super::model::LibraryFixture;
+use super::model::MusicLibrary;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AuthenticationMode {
@@ -44,9 +44,9 @@ impl ConnectionFields {
         }
     }
 
-    pub(super) fn load(&self, library: &LibraryFixture, cx: &mut App) {
+    pub(super) fn load(&self, library: &MusicLibrary, cx: &mut App) {
         self.address.update(cx, |this, cx| {
-            this.set_value(cx, format!("https://{}", library.host).into());
+            this.set_value(cx, library.address.clone());
         });
         self.username.update(cx, |this, cx| {
             this.set_value(cx, library.username.clone());

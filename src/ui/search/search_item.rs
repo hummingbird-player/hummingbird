@@ -27,7 +27,7 @@ pub enum SearchPaletteItem {
         artist: String,
         artists: String,
         available: bool,
-        remote: bool,
+        source: String,
     },
     Artist {
         id: i64,
@@ -38,7 +38,7 @@ pub enum SearchPaletteItem {
         title: String,
         artists: String,
         album_id: Option<i64>,
-        remote: bool,
+        source: String,
     },
 }
 
@@ -65,7 +65,7 @@ impl SearchPaletteItem {
                 artist: artist_override.unwrap_or_else(|| artists.clone()),
                 artists,
                 available,
-                remote: source != "local",
+                source,
             }));
         }
 
@@ -75,7 +75,7 @@ impl SearchPaletteItem {
                 title,
                 artists,
                 album_id,
-                remote: source != "local",
+                source,
             }));
         }
 
@@ -86,11 +86,14 @@ impl SearchPaletteItem {
 impl PaletteItem for SearchPaletteItem {
     fn left_content(&self, _cx: &mut App) -> Option<FinderItemLeft> {
         match self {
-            SearchPaletteItem::Album { id, .. } => {
+            SearchPaletteItem::Album { id, source, .. } if source == "local" => {
                 Some(FinderItemLeft::Image(Self::thumbnail_path(*id).into()))
             }
+            SearchPaletteItem::Album { .. } => Some(FinderItemLeft::Icon(DISC.into())),
             SearchPaletteItem::Artist { .. } => Some(FinderItemLeft::Icon(USERS.into())),
-            SearchPaletteItem::Track { album_id, .. } => {
+            SearchPaletteItem::Track {
+                album_id, source, ..
+            } if source == "local" => {
                 if let Some(album_id) = album_id {
                     Some(FinderItemLeft::Image(
                         Self::thumbnail_path(*album_id).into(),
@@ -99,6 +102,7 @@ impl PaletteItem for SearchPaletteItem {
                     Some(FinderItemLeft::Icon(DISC.into()))
                 }
             }
+            SearchPaletteItem::Track { .. } => Some(FinderItemLeft::Icon(DISC.into())),
         }
     }
 
@@ -129,12 +133,12 @@ impl PaletteItem for SearchPaletteItem {
         )
     }
 
-    fn has_remote_source(&self) -> bool {
+    fn source_id(&self) -> Option<&str> {
         match self {
-            SearchPaletteItem::Album { remote, .. } | SearchPaletteItem::Track { remote, .. } => {
-                *remote
+            SearchPaletteItem::Album { source, .. } | SearchPaletteItem::Track { source, .. } => {
+                Some(source)
             }
-            SearchPaletteItem::Artist { .. } => false,
+            SearchPaletteItem::Artist { .. } => None,
         }
     }
 

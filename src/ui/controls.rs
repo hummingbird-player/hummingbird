@@ -302,6 +302,7 @@ impl Render for InfoSection {
         let image_key = self
             .current_library_track
             .as_ref()
+            .filter(|track| track.source.is_local())
             .map(|track| ManagedImageKey::Track(track.id))
             .or_else(|| {
                 self.current_track_path
@@ -309,10 +310,10 @@ impl Render for InfoSection {
                     .map(|p| ManagedImageKey::TrackFile(p.clone()))
             });
         let image_element_key = self.image_element_key;
-        let is_remote = self
+        let source_id = self
             .current_library_track
             .as_ref()
-            .is_some_and(|track| !track.source.is_local());
+            .map(|track| track.source.0.clone());
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
 
@@ -454,7 +455,8 @@ impl Render for InfoSection {
                                         )
                                         .when_some(
                                             source_origin(
-                                                is_remote,
+                                                cx,
+                                                source_id.as_deref(),
                                                 track_id.unwrap_or_default() as usize,
                                             ),
                                             |this, origin| {

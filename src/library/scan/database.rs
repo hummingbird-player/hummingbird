@@ -3,6 +3,8 @@ mod artist_links;
 mod artists;
 mod genre_links;
 mod relocate;
+#[cfg(feature = "libre-services")]
+mod remote;
 mod tracks;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -30,6 +32,10 @@ pub(crate) use genre_links::recompute_album_genres;
 use genre_links::sync_track_genres;
 pub use genre_links::{flush_album_genres, sweep_orphan_genres};
 pub use relocate::relocate_track;
+#[cfg(feature = "libre-services")]
+pub(crate) use remote::{
+    begin_remote_sync, finish_remote_sync, remove_remote_source, write_remote_batch,
+};
 pub use tracks::{AlbumPathCacheKey, TrackWriteOutcome};
 use tracks::{delete_lyrics, insert_track, upsert_lyrics};
 

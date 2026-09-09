@@ -80,7 +80,7 @@ pub struct ReleaseView {
     track_listing: TrackListing,
     collection_summary: SharedString,
     release_info: Option<SharedString>,
-    img_path: SharedString,
+    img_path: Option<SharedString>,
     scroll_handle: ScrollHandle,
     pending_scroll: Option<usize>,
     scroll_follow: SmoothScrollFollow,
@@ -102,7 +102,9 @@ impl ReleaseView {
             let artist_name = album.artist_display_override.clone();
 
             cx.on_release(|this: &mut Self, cx: &mut App| {
-                ImageSource::Resource(Resource::Embedded(this.img_path.clone())).remove_asset(cx);
+                if let Some(img_path) = this.img_path.clone() {
+                    ImageSource::Resource(Resource::Embedded(img_path)).remove_asset(cx);
+                }
             })
             .detach();
 
@@ -142,6 +144,10 @@ impl ReleaseView {
             });
 
             let all_liked = compute_all_liked(cx, &tracks);
+            let img_path = album
+                .source
+                .is_local()
+                .then(|| SharedString::from(format!("!db://album/{album_id}/full")));
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
             cx.subscribe(&playlist_tracker, |this: &mut Self, _, ev, cx| {
@@ -163,7 +169,7 @@ impl ReleaseView {
                 track_listing,
                 collection_summary,
                 release_info,
-                img_path: SharedString::from(format!("!db://album/{album_id}/full")),
+                img_path,
                 scroll_handle: ScrollHandle::new(),
                 pending_scroll,
                 scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
@@ -176,12 +182,23 @@ impl ReleaseView {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let album_id = self.album.id;
-        let album = cx
-            .get_album_by_id(album_id, AlbumMethod::FullQuality)
-            .expect("Failed to retrieve album");
-        let tracks = cx
-            .list_tracks_in_album(album_id)
-            .expect("Failed to retrieve tracks");
+        let Ok(album) = cx.get_album_by_id(album_id, AlbumMethod::FullQuality) else {
+            let tracks = Arc::new(Vec::new());
+            self.track_listing = TrackListing::new(
+                cx,
+                tracks.clone(),
+                ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone()),
+                self.album.number_display_mode,
+                false,
+                true,
+            );
+            self.tracks = tracks;
+            self.collection_summary = format_collection_summary(0, 0);
+            self.all_liked = false;
+            cx.notify();
+            return;
+        };
+        let tracks = cx.list_tracks_in_album(album_id).unwrap_or_default();
         let artist_name = album.artist_display_override.clone();
         let track_listing = TrackListing::new(
             cx,
@@ -240,18 +257,20 @@ impl ReleaseView {
                     .h(RELEASE_ARTWORK_SIZE)
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .child(
-                        img(self.img_path.clone())
-                            .w(RELEASE_ARTWORK_SIZE)
-                            .h(RELEASE_ARTWORK_SIZE)
-                            .overflow_hidden()
-                            .flex()
-                            // TODO: Ideally this should be ObjectFit::Cover, but this
-                            // breaks rounding
-                            // FIXME: This is a GPUI bug
-                            .object_fit(ObjectFit::Fill)
-                            .rounded(px(10.0)),
-                    ),
+                    .when_some(self.img_path.clone(), |this, img_path| {
+                        this.child(
+                            img(img_path)
+                                .w(RELEASE_ARTWORK_SIZE)
+                                .h(RELEASE_ARTWORK_SIZE)
+                                .overflow_hidden()
+                                .flex()
+                                // TODO: Ideally this should be ObjectFit::Cover, but this
+                                // breaks rounding
+                                // FIXME: This is a GPUI bug
+                                .object_fit(ObjectFit::Fill)
+                                .rounded(px(10.0)),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -298,19 +317,6 @@ impl ReleaseView {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .child(self.album.title.clone()),
-                            )
-                            .when_some(
-                                source_origin(
-                                    !self.album.source.is_local(),
-                                    self.album.id as usize,
-                                ),
-                                |this, origin| {
-                                    this.child(source_indicator(
-                                        ("release-source", self.album.id as usize),
-                                        origin,
-                                        theme.text_secondary,
-                                    ))
-                                },
                             ),
                     )
                     .child(
@@ -346,8 +352,25 @@ impl ReleaseView {
                             .child(
                                 div()
                                     .ml_auto()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
                                     .text_sm()
                                     .text_color(theme.text_secondary)
+                                    .when_some(
+                                        source_origin(
+                                            cx,
+                                            Some(&self.album.source.0),
+                                            self.album.id as usize,
+                                        ),
+                                        |this, origin| {
+                                            this.child(source_indicator(
+                                                ("release-source", self.album.id as usize),
+                                                origin,
+                                                theme.text_secondary,
+                                            ))
+                                        },
+                                    )
                                     .child(self.collection_summary.clone()),
                             ),
                     ),

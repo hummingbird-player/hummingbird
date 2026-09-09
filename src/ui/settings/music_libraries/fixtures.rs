@@ -2,7 +2,7 @@ use cntp_i18n::tr;
 
 use super::{
     connection_fields::AuthenticationMode,
-    model::{LibraryFixture, LibraryStatus},
+    model::{LibraryStatus, MusicLibrary},
 };
 
 const FIXTURE_ENV: &str = "HUMMINGBIRD_SUBSONIC_UI_FIXTURE";
@@ -44,7 +44,7 @@ pub(super) enum InitialPage {
 }
 
 pub(super) struct FixtureScenario {
-    pub(super) libraries: Vec<LibraryFixture>,
+    pub(super) libraries: Vec<MusicLibrary>,
     pub(super) initial_page: InitialPage,
 }
 
@@ -57,23 +57,23 @@ pub(super) fn load() -> Option<FixtureScenario> {
     let libraries = match fixture {
         FixtureKind::Empty | FixtureKind::AddPassword | FixtureKind::AddApiKey => Vec::new(),
         FixtureKind::Error => vec![error_library()],
-        FixtureKind::Importing => vec![LibraryFixture {
+        FixtureKind::Importing => vec![MusicLibrary {
             status: LibraryStatus::Importing,
             ..connected_library()
         }],
-        FixtureKind::Offline => vec![LibraryFixture {
+        FixtureKind::Offline => vec![MusicLibrary {
             status: LibraryStatus::Offline,
             ..connected_library()
         }],
         FixtureKind::Connected | FixtureKind::Edit | FixtureKind::EditExpanded => vec![
             connected_library(),
-            LibraryFixture {
+            MusicLibrary {
                 name: "Away library".into(),
+                address: "https://away.example.com".into(),
                 host: "away.example.com".into(),
-                username: "william".into(),
                 enabled: false,
                 status: LibraryStatus::Disabled,
-                error: None,
+                ..connected_library()
             },
         ],
     };
@@ -91,19 +91,24 @@ pub(super) fn load() -> Option<FixtureScenario> {
     })
 }
 
-fn connected_library() -> LibraryFixture {
-    LibraryFixture {
+fn connected_library() -> MusicLibrary {
+    MusicLibrary {
+        id: "fixture-home".into(),
         name: "Home music".into(),
+        address: "https://music.example.com".into(),
         host: "music.example.com".into(),
         username: "william".into(),
+        authentication: AuthenticationMode::Password,
+        credential_reference: "hummingbird-source-00000000000000000000000000000000".into(),
         enabled: true,
+        report_playback: true,
         status: LibraryStatus::Updated,
         error: None,
     }
 }
 
-fn error_library() -> LibraryFixture {
-    LibraryFixture {
+fn error_library() -> MusicLibrary {
+    MusicLibrary {
         status: LibraryStatus::SignInRequired,
         error: Some(
             tr!(

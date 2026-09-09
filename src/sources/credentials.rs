@@ -45,7 +45,7 @@ impl fmt::Debug for Credentials {
 pub struct CredentialRef(String);
 
 impl CredentialRef {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self(format!(
             "hummingbird-source-{:032x}",
             rand::random::<u128>()
@@ -155,6 +155,7 @@ fn decode(account: &str, bytes: Zeroizing<Vec<u8>>) -> Result<Credentials, Crede
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CredentialPersistence {
     SessionOnly,
@@ -164,6 +165,7 @@ pub enum CredentialPersistence {
 /// Saves credentials only when OS persistence was requested.
 ///
 /// An error leaves the choice of session-only use to the caller; it never falls back to a file.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn save(
     store: &impl CredentialStore,
     credentials: &Credentials,

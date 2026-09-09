@@ -9,9 +9,15 @@ use tokio::sync::Mutex;
 use url::Url;
 use zed_reqwest::{Client, StatusCode};
 
-use crate::library::source::SourceId;
+use crate::{
+    library::source::SourceId,
+    media::metadata::{Metadata, MetadataTag, apply_tag},
+};
 
-use super::{BackendError, BackendInfo, LibraryBackend, credentials::Credentials};
+use super::{
+    BackendError, BackendInfo, CatalogPage, CatalogRequest, LibraryBackend, RemoteAlbum,
+    RemoteAlbumRef, RemoteTrack, credentials::Credentials,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_LIMIT: usize = 1024 * 1024;
@@ -65,6 +71,7 @@ pub struct SubsonicBackend {
     discovery: Mutex<Option<Discovery>>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 struct Discovery {
     info: BackendInfo,
     extensions: BTreeMap<String, Vec<u32>>,
@@ -95,6 +102,7 @@ impl SubsonicBackend {
         })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn cached_info(&self) -> Option<BackendInfo> {
         self.discovery
             .try_lock()
@@ -103,6 +111,7 @@ impl SubsonicBackend {
             .map(|d| d.info.clone())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn supports_api_key(&self) -> bool {
         self.discovery
             .try_lock()
@@ -112,6 +121,15 @@ impl SubsonicBackend {
     }
 
     async fn request(&self, endpoint: &str, authenticated: bool) -> Result<Response, BackendError> {
+        self.request_with_params(endpoint, authenticated, &[]).await
+    }
+
+    async fn request_with_params(
+        &self,
+        endpoint: &str,
+        authenticated: bool,
+        parameters: &[(&str, String)],
+    ) -> Result<Response, BackendError> {
         let mut url = self.server.endpoint(endpoint);
         {
             let mut query = url.query_pairs_mut();
@@ -136,6 +154,9 @@ impl SubsonicBackend {
                         query.append_pair("apiKey", key.expose());
                     }
                 }
+            }
+            for (name, value) in parameters {
+                query.append_pair(name, value);
             }
         }
 
@@ -239,8 +260,16 @@ impl LibraryBackend for SubsonicBackend {
         {
             extensions = match self.extensions().await {
                 Ok(extensions) => extensions,
-                Err(BackendError::NotFound | BackendError::Unsupported) => BTreeMap::new(),
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // Capability discovery is optional for password authentication. Some
+                    // otherwise usable servers advertise OpenSubsonic but do not implement
+                    // this endpoint correctly.
+                    tracing::warn!(
+                        ?error,
+                        "OpenSubsonic capability discovery failed; continuing without extensions"
+                    );
+                    BTreeMap::new()
+                }
             };
         }
         let info = BackendInfo {
@@ -252,6 +281,177 @@ impl LibraryBackend for SubsonicBackend {
             extensions,
         });
         Ok(info)
+    }
+
+    async fn catalog_page(&self, request: CatalogRequest) -> Result<CatalogPage, BackendError> {
+        let offset = request
+            .cursor
+            .as_deref()
+            .unwrap_or("0")
+            .parse::<usize>()
+            .map_err(|_| BackendError::InvalidRequest)?;
+        let page_size = request.page_size.clamp(1, 500);
+        let response = self
+            .request_with_params(
+                "getAlbumList2.view",
+                true,
+                &[
+                    ("type", "alphabeticalByName".into()),
+                    ("size", page_size.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
+            .await?;
+        let albums = response
+            .album_list
+            .ok_or(BackendError::MalformedResponse)?
+            .albums
+            .into_iter()
+            .map(|album| RemoteAlbumRef { location: album.id })
+            .collect::<Vec<_>>();
+        let next_cursor = if albums.len() == page_size {
+            Some(
+                offset
+                    .checked_add(albums.len())
+                    .ok_or(BackendError::MalformedResponse)?
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+        Ok(CatalogPage {
+            albums,
+            next_cursor,
+        })
+    }
+
+    async fn album(&self, album: &RemoteAlbumRef) -> Result<RemoteAlbum, BackendError> {
+        if album.location.is_empty() {
+            return Err(BackendError::InvalidRequest);
+        }
+        let response = self
+            .request_with_params("getAlbum.view", true, &[("id", album.location.clone())])
+            .await?;
+        let album_response = response.album.ok_or(BackendError::MalformedResponse)?;
+        normalize_album(album_response, &album.location)
+    }
+}
+
+fn normalize_album(album: AlbumResponse, expected_id: &str) -> Result<RemoteAlbum, BackendError> {
+    if album.id != expected_id || album.id.is_empty() || album.name.trim().is_empty() {
+        return Err(BackendError::MalformedResponse);
+    }
+
+    let album_artists = contributor_names(album.album_artists);
+    let album_artist = album
+        .artist
+        .filter(|artist| !artist.trim().is_empty())
+        .or_else(|| album_artists.first().cloned());
+    let mut metadata = Metadata {
+        name: Some(album.name.clone()),
+        album: Some(album.name.clone()),
+        sort_album: album.sort_name,
+        artist: album_artist.clone(),
+        album_artist: album_artist.clone(),
+        year: album.year.and_then(|year| u16::try_from(year).ok()),
+        mbid_album: album.music_brainz_id,
+        ..Metadata::default()
+    };
+    metadata.album_artist_keys.extend(album_artists);
+    if metadata.album_artist_keys.is_empty()
+        && let Some(artist) = album_artist
+    {
+        metadata.album_artist_keys.push(artist);
+    }
+    add_genres(&mut metadata, album.genre, album.genres);
+
+    let tracks = album
+        .songs
+        .into_iter()
+        .filter(|song| !song.is_dir && !song.is_video)
+        .map(|song| normalize_song(song, &album.name, &metadata))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RemoteAlbum {
+        location: album.id,
+        metadata,
+        tracks,
+    })
+}
+
+fn normalize_song(
+    song: Song,
+    album_name: &str,
+    album_metadata: &Metadata,
+) -> Result<RemoteTrack, BackendError> {
+    if song.id.is_empty() || song.title.trim().is_empty() {
+        return Err(BackendError::MalformedResponse);
+    }
+
+    let artists = contributor_names(song.artists);
+    let album_artists = contributor_names(song.album_artists);
+    let artist = song
+        .artist
+        .filter(|artist| !artist.trim().is_empty())
+        .or_else(|| artists.first().cloned());
+    let album_artist = song
+        .album_artist
+        .filter(|artist| !artist.trim().is_empty())
+        .or_else(|| album_metadata.album_artist.clone());
+    let mut metadata = Metadata {
+        name: Some(song.title),
+        sort_album: album_metadata.sort_album.clone(),
+        artist,
+        album_artist,
+        artist_sort: song.artist_sort,
+        album_artist_sort: album_metadata.album_artist_sort.clone(),
+        album: Some(song.album.unwrap_or_else(|| album_name.to_owned())),
+        year: song
+            .year
+            .or(album_metadata.year.map(u32::from))
+            .and_then(|year| u16::try_from(year).ok()),
+        track_current: song.track.map(u64::from),
+        disc_current: song.disc_number.map(u64::from),
+        mbid_album: album_metadata.mbid_album.clone(),
+        ..Metadata::default()
+    };
+    metadata.artists.extend(artists);
+    if metadata.artists.is_empty()
+        && let Some(artist) = metadata.artist.clone()
+    {
+        metadata.artists.push(artist);
+    }
+    metadata.album_artist_keys.extend(album_artists);
+    if metadata.album_artist_keys.is_empty()
+        && let Some(artist) = metadata.album_artist.clone()
+    {
+        metadata.album_artist_keys.push(artist);
+    }
+    add_genres(&mut metadata, song.genre, song.genres);
+
+    Ok(RemoteTrack {
+        location: song.id,
+        duration_seconds: song.duration.unwrap_or_default(),
+        metadata,
+    })
+}
+
+fn contributor_names(contributors: Vec<Contributor>) -> Vec<String> {
+    let mut names = Vec::new();
+    for contributor in contributors {
+        let name = contributor.name.trim();
+        if !name.is_empty() && !names.iter().any(|current| current == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+fn add_genres(metadata: &mut Metadata, genre: Option<String>, genres: Vec<Genre>) {
+    for genre in genre
+        .into_iter()
+        .chain(genres.into_iter().map(|genre| genre.name))
+    {
+        apply_tag(MetadataTag::Genre(genre), metadata);
     }
 }
 
@@ -297,6 +497,9 @@ struct Response {
     error: Option<ApiError>,
     #[serde(rename = "openSubsonicExtensions")]
     extensions: Option<Vec<Extension>>,
+    #[serde(rename = "albumList2")]
+    album_list: Option<AlbumList>,
+    album: Option<AlbumResponse>,
 }
 
 #[derive(Deserialize)]
@@ -310,6 +513,71 @@ enum ResponseStatus {
 struct Extension {
     name: String,
     versions: Vec<u32>,
+}
+
+#[derive(Deserialize)]
+struct AlbumList {
+    #[serde(default, rename = "album")]
+    albums: Vec<AlbumSummary>,
+}
+
+#[derive(Deserialize)]
+struct AlbumSummary {
+    id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AlbumResponse {
+    id: String,
+    name: String,
+    artist: Option<String>,
+    sort_name: Option<String>,
+    year: Option<u32>,
+    music_brainz_id: Option<String>,
+    genre: Option<String>,
+    #[serde(default)]
+    genres: Vec<Genre>,
+    #[serde(default)]
+    album_artists: Vec<Contributor>,
+    #[serde(default, rename = "song")]
+    songs: Vec<Song>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Song {
+    id: String,
+    title: String,
+    album: Option<String>,
+    artist: Option<String>,
+    album_artist: Option<String>,
+    artist_sort: Option<String>,
+    year: Option<u32>,
+    track: Option<u32>,
+    disc_number: Option<u32>,
+    duration: Option<u64>,
+    genre: Option<String>,
+    #[serde(default)]
+    genres: Vec<Genre>,
+    #[serde(default)]
+    artists: Vec<Contributor>,
+    #[serde(default)]
+    album_artists: Vec<Contributor>,
+    #[serde(default)]
+    is_dir: bool,
+    #[serde(default)]
+    is_video: bool,
+}
+
+#[derive(Deserialize)]
+struct Contributor {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct Genre {
+    name: String,
 }
 
 #[derive(Deserialize)]

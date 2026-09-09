@@ -207,11 +207,15 @@ impl TableData<AlbumColumn> for Album {
     }
 
     fn get_image_path(&self) -> Option<SharedString> {
-        Some(format!("!db://album/{}/thumb", self.id).into())
+        self.source
+            .is_local()
+            .then(|| format!("!db://album/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        Some(ManagedImageKey::Album(self.id))
+        self.source
+            .is_local()
+            .then_some(ManagedImageKey::Album(self.id))
     }
 
     fn has_images() -> bool {
@@ -226,8 +230,8 @@ impl TableData<AlbumColumn> for Album {
         (column == AlbumColumn::Title).then_some(SourceIndicatorPosition::After)
     }
 
-    fn is_remote_source(&self) -> bool {
-        !self.source.is_local()
+    fn source_id(&self) -> Option<&str> {
+        Some(&self.source.0)
     }
 
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {
@@ -487,11 +491,15 @@ impl TableData<TrackColumn> for Track {
 
     fn get_image_path(&self) -> Option<SharedString> {
         // every track has its own artwork association (shared with the album when identical)
-        Some(format!("!db://track/{}/thumb", self.id).into())
+        self.source
+            .is_local()
+            .then(|| format!("!db://track/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        Some(ManagedImageKey::Track(self.id))
+        self.source
+            .is_local()
+            .then_some(ManagedImageKey::Track(self.id))
     }
 
     fn has_images() -> bool {
@@ -503,11 +511,11 @@ impl TableData<TrackColumn> for Track {
     }
 
     fn source_indicator_position(column: TrackColumn) -> Option<SourceIndicatorPosition> {
-        (column == TrackColumn::Length).then_some(SourceIndicatorPosition::Before)
+        (column == TrackColumn::Title).then_some(SourceIndicatorPosition::After)
     }
 
-    fn is_remote_source(&self) -> bool {
-        !self.source.is_local()
+    fn source_id(&self) -> Option<&str> {
+        Some(&self.source.0)
     }
 
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {
