@@ -18,6 +18,7 @@ use crate::{
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
             scrollbar::{ScrollableHandle, floating_scrollbar},
+            source_indicator::{source_indicator_slot, source_origin},
             tooltip::build_tooltip,
         },
         library::{
@@ -261,6 +262,10 @@ impl Render for QueueItem {
                     .map(|path| ManagedImageKey::TrackFile(path.clone()))
             });
             let idx = self.idx;
+            let is_remote = self
+                .item
+                .as_ref()
+                .is_some_and(|item| !item.reference().source().is_local());
             let current = self.current;
             let selection = self.selection.clone();
             let selection_for_drag = selection.clone();
@@ -470,6 +475,14 @@ impl Render for QueueItem {
                                                 .child(item.artist_name.clone().unwrap_or_else(
                                                     || tr!("UNKNOWN_ARTIST").into(),
                                                 )),
+                                        )
+                                        .child(
+                                            source_indicator_slot(
+                                                ("queue-source", idx),
+                                                source_origin(is_remote, idx),
+                                                theme.text_secondary,
+                                            )
+                                            .ml(px(6.0)),
                                         )
                                         .when_some(item.duration, |child, duration| {
                                             child.child(

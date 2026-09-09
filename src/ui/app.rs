@@ -63,7 +63,9 @@ use super::{
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     right_sidebar::RightSidebar,
     search::SearchView,
-    settings::close_orphaned_settings_windows,
+    settings::{
+        SettingsSectionKind, close_orphaned_settings_windows, open_settings_window_with_section,
+    },
     theme::setup_theme,
     util::drop_image_from_app,
 };
@@ -597,6 +599,10 @@ pub fn run() -> anyhow::Result<()> {
             })
             .unwrap();
         register_pbc_event_handlers(cx);
+
+        if std::env::var_os("HUMMINGBIRD_SUBSONIC_UI_FIXTURE").is_some() {
+            open_settings_window_with_section(cx, SettingsSectionKind::Services);
+        }
     });
 
     Ok(())

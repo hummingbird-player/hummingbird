@@ -2,7 +2,8 @@ use cntp_i18n::tr;
 #[cfg(feature = "libre-services")]
 use gpui::StyleRefinement;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    ScrollHandle, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
@@ -19,11 +20,16 @@ use crate::{
 };
 use crate::{
     settings::{Settings, SettingsGlobal, save_settings},
-    ui::components::{checkbox::checkbox, label::label, section_header::section_header},
+    ui::{
+        components::{checkbox::checkbox, label::label, section_header::section_header},
+        settings::music_libraries::MusicLibrariesSettings,
+    },
 };
 
 pub struct ServicesSettings {
     settings: Entity<Settings>,
+    music_libraries: Entity<MusicLibrariesSettings>,
+    scroll_handle: ScrollHandle,
     #[cfg(feature = "proprietary-services")]
     lastfm: Entity<LastFMState>,
     #[cfg(feature = "libre-services")]
@@ -36,6 +42,7 @@ impl ServicesSettings {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let settings = cx.global::<SettingsGlobal>().model.clone();
+            let music_libraries = MusicLibrariesSettings::new(cx);
             #[cfg(feature = "proprietary-services")]
             let lastfm = cx.global::<Models>().lastfm.clone();
             #[cfg(feature = "libre-services")]
@@ -71,11 +78,15 @@ impl ServicesSettings {
             };
 
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+            cx.observe(&music_libraries, |_, _, cx| cx.notify())
+                .detach();
             #[cfg(feature = "proprietary-services")]
             cx.observe(&lastfm, |_, _, cx| cx.notify()).detach();
 
             Self {
                 settings,
+                music_libraries,
+                scroll_handle: ScrollHandle::new(),
                 #[cfg(feature = "proprietary-services")]
                 lastfm,
                 #[cfg(feature = "libre-services")]
@@ -102,6 +113,15 @@ impl ServicesSettings {
 
 impl Render for ServicesSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_handle = self.scroll_handle.clone();
+        let (show_music_libraries, show_music_libraries_overview) = {
+            let music_libraries = self.music_libraries.read(cx);
+            (music_libraries.is_visible(), music_libraries.is_overview())
+        };
+        if show_music_libraries && !show_music_libraries_overview {
+            return self.music_libraries.clone().into_any_element();
+        }
+
         let services = self.settings.read(cx).services.clone();
         #[cfg(feature = "proprietary-services")]
         let lastfm = self.lastfm.read(cx).clone();
@@ -187,26 +207,52 @@ impl Render for ServicesSettings {
             }
         }
 
-        body.child(
-            label(
-                "services-discord-rpc",
-                tr!("SERVICES_DISCORD_RPC_TITLE", "Discord Rich Presence"),
+        let content = body
+            .child(
+                label(
+                    "services-discord-rpc",
+                    tr!("SERVICES_DISCORD_RPC_TITLE", "Discord Rich Presence"),
+                )
+                .subtext(tr!(
+                    "SERVICES_DISCORD_RPC_SUBTEXT",
+                    "Shows the current track in your Discord status while music is playing."
+                ))
+                .cursor_pointer()
+                .w_full()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.update_services(cx, |services| {
+                        services.discord_rpc_enabled = !services.discord_rpc_enabled;
+                    });
+                }))
+                .child(checkbox(
+                    "services-discord-rpc-check",
+                    services.discord_rpc_enabled,
+                )),
             )
-            .subtext(tr!(
-                "SERVICES_DISCORD_RPC_SUBTEXT",
-                "Shows the current track in your Discord status while music is playing."
-            ))
-            .cursor_pointer()
-            .w_full()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.update_services(cx, |services| {
-                    services.discord_rpc_enabled = !services.discord_rpc_enabled;
-                });
-            }))
-            .child(checkbox(
-                "services-discord-rpc-check",
-                services.discord_rpc_enabled,
-            )),
-        )
+            .when(show_music_libraries, |this| {
+                this.child(div().h(px(12.0)))
+                    .child(self.music_libraries.clone())
+            });
+
+        div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .child(
+                div()
+                    .id("services-settings-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll_handle)
+                    .child(div().w_full().p(px(16.0)).child(content)),
+            )
+            .child(
+                crate::ui::components::scrollbar::floating_scrollbar(
+                    "services-settings-scrollbar",
+                    scroll_handle,
+                )
+                .right(px(4.0)),
+            )
+            .into_any_element()
     }
 }

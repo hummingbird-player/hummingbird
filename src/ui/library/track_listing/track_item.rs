@@ -20,7 +20,10 @@ use crate::media::numbering::{NumberDisplayMode, format_track_position, side_let
 use crate::ui::library::detail_view_padding;
 use crate::ui::{
     availability::is_track_available,
-    components::context::context,
+    components::{
+        context::context,
+        source_indicator::{source_indicator_slot, source_origin},
+    },
     library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
     models::PlaybackInfo,
     theme::Theme,
@@ -448,6 +451,17 @@ impl Render for TrackItem {
                                         is_available,
                                         cx,
                                     ))
+                                    .child(
+                                        source_indicator_slot(
+                                            ("track-source", track_id as usize),
+                                            source_origin(
+                                                !self.track.source.is_local(),
+                                                track_id as usize,
+                                            ),
+                                            theme.text_secondary,
+                                        )
+                                        .ml(px(10.0)),
+                                    )
                                     .child(self.render_duration(&theme)),
                             ),
                     )

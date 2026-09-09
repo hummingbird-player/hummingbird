@@ -58,6 +58,9 @@ Colors are specified as CSS-style hex codes (`#ABCDEF`). Use `#00000000` for ful
 transparent colors. If a color is not specified, the color from the default theme
 is used.
 
+`text_placeholder` controls placeholder text in textboxes. When it is omitted,
+it inherits that theme's `text_secondary` color.
+
 ## Example
 A `theme.json` for the default theme is provided here.
 
@@ -76,6 +79,7 @@ A `theme.json` for the default theme is provided here.
   
   "text": "#E8E9F2",
   "text_secondary": "#A0A1AD",
+  "text_placeholder": "#A0A1AD",
   "text_disabled": "#5F5F71",
   "text_link": "#5279D4",
 

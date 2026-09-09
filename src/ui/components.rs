@@ -25,6 +25,7 @@ pub mod section_header;
 pub mod segmented_control;
 pub mod sidebar;
 pub mod slider;
+pub mod source_indicator;
 pub mod styling;
 pub mod table;
 pub mod textbox;

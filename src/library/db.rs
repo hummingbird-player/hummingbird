@@ -547,27 +547,27 @@ pub async fn get_track_by_reference(
     Ok(track.map(Arc::new))
 }
 
-/// Lists all albums for searching. Returns (id, title, artist display override, artist names).
+/// Lists all albums for searching.
 #[allow(clippy::type_complexity)]
 pub async fn list_albums_search(
     pool: &SqlitePool,
-) -> sqlx::Result<Vec<(i64, String, Option<String>, String)>> {
+) -> sqlx::Result<Vec<(i64, String, Option<String>, String, String)>> {
     let query = include_str!("../../queries/library/find_albums_search.sql");
 
-    let albums = sqlx::query_as::<_, (i64, String, Option<String>, String)>(query)
+    let albums = sqlx::query_as::<_, (i64, String, Option<String>, String, String)>(query)
         .fetch_all(pool)
         .await?;
 
     Ok(albums)
 }
 
-/// Lists all tracks for searching. Returns (id, title, artist_names, album_id).
+/// Lists all tracks for searching.
 pub async fn list_tracks_search(
     pool: &SqlitePool,
-) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>> {
+) -> sqlx::Result<Vec<(i64, String, String, Option<i64>, String)>> {
     let query = include_str!("../../queries/library/find_tracks_search.sql");
 
-    let tracks = sqlx::query_as::<_, (i64, String, String, Option<i64>)>(query)
+    let tracks = sqlx::query_as::<_, (i64, String, String, Option<i64>, String)>(query)
         .fetch_all(pool)
         .await?;
 

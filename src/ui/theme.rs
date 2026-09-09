@@ -97,6 +97,7 @@ pub struct Theme {
 
     pub text: Rgba,
     pub text_secondary: Rgba,
+    pub text_placeholder: Rgba,
     pub text_disabled: Rgba,
     pub text_link: Rgba,
 
@@ -267,6 +268,7 @@ impl<'de> Deserialize<'de> for Theme {
                 A: MapAccess<'de>,
             {
                 let mut theme = Theme::default();
+                let mut has_text_placeholder = false;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "window_background" => {
@@ -295,6 +297,10 @@ impl<'de> Deserialize<'de> for Theme {
                         }
                         "text" => theme.text = map.next_value::<ColorHex>()?.0,
                         "text_secondary" => theme.text_secondary = map.next_value::<ColorHex>()?.0,
+                        "text_placeholder" => {
+                            theme.text_placeholder = map.next_value::<ColorHex>()?.0;
+                            has_text_placeholder = true;
+                        }
                         "text_disabled" => theme.text_disabled = map.next_value::<ColorHex>()?.0,
                         "text_link" => theme.text_link = map.next_value::<ColorHex>()?.0,
                         "nav_button_hover" => {
@@ -627,6 +633,9 @@ impl<'de> Deserialize<'de> for Theme {
                         }
                     }
                 }
+                if !has_text_placeholder {
+                    theme.text_placeholder = theme.text_secondary;
+                }
                 Ok(theme)
             }
         }
@@ -652,6 +661,7 @@ impl Default for Theme {
 
             text: rgb(0xF1F2F4),
             text_secondary: rgb(0xB1B3B9),
+            text_placeholder: rgb(0xB1B3B9),
             text_disabled: rgb(0x676771),
             text_link: rgb(0x647ADB),
 
@@ -1107,5 +1117,32 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
         cx.set_global(tw);
     } else if let Err(e) = watcher {
         warn!("failed to watch theme directory: {:?}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Theme;
+
+    #[test]
+    fn placeholder_inherits_custom_secondary_text_color_when_omitted() {
+        let theme: Theme = serde_json::from_str(r##"{"text_secondary":"#123456"}"##).unwrap();
+
+        assert_eq!(theme.text_placeholder, theme.text_secondary);
+    }
+
+    #[test]
+    fn explicit_placeholder_color_overrides_secondary_text_color() {
+        let theme: Theme = serde_json::from_str(
+            r##"{
+                "text_secondary":"#123456",
+                "text_placeholder":"#654321",
+                "text_link":"#654321"
+            }"##,
+        )
+        .unwrap();
+
+        assert_ne!(theme.text_placeholder, theme.text_secondary);
+        assert_eq!(theme.text_placeholder, theme.text_link);
     }
 }

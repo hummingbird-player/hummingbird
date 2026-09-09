@@ -11,6 +11,7 @@ use crate::ui::{
         context::context,
         drag_drop::{AlbumDragData, DragPreview, TrackDragData},
         managed_image::{ManagedImageKey, managed_image},
+        source_indicator::{source_indicator, source_origin},
     },
     models::Models,
     theme::Theme,
@@ -187,12 +188,33 @@ where
                 div()
                     .mt(px(8.0))
                     .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
                     .text_sm()
                     .font_weight(FontWeight::BOLD)
-                    .text_ellipsis()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(self.primary_text.clone()),
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex_grow(1.0)
+                            .text_ellipsis()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(self.primary_text.clone()),
+                    )
+                    .when_some(
+                        T::has_source_indicators()
+                            .then(|| source_origin(self.row.is_remote_source(), 0))
+                            .flatten(),
+                        |this, origin| {
+                            this.child(source_indicator(
+                                (self.id.clone(), "source"),
+                                origin,
+                                theme.text_secondary,
+                            ))
+                        },
+                    ),
             )
             .when_some(self.secondary_text.clone(), |this, secondary| {
                 this.child(

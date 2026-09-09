@@ -6,11 +6,17 @@ use rustc_hash::FxBuildHasher;
 
 use super::{
     OnSelectHandler,
-    table_data::{Column, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData},
+    table_data::{
+        Column, GridContext, SourceIndicatorPosition, TABLE_IMAGE_COLUMN_WIDTH, TableData,
+        TableDragData,
+    },
 };
 use crate::ui::{
-    components::context::context,
-    components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+    components::{
+        context::context,
+        drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+        source_indicator::{source_indicator_slot, source_origin},
+    },
     models::Models,
     theme::Theme,
 };
@@ -203,25 +209,57 @@ where
                     .get_index(i)
                     .expect("data references column outside of viewed table");
                 let is_last = i == column_count - 1;
-                let base_width = *col.1;
-                row = row.child(
-                    div()
-                        .when(!is_last, |this| this.w(px(base_width)))
-                        .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
-                        .h(px(36.0))
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
-                        .when(!col.0.is_primary(), |div| {
-                            div.text_color(theme.text_secondary)
-                        })
-                        .text_sm()
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .border_color(theme.border_color)
-                        .when_some(column_data.clone(), |div, string| div.child(string)),
-                );
+                let source_position = T::source_indicator_position(*col.0);
+                let origin = source_position.and_then(|_| {
+                    source_origin(
+                        self.row.as_ref().is_some_and(|row| row.is_remote_source()),
+                        self.index,
+                    )
+                });
+                let source = || {
+                    source_indicator_slot(
+                        (self.id.clone().unwrap_or(self.index.into()), "source"),
+                        origin.clone(),
+                        theme.text_secondary,
+                    )
+                };
+                let mut cell = div()
+                    .when(!is_last, |this| this.w(px(*col.1)))
+                    .when(is_last, |this| this.flex_grow(1.0).min_w(px(*col.1)))
+                    .h(px(36.0))
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
+                    .when(!col.0.is_primary(), |div| {
+                        div.text_color(theme.text_secondary)
+                    })
+                    .text_sm()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .border_color(theme.border_color);
+                if source_position.is_some() {
+                    cell = cell.flex().items_center().gap(px(6.0));
+                }
+                if source_position == Some(SourceIndicatorPosition::Before) {
+                    cell = cell.child(source());
+                }
+                cell = cell.when_some(column_data.clone(), |this, string| {
+                    this.child(
+                        div()
+                            .min_w(px(0.0))
+                            .when(
+                                source_position == Some(SourceIndicatorPosition::After),
+                                |this| this.flex_grow(1.0),
+                            )
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(string),
+                    )
+                });
+                if source_position == Some(SourceIndicatorPosition::After) {
+                    cell = cell.child(source());
+                }
+                row = row.child(cell);
             }
         }
 

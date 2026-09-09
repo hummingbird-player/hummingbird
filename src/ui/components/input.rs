@@ -7,7 +7,7 @@ use gpui::{
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ScrollHandle, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
-    actions, div, fill, hsla, point, prelude::*, px, relative, size,
+    actions, div, fill, point, prelude::*, px, relative, rgb_to_hsla, size,
 };
 use unicode_segmentation::*;
 
@@ -119,6 +119,7 @@ pub struct TextInput {
     scroll_handle: ScrollHandle,
     pub content: SharedString,
     placeholder: SharedString,
+    masked: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -712,6 +713,7 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let theme = cx.global::<Theme>();
         let input = self.input.read(cx);
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
@@ -719,7 +721,12 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
+            (
+                input.placeholder.clone(),
+                rgb_to_hsla(theme.text_placeholder),
+            )
+        } else if input.masked {
+            (SharedString::from("*".repeat(content.len())), style.color)
         } else {
             (content, style.color)
         };
@@ -764,8 +771,6 @@ impl Element for TextElement {
         let line = window
             .text_system()
             .shape_line(display_text, font_size, &runs, None);
-
-        let theme = cx.global::<Theme>();
 
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
@@ -859,6 +864,7 @@ impl TextInput {
             focus_handle,
             content: content.unwrap_or_else(|| "".into()),
             placeholder: placeholder.unwrap_or_else(|| "".into()),
+            masked: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -871,6 +877,14 @@ impl TextInput {
             scroll_handle: ScrollHandle::new(),
             enriched_input_handler,
         })
+    }
+
+    pub fn set_placeholder(&mut self, placeholder: SharedString) {
+        self.placeholder = placeholder;
+    }
+
+    pub fn set_masked(&mut self, masked: bool) {
+        self.masked = masked;
     }
 }
 

@@ -16,7 +16,11 @@ use tokio::sync::mpsc::channel;
 use tracing::{debug, trace};
 
 use crate::ui::{
-    components::{context::context, input::EnrichedInputAction},
+    components::{
+        context::context,
+        input::EnrichedInputAction,
+        source_indicator::{source_indicator_slot, source_origin},
+    },
     theme::Theme,
 };
 
@@ -26,6 +30,15 @@ pub trait PaletteItem {
     fn left_content(&self, cx: &mut App) -> Option<FinderItemLeft>;
     fn middle_content(&self, cx: &mut App) -> SharedString;
     fn right_content(&self, cx: &mut App) -> Option<SharedString>;
+    fn has_source_indicator_slot() -> bool {
+        false
+    }
+    fn supports_source_indicator(&self) -> bool {
+        false
+    }
+    fn has_remote_source(&self) -> bool {
+        false
+    }
     fn is_enabled(&self, _cx: &App) -> bool {
         true
     }
@@ -921,10 +934,26 @@ where
                     .text_ellipsis()
                     .child(self.middle.clone()),
             )
+            .when(T::has_source_indicator_slot(), |div_outer| {
+                let origin = self.item_data.as_ref().and_then(|item| {
+                    item.supports_source_indicator()
+                        .then(|| source_origin(item.has_remote_source(), self.idx))
+                        .flatten()
+                });
+                div_outer.child(
+                    source_indicator_slot(
+                        (self.id.clone(), "source"),
+                        origin,
+                        theme.text_secondary,
+                    )
+                    .ml_auto()
+                    .ml(px(8.0)),
+                )
+            })
             .when_some(self.right.clone(), |div_outer, right| {
                 div_outer.child(
                     div()
-                        .ml_auto()
+                        .when(!T::has_source_indicator_slot(), |this| this.ml_auto())
                         .pl(px(8.0))
                         .flex_shrink(1.0)
                         .overflow_hidden()

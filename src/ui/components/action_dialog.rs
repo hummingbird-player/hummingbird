@@ -462,6 +462,7 @@ impl RenderOnce for ActionDialog {
                         div()
                             .flex()
                             .flex_col()
+                            .when(!show_divider, |this| this.pt(px(14.0)))
                             .gap(px(8.0))
                             .children(self.actions.into_iter().map(render_action)),
                     )

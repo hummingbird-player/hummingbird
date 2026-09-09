@@ -6,6 +6,7 @@ pub mod lastfm;
 mod library;
 #[cfg(feature = "libre-services")]
 pub mod listenbrainz;
+mod music_libraries;
 mod playback;
 mod services;
 #[cfg(feature = "update")]
@@ -171,7 +172,7 @@ impl SettingsSectionKind {
 
     // sections that fill the content area vertically instead of scrolling
     fn fills_height(self) -> bool {
-        matches!(self, Self::Equalizer)
+        matches!(self, Self::Equalizer | Self::Services)
     }
 }
 

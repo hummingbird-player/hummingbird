@@ -54,9 +54,9 @@ async fn load_search_items(
     let albums = match db::list_albums_search(pool).await {
         Ok(album_data) => album_data
             .into_iter()
-            .map(|(id, title, artist_override, artists)| {
+            .map(|(id, title, artist_override, artists, source)| {
                 let available = availability.get(&id).copied().unwrap_or_default();
-                (id, title, artist_override, artists, available)
+                (id, title, artist_override, artists, available, source)
             })
             .collect(),
         Err(e) => {

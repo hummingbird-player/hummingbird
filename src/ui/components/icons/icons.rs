@@ -29,6 +29,7 @@ pub const MENU: &str = "!bundled:icons/menu-2.svg";
 pub const DOTS_VERTICAL: &str = "!bundled:icons/dots-vertical.svg";
 pub const CHEVRON_UP: &str = "!bundled:icons/chevron-up.svg";
 pub const CHEVRON_DOWN: &str = "!bundled:icons/chevron-down.svg";
+pub const CLOUD: &str = "!bundled:icons/cloud.svg";
 pub const DISC: &str = "!bundled:icons/disc.svg";
 pub const PLAYLIST: &str = "!bundled:icons/playlist.svg";
 pub const PLAYLIST_ADD: &str = "!bundled:icons/playlist-add.svg";

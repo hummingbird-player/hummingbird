@@ -1727,7 +1727,7 @@ async fn albums_search_includes_override_and_artist_names() {
         .await
         .unwrap();
 
-    let rows: Vec<(i64, String, Option<String>, String)> = sqlx::query_as(include_str!(
+    let rows: Vec<(i64, String, Option<String>, String, String)> = sqlx::query_as(include_str!(
         "../../../../queries/library/find_albums_search.sql"
     ))
     .fetch_all(&pool)
@@ -1736,10 +1736,11 @@ async fn albums_search_includes_override_and_artist_names() {
 
     let album = rows
         .iter()
-        .find(|(_, title, _, _)| title == "Album")
+        .find(|(_, title, _, _, _)| title == "Album")
         .unwrap();
     assert_eq!(album.2.as_deref(), Some("TR-i"));
     assert_eq!(album.3, "Todd Rundgren");
+    assert_eq!(album.4, "local");
 }
 
 async fn linked_artist_names(pool: &SqlitePool, album: &str) -> Vec<String> {

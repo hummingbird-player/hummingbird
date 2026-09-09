@@ -27,6 +27,7 @@ pub enum SearchPaletteItem {
         artist: String,
         artists: String,
         available: bool,
+        remote: bool,
     },
     Artist {
         id: i64,
@@ -37,6 +38,7 @@ pub enum SearchPaletteItem {
         title: String,
         artists: String,
         album_id: Option<i64>,
+        remote: bool,
     },
 }
 
@@ -46,9 +48,9 @@ impl SearchPaletteItem {
     }
 
     pub fn from_search_results(
-        albums: Vec<(i64, String, Option<String>, String, bool)>,
+        albums: Vec<(i64, String, Option<String>, String, bool, String)>,
         artists: Vec<(i64, String)>,
-        tracks: Vec<(i64, String, String, Option<i64>)>,
+        tracks: Vec<(i64, String, String, Option<i64>, String)>,
     ) -> Vec<Arc<SearchPaletteItem>> {
         let mut items: Vec<Arc<SearchPaletteItem>> = Vec::new();
 
@@ -56,22 +58,24 @@ impl SearchPaletteItem {
             items.push(Arc::new(SearchPaletteItem::Artist { id, name }));
         }
 
-        for (id, title, artist_override, artists, available) in albums {
+        for (id, title, artist_override, artists, available, source) in albums {
             items.push(Arc::new(SearchPaletteItem::Album {
                 id,
                 title,
                 artist: artist_override.unwrap_or_else(|| artists.clone()),
                 artists,
                 available,
+                remote: source != "local",
             }));
         }
 
-        for (id, title, artists, album_id) in tracks {
+        for (id, title, artists, album_id, source) in tracks {
             items.push(Arc::new(SearchPaletteItem::Track {
                 id,
                 title,
                 artists,
                 album_id,
+                remote: source != "local",
             }));
         }
 
@@ -111,6 +115,26 @@ impl PaletteItem for SearchPaletteItem {
             SearchPaletteItem::Album { artist, .. } => Some(artist.clone().into()),
             SearchPaletteItem::Track { artists, .. } => Some(artists.clone().into()),
             SearchPaletteItem::Artist { .. } => None,
+        }
+    }
+
+    fn has_source_indicator_slot() -> bool {
+        true
+    }
+
+    fn supports_source_indicator(&self) -> bool {
+        matches!(
+            self,
+            SearchPaletteItem::Album { .. } | SearchPaletteItem::Track { .. }
+        )
+    }
+
+    fn has_remote_source(&self) -> bool {
+        match self {
+            SearchPaletteItem::Album { remote, .. } | SearchPaletteItem::Track { remote, .. } => {
+                *remote
+            }
+            SearchPaletteItem::Artist { .. } => false,
         }
     }
 

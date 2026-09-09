@@ -17,6 +17,7 @@ use crate::{
             },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_check_item, menu_item},
+            source_indicator::{source_indicator, source_origin},
             tooltip::build_tooltip,
             volume_tooltip::build_volume_tooltip,
         },
@@ -308,6 +309,10 @@ impl Render for InfoSection {
                     .map(|p| ManagedImageKey::TrackFile(p.clone()))
             });
         let image_element_key = self.image_element_key;
+        let is_remote = self
+            .current_library_track
+            .as_ref()
+            .is_some_and(|track| !track.source.is_local());
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
 
@@ -426,17 +431,40 @@ impl Render for InfoSection {
                                 .child(
                                     div()
                                         .id("info-section-track-name")
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(5.0))
                                         .font_weight(FontWeight::BOLD)
-                                        .text_ellipsis()
                                         .w_full()
+                                        .overflow_hidden()
                                         .when_some(album_navigation_track, |this, track| {
                                             this.cursor_pointer().on_click(move |_, _, cx| {
                                                 navigate_to_track_album_and_reveal(cx, &track);
                                             })
                                         })
-                                        .child(self.track_name.clone().unwrap_or_else(|| {
-                                            tr!("UNKNOWN_TRACK", "Unknown Track").into()
-                                        })),
+                                        .child(
+                                            div()
+                                                .min_w(px(0.0))
+                                                .flex_grow(1.0)
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .child(self.track_name.clone().unwrap_or_else(
+                                                    || tr!("UNKNOWN_TRACK", "Unknown Track").into(),
+                                                )),
+                                        )
+                                        .when_some(
+                                            source_origin(
+                                                is_remote,
+                                                track_id.unwrap_or_default() as usize,
+                                            ),
+                                            |this, origin| {
+                                                this.child(source_indicator(
+                                                    "info-section-source",
+                                                    origin,
+                                                    theme.text_secondary,
+                                                ))
+                                            },
+                                        ),
                                 )
                                 .child(
                                     div()

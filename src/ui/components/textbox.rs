@@ -102,6 +102,20 @@ impl Textbox {
         });
     }
 
+    pub fn set_placeholder(&self, cx: &mut App, placeholder: SharedString) {
+        self.input.update(cx, |input, cx| {
+            input.set_placeholder(placeholder);
+            cx.notify();
+        });
+    }
+
+    pub fn set_masked(&self, cx: &mut App, masked: bool) {
+        self.input.update(cx, |input, cx| {
+            input.set_masked(masked);
+            cx.notify();
+        });
+    }
+
     pub fn select_all(&self, cx: &mut App) {
         self.input.update(cx, |input, cx| input.select_all_text(cx));
     }

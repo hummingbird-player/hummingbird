@@ -24,6 +24,7 @@ use crate::{
             playback_controls::playback_controls,
             popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
+            source_indicator::{source_indicator, source_origin},
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
@@ -281,13 +282,36 @@ impl ReleaseView {
                     )
                     .child(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
                             .font_weight(FontWeight::EXTRA_BOLD)
                             .text_size(rems(2.5))
                             .line_height(rems(2.75))
                             .mb(px(11.0))
                             .w_full()
-                            .text_ellipsis()
-                            .child(self.album.title.clone()),
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .flex_grow(1.0)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(self.album.title.clone()),
+                            )
+                            .when_some(
+                                source_origin(
+                                    !self.album.source.is_local(),
+                                    self.album.id as usize,
+                                ),
+                                |this, origin| {
+                                    this.child(source_indicator(
+                                        ("release-source", self.album.id as usize),
+                                        origin,
+                                        theme.text_secondary,
+                                    ))
+                                },
+                            ),
                     )
                     .child(
                         div()

@@ -20,7 +20,9 @@ use crate::{
         components::{
             drag_drop::{AlbumDragData, TrackDragData},
             managed_image::ManagedImageKey,
-            table::table_data::{Column, GridContext, TableData, TableDragData, TableSort},
+            table::table_data::{
+                Column, GridContext, SourceIndicatorPosition, TableData, TableDragData, TableSort,
+            },
         },
         library::context_menus::{
             AlbumContextMenuContext, TrackContextMenuContext, album_menu_for_table,
@@ -214,6 +216,18 @@ impl TableData<AlbumColumn> for Album {
 
     fn has_images() -> bool {
         true
+    }
+
+    fn has_source_indicators() -> bool {
+        true
+    }
+
+    fn source_indicator_position(column: AlbumColumn) -> Option<SourceIndicatorPosition> {
+        (column == AlbumColumn::Title).then_some(SourceIndicatorPosition::After)
+    }
+
+    fn is_remote_source(&self) -> bool {
+        !self.source.is_local()
     }
 
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {
@@ -482,6 +496,18 @@ impl TableData<TrackColumn> for Track {
 
     fn has_images() -> bool {
         true
+    }
+
+    fn has_source_indicators() -> bool {
+        true
+    }
+
+    fn source_indicator_position(column: TrackColumn) -> Option<SourceIndicatorPosition> {
+        (column == TrackColumn::Length).then_some(SourceIndicatorPosition::Before)
+    }
+
+    fn is_remote_source(&self) -> bool {
+        !self.source.is_local()
     }
 
     fn get_element_id(&self) -> impl Into<gpui::ElementId> {

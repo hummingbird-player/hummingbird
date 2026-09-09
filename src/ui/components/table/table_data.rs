@@ -73,6 +73,12 @@ pub enum GridContext {
     Standalone,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceIndicatorPosition {
+    Before,
+    After,
+}
+
 /// The TableData trait defines the interface for retrieving, sorting, and listing data for a table.
 /// Implementing this trait allows a table to display data in a structured manner.
 pub trait TableData<C>: Sized
@@ -101,6 +107,18 @@ where
     /// Returns true if the rows may contain images. This is used during the layout phase to
     /// determine if placeholder covers and the header section should be displayed.
     fn has_images() -> bool;
+
+    fn has_source_indicators() -> bool {
+        false
+    }
+
+    fn source_indicator_position(_column: C) -> Option<SourceIndicatorPosition> {
+        None
+    }
+
+    fn is_remote_source(&self) -> bool {
+        false
+    }
 
     /// Retrieves the associated image for the row.
     fn get_image_path(&self) -> Option<SharedString>;

@@ -33,7 +33,8 @@ use gpui::{prelude::FluentBuilder, *};
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use table_data::{
-    Column, ColumnReorderDrag, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableSort,
+    Column, ColumnReorderDrag, GridContext, SourceIndicatorPosition, TABLE_IMAGE_COLUMN_WIDTH,
+    TableData, TableSort,
 };
 use table_item::TableItem;
 
@@ -513,41 +514,56 @@ where
                 None
             };
 
-            header = header.child(
+            let source_position = T::source_indicator_position(column_id);
+            let source_space = || div().size(px(16.0)).flex_shrink_0();
+            let mut column_header = div()
+                .overflow_hidden()
+                .flex()
+                .when(!is_last, |this| this.w(px(base_width)))
+                .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
+                .h(px(TABLE_HEADER_HEIGHT))
+                .pl(px(12.0))
+                .pr(px(8.0))
+                .items_center()
+                .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
+                .text_sm()
+                .flex_shrink_0()
+                .font_weight(FontWeight::SEMIBOLD)
+                .when(source_position.is_some(), |this| this.gap(px(6.0)));
+            if source_position == Some(SourceIndicatorPosition::Before) {
+                column_header = column_header.child(source_space());
+            }
+            column_header = column_header.child(
                 div()
+                    .flex_shrink(1.0)
+                    .when(
+                        source_position == Some(SourceIndicatorPosition::After),
+                        |this| this.flex_grow(1.0),
+                    )
                     .overflow_hidden()
-                    .flex()
-                    .when(!is_last, |this| this.w(px(base_width)))
-                    .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
-                    .h(px(TABLE_HEADER_HEIGHT))
-                    .pl(px(12.0))
-                    .pr(px(8.0))
-                    .items_center()
-                    .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
-                    .text_sm()
-                    .flex_shrink_0()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(
-                        div()
-                            .flex_shrink(1.0)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(column_id.get_column_name()),
-                    )
-                    .child(
-                        icon(match sort_ascending_if_this_col {
-                            Some(true) => CHEVRON_UP,
-                            Some(false) => CHEVRON_DOWN,
-                            None => SELECTOR,
-                        })
-                        .when(!sort_ascending_if_this_col.is_some(), |this| {
-                            this.text_color(theme.text_disabled)
-                        })
-                        .size(px(14.0))
-                        .ml_auto()
-                        .flex_shrink_0()
-                        .my_auto(),
-                    )
+                    .text_ellipsis()
+                    .child(column_id.get_column_name()),
+            );
+            if source_position == Some(SourceIndicatorPosition::After) {
+                column_header = column_header.child(source_space());
+            }
+            column_header = column_header.child(
+                icon(match sort_ascending_if_this_col {
+                    Some(true) => CHEVRON_UP,
+                    Some(false) => CHEVRON_DOWN,
+                    None => SELECTOR,
+                })
+                .when(!sort_ascending_if_this_col.is_some(), |this| {
+                    this.text_color(theme.text_disabled)
+                })
+                .size(px(14.0))
+                .ml_auto()
+                .flex_shrink_0()
+                .my_auto(),
+            );
+
+            header = header.child(
+                column_header
                     .id(i)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.sort_method.update(cx, move |this, cx| {
