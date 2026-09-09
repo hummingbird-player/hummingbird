@@ -7,7 +7,7 @@ use crate::{
         format::{BufferSize, ChannelSpec, FormatInfo, SampleFormat, SupportedFormat},
         resample::SampleFrom,
         traits::{Device, DeviceProvider, OutputStream},
-        util::{AtomicF64, GainRamp, Scale, read_available, write_bounded},
+        util::{AtomicF64, GainRamp, Scale, read_available},
     },
     media::{
         pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES},
@@ -341,6 +341,23 @@ where
     }
 }
 
+fn idle_pause_delay(samples: usize, channels: u16, rate: u32) -> Duration {
+    Duration::from_secs_f64(4.0 * samples as f64 / f64::from(channels) / f64::from(rate))
+}
+
+#[cfg(test)]
+#[test]
+fn idle_pause_delay_counts_frames_not_interleaved_samples() {
+    assert_eq!(
+        idle_pause_delay(19_200, 2, 48_000),
+        Duration::from_millis(800)
+    );
+    assert_eq!(
+        idle_pause_delay(9_600, 1, 48_000),
+        Duration::from_millis(800)
+    );
+}
+
 impl<T> OutputStream for CpalStream<T>
 where
     T: CpalSample + SampleFrom<f64>,
@@ -350,7 +367,25 @@ where
     }
 
     fn needs_input(&self) -> bool {
-        true // will always be true as long as the submitting thread is not blocked by submit_frame
+        self.ring_buf.slots() >= usize::from(self.config.channels)
+    }
+
+    fn queued_frames(&self) -> usize {
+        (self.buffer_size - self.ring_buf.slots()) / usize::from(self.config.channels)
+    }
+
+    fn idle_pause_delay(&self) -> Duration {
+        // buffer_size counts interleaved samples, not frames
+        idle_pause_delay(
+            self.buffer_size,
+            self.config.channels,
+            self.config.sample_rate,
+        )
+    }
+
+    fn next_poll_delay(&self) -> Option<Duration> {
+        self.pause_at
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 
     fn play(&mut self) -> Result<(), StateError> {
@@ -422,8 +457,13 @@ where
 
         self.report_underruns();
 
+        let channel_count = input.channel_count().max(1);
         let capacity_frames = self.interleave_buffer.capacity() / input.channel_count().max(1);
-        let available = input.potentially_available().min(capacity_frames);
+        let writable_frames = self.ring_buf.slots() / channel_count;
+        let available = input
+            .potentially_available()
+            .min(capacity_frames)
+            .min(writable_frames);
         if available == 0 {
             return Ok(0);
         }
@@ -451,8 +491,12 @@ where
             }
         }
 
-        write_bounded(&mut self.ring_buf, &self.interleave_buffer)
-            .map_err(|_| SubmissionError::WriteTimeout)?;
+        // The callback only frees space, so this cannot become full after the check above.
+        let chunk = self
+            .ring_buf
+            .write_chunk_uninit(self.interleave_buffer.len())
+            .expect("checked CPAL ring capacity before consuming input");
+        chunk.fill_from_iter(self.interleave_buffer.iter().copied());
 
         Ok(read)
     }

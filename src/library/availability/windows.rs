@@ -222,8 +222,8 @@ fn drive_mountpoint(index: usize) -> PathBuf {
 fn drive_index(path: &Path) -> Option<usize> {
     let key = path_key(path);
     let drive = *key.as_bytes().first()?;
-    (b'a'..=b'z')
-        .contains(&drive)
+    drive
+        .is_ascii_lowercase()
         .then_some((drive - b'a') as usize)
         .filter(|_| key.as_bytes().get(1) == Some(&b':'))
 }

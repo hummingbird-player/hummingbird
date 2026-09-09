@@ -14,7 +14,7 @@ use crate::media::{
         PlaybackStartError, SeekError, TrackDurationError,
     },
     metadata::{Metadata, MetadataTag, apply_tag},
-    pipeline::{ChannelProducers, DecodeResult},
+    pipeline::{AudioBlock, DecodeResult},
     traits::{MediaProvider, MediaProviderFeatures, MediaStream},
 };
 
@@ -480,10 +480,7 @@ impl MediaStream for LoftyStream {
         Err(ChannelRetrievalError::NothingToPlay)
     }
 
-    fn decode_into(
-        &mut self,
-        _output: &mut ChannelProducers<f64>,
-    ) -> Result<DecodeResult, PlaybackReadError> {
+    fn decode_into(&mut self, _output: &mut AudioBlock) -> Result<DecodeResult, PlaybackReadError> {
         Err(PlaybackReadError::InvalidState)
     }
 

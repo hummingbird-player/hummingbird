@@ -19,6 +19,7 @@ use tracing::{Instrument as _, debug_span, error, trace_span, warn};
 use crate::{
     media::metadata::Metadata,
     playback::{
+        commands::CommandSender,
         events::{PlaybackCommand, RepeatState},
         interface::PlaybackInterface,
         thread::PlaybackState,
@@ -94,11 +95,11 @@ pub trait PlaybackController: Send {
 
 #[derive(Clone)]
 pub struct ControllerBridge {
-    playback_thread: UnboundedSender<PlaybackCommand>,
+    playback_thread: CommandSender,
 }
 
 impl ControllerBridge {
-    pub fn new(playback_thread: UnboundedSender<PlaybackCommand>) -> Self {
+    pub fn new(playback_thread: CommandSender) -> Self {
         Self { playback_thread }
     }
 

@@ -10,7 +10,7 @@ use super::{
         PlaybackStartError, SeekError, TrackDurationError,
     },
     metadata::Metadata,
-    pipeline::{ChannelProducers, DecodeResult},
+    pipeline::{AudioBlock, DecodeResult},
 };
 
 bitflags! {
@@ -127,12 +127,8 @@ pub trait MediaStream {
     /// resampling when the source rate differs from the device rate.
     fn sample_rate(&self) -> Result<u32, ChannelRetrievalError>;
 
-    /// Decode one packet/frame and write samples as f64 directly to the provided ring buffer producers.
-    /// The decoder is responsible for converting from the native sample format to f64.
-    fn decode_into(
-        &mut self,
-        output: &mut ChannelProducers<f64>,
-    ) -> Result<DecodeResult, PlaybackReadError>;
+    /// Fill the reusable block with decoded planar f64 samples.
+    fn decode_into(&mut self, output: &mut AudioBlock) -> Result<DecodeResult, PlaybackReadError>;
 
     /// Whether or not the media stream should attempt to use it's internal loop handling. With
     /// Symphonia, the media stream will seek to the loop start point from the EOF or loop end

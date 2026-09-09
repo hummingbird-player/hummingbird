@@ -21,6 +21,7 @@ fn process_cycle_does_not_allocate() {
     write_wav_i16(&path, RATE, 2, &i16_test_signal(FRAMES, 2));
 
     let mut engine = engine_playing(&path);
+    let initial_decode_allocations = engine.decode_allocations();
 
     let mut guarded_cycles = 0usize;
     let mut violating_cycles = 0usize;
@@ -29,7 +30,11 @@ fn process_cycle_does_not_allocate() {
     loop {
         let (result, allocations) = count_allocations(|| engine.process_cycle());
         match result {
-            EngineCycleResult::Continue => {}
+            EngineCycleResult::SourceEof => engine.finish_playback(),
+            EngineCycleResult::Pending => {
+                std::thread::park_timeout(std::time::Duration::from_millis(1));
+            }
+            EngineCycleResult::Continue | EngineCycleResult::Backpressured => {}
             EngineCycleResult::Eof => break,
             other => panic!("unexpected engine result under allocation guard: {other:?}"),
         }
@@ -57,5 +62,10 @@ fn process_cycle_does_not_allocate() {
         "{violating_cycles} of {guarded_cycles} steady-state cycles allocated \
          ({total_allocations} allocations total, first at guarded cycle {})",
         first_violation.unwrap_or(0)
+    );
+    assert_eq!(
+        engine.decode_allocations(),
+        initial_decode_allocations,
+        "steady-state worker decode/handoff allocated"
     );
 }

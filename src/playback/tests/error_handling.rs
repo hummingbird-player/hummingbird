@@ -14,37 +14,6 @@ fn constant_signal(frames: usize, value: i16) -> Vec<i16> {
 }
 
 #[test]
-fn device_death_mid_playback_recovers_without_dropping_frames() {
-    let _guard = engine_lock();
-    let rate = 44_100;
-    configure_dummy_device(rate, "S16", CHANNELS);
-    // fault once, part way through the track.
-    configure_device_death(5_000);
-
-    let dir = TestDir::new("hb-robustness-device-death");
-    let frames = 20_000;
-    let path = dir.join("a.wav");
-    write_wav_i16(&path, rate, CHANNELS, &constant_signal(frames, 9_000));
-
-    let capture = dummy::install_capture();
-    let mut engine = engine_playing(&path);
-    run_to_eof(&mut engine, MAX_CYCLES);
-    engine.stop();
-    dummy::uninstall_capture();
-
-    let planes = capture.lock().unwrap();
-    for (ch, plane) in planes.iter().enumerate() {
-        assert_eq!(
-            plane.len(),
-            frames,
-            "channel {ch}: {} frames reached the device, source has {frames} — frames were \
-             dropped when the device faulted",
-            plane.len()
-        );
-    }
-}
-
-#[test]
 fn seek_while_playing_flushes_and_continues() {
     let _guard = engine_lock();
     let rate = 44_100;
@@ -70,7 +39,7 @@ fn seek_while_playing_flushes_and_continues() {
 }
 
 #[test]
-fn playback_continues_after_earlier_device_fault() {
+fn device_fault_preserves_pcm_and_allows_the_next_track() {
     let _guard = engine_lock();
     let rate = 44_100;
     configure_dummy_device(rate, "S16", CHANNELS);
@@ -86,6 +55,17 @@ fn playback_continues_after_earlier_device_fault() {
     let capture = dummy::install_capture();
     let mut engine = engine_playing(&path_a);
     run_to_eof(&mut engine, MAX_CYCLES); // fault fires during track A
+    {
+        let planes = capture.lock().unwrap();
+        assert_eq!(planes.len(), CHANNELS as usize);
+        for (ch, plane) in planes.iter().enumerate() {
+            assert_eq!(plane.len(), frames, "channel {ch}: recovery lost frames");
+            assert!(
+                plane.iter().all(|&sample| sample == 7_000.0 / 32768.0),
+                "channel {ch}: recovery changed PCM"
+            );
+        }
+    }
     engine.open(&path_b, false).expect("failed to open track B");
     run_to_eof(&mut engine, MAX_CYCLES); // track B plays on a healthy stream
     engine.stop();
@@ -99,6 +79,12 @@ fn playback_continues_after_earlier_device_fault() {
             expected,
             "channel {ch}: {} frames reached the device across both tracks, expected {expected}",
             plane.len()
+        );
+        assert!(
+            plane[frames..]
+                .iter()
+                .all(|&sample| sample == -7_000.0 / 32768.0),
+            "channel {ch}: second track contains stale or corrupted PCM"
         );
     }
 }

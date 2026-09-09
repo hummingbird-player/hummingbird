@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod dsp;
 pub mod events;
 pub mod interface;

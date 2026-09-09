@@ -3,10 +3,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::App;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{
-    playback::{dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
+    playback::{commands::CommandSender, dsp::spectrum::SpectrumTapConsumer, events::RepeatState},
     power::PowerManager,
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
     ui::models::{CurrentTrack, ImageEvent, MMBSEvent, Models, PlaybackInfo},
@@ -30,7 +30,7 @@ use super::{
 ///
 /// For the functions provided by this interface, see the documentation for the playback thread.
 pub struct PlaybackInterface {
-    cmd_tx: UnboundedSender<PlaybackCommand>,
+    cmd_tx: CommandSender,
     events_rx: Option<UnboundedReceiver<PlaybackEvent>>,
     spectrum_tap: Option<SpectrumTapConsumer>,
 }
@@ -39,7 +39,7 @@ impl gpui::Global for PlaybackInterface {}
 
 impl PlaybackInterface {
     pub fn new(
-        cmd_tx: UnboundedSender<PlaybackCommand>,
+        cmd_tx: CommandSender,
         events_rx: UnboundedReceiver<PlaybackEvent>,
         spectrum_tap: SpectrumTapConsumer,
     ) -> Self {
@@ -191,7 +191,7 @@ impl PlaybackInterface {
             .unwrap();
     }
 
-    pub fn get_sender(&self) -> UnboundedSender<PlaybackCommand> {
+    pub fn get_sender(&self) -> CommandSender {
         self.cmd_tx.clone()
     }
 

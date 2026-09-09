@@ -303,7 +303,7 @@ impl BoundedDummyStream {
     fn new(capacity: usize, drain: usize) -> Self {
         Self {
             capacity,
-            drain: drain.max(1),
+            drain,
             fill: 0,
         }
     }
@@ -316,6 +316,10 @@ impl OutputStream for BoundedDummyStream {
 
     fn needs_input(&self) -> bool {
         self.fill < self.capacity
+    }
+
+    fn queued_frames(&self) -> usize {
+        self.fill
     }
 
     fn play(&mut self) -> Result<(), StateError> {

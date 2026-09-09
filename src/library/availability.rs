@@ -406,9 +406,9 @@ fn is_root_mount(path: &Path) -> bool {
     #[cfg(target_os = "windows")]
     {
         let key = path_key(path);
-        return key.len() == 2
+        key.len() == 2
             && key.as_bytes().get(1) == Some(&b':')
-            && key.as_bytes().get(0).is_some_and(u8::is_ascii_alphabetic);
+            && key.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
     }
 
     #[cfg(not(target_os = "windows"))]

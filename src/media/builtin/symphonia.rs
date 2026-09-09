@@ -1,4 +1,3 @@
-use smallvec::SmallVec;
 use std::{ffi::OsStr, fs::File};
 use symphonia::{
     core::{
@@ -35,7 +34,10 @@ use crate::{
             PlaybackStartError, SeekError, TrackDurationError,
         },
         metadata::{Metadata, MetadataTag, apply_tag},
-        pipeline::{ChannelProducers, DecodeResult, WriteError},
+        pipeline::{
+            AudioBlock, AudioBlockError, AudioDiscontinuity, DecodeResult, MAX_AUDIO_CHANNELS,
+            MAX_PACKET_FRAMES,
+        },
         traits::{MediaProvider, MediaProviderFeatures, MediaStream},
     },
 };
@@ -65,10 +67,44 @@ fn next_packet(
     symphonia_alloc_exempt(|| format.next_packet())
 }
 
-fn map_write_error(e: WriteError) -> PlaybackReadError {
+fn map_block_error(e: AudioBlockError) -> PlaybackReadError {
     match e {
-        WriteError::ChannelMismatch(m) => PlaybackReadError::ChannelCountChanged(m.got.max(1)),
-        other => PlaybackReadError::Unknown(format!("pipeline write failed: {other:?}")),
+        AudioBlockError::ChannelMismatch(m) => PlaybackReadError::ChannelCountChanged(m.got.max(1)),
+        other => PlaybackReadError::DecodeFatal(format!("invalid decoded audio: {other:?}")),
+    }
+}
+
+fn convert_audio(
+    decoded: GenericAudioBufferRef<'_>,
+    output: &mut [Vec<f64>],
+    start_offset: usize,
+    frames: usize,
+) {
+    macro_rules! convert_chan {
+        ($v:ident, $convert:expr) => {{
+            for (ch, output) in output.iter_mut().enumerate() {
+                if let Some(plane) = $v.plane(ch) {
+                    output.extend(plane.iter().skip(start_offset).take(frames).map($convert));
+                }
+            }
+        }};
+    }
+
+    match decoded {
+        GenericAudioBufferRef::U8(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::U16(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::U24(v) => {
+            convert_chan!(v, |s| u24_saturating(s.0).sample_into())
+        }
+        GenericAudioBufferRef::U32(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::S8(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::S16(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::S24(v) => {
+            convert_chan!(v, |s| i24_saturating(s.0).sample_into())
+        }
+        GenericAudioBufferRef::S32(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::F32(v) => convert_chan!(v, |&s| s.sample_into()),
+        GenericAudioBufferRef::F64(v) => convert_chan!(v, |&s| s),
     }
 }
 
@@ -103,6 +139,7 @@ fn map_probe_error(err: Error) -> OpenError {
 #[derive(Default)]
 pub struct SymphoniaProvider;
 
+#[derive(Default)]
 pub struct SymphoniaStream {
     format: Option<Box<dyn FormatReader>>,
     current_metadata: Metadata,
@@ -114,12 +151,67 @@ pub struct SymphoniaStream {
     decoder: Option<Box<dyn AudioDecoder>>,
     pending_metadata_update: bool,
     last_image: Option<Visual>,
-    conversion_buffer: Vec<Vec<f64>>,
+    conversion: ConvertedPacket,
+    pending_discontinuity: bool,
+    decode_eof_pending: bool,
     looping: bool,
     loop_start_seconds: Option<f64>,
     loop_end_seconds: Option<f64>,
     pending_loop_seek: bool,
     needs_loop_start_trim: bool,
+}
+
+/// Storage for a decoded packet that didn't fit in the caller's block.
+/// The planes stay allocated after the packet has been consumed.
+#[derive(Default)]
+struct ConvertedPacket {
+    planes: Vec<Vec<f64>>,
+    offset: usize,
+    rate: u32,
+    position_ms: Option<u64>,
+    discontinuity: Option<AudioDiscontinuity>,
+}
+
+impl ConvertedPacket {
+    fn clear(&mut self) {
+        for plane in &mut self.planes {
+            plane.clear();
+        }
+        self.offset = 0;
+        self.rate = 0;
+        self.position_ms = None;
+        self.discontinuity = None;
+    }
+
+    fn remaining(&self) -> usize {
+        self.planes
+            .first()
+            .map(|plane| plane.len().saturating_sub(self.offset))
+            .unwrap_or(0)
+    }
+
+    fn copy_into(&mut self, output: &mut AudioBlock) -> Result<(), PlaybackReadError> {
+        let remaining = self.remaining();
+        if remaining == 0 {
+            return Ok(());
+        }
+
+        if output.frames() == 0 {
+            let position_ms = self.position_ms.map(|position| {
+                position + (self.offset as u64 * 1000) / u64::from(self.rate.max(1))
+            });
+            output
+                .begin(self.rate, position_ms, self.discontinuity)
+                .map_err(map_block_error)?;
+            self.discontinuity = None;
+        }
+
+        let copied = output
+            .append_planar(&self.planes, self.offset, remaining)
+            .map_err(map_block_error)?;
+        self.offset += copied;
+        Ok(())
+    }
 }
 
 impl SymphoniaStream {
@@ -228,9 +320,9 @@ impl SymphoniaStream {
         self.pending_metadata_update = found_metadata;
     }
 
-    fn loop_seek_if_pending(&mut self) -> Result<(), PlaybackReadError> {
+    fn loop_seek_if_pending(&mut self) -> Result<bool, PlaybackReadError> {
         if !self.pending_loop_seek {
-            return Ok(());
+            return Ok(false);
         }
         let Some(format) = self.format.as_mut() else {
             return Err(PlaybackReadError::InvalidState);
@@ -250,7 +342,7 @@ impl SymphoniaStream {
         }
         self.pending_loop_seek = false;
         self.needs_loop_start_trim = true;
-        Ok(())
+        Ok(true)
     }
 
     fn try_loop_on_eof(&mut self) -> bool {
@@ -312,8 +404,8 @@ impl SymphoniaStream {
     }
 }
 
-impl MediaProvider for SymphoniaProvider {
-    fn open(&self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError> {
+impl SymphoniaProvider {
+    fn open_stream(&self, file: File, ext: Option<&OsStr>) -> Result<SymphoniaStream, OpenError> {
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
@@ -334,29 +426,18 @@ impl MediaProvider for SymphoniaProvider {
                 .map_err(map_probe_error)?
         };
 
-        let mut stream = SymphoniaStream {
-            format: None,
-            current_metadata: Metadata::default(),
-            current_track: 0,
-            current_duration: 0,
-            current_length: None,
-            current_position_ms: 0,
-            current_timebase: None,
-            decoder: None,
-            pending_metadata_update: false,
-            last_image: None,
-            conversion_buffer: Vec::new(),
-            looping: false,
-            loop_start_seconds: None,
-            loop_end_seconds: None,
-            pending_loop_seek: false,
-            needs_loop_start_trim: false,
-        };
+        let mut stream = SymphoniaStream::default();
 
         stream.read_base_metadata(&mut *format);
         stream.format = Some(format);
 
-        Ok(Box::new(stream))
+        Ok(stream)
+    }
+}
+
+impl MediaProvider for SymphoniaProvider {
+    fn open(&self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError> {
+        Ok(Box::new(self.open_stream(file, ext)?))
     }
 
     fn supported_extensions(&self) -> &[&str] {
@@ -412,10 +493,19 @@ impl MediaStream for SymphoniaStream {
             .map(|c| c.count())
             .unwrap_or(2);
         let frame_capacity = audio_params.max_frames_per_packet.unwrap_or(8192) as usize;
+        if channel_count == 0
+            || channel_count > MAX_AUDIO_CHANNELS
+            || frame_capacity > MAX_PACKET_FRAMES
+        {
+            return Err(PlaybackStartError::Undecodable);
+        }
 
-        self.conversion_buffer = (0..channel_count)
+        self.conversion.planes = (0..channel_count)
             .map(|_| Vec::with_capacity(frame_capacity))
             .collect();
+        self.conversion.clear();
+        self.pending_discontinuity = false;
+        self.decode_eof_pending = false;
 
         self.current_track = track.id;
 
@@ -505,6 +595,9 @@ impl MediaStream for SymphoniaStream {
 
         self.pending_loop_seek = false;
         self.needs_loop_start_trim = false;
+        self.conversion.clear();
+        self.pending_discontinuity = false;
+        self.decode_eof_pending = false;
 
         let seek = format
             .seek(
@@ -692,16 +785,37 @@ impl MediaStream for SymphoniaStream {
             .ok_or(ChannelRetrievalError::NothingToPlay)
     }
 
-    fn decode_into(
-        &mut self,
-        output: &mut ChannelProducers<f64>,
-    ) -> Result<DecodeResult, PlaybackReadError> {
+    fn decode_into(&mut self, output: &mut AudioBlock) -> Result<DecodeResult, PlaybackReadError> {
         if self.format.is_none() {
             return Err(PlaybackReadError::InvalidState);
         }
 
+        output.clear();
+        if self.decode_eof_pending {
+            self.decode_eof_pending = false;
+            return Ok(DecodeResult::Eof);
+        }
+
         loop {
-            self.loop_seek_if_pending()?;
+            if self.conversion.remaining() > 0 {
+                if output.frames() > 0
+                    && (output.sample_rate() != self.conversion.rate
+                        || self.conversion.discontinuity.is_some())
+                {
+                    return Ok(DecodeResult::Decoded);
+                }
+                self.conversion.copy_into(output)?;
+                if output.remaining() == 0 {
+                    return Ok(DecodeResult::Decoded);
+                }
+            }
+
+            let looped =
+                self.loop_seek_if_pending()? || std::mem::take(&mut self.pending_discontinuity);
+            if looped && output.frames() > 0 {
+                self.pending_discontinuity = true;
+                return Ok(DecodeResult::Decoded);
+            }
 
             let format = self.format.as_mut().expect("format presence checked above");
 
@@ -711,9 +825,19 @@ impl MediaStream for SymphoniaStream {
                     if self.try_loop_on_eof() {
                         continue;
                     }
+                    if output.frames() > 0 {
+                        self.decode_eof_pending = true;
+                        return Ok(DecodeResult::Decoded);
+                    }
                     return Ok(DecodeResult::Eof);
                 }
-                Err(err) => return classify_next_packet_error(err),
+                Err(err) => match classify_next_packet_error(err)? {
+                    DecodeResult::Eof if output.frames() > 0 => {
+                        self.decode_eof_pending = true;
+                        return Ok(DecodeResult::Decoded);
+                    }
+                    result => return Ok(result),
+                },
             };
 
             format.metadata().skip_to_latest();
@@ -731,8 +855,6 @@ impl MediaStream for SymphoniaStream {
                     let spec = decoded.spec();
                     let rate = spec.rate();
                     let channel_count = spec.channels().count();
-                    self.current_duration = decoded.capacity() as u64;
-
                     if let Some(tb) = &self.current_timebase
                         && let Some(t) = tb.calc_time(packet.pts)
                     {
@@ -771,87 +893,87 @@ impl MediaStream for SymphoniaStream {
                         continue;
                     }
 
-                    if channel_count != output.channel_count() {
+                    if channel_count != usize::from(output.channels().count()) {
                         return Err(PlaybackReadError::ChannelCountChanged(channel_count));
                     }
 
-                    // sometimes the hint is wrong, check against actual capacity
-                    let frame_capacity = decoded.capacity();
-                    while self.conversion_buffer.len() < channel_count {
-                        self.conversion_buffer
-                            .push(Vec::with_capacity(frame_capacity));
+                    if channel_count == 0
+                        || channel_count > MAX_AUDIO_CHANNELS
+                        || decoded.frames() > MAX_PACKET_FRAMES
+                        || decoded.capacity() > MAX_PACKET_FRAMES
+                        || max_samples > MAX_PACKET_FRAMES
+                        || max_samples.checked_mul(channel_count).is_none()
+                    {
+                        return Err(PlaybackReadError::DecodeFatal(
+                            "decoded packet exceeds playback limits".to_string(),
+                        ));
+                    }
+                    self.current_duration = decoded.capacity() as u64;
+
+                    let position_ms = Some(
+                        self.current_position_ms
+                            + (start_offset as u64 * 1000) / u64::from(rate.max(1)),
+                    );
+                    let discontinuity = looped.then_some(AudioDiscontinuity::Loop);
+                    if output.frames() == 0 {
+                        output
+                            .begin(rate, position_ms, discontinuity)
+                            .map_err(map_block_error)?;
+                    }
+                    let can_write_directly = max_samples <= output.remaining()
+                        && (output.frames() == 0
+                            || (output.sample_rate() == rate && discontinuity.is_none()));
+
+                    if can_write_directly {
+                        convert_audio(decoded, output.planes_mut(), start_offset, max_samples);
+                        output
+                            .commit_appended(max_samples)
+                            .map_err(map_block_error)?;
+                        if needs_loop_seek {
+                            self.pending_loop_seek = true;
+                        }
+                        if output.remaining() == 0 || needs_loop_seek {
+                            return Ok(DecodeResult::Decoded);
+                        }
+                        continue;
                     }
 
-                    for buf in &mut self.conversion_buffer[..channel_count] {
+                    while self.conversion.planes.len() < channel_count {
+                        self.conversion.planes.push(Vec::new());
+                    }
+                    self.conversion.planes.truncate(channel_count);
+
+                    for buf in &mut self.conversion.planes[..channel_count] {
                         buf.clear();
-                        if buf.capacity() < frame_capacity {
-                            buf.reserve(frame_capacity);
+                        if buf.capacity() < max_samples {
+                            buf.reserve(max_samples);
                         }
                     }
+                    convert_audio(
+                        decoded,
+                        &mut self.conversion.planes[..channel_count],
+                        start_offset,
+                        max_samples,
+                    );
 
-                    macro_rules! convert_chan {
-                        ($v:ident, $convert:expr) => {{
-                            for ch in 0..channel_count {
-                                if let Some(plane) = $v.plane(ch) {
-                                    self.conversion_buffer[ch].extend(
-                                        plane
-                                            .iter()
-                                            .skip(start_offset)
-                                            .take(max_samples)
-                                            .map($convert),
-                                    );
-                                }
-                            }
-                        }};
-                    }
-
-                    match decoded {
-                        GenericAudioBufferRef::U8(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::U16(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::U24(v) => {
-                            convert_chan!(v, |s| u24_saturating(s.0).sample_into())
-                        }
-                        GenericAudioBufferRef::U32(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::S8(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::S16(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::S24(v) => {
-                            convert_chan!(v, |s| i24_saturating(s.0).sample_into())
-                        }
-                        GenericAudioBufferRef::S32(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::F32(v) => convert_chan!(v, |&s| s.sample_into()),
-                        GenericAudioBufferRef::F64(v) => {
-                            let counts: SmallVec<[&[f64]; 8]> = (0..channel_count)
-                                .filter_map(|ch| {
-                                    v.plane(ch).map(|plane| {
-                                        &plane[start_offset..start_offset + max_samples]
-                                    })
-                                })
-                                .collect();
-                            if let Err(e) = output.write_slices(&counts) {
-                                return Err(map_write_error(e));
-                            }
-                            if needs_loop_seek {
-                                self.pending_loop_seek = true;
-                            }
-                            return Ok(DecodeResult::Decoded {
-                                frames: max_samples,
-                                rate,
-                            });
-                        }
-                    }
-
-                    if let Err(e) = output.write_vecs(&self.conversion_buffer[..channel_count]) {
-                        return Err(map_write_error(e));
-                    }
-
+                    self.conversion.offset = 0;
+                    self.conversion.rate = rate;
+                    self.conversion.position_ms = position_ms;
+                    self.conversion.discontinuity = discontinuity;
                     if needs_loop_seek {
                         self.pending_loop_seek = true;
                     }
 
-                    return Ok(DecodeResult::Decoded {
-                        frames: max_samples,
-                        rate,
-                    });
+                    if output.frames() > 0
+                        && (output.sample_rate() != self.conversion.rate
+                            || self.conversion.discontinuity.is_some())
+                    {
+                        return Ok(DecodeResult::Decoded);
+                    }
+                    self.conversion.copy_into(output)?;
+                    if output.remaining() == 0 || needs_loop_seek {
+                        return Ok(DecodeResult::Decoded);
+                    }
                 }
                 Err(Error::IoError(_)) | Err(Error::DecodeError(_)) => {
                     continue;
@@ -904,12 +1026,44 @@ mod tests {
         );
     }
 
-    fn open_fixture(name: &str) -> Box<dyn MediaStream> {
+    fn open_fixture(name: &str) -> SymphoniaStream {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("assets/tests/audio-fixtures")
             .join(name);
         let file = std::fs::File::open(&path).unwrap();
-        SymphoniaProvider.open(file, path.extension()).unwrap()
+        SymphoniaProvider
+            .open_stream(file, path.extension())
+            .unwrap()
+    }
+
+    #[test]
+    fn decoding_replaces_stale_rate_and_channel_dimensions() {
+        let mut reference = open_fixture("fixture.wav");
+        reference.start_playback().unwrap();
+        let rate = reference.sample_rate().unwrap();
+        let channels = reference.channels().unwrap();
+        let mut expected = AudioBlock::new(channels.clone(), rate).unwrap();
+
+        let mut stream = open_fixture("fixture.wav");
+        stream.start_playback().unwrap();
+        // leave some storage from a wider stream, as if the pipeline had just been rebuilt
+        stream.conversion.planes.push(vec![123.0; 8192]);
+        // even if the old block could hold a whole packet, use the actual rate's block size
+        let mut actual = AudioBlock::new(channels, 768_000).unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                reference.decode_into(&mut expected).unwrap(),
+                DecodeResult::Decoded
+            );
+            assert_eq!(
+                stream.decode_into(&mut actual).unwrap(),
+                DecodeResult::Decoded
+            );
+            assert_eq!(actual.sample_rate(), rate);
+            assert_eq!(actual.frames(), expected.frames());
+            assert_eq!(actual.planes(), expected.planes());
+            assert_eq!(actual.position_ms(), expected.position_ms());
+        }
     }
 
     #[test]
@@ -919,5 +1073,32 @@ mod tests {
         // better metadata the UI already has from the library or other providers
         assert!(!open_fixture("fixture.wav").metadata_updated());
         assert!(open_fixture("fixture.flac").metadata_updated());
+    }
+
+    #[test]
+    fn decode_carries_packet_remainders_into_timed_blocks() {
+        let mut stream = open_fixture("fixture.wav");
+        stream.start_playback().unwrap();
+        let rate = stream.sample_rate().unwrap();
+        let channels = stream.channels().unwrap();
+        let mut block = AudioBlock::new(channels, rate).unwrap();
+
+        assert_eq!(
+            stream.decode_into(&mut block).unwrap(),
+            DecodeResult::Decoded
+        );
+        let first_frames = block.frames();
+        let first_position = block.position_ms().unwrap();
+        assert_eq!(first_frames, block.frame_capacity());
+
+        assert_eq!(
+            stream.decode_into(&mut block).unwrap(),
+            DecodeResult::Decoded
+        );
+        assert_eq!(block.frames(), block.frame_capacity());
+        assert_eq!(
+            block.position_ms(),
+            Some(first_position + first_frames as u64 * 1000 / u64::from(rate))
+        );
     }
 }

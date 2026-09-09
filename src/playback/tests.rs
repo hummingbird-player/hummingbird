@@ -2,5 +2,5 @@ mod alloc_guard;
 mod bit_transparency;
 mod eof_drain;
 mod error_handling;
-mod harness;
+pub(super) mod harness;
 mod round_trip;

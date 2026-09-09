@@ -60,6 +60,29 @@ pub fn engine_playing(path: &Path) -> AudioEngine {
     engine
         .open(path, false)
         .expect("failed to open the generated test WAV");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        engine.poll();
+        if let Some(result) = engine.take_opened() {
+            result.expect("worker could not open the generated test WAV");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker open timed out"
+        );
+        std::thread::park_timeout(std::time::Duration::from_millis(1));
+    }
+    loop {
+        if engine.process_cycle() != EngineCycleResult::Pending {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "first decode timed out"
+        );
+        std::thread::park_timeout(std::time::Duration::from_millis(1));
+    }
     engine
 }
 
@@ -68,12 +91,32 @@ pub fn engine_playing(path: &Path) -> AudioEngine {
 pub fn run_to_eof(engine: &mut AudioEngine, max_cycles: usize) -> usize {
     for cycle in 0..max_cycles {
         match engine.process_cycle() {
+            EngineCycleResult::SourceEof => engine.finish_playback(),
+            EngineCycleResult::Pending => {
+                std::thread::park_timeout(std::time::Duration::from_millis(1));
+            }
             EngineCycleResult::Eof => return cycle,
-            EngineCycleResult::Continue | EngineCycleResult::NothingToDo => {}
+            EngineCycleResult::Continue
+            | EngineCycleResult::Backpressured
+            | EngineCycleResult::NothingToDo => {}
             EngineCycleResult::FatalError(msg) => panic!("fatal engine error: {msg}"),
         }
     }
     panic!("engine did not reach EOF within {max_cycles} cycles");
+}
+
+pub fn run_to_source_eof(engine: &mut AudioEngine, max_cycles: usize) {
+    for _ in 0..max_cycles {
+        match engine.process_cycle() {
+            EngineCycleResult::SourceEof => return,
+            EngineCycleResult::Pending => {
+                std::thread::park_timeout(std::time::Duration::from_millis(1))
+            }
+            EngineCycleResult::FatalError(error) => panic!("{error}"),
+            _ => {}
+        }
+    }
+    panic!("source did not finish within {max_cycles} cycles");
 }
 
 pub fn xorshift64(state: &mut u64) -> u64 {

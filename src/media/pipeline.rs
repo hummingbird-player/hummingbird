@@ -1,13 +1,183 @@
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::devices::util::write_bounded_planar;
+use crate::devices::format::ChannelSpec;
 
 pub const DEFAULT_BUFFER_FRAMES: usize = 8192;
+pub const AUDIO_BLOCK_MS: u32 = 20;
+pub const MAX_AUDIO_CHANNELS: usize = 32;
+pub const MAX_AUDIO_RATE: u32 = 768_000;
+pub const MAX_PACKET_FRAMES: usize = 1_048_576;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeResult {
-    Decoded { frames: usize, rate: u32 },
+    Decoded,
     Eof,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioDiscontinuity {
+    Loop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioBlockError {
+    InvalidChannels(usize),
+    InvalidRate(u32),
+    InvalidFrames(usize),
+    ChannelMismatch(ChannelMismatch),
+}
+
+/// Reusable decoded PCM storage. Only the first `frames` samples in each plane are valid.
+/// Clearing keeps the allocations; a rate increase can grow them, but lowering the rate does
+/// not shrink them. Channel-count changes require a new block.
+#[derive(Debug)]
+pub struct AudioBlock {
+    planes: Vec<Vec<f64>>,
+    frames: usize,
+    sample_rate: u32,
+    channels: ChannelSpec,
+    position_ms: Option<u64>,
+    discontinuity: Option<AudioDiscontinuity>,
+    frame_capacity: usize,
+}
+
+impl AudioBlock {
+    pub fn new(channels: ChannelSpec, sample_rate: u32) -> Result<Self, AudioBlockError> {
+        let channel_count = usize::from(channels.count());
+        if channel_count == 0 || channel_count > MAX_AUDIO_CHANNELS {
+            return Err(AudioBlockError::InvalidChannels(channel_count));
+        }
+        let frame_capacity = audio_block_frames(sample_rate)?;
+        Ok(Self {
+            planes: (0..channel_count)
+                .map(|_| Vec::with_capacity(frame_capacity))
+                .collect(),
+            frames: 0,
+            sample_rate,
+            channels,
+            position_ms: None,
+            discontinuity: None,
+            frame_capacity,
+        })
+    }
+
+    pub fn clear(&mut self) {
+        for plane in &mut self.planes {
+            plane.clear();
+        }
+        self.frames = 0;
+        self.position_ms = None;
+        self.discontinuity = None;
+    }
+
+    pub fn begin(
+        &mut self,
+        sample_rate: u32,
+        position_ms: Option<u64>,
+        discontinuity: Option<AudioDiscontinuity>,
+    ) -> Result<(), AudioBlockError> {
+        if self.frames != 0 {
+            return Err(AudioBlockError::InvalidFrames(self.frames));
+        }
+        let frame_capacity = audio_block_frames(sample_rate)?;
+        if frame_capacity != self.frame_capacity {
+            for plane in &mut self.planes {
+                if plane.capacity() < frame_capacity {
+                    plane.reserve(frame_capacity);
+                }
+            }
+            self.frame_capacity = frame_capacity;
+        }
+        self.sample_rate = sample_rate;
+        self.position_ms = position_ms;
+        self.discontinuity = discontinuity;
+        Ok(())
+    }
+
+    pub fn append_planar(
+        &mut self,
+        planes: &[Vec<f64>],
+        offset: usize,
+        frames: usize,
+    ) -> Result<usize, AudioBlockError> {
+        if planes.len() != self.planes.len() {
+            return Err(AudioBlockError::ChannelMismatch(ChannelMismatch {
+                expected: self.planes.len(),
+                got: planes.len(),
+            }));
+        }
+        let available = self.remaining().min(frames);
+        let end = offset
+            .checked_add(available)
+            .ok_or(AudioBlockError::InvalidFrames(frames))?;
+        if planes.iter().any(|plane| plane.len() < end) {
+            return Err(AudioBlockError::InvalidFrames(frames));
+        }
+        for (output, input) in self.planes.iter_mut().zip(planes) {
+            output.extend_from_slice(&input[offset..end]);
+        }
+        self.frames += available;
+        Ok(available)
+    }
+
+    pub fn planes(&self) -> &[Vec<f64>] {
+        &self.planes
+    }
+
+    pub(crate) fn planes_mut(&mut self) -> &mut [Vec<f64>] {
+        &mut self.planes
+    }
+
+    pub(crate) fn commit_appended(&mut self, frames: usize) -> Result<(), AudioBlockError> {
+        let expected = self
+            .frames
+            .checked_add(frames)
+            .ok_or(AudioBlockError::InvalidFrames(frames))?;
+        if expected > self.frame_capacity || self.planes.iter().any(|plane| plane.len() != expected)
+        {
+            for plane in &mut self.planes {
+                plane.truncate(self.frames);
+            }
+            return Err(AudioBlockError::InvalidFrames(frames));
+        }
+        self.frames = expected;
+        Ok(())
+    }
+
+    pub fn frames(&self) -> usize {
+        self.frames
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.frame_capacity - self.frames
+    }
+
+    pub fn frame_capacity(&self) -> usize {
+        self.frame_capacity
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn channels(&self) -> &ChannelSpec {
+        &self.channels
+    }
+
+    pub fn position_ms(&self) -> Option<u64> {
+        self.position_ms
+    }
+
+    pub fn discontinuity(&self) -> Option<AudioDiscontinuity> {
+        self.discontinuity
+    }
+}
+
+pub fn audio_block_frames(sample_rate: u32) -> Result<usize, AudioBlockError> {
+    if sample_rate == 0 || sample_rate > MAX_AUDIO_RATE {
+        return Err(AudioBlockError::InvalidRate(sample_rate));
+    }
+    Ok((sample_rate as usize * AUDIO_BLOCK_MS as usize).div_ceil(1000))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,8 +192,8 @@ pub enum WriteError {
     ChannelMismatch(ChannelMismatch),
     /// The planes weren't all the same length, writing would desync the channels.
     UnequalPlanes { min: usize, max: usize },
-    /// The consumer stopped draining before the write deadline. `dropped` frames were lost.
-    Timeout { dropped: usize },
+    /// The complete block cannot be written right now.
+    InsufficientCapacity { needed: usize, available: usize },
 }
 
 pub struct ChannelBuffers<T: Copy + Default + Send + 'static> {
@@ -89,9 +259,22 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
             return Err(WriteError::UnequalPlanes { min, max });
         }
 
-        write_bounded_planar(&mut self.producers, samples, min).map_err(|t| WriteError::Timeout {
-            dropped: min - t.written,
-        })
+        let available = self.available();
+        if available < min {
+            return Err(WriteError::InsufficientCapacity {
+                needed: min,
+                available,
+            });
+        }
+
+        // we checked every channel, and there's no other producer to take that space
+        for (producer, plane) in self.producers.iter_mut().zip(samples) {
+            let chunk = producer
+                .write_chunk_uninit(min)
+                .expect("checked ring capacity changed without another producer");
+            chunk.fill_from_iter(plane.iter().copied());
+        }
+        Ok(())
     }
 
     pub fn write_vecs(&mut self, samples: &[Vec<T>]) -> Result<(), WriteError> {
@@ -102,7 +285,8 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
             }));
         }
 
-        let slices: smallvec::SmallVec<[&[T]; 8]> = samples.iter().map(Vec::as_slice).collect();
+        let slices: smallvec::SmallVec<[&[T]; MAX_AUDIO_CHANNELS]> =
+            samples.iter().map(Vec::as_slice).collect();
         self.write_slices(&slices)
     }
 
@@ -114,11 +298,6 @@ impl<T: Copy + Send + 'static> ChannelProducers<T> {
             .map(Producer::slots)
             .min()
             .unwrap_or(0)
-    }
-
-    /// Number of channels this producer set was built for.
-    pub fn channel_count(&self) -> usize {
-        self.channel_count
     }
 }
 
@@ -206,22 +385,21 @@ impl<T: Copy + Default + Send + 'static> ChannelConsumers<T> {
 /// The audio pipeline: decoder output -> (resampler) -> (mixer) -> device input. All samples
 /// travel as f64, which is lossless for every source format.
 pub struct AudioPipeline {
-    pub decoder_output: ChannelProducers<f64>,
-    pub resampler_input: ChannelConsumers<f64>,
+    pub decode_block: AudioBlock,
+    /// First frame in `decode_block` that has not reached the resampler yet.
+    pub decode_offset: usize,
     /// Per-channel output buffer handed from the resampler to the mixer. Pre-allocated once,
     /// (hopefully) meaning it never needs to be resized (which avoids extra allocations).
     pub resampler_output: Vec<Vec<f64>>,
     pub device_input_producers: ChannelProducers<f64>,
     pub device_input: ChannelConsumers<f64>,
+    device_input_capacity: usize,
     pub source_rate: u32,
     pub target_rate: u32,
     /// Channel count of the source (decoder) side.
     pub source_channel_count: usize,
     /// Channel count of the device side.
     pub device_channel_count: usize,
-    /// Capacity, in frames, of the `device_input` ring. Sized to hold a worst-case cycle's
-    /// resampler output so a single write never overruns it.
-    pub device_input_capacity: usize,
 }
 
 /// Upper bound on the frames one processing cycle can hand from the resampler
@@ -234,14 +412,14 @@ pub fn output_frame_bound(source_rate: u32, target_rate: u32, buffer_frames: usi
 
 impl AudioPipeline {
     pub fn new(
-        source_channel_count: usize,
+        source_channels: ChannelSpec,
         device_channel_count: usize,
         source_rate: u32,
         target_rate: u32,
         buffer_frames: usize,
-    ) -> Self {
-        let (decoder_output, resampler_input) =
-            ChannelBuffers::<f64>::new(source_channel_count, buffer_frames).split();
+    ) -> Result<Self, AudioBlockError> {
+        let source_channel_count = usize::from(source_channels.count());
+        let decode_block = AudioBlock::new(source_channels, source_rate)?;
 
         // The device-input ring must be able to absorb one full cycle's resampler output (the
         // resampler reads up to `buffer_frames` and can upsample), so a single write never blocks
@@ -250,20 +428,20 @@ impl AudioPipeline {
         let (device_input_producers, device_input) =
             ChannelBuffers::<f64>::new(device_channel_count, device_input_capacity).split();
 
-        Self {
-            decoder_output,
-            resampler_input,
+        Ok(Self {
+            decode_block,
+            decode_offset: 0,
             resampler_output: (0..source_channel_count)
                 .map(|_| Vec::with_capacity(device_input_capacity))
                 .collect(),
             device_input_producers,
             device_input,
+            device_input_capacity,
             source_rate,
             target_rate,
             source_channel_count,
             device_channel_count,
-            device_input_capacity,
-        }
+        })
     }
 
     /// Clear the resampler→mixer handoff buffer without freeing its capacity.
@@ -284,20 +462,34 @@ impl AudioPipeline {
         }
     }
 
-    /// Whether the device-input ring has room to absorb another decode cycle's worth of output,
-    /// given the current packet size (`frame_duration`).
-    ///
-    /// If we can't, it might cause the decode thread to stall and drop audio.
-    pub fn can_accept_decode(&self, frame_duration: usize) -> bool {
-        let needed = output_frame_bound(self.source_rate, self.target_rate, frame_duration)
-            .min(self.device_input_capacity);
-        self.device_input_producers.available() >= needed
+    /// Whether the device-input ring can absorb a complete processing result right now.
+    pub fn can_accept_output(&self, frames: usize) -> bool {
+        self.device_input_producers.available() >= frames
+    }
+
+    /// Grow for a new processing size, retaining audio already queued for the device.
+    /// Ordinary backpressure must still be handled by draining the existing ring.
+    pub fn ensure_device_input_capacity(&mut self, frames: usize) {
+        if frames <= self.device_input_capacity {
+            return;
+        }
+        let (mut producers, consumers) =
+            ChannelBuffers::new(self.device_channel_count, frames).split();
+        let queued = self.device_input.potentially_available();
+        self.device_input.try_read_to_staging(queued);
+        producers
+            .write_vecs(self.device_input.staging())
+            .expect("replacement ring must hold queued audio");
+        self.device_input_producers = producers;
+        self.device_input = consumers;
+        self.device_input_capacity = frames;
     }
 
     /// Drop all buffered audio in the pipeline ring buffers, so a seek while playing is heard
     /// immediately instead of after the stale buffers drain.
     pub fn flush_buffers(&mut self) {
-        self.resampler_input.drain();
+        self.decode_block.clear();
+        self.decode_offset = 0;
         self.device_input.drain();
         self.clear_resampler_output();
     }
@@ -306,6 +498,105 @@ impl AudioPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_planar_handoff_does_not_allocate() {
+        let (mut producers, mut consumers) =
+            ChannelBuffers::<f64>::new(MAX_AUDIO_CHANNELS, 64).split();
+        let planes = vec![vec![0.25; 64]; MAX_AUDIO_CHANNELS];
+        let (_, allocations) = crate::test_support::alloc_guard::count_allocations(|| {
+            for _ in 0..4 {
+                producers.write_vecs(&planes).unwrap();
+                assert_eq!(consumers.try_read_to_staging(64), 64);
+            }
+        });
+        assert_eq!(allocations, 0);
+    }
+
+    #[test]
+    fn audio_block_reuses_storage_after_rate_changes() {
+        use crate::test_support::alloc_guard::count_allocations;
+
+        let mut block = AudioBlock::new(2.into(), 44_100).unwrap();
+        block.begin(192_000, None, None).unwrap();
+        let planes = vec![vec![0.25; 3840], vec![-0.25; 3840]];
+        let pointers: Vec<_> = block.planes().iter().map(Vec::as_ptr).collect();
+        let capacities: Vec<_> = block.planes().iter().map(Vec::capacity).collect();
+
+        let (_, allocations) = count_allocations(|| {
+            for rate in [44_100, 48_000, 192_000, 44_100, 192_000] {
+                block.clear();
+                block.begin(rate, Some(100), None).unwrap();
+                let frames = block.frame_capacity();
+                assert_eq!(block.append_planar(&planes, 0, frames).unwrap(), frames);
+                for (ch, plane) in block.planes().iter().enumerate() {
+                    assert_eq!(plane.as_ptr(), pointers[ch]);
+                    assert_eq!(plane.capacity(), capacities[ch]);
+                }
+            }
+        });
+        assert_eq!(allocations, 0);
+    }
+
+    #[test]
+    fn growing_device_ring_preserves_queued_samples() {
+        let mut pipeline = AudioPipeline::new(2.into(), 2, 48_000, 48_000, 64).unwrap();
+        let queued = vec![vec![0.25; 1000], vec![-0.5; 1000]];
+        pipeline.device_input_producers.write_vecs(&queued).unwrap();
+        pipeline.ensure_device_input_capacity(20_000);
+        let next = vec![vec![0.75; 19_000], vec![-0.25; 19_000]];
+        pipeline.device_input_producers.write_vecs(&next).unwrap();
+        assert_eq!(pipeline.device_input.try_read_to_staging(20_000), 20_000);
+        for ch in 0..2 {
+            assert_eq!(&pipeline.device_input.staging()[ch][..1000], &queued[ch]);
+            assert_eq!(&pipeline.device_input.staging()[ch][1000..], &next[ch]);
+        }
+    }
+
+    #[test]
+    fn audio_block_has_twenty_milliseconds_of_reusable_storage() {
+        let mut block = AudioBlock::new(2.into(), 44_100).unwrap();
+        assert_eq!(block.frame_capacity(), 882);
+
+        block
+            .begin(44_100, Some(1250), Some(AudioDiscontinuity::Loop))
+            .unwrap();
+        let planes = vec![vec![0.25; 1000], vec![-0.25; 1000]];
+        assert_eq!(block.append_planar(&planes, 0, 1000).unwrap(), 882);
+        assert_eq!(block.frames(), 882);
+        assert_eq!(block.planes()[0][881], 0.25);
+        assert_eq!(block.position_ms(), Some(1250));
+        assert_eq!(block.discontinuity(), Some(AudioDiscontinuity::Loop));
+
+        let capacities: Vec<_> = block.planes().iter().map(Vec::capacity).collect();
+        block.clear();
+        block.begin(44_100, None, None).unwrap();
+        assert_eq!(
+            block.planes().iter().map(Vec::capacity).collect::<Vec<_>>(),
+            capacities
+        );
+
+        block.clear();
+        block.begin(48_000, None, None).unwrap();
+        assert_eq!(block.frame_capacity(), 960);
+        assert!(block.planes().iter().all(|plane| plane.capacity() >= 960));
+    }
+
+    #[test]
+    fn audio_block_rejects_unbounded_formats() {
+        assert!(matches!(
+            AudioBlock::new(ChannelSpec::Count(0), 44_100),
+            Err(AudioBlockError::InvalidChannels(0))
+        ));
+        assert!(matches!(
+            AudioBlock::new(ChannelSpec::Count(33), 44_100),
+            Err(AudioBlockError::InvalidChannels(33))
+        ));
+        assert!(matches!(
+            AudioBlock::new(2.into(), MAX_AUDIO_RATE + 1),
+            Err(AudioBlockError::InvalidRate(_))
+        ));
+    }
 
     #[test]
     fn write_slices_rejects_wrong_channel_count() {
@@ -338,16 +629,19 @@ mod tests {
     }
 
     #[test]
-    fn write_slices_reports_timeout_instead_of_dropping_silently() {
+    fn write_slices_rejects_a_block_that_does_not_fit() {
         let (mut producers, _consumers) = ChannelBuffers::<f64>::new(1, 8).split();
 
-        // more samples than the ring holds with nobody draining: the deadline must surface as an
-        // error naming the dropped frames, not a silent Ok
+        // nobody can drain this ring while we're waiting, so don't write a prefix or sleep
         let planes: [&[f64]; 1] = [&[0.0; 16]];
         assert_eq!(
             producers.write_slices(&planes),
-            Err(WriteError::Timeout { dropped: 8 })
+            Err(WriteError::InsufficientCapacity {
+                needed: 16,
+                available: 8
+            })
         );
+        assert_eq!(_consumers.potentially_available(), 0);
     }
 
     #[test]
@@ -364,7 +658,7 @@ mod tests {
 
     #[test]
     fn flush_buffers_clears_pipeline() {
-        let mut pipeline = AudioPipeline::new(2, 2, 44_100, 44_100, 64);
+        let mut pipeline = AudioPipeline::new(2.into(), 2, 44_100, 44_100, 64).unwrap();
 
         pipeline
             .device_input_producers

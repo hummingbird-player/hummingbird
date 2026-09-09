@@ -5,7 +5,7 @@ use intx::{I24, U24};
 use rubato::{Fft, FixedSync, Resampler as RubatoResampler};
 use tracing::{error, info};
 
-use crate::media::pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES};
+use crate::media::pipeline::{AudioBlock, DEFAULT_BUFFER_FRAMES};
 
 /// One LSB step of a 24-bit sample under symmetric scaling: 2^23.
 const I24_SCALE: f64 = 8_388_608.0;
@@ -242,66 +242,59 @@ impl Resampler {
         self.flushed = false;
     }
 
-    pub fn process_into(
+    pub fn process_block(
         &mut self,
-        input: &mut ChannelConsumers<f64>,
+        input: &AudioBlock,
+        input_offset: usize,
         output: &mut [Vec<f64>],
         max_input_samples: usize,
     ) -> usize {
         if !self.needs_resampling() {
-            return Self::passthrough_direct(input, output, max_input_samples);
+            return Self::passthrough_block(input, input_offset, output, max_input_samples);
         }
 
-        let read = Self::read_into_buffers(input, &mut self.input_buffer, max_input_samples);
+        let duration = self.duration as usize;
+        let needed = duration.saturating_sub(self.input_available());
+        let read = Self::read_into_buffers(
+            input,
+            input_offset,
+            &mut self.input_buffer,
+            max_input_samples.min(needed),
+        );
         self.frames_in += read as u64;
 
-        if read == 0 {
-            return 0;
-        }
-
         let available = self.input_available();
-        if available < self.duration as usize {
-            return 0; // not enough input yet
+        if available < duration {
+            return read; // not enough input yet
         }
 
-        let mut total_output = 0;
-        let duration = self.duration as usize;
-
-        while self.input_available() >= duration {
-            for ch in 0..self.channels {
-                let drain_count = duration.min(self.input_buffer[ch].len());
-                self.temp_input[ch].clear();
-                self.temp_input[ch].extend(self.input_buffer[ch].drain(..drain_count));
-            }
-
-            let input_frames = self.temp_input.first().map(|v| v.len()).unwrap_or(0);
-            let input_adapter =
-                SequentialSliceOfVecs::new(&self.temp_input, self.channels, input_frames).unwrap();
-            let output_frames_max = self.temp_output.first().map(|v| v.len()).unwrap_or(0);
-            let mut output_adapter = SequentialSliceOfVecs::new_mut(
-                &mut self.temp_output,
-                self.channels,
-                output_frames_max,
-            )
-            .unwrap();
-
-            let (_, frames_written) = self
-                .resampler
-                .process_into_buffer(&input_adapter, &mut output_adapter, None)
-                .expect("resampler error");
-
-            for (out_buf, temp_ch) in output
-                .iter_mut()
-                .zip(self.temp_output.iter())
-                .take(self.channels)
-            {
-                out_buf.extend_from_slice(&temp_ch[..frames_written]);
-            }
-            total_output += frames_written;
+        for ch in 0..self.channels {
+            self.temp_input[ch].clear();
+            self.temp_input[ch].extend(self.input_buffer[ch].drain(..duration));
         }
 
-        self.frames_out += total_output as u64;
-        total_output
+        let input_adapter =
+            SequentialSliceOfVecs::new(&self.temp_input, self.channels, duration).unwrap();
+        let output_frames_max = self.temp_output.first().map(|v| v.len()).unwrap_or(0);
+        let mut output_adapter =
+            SequentialSliceOfVecs::new_mut(&mut self.temp_output, self.channels, output_frames_max)
+                .unwrap();
+
+        let (_, frames_written) = self
+            .resampler
+            .process_into_buffer(&input_adapter, &mut output_adapter, None)
+            .expect("resampler error");
+
+        for (out_buf, temp_ch) in output
+            .iter_mut()
+            .zip(self.temp_output.iter())
+            .take(self.channels)
+        {
+            out_buf.extend_from_slice(&temp_ch[..frames_written]);
+        }
+
+        self.frames_out += frames_written as u64;
+        read
     }
 
     /// Flush the contents of the resampler's input buffer into `output`. Used only when the
@@ -384,39 +377,39 @@ impl Resampler {
         written
     }
 
-    pub fn passthrough_direct(
-        input: &mut ChannelConsumers<f64>,
+    pub fn passthrough_block(
+        input: &AudioBlock,
+        input_offset: usize,
         output: &mut [Vec<f64>],
         max_samples: usize,
     ) -> usize {
-        let read = input.try_read_to_staging(max_samples);
+        let read = input.frames().saturating_sub(input_offset).min(max_samples);
         if read == 0 {
             return 0;
         }
 
-        let staging = input.staging();
-        for (ch, channel) in staging.iter().enumerate() {
+        for (ch, channel) in input.planes().iter().enumerate() {
             if let Some(buf) = output.get_mut(ch) {
-                buf.extend_from_slice(&channel[..read]);
+                buf.extend_from_slice(&channel[input_offset..input_offset + read]);
             }
         }
         read
     }
 
-    /// Read samples from f64 channel consumers into internal buffers
+    /// Copy samples from a decoded block into the resampler's filter history.
     fn read_into_buffers(
-        input: &mut ChannelConsumers<f64>,
+        input: &AudioBlock,
+        input_offset: usize,
         buffers: &mut [VecDeque<f64>],
         max_samples: usize,
     ) -> usize {
-        let read = input.try_read_to_staging(max_samples);
+        let read = input.frames().saturating_sub(input_offset).min(max_samples);
         if read == 0 {
             return 0;
         }
 
-        let staging = input.staging();
-        for (ch, channel) in staging.iter().enumerate() {
-            buffers[ch].extend(&channel[..read]);
+        for (buffer, channel) in buffers.iter_mut().zip(input.planes()) {
+            buffer.extend(&channel[input_offset..input_offset + read]);
         }
         read
     }
@@ -425,22 +418,26 @@ impl Resampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::pipeline::ChannelBuffers;
+    use crate::media::pipeline::AudioBlock;
 
-    /// Push `frames` frames of constant `value` through the resampler in ring-buffer-sized pieces,
+    /// Push `frames` frames of constant `value` through the resampler in reusable blocks,
     /// collecting output into `out`.
     fn feed_constant(resampler: &mut Resampler, frames: usize, value: f64, out: &mut [Vec<f64>]) {
-        let (mut producers, mut consumers) = ChannelBuffers::<f64>::new(2, 8192).split();
         let mut remaining = frames;
         while remaining > 0 {
-            let piece = remaining.min(4096);
+            let mut block = AudioBlock::new(2.into(), resampler.source_rate).unwrap();
+            let piece = remaining.min(block.frame_capacity());
             let planes = vec![vec![value; piece], vec![value; piece]];
-            producers.write_vecs(&planes).unwrap();
-            resampler.process_into(&mut consumers, out, 8192);
+            block.begin(resampler.source_rate, None, None).unwrap();
+            block.append_planar(&planes, 0, piece).unwrap();
+            let mut offset = 0;
+            while offset < piece {
+                let consumed = resampler.process_block(&block, offset, out, 8192);
+                assert!(consumed > 0);
+                offset += consumed;
+            }
             remaining -= piece;
         }
-        // pick up anything the last write left in the ring buffer
-        resampler.process_into(&mut consumers, out, 8192);
     }
 
     #[test]
@@ -493,5 +490,18 @@ mod tests {
         let mut out = vec![Vec::new(), Vec::new()];
         assert_eq!(resampler.flush_into(&mut out), 0);
         assert!(out[0].is_empty());
+    }
+
+    #[test]
+    fn passthrough_reports_consumed_frames_from_an_offset() {
+        let mut block = AudioBlock::new(2.into(), 48_000).unwrap();
+        block.begin(48_000, None, None).unwrap();
+        block
+            .append_planar(&[vec![1.0; 32], vec![2.0; 32]], 0, 32)
+            .unwrap();
+        let mut out = vec![Vec::new(), Vec::new()];
+
+        assert_eq!(Resampler::passthrough_block(&block, 7, &mut out, 10), 10);
+        assert_eq!(out, [vec![1.0; 10], vec![2.0; 10]]);
     }
 }

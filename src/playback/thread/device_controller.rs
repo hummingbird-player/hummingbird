@@ -91,6 +91,7 @@ pub struct DeviceController {
     current_format: Option<FormatInfo>,
     last_volume: f64,
     last_replaygain: f64,
+    idle_pause_at: Option<std::time::Instant>,
 }
 
 impl DeviceController {
@@ -102,6 +103,7 @@ impl DeviceController {
             current_format: None,
             last_volume: 1.0,
             last_replaygain: 1.0,
+            idle_pause_at: None,
         }
     }
 
@@ -149,6 +151,24 @@ impl DeviceController {
     /// Check if a stream is currently open.
     pub fn has_stream(&self) -> bool {
         self.stream.is_some()
+    }
+
+    pub fn queued_frames(&self) -> usize {
+        self.stream
+            .as_ref()
+            .map_or(0, |stream| stream.queued_frames())
+    }
+
+    pub fn next_poll_delay(&self) -> Option<std::time::Duration> {
+        self.stream
+            .as_ref()
+            .and_then(|stream| stream.next_poll_delay())
+            .into_iter()
+            .chain(
+                self.idle_pause_at
+                    .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now())),
+            )
+            .min()
     }
 
     /// Create a new stream with the specified channel configuration.
@@ -216,50 +236,26 @@ impl DeviceController {
         Ok(opened_format)
     }
 
-    /// Recreate the stream, optionally forcing recreation even if the device hasn't changed.
-    ///
-    /// Returns the new format if successful.
-    pub fn recreate_stream(
-        &mut self,
-        force: bool,
-        channels: Option<ChannelSpec>,
-    ) -> Result<FormatInfo, DeviceError> {
-        let device_provider = self
-            .device_provider
-            .as_mut()
-            .ok_or(DeviceError::NoProvider)?;
-
-        let new_device = device_provider.get_default_device()?;
-        let new_uid = new_device.get_uid().ok();
-        let current_uid = self.device.as_ref().and_then(|d| d.get_uid().ok());
-
-        // Only skip recreation if not forced and device hasn't changed
-        if !force
-            && new_uid == current_uid
-            && let Some(format) = &self.current_format
-        {
-            return Ok(format.clone());
-        }
-
-        // Need to drop the new_device before calling create_stream since it will
-        // try to get the default device again
-        drop(new_device);
-
-        self.create_stream(channels)
-    }
-
     /// Close the current stream.
     pub fn close_stream(&mut self) {
+        self.idle_pause_at = None;
         if let Some(mut stream) = self.stream.take()
             && let Err(e) = stream.close_stream()
         {
             warn!("Failed to close stream: {:?}", e);
         }
         self.current_format = None;
+        self.device = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_provider(&mut self, provider: Box<dyn DeviceProvider>) {
+        self.device_provider = Some(provider);
     }
 
     /// Start playback on the current stream.
     pub fn play(&mut self) -> Result<(), DeviceError> {
+        self.idle_pause_at = None;
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
         stream.play()?;
         Ok(())
@@ -267,6 +263,7 @@ impl DeviceController {
 
     /// Pause playback on the current stream.
     pub fn pause(&mut self) -> Result<(), DeviceError> {
+        self.idle_pause_at = None;
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
         stream.pause()?;
         Ok(())
@@ -275,6 +272,12 @@ impl DeviceController {
     /// Advance any deferred stream work (e.g. completing an async pause fade). No-op with no
     /// stream.
     pub fn poll(&mut self) -> Result<(), DeviceError> {
+        if self
+            .idle_pause_at
+            .is_some_and(|deadline| deadline <= std::time::Instant::now())
+        {
+            self.pause()?;
+        }
         if let Some(stream) = &mut self.stream {
             stream.poll()?;
         }
@@ -283,9 +286,18 @@ impl DeviceController {
 
     /// Reset the stream buffer.
     pub fn reset(&mut self) -> Result<(), DeviceError> {
+        self.idle_pause_at = None;
         let stream = self.stream.as_mut().ok_or(DeviceError::NoStream)?;
         stream.reset()?;
         Ok(())
+    }
+
+    /// Leave submitted audio untouched, then pause if playback stays idle.
+    pub fn finish(&mut self) {
+        self.idle_pause_at = self
+            .stream
+            .as_ref()
+            .map(|stream| std::time::Instant::now() + stream.idle_pause_delay());
     }
 
     /// Consume samples from ring buffer consumers and submit them to the device.
@@ -337,5 +349,87 @@ impl DeviceController {
 impl Default for DeviceController {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
+
+    struct Output {
+        pauses: Rc<Cell<usize>>,
+        resets: Rc<Cell<usize>>,
+    }
+
+    impl OutputStream for Output {
+        fn close_stream(&mut self) -> Result<(), crate::devices::errors::CloseError> {
+            Ok(())
+        }
+        fn needs_input(&self) -> bool {
+            true
+        }
+        fn idle_pause_delay(&self) -> Duration {
+            Duration::from_millis(800)
+        }
+        fn play(&mut self) -> Result<(), StateError> {
+            Ok(())
+        }
+        fn pause(&mut self) -> Result<(), StateError> {
+            self.pauses.set(self.pauses.get() + 1);
+            Ok(())
+        }
+        fn reset(&mut self) -> Result<(), ResetError> {
+            self.resets.set(self.resets.get() + 1);
+            Ok(())
+        }
+        fn set_volume(&mut self, _: f64) -> Result<(), StateError> {
+            Ok(())
+        }
+        fn consume_from(
+            &mut self,
+            _: &mut ChannelConsumers<f64>,
+        ) -> Result<usize, SubmissionError> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn natural_completion_schedules_a_cancellable_pause_without_resetting() {
+        let pauses = Rc::new(Cell::new(0));
+        let resets = Rc::new(Cell::new(0));
+        let mut device = DeviceController::new();
+        device.stream = Some(Box::new(Output {
+            pauses: pauses.clone(),
+            resets: resets.clone(),
+        }));
+        let before = Instant::now();
+        device.finish();
+        assert!(device.idle_pause_at.unwrap() >= before + Duration::from_millis(800));
+        device.poll().unwrap();
+        assert_eq!((pauses.get(), resets.get()), (0, 0));
+
+        device.idle_pause_at = Some(Instant::now());
+        device.play().unwrap();
+        device.poll().unwrap();
+        assert_eq!(pauses.get(), 0);
+        assert!(device.idle_pause_at.is_none());
+
+        device.finish();
+        device.idle_pause_at = Some(Instant::now());
+        device.poll().unwrap();
+        device.poll().unwrap();
+        assert_eq!((pauses.get(), resets.get()), (1, 0));
+
+        device.finish();
+        device.reset().unwrap();
+        assert!(device.idle_pause_at.is_none());
+        device.finish();
+        device.close_stream();
+        assert!(device.idle_pause_at.is_none());
     }
 }

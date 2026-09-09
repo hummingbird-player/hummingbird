@@ -1,12 +1,16 @@
 pub(crate) mod audio_engine;
+mod decoder;
 mod device_controller;
 mod media_controller;
 mod queue_manager;
+mod submission_timing;
+#[cfg(test)]
+mod worker_tests;
 
 use std::{
     path::Path,
     sync::{Arc, RwLock},
-    thread::sleep,
+    thread::park_timeout,
 };
 
 use itertools::Itertools as _;
@@ -19,7 +23,8 @@ use tracing::{debug, error, info, warn};
 use crate::{
     media::errors::PlaybackStartError,
     playback::{
-        dsp::spectrum::spectrum_tap, events::RepeatState, session_storage::PlaybackSessionData,
+        commands, dsp::spectrum::spectrum_tap, events::RepeatState,
+        session_storage::PlaybackSessionData,
     },
     settings::{
         equalizer::EqualizerSettings,
@@ -67,7 +72,6 @@ impl From<EngineState> for PlaybackState {
     fn from(state: EngineState) -> Self {
         match state {
             EngineState::Idle => PlaybackState::Stopped,
-            EngineState::Ready => PlaybackState::Stopped,
             EngineState::Playing => PlaybackState::Playing,
             EngineState::Paused => PlaybackState::Paused,
         }
@@ -77,6 +81,7 @@ impl From<EngineState> for PlaybackState {
 /// The playback thread orchestrates audio playback by coordinating
 /// between the audio engine and queue manager.
 pub struct PlaybackThread {
+    pending_tracks: std::collections::VecDeque<PendingTrack>,
     /// The playback settings. Received on thread startup.
     playback_settings: PlaybackSettings,
     commands_rx: UnboundedReceiver<PlaybackCommand>,
@@ -103,6 +108,14 @@ pub struct PlaybackThread {
     no_progress_cycles: u32,
 }
 
+struct PendingTrack {
+    serial: u64,
+    path: std::path::PathBuf,
+    queue_position: Option<usize>,
+    duration_ms: u64,
+    metadata: Option<media_controller::CompleteMetadata>,
+}
+
 impl PlaybackThread {
     /// Creates a new playback interface and starts the playback thread.
     pub fn start(
@@ -112,18 +125,22 @@ impl PlaybackThread {
         session: PlaybackSessionData,
         storage_tx: watch::Sender<PlaybackSessionData>,
     ) -> PlaybackInterface {
-        let (commands_tx, commands_rx) = unbounded_channel();
+        let (commands_tx, commands_rx) = commands::channel();
         let (events_tx, events_rx) = unbounded_channel();
         let engine_events_tx = events_tx.clone();
         let (tap, tap_consumer) = spectrum_tap();
+        let wakeup = commands_tx.clone();
 
         std::thread::Builder::new()
             .name("playback".to_string())
             .spawn(move || {
+                wakeup.bind_current_thread();
+                drop(wakeup);
                 let queue_manager =
                     QueueManager::new(queue, playback_settings.clone(), session, storage_tx);
 
                 let mut thread = PlaybackThread {
+                    pending_tracks: std::collections::VecDeque::new(),
                     playback_settings,
                     commands_rx,
                     events_tx,
@@ -163,9 +180,21 @@ impl PlaybackThread {
             self.queue.current_position().unwrap_or(0),
         ));
 
-        loop {
+        while !self.commands_rx.is_closed() {
             self.main_loop();
+            if self.commands_rx.is_closed() {
+                break;
+            }
+            if self.engine.state() != EngineState::Playing {
+                if let Some(delay) = self.engine.next_poll_delay() {
+                    park_timeout(delay);
+                } else {
+                    std::thread::park();
+                }
+            }
         }
+        self.engine.stop();
+        self.engine.shutdown();
     }
 
     /// Start command intake and audio playback loop.
@@ -174,6 +203,24 @@ impl PlaybackThread {
 
         // Finish any deferred device work (e.g. an async pause fade) without blocking intake.
         self.engine.poll();
+        if self.engine.take_seek_completed() {
+            self.update_ts(true);
+        }
+        if let Some(result) = self.engine.take_opened() {
+            match result {
+                Ok(duration_ms) => {
+                    if let Some(track) = self.pending_tracks.back_mut() {
+                        track.duration_ms = duration_ms.unwrap_or(0);
+                    }
+                    self.process_metadata_update();
+                    self.update_ts(true);
+                }
+                Err(e) => {
+                    error!("Unable to open media: {e}");
+                    self.publish_stopped();
+                }
+            }
+        }
 
         if self.engine.state() == EngineState::Playing {
             if self.play_audio() {
@@ -189,15 +236,35 @@ impl PlaybackThread {
                     self.next(false, false);
                 } else {
                     // we didn't block waiting for the device so we have to sleep here
-                    sleep(no_progress_backoff(self.no_progress_cycles));
+                    park_timeout(no_progress_backoff(self.no_progress_cycles));
                 }
             }
         } else {
             self.no_progress_cycles = 0;
-            sleep(std::time::Duration::from_millis(10));
         }
 
+        self.update_ts(false);
         self.broadcast_events();
+        while let Some(serial) = self.engine.take_started() {
+            let Some(index) = self
+                .pending_tracks
+                .iter()
+                .position(|track| track.serial == serial)
+            else {
+                continue;
+            };
+            let track = self.pending_tracks.remove(index).unwrap();
+            if let Some(position) = track.queue_position {
+                self.send_event(PlaybackEvent::QueuePositionChanged(position));
+            }
+            self.send_event(PlaybackEvent::SongChanged(track.path));
+            self.send_event(PlaybackEvent::DurationChanged(track.duration_ms));
+            if let Some(metadata) = track.metadata {
+                self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));
+                self.send_event(PlaybackEvent::AlbumArtUpdate(metadata.album_art));
+            }
+            self.update_ts(true);
+        }
     }
 
     /// Check for updated metadata and album art, and broadcast it to the UI.
@@ -320,17 +387,26 @@ impl PlaybackThread {
         self.last_track_gain = None;
         self.last_album_gain = None;
 
-        let info = self.engine.open(path, preserve_resampler)?;
+        let serial = self.engine.open(path, preserve_resampler)?;
+        if !preserve_resampler {
+            self.pending_tracks.clear();
+        }
 
         // Enable loop-point-aware decoding if repeat-one is active
         self.engine
             .set_looping(self.queue.repeat_state() == RepeatState::RepeatingOne);
 
-        self.send_event(PlaybackEvent::SongChanged(path.to_owned()));
-
-        self.send_event(PlaybackEvent::DurationChanged(
-            info.duration_ms.unwrap_or(0),
-        ));
+        self.pending_tracks.push_back(PendingTrack {
+            serial,
+            path: path.to_owned(),
+            queue_position: if preserve_resampler {
+                self.queue.current_position()
+            } else {
+                None
+            },
+            duration_ms: 0,
+            metadata: None,
+        });
 
         self.process_metadata_update();
 
@@ -348,8 +424,12 @@ impl PlaybackThread {
 
             self.reapply_replaygain();
 
-            self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));
-            self.send_event(PlaybackEvent::AlbumArtUpdate(metadata.album_art));
+            if let Some(track) = self.pending_tracks.back_mut() {
+                track.metadata = Some(metadata);
+            } else {
+                self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));
+                self.send_event(PlaybackEvent::AlbumArtUpdate(metadata.album_art));
+            }
         }
     }
 
@@ -412,13 +492,13 @@ impl PlaybackThread {
                     self.send_event(PlaybackEvent::QueueUpdated);
                 }
 
-                let preserve_resampler =
-                    preserve_resampler && reshuffled == Reshuffled::NotReshuffled;
                 if let Err(err) = self.open_with_resampler(&path, preserve_resampler) {
                     error!(path = %path.display(), ?err, "Unable to open file: {err}");
                 }
 
-                self.send_event(PlaybackEvent::QueuePositionChanged(index));
+                if !preserve_resampler {
+                    self.send_event(PlaybackEvent::QueuePositionChanged(index));
+                }
             }
             QueueNavigationResult::Unchanged { path } => {
                 info!("Repeating current track");
@@ -428,7 +508,11 @@ impl PlaybackThread {
             }
             QueueNavigationResult::EndOfQueue => {
                 info!("Playback queue ended, stopping playback");
-                self.stop();
+                if preserve_resampler {
+                    self.engine.finish_playback();
+                } else {
+                    self.stop();
+                }
             }
         }
     }
@@ -655,11 +739,15 @@ impl PlaybackThread {
                     if let Err(err) = self.open_with_resampler(&path, preserve_resampler) {
                         error!(path = %path.display(), ?err, "Unable to open file: {err}");
                     }
-                    if let Some(pos) = self.queue.current_position() {
+                    if !preserve_resampler && let Some(pos) = self.queue.current_position() {
                         self.send_event(PlaybackEvent::QueuePositionChanged(pos));
                     }
                 } else {
-                    self.stop();
+                    if preserve_resampler {
+                        self.engine.finish_playback();
+                    } else {
+                        self.stop();
+                    }
                 }
             }
             DequeueResult::Unchanged => {}
@@ -811,6 +899,9 @@ impl PlaybackThread {
 
     /// Emit a [`PositionChanged`] event if the timestamp has changed.
     fn update_ts(&mut self, force: bool) {
+        if self.engine.has_pending_start() {
+            return;
+        }
         if let Some(timestamp) = self.engine.position_ms() {
             self.last_timestamp = timestamp;
 
@@ -841,8 +932,6 @@ impl PlaybackThread {
     fn seek(&mut self, timestamp: f64) {
         if let Err(e) = self.engine.seek(timestamp) {
             warn!("Failed to seek: {:?}", e);
-        } else {
-            self.update_ts(true);
         }
     }
 
@@ -943,8 +1032,13 @@ impl PlaybackThread {
 
     /// Stop the current playback.
     fn stop(&mut self) {
-        self.set_stop_after_current(false);
         self.engine.stop();
+        self.publish_stopped();
+    }
+
+    fn publish_stopped(&mut self) {
+        self.pending_tracks.clear();
+        self.set_stop_after_current(false);
         self.last_track_gain = None;
         self.last_album_gain = None;
 
@@ -1042,23 +1136,41 @@ impl PlaybackThread {
         self.update_ts(true);
     }
 
-    /// Process audio samples through the engine and send to device. Returns whether the engine
-    /// made forward progress this cycle.
+    /// Process audio samples through the engine and send them to the device. Backpressure is
+    /// healthy even when it makes no progress, so only unexpected idle cycles return false.
     fn play_audio(&mut self) -> bool {
         match self.engine.process_cycle() {
+            EngineCycleResult::Pending => {
+                park_timeout(self.engine.pending_poll_delay());
+                true
+            }
             EngineCycleResult::Continue => {
                 self.update_ts(false);
                 true
             }
-            EngineCycleResult::Eof => {
+            EngineCycleResult::Backpressured => {
+                park_timeout(std::time::Duration::from_millis(2));
+                true
+            }
+            EngineCycleResult::SourceEof => {
+                self.process_metadata_update();
+                if !self.engine.source_has_pending_start() {
+                    self.pending_tracks.pop_back();
+                }
                 if self.stop_after_current {
-                    info!("EOF, stopping after current track");
-                    self.consume_current_track();
-                    self.stop();
+                    self.engine.finish_playback();
                 } else {
                     info!("EOF, moving to next song");
                     self.next(false, true);
                 }
+                true
+            }
+            EngineCycleResult::Eof => {
+                if self.stop_after_current {
+                    self.consume_current_track();
+                }
+                self.engine.complete();
+                self.publish_stopped();
                 true
             }
             EngineCycleResult::FatalError(msg) => {
@@ -1077,6 +1189,6 @@ impl PlaybackThread {
     }
 
     fn send_event(&mut self, event: PlaybackEvent) {
-        self.events_tx.send(event).expect("unable to send event");
+        let _ = self.events_tx.send(event);
     }
 }

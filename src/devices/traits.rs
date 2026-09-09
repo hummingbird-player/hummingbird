@@ -51,6 +51,14 @@ pub trait OutputStream {
     fn close_stream(&mut self) -> Result<(), CloseError>;
     /// Returns true if the stream requires input (e.g. the buffer is empty).
     fn needs_input(&self) -> bool;
+    /// Frames still waiting in the application-owned device queue, excluding hardware latency.
+    fn queued_frames(&self) -> usize {
+        0
+    }
+    /// Conservative idle time before pausing after natural completion.
+    fn idle_pause_delay(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
     /// Tells the device to start playing audio.
     fn play(&mut self) -> Result<(), StateError>;
     /// Tells the device to stop playing audio. Note that some providers may not actually stop
@@ -67,6 +75,9 @@ pub trait OutputStream {
     fn poll(&mut self) -> Result<(), StateError> {
         Ok(())
     }
+    fn next_poll_delay(&self) -> Option<std::time::Duration> {
+        None
+    }
     /// Tells the device to reset the buffer. This is useful for restarting playback after a pause,
     /// in order to avoid playing stale data (e.g. if a user pauses before seeking or changing
     /// tracks).
@@ -82,7 +93,10 @@ pub trait OutputStream {
         Ok(())
     }
 
-    /// Consume samples from ring buffer consumers and submit them to the device.
+    /// Submit as many whole frames as fit immediately and return the accepted frame count.
+    ///
+    /// A full device returns zero without consuming input. Implementations must not wait for
+    /// capacity or remove frames they cannot accept.
     fn consume_from(&mut self, input: &mut ChannelConsumers<f64>)
     -> Result<usize, SubmissionError>;
 }

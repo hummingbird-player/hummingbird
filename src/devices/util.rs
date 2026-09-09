@@ -1,64 +1,8 @@
 use intx::{I24, U24};
-use rtrb::{Consumer, Producer};
+use rtrb::Consumer;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
 
 use super::resample::{SampleFrom, SampleInto};
-
-/// How long a ring-buffer producer sleeps between retries when the buffer is full.
-pub const RING_WRITE_PARK: Duration = Duration::from_millis(1);
-pub const RING_WRITE_DEADLINE: Duration = Duration::from_millis(250);
-
-/// The consumer of a ring buffer stopped draining before the write deadline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingWriteTimeout {
-    /// Samples written to each ring before the deadline expired.
-    pub written: usize,
-}
-
-pub fn write_bounded<T: Copy>(
-    producer: &mut Producer<T>,
-    slice: &[T],
-) -> Result<(), RingWriteTimeout> {
-    write_bounded_planar(std::slice::from_mut(producer), &[slice], slice.len())
-}
-
-/// Write the first `total` samples of equal-length planes to their producers in lockstep, so the
-/// channels never desync
-pub fn write_bounded_planar<T: Copy>(
-    producers: &mut [Producer<T>],
-    planes: &[&[T]],
-    total: usize,
-) -> Result<(), RingWriteTimeout> {
-    let mut written = 0;
-    let deadline = Instant::now() + RING_WRITE_DEADLINE;
-
-    while written < total {
-        let writable = producers
-            .iter()
-            .map(Producer::slots)
-            .min()
-            .unwrap_or(0)
-            .min(total - written);
-
-        if writable == 0 {
-            if Instant::now() >= deadline {
-                return Err(RingWriteTimeout { written });
-            }
-            std::thread::sleep(RING_WRITE_PARK);
-            continue;
-        }
-
-        for (producer, plane) in producers.iter_mut().zip(planes) {
-            if let Ok(chunk) = producer.write_chunk_uninit(writable) {
-                chunk.fill_from_iter(plane[written..written + writable].iter().copied());
-            }
-        }
-        written += writable;
-    }
-
-    Ok(())
-}
 
 pub fn read_available<T: Copy>(consumer: &mut Consumer<T>, data: &mut [T]) -> usize {
     let readable = consumer.slots().min(data.len());

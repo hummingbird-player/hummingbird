@@ -21,8 +21,6 @@ pub enum PlaybackStartError {
     Undecodable,
     #[error("Failed to process media: {0}")]
     MediaError(String),
-    #[error("Audio stream error: {0}")]
-    StreamError(String),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
@@ -38,8 +36,6 @@ pub enum PlaybackReadError {
     Eof,
     #[error("Channel count changed to {0}")]
     ChannelCountChanged(usize),
-    #[error("Unknown media provider error: `{0}`")]
-    Unknown(String),
     #[error("Decode error: `{0}`")]
     DecodeFatal(String),
 }
