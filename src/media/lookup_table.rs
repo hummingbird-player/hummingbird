@@ -50,9 +50,12 @@ fn provider_can_read(
 }
 
 pub fn can_be_read(path: &Path, required_features: MediaProviderFeatures) -> anyhow::Result<bool> {
+    let Some(extension) = path.extension() else {
+        return Ok(false);
+    };
     let read = LOOKUP_TABLE.blocking_read();
     for provider in read.iter() {
-        if provider_can_read(path.extension(), required_features, provider)? {
+        if provider_can_read(Some(extension), required_features, provider)? {
             return Ok(true);
         }
     }

@@ -8,6 +8,7 @@ use crate::{
 };
 use sqlx::{Connection, Row, SqliteConnection};
 
+const ARTWORK_MIGRATION: i64 = 20260808120000;
 const SOURCE_MIGRATION: i64 = 20260819000000;
 
 async fn snapshot(conn: &mut SqliteConnection, sql: &str) -> Vec<Vec<String>> {
@@ -18,6 +19,108 @@ async fn snapshot(conn: &mut SqliteConnection, sql: &str) -> Vec<Vec<String>> {
         .into_iter()
         .map(|row| (0..row.len()).map(|i| row.get::<String, _>(i)).collect())
         .collect()
+}
+
+#[tokio::test]
+async fn database_upgrades_without_losing_source_or_artwork_identity() {
+    let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    let migrations = sqlx::migrate!("./migrations");
+    for migration in migrations
+        .iter()
+        .filter(|migration| migration.version < ARTWORK_MIGRATION)
+    {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(migration.sql.as_ref()))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+
+    sqlx::raw_sql(
+        r#"
+        INSERT INTO artist (id, name, name_sortable) VALUES (20, 'Artist', 'Artist');
+        INSERT INTO album (id, title, title_sortable, artist_display_override, image, thumb)
+            VALUES (30, 'Album', 'Album', 'Artist', X'1122', X'3344');
+        INSERT INTO album_artist (album_id, artist_id) VALUES (30, 20);
+        INSERT INTO track (id, title, title_sortable, album_id, duration, location, folder)
+            VALUES (40, 'Song', 'Song', 30, 240, '/music/song.flac', '/music');
+        INSERT INTO playlist (id, name, type, position) VALUES (60, 'Mix', 0, 1);
+        INSERT INTO playlist_item (id, playlist_id, track_id, position)
+            VALUES (70, 60, 40, 0);
+        "#,
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+
+    for migration in migrations
+        .iter()
+        .filter(|migration| migration.version >= ARTWORK_MIGRATION)
+    {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(migration.sql.as_ref()))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+    }
+
+    let track: (i64, i64, String, String, i64) = sqlx::query_as(
+        "SELECT id, album_id, source, location, source_generation FROM track WHERE id = 40",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        track,
+        (40, 30, "local".into(), "/music/song.flac".into(), 0)
+    );
+
+    let album: (i64, String, i64, Vec<u8>, Vec<u8>) = sqlx::query_as(
+        "SELECT album.id, album.source, artwork.id, artwork.image, artwork.thumb
+         FROM album JOIN artwork ON artwork.id = album.artwork_id
+         WHERE album.id = 30",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(album.0, 30);
+    assert_eq!(album.1, "local");
+    assert!(album.2 > 0);
+    assert_eq!(album.3, vec![0x11, 0x22]);
+    assert_eq!(album.4, vec![0x33, 0x44]);
+
+    let playlist_reference: (i64, i64, i64) =
+        sqlx::query_as("SELECT id, playlist_id, track_id FROM playlist_item WHERE id = 70")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(playlist_reference, (70, 60, 40));
+
+    let local_source: (String, String, i64, i64) = sqlx::query_as(
+        "SELECT id, kind, sync_generation, completed_generation
+         FROM library_source WHERE id = 'local'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(local_source, ("local".into(), "local".into(), 0, 0));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM source_album")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(foreign_keys, 1);
 }
 
 #[tokio::test]
