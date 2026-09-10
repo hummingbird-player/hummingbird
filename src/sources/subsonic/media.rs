@@ -1,6 +1,9 @@
 //! Original-quality media requests and bounded response streaming.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -8,13 +11,13 @@ use zed_reqwest::{
     Client, StatusCode,
     header::{
         ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_RANGE, ETAG, HeaderValue,
-        IF_RANGE, LAST_MODIFIED, RANGE,
+        IF_RANGE, RANGE,
     },
 };
 
 use crate::sources::{
-    BackendError, MediaByteRangeReader, MediaDelivery, MediaDescriptor, MediaQuality,
-    RemoteArtworkRef,
+    BackendError, MediaByteRange, MediaByteRangeReader, MediaDelivery, MediaDescriptor,
+    MediaQuality, RemoteArtworkRef,
 };
 
 use super::client::{
@@ -124,7 +127,7 @@ impl MediaReader {
         let response = tokio::time::timeout(
             client.timeout,
             self.client
-                .get(url)
+                .get(url.clone())
                 .header(ACCEPT_ENCODING, "identity")
                 .send(),
         )
@@ -135,7 +138,10 @@ impl MediaReader {
             response,
             client.timeout,
             delivery,
-            (quality == MediaQuality::Original && allow_byte_ranges).then_some(self.client.clone()),
+            (quality == MediaQuality::Original && allow_byte_ranges).then_some(RangeRequest {
+                client: self.client.clone(),
+                authenticated_url: url,
+            }),
         )
         .await
     }
@@ -206,7 +212,7 @@ impl MediaReader {
         let response = tokio::time::timeout(
             client.timeout,
             self.client
-                .get(url)
+                .get(url.clone())
                 .header(ACCEPT_ENCODING, "identity")
                 .send(),
         )
@@ -217,7 +223,10 @@ impl MediaReader {
             response,
             client.timeout,
             delivery,
-            (direct_play && allow_byte_ranges).then_some(self.client.clone()),
+            (direct_play && allow_byte_ranges).then_some(RangeRequest {
+                client: self.client.clone(),
+                authenticated_url: url,
+            }),
         )
         .await
     }
@@ -271,7 +280,7 @@ async fn descriptor_from_response(
     mut response: zed_reqwest::Response,
     timeout: std::time::Duration,
     delivery: MediaDelivery,
-    range_client: Option<Client>,
+    range_request: Option<RangeRequest>,
 ) -> Result<MediaDescriptor, BackendError> {
     check_http_status(&response)?;
     let content_type = response
@@ -291,14 +300,20 @@ async fn descriptor_from_response(
 
     let byte_len = response.content_length();
     let extension = content_type.as_deref().and_then(media_extension);
-    let range_reader = range_client.and_then(|client| {
-        let byte_len = byte_len.filter(|length| *length != 0)?;
-        response_supports_ranges(&response).then(|| {
+    let range_reader = range_request.and_then(|request| {
+        let validator = response_validator(&response)?;
+        (byte_len != Some(0)
+            && response_has_identity_encoding(&response)
+            && !response_refuses_ranges(&response))
+        .then(|| {
             Arc::new(HttpMediaByteRangeReader {
-                client,
-                url: response.url().clone(),
-                byte_len,
-                validator: response_validator(&response),
+                request,
+                representation: Mutex::new(RangeRepresentation {
+                    url: response.url().clone(),
+                    byte_len,
+                }),
+                validator,
+                refresh_used: AtomicBool::new(false),
                 timeout,
             }) as Arc<dyn MediaByteRangeReader>
         })
@@ -344,39 +359,184 @@ async fn descriptor_from_response(
     })
 }
 
-struct HttpMediaByteRangeReader {
+struct RangeRequest {
     client: Client,
+    /// The authenticated Subsonic endpoint is contacted only to obtain a replacement redirect.
+    /// Its credential query is never copied into the final CDN URL.
+    authenticated_url: Url,
+}
+
+struct RangeRepresentation {
     url: Url,
-    byte_len: u64,
-    validator: Option<HeaderValue>,
+    byte_len: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Validator(HeaderValue);
+
+impl Validator {
+    fn value(&self) -> &HeaderValue {
+        &self.0
+    }
+}
+
+struct RefreshReservation<'a> {
+    refresh_used: &'a AtomicBool,
+    completed: bool,
+}
+
+impl<'a> RefreshReservation<'a> {
+    fn acquire(refresh_used: &'a AtomicBool) -> Option<Self> {
+        if refresh_used
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return None;
+        }
+        Some(Self {
+            refresh_used,
+            completed: false,
+        })
+    }
+
+    fn complete(mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for RefreshReservation<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.refresh_used.store(false, Ordering::Release);
+        }
+    }
+}
+
+struct HttpMediaByteRangeReader {
+    request: RangeRequest,
+    representation: Mutex<RangeRepresentation>,
+    validator: Validator,
+    refresh_used: AtomicBool,
     timeout: std::time::Duration,
 }
 
 #[async_trait::async_trait]
 impl MediaByteRangeReader for HttpMediaByteRangeReader {
-    async fn read_range(&self, start: u64, length: usize) -> Result<Box<[u8]>, BackendError> {
-        if length == 0 || start >= self.byte_len {
-            return Ok(Box::default());
+    async fn read_range(&self, start: u64, length: usize) -> Result<MediaByteRange, BackendError> {
+        let (url, known_len) = {
+            let representation = self
+                .representation
+                .lock()
+                .expect("range representation poisoned");
+            (representation.url.clone(), representation.byte_len)
+        };
+        if length == 0 || known_len.is_some_and(|byte_len| start >= byte_len) {
+            return Ok(MediaByteRange {
+                bytes: Box::default(),
+                total_len: known_len.unwrap_or(start),
+            });
         }
         let length = u64::try_from(length).map_err(|_| BackendError::InvalidRequest)?;
-        let end = start
-            .saturating_add(length.saturating_sub(1))
-            .min(self.byte_len - 1);
+        let requested_end = start.saturating_add(length.saturating_sub(1));
+        let end = known_len
+            .map(|byte_len| requested_end.min(byte_len - 1))
+            .unwrap_or(requested_end);
+        let first = self.send_range(url.clone(), start, end).await;
+        // Spend at most one retry: either one transient retry for this request or the reader's
+        // single signed-URL refresh. Validation failures are never retried.
+        let mut refresh_reservation = None;
+        let (response, refreshed) = match first {
+            Err(error) if is_transient_range_error(&error) => {
+                (self.send_range(url, start, end).await?, false)
+            }
+            Err(error) => return Err(error),
+            Ok(response)
+                if signed_url_expired(&response)
+                    && response.url() != &self.request.authenticated_url =>
+            {
+                let Some(reservation) = RefreshReservation::acquire(&self.refresh_used) else {
+                    return self
+                        .validate_range(response, start, requested_end, known_len, false)
+                        .await;
+                };
+                match self
+                    .send_range(self.request.authenticated_url.clone(), start, end)
+                    .await
+                {
+                    Ok(response) => {
+                        refresh_reservation = Some(reservation);
+                        (response, true)
+                    }
+                    Err(error) => {
+                        // The refresh attempt completed, so consume its budget. Only dropping
+                        // this future while the request is pending may release the reservation.
+                        reservation.complete();
+                        return Err(error);
+                    }
+                }
+            }
+            Ok(response) if response.status().is_server_error() => {
+                (self.send_range(url, start, end).await?, false)
+            }
+            Ok(response) => (response, false),
+        };
+        let result = self
+            .validate_range(response, start, requested_end, known_len, refreshed)
+            .await;
+        if let Some(reservation) = refresh_reservation {
+            reservation.complete();
+        }
+        result
+    }
+}
+
+impl HttpMediaByteRangeReader {
+    async fn send_range(
+        &self,
+        url: Url,
+        start: u64,
+        end: u64,
+    ) -> Result<zed_reqwest::Response, BackendError> {
         let mut request = self
+            .request
             .client
-            .get(self.url.clone())
+            .get(url)
             .header(ACCEPT_ENCODING, "identity")
             .header(RANGE, format!("bytes={start}-{end}"));
-        if let Some(validator) = &self.validator {
-            request = request.header(IF_RANGE, validator);
-        }
-        let mut response = tokio::time::timeout(self.timeout, request.send())
+        request = request.header(IF_RANGE, self.validator.value());
+        tokio::time::timeout(self.timeout, request.send())
             .await
             .map_err(|_| BackendError::Timeout)?
-            .map_err(network_error)?;
+            .map_err(network_error)
+    }
+
+    async fn validate_range(
+        &self,
+        mut response: zed_reqwest::Response,
+        start: u64,
+        requested_end: u64,
+        known_len: Option<u64>,
+        refreshed: bool,
+    ) -> Result<MediaByteRange, BackendError> {
+        if response.status() == StatusCode::OK {
+            // A matching full representation means the server ignored Range. A mismatch is an
+            // If-Range representation change and must not become a sequential fallback.
+            let same_validator =
+                validate_response_validator(&response, &self.validator, true).is_ok();
+            let same_length =
+                known_len.is_none_or(|byte_len| response.content_length() == Some(byte_len));
+            return if same_validator && same_length {
+                Err(BackendError::Unsupported)
+            } else {
+                Err(BackendError::RepresentationChanged)
+            };
+        }
+        if response.status() == StatusCode::PRECONDITION_FAILED {
+            return Err(BackendError::RepresentationChanged);
+        }
         if response.status() != StatusCode::PARTIAL_CONTENT {
             check_http_status(&response)?;
-            return Err(BackendError::Unsupported);
+            return Err(BackendError::MalformedResponse);
         }
         if !response_has_identity_encoding(&response) {
             return Err(BackendError::MalformedResponse);
@@ -387,7 +547,12 @@ impl MediaByteRangeReader for HttpMediaByteRangeReader {
             .and_then(|value| value.to_str().ok())
             .and_then(parse_content_range)
             .ok_or(BackendError::MalformedResponse)?;
-        if actual_start != start || actual_end != end || total != self.byte_len {
+        if known_len.is_some_and(|byte_len| byte_len != total) {
+            return Err(BackendError::RepresentationChanged);
+        }
+        let expected_end = requested_end.min(total.saturating_sub(1));
+        validate_response_validator(&response, &self.validator, refreshed)?;
+        if actual_start != start || start >= total || actual_end != expected_end {
             return Err(BackendError::MalformedResponse);
         }
         let expected = usize::try_from(actual_end - actual_start + 1)
@@ -400,25 +565,58 @@ impl MediaByteRangeReader for HttpMediaByteRangeReader {
         }
         let body = tokio::time::timeout(self.timeout, read_limited_body(&mut response, expected))
             .await
-            .map_err(|_| BackendError::Timeout)??;
+            .map_err(|_| BackendError::Timeout)?
+            .map_err(|error| match error {
+                BackendError::ResponseTooLarge => BackendError::MalformedResponse,
+                error => error,
+            })?;
         if body.len() != expected {
             return Err(BackendError::MalformedResponse);
         }
-        Ok(body.into_boxed_slice())
+        let final_url = response.url().clone();
+        let mut representation = self
+            .representation
+            .lock()
+            .expect("range representation poisoned");
+        if representation
+            .byte_len
+            .is_some_and(|byte_len| byte_len != total)
+        {
+            return Err(BackendError::RepresentationChanged);
+        }
+        representation.url = final_url;
+        representation.byte_len = Some(total);
+        Ok(MediaByteRange {
+            bytes: body.into_boxed_slice(),
+            total_len: total,
+        })
     }
 }
 
-fn response_supports_ranges(response: &zed_reqwest::Response) -> bool {
-    response_has_identity_encoding(response)
-        && response
-            .headers()
-            .get(ACCEPT_RANGES)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| {
-                value
-                    .split(',')
-                    .any(|unit| unit.trim().eq_ignore_ascii_case("bytes"))
-            })
+fn signed_url_expired(response: &zed_reqwest::Response) -> bool {
+    matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+    )
+}
+
+fn is_transient_range_error(error: &BackendError) -> bool {
+    matches!(
+        error,
+        BackendError::Network | BackendError::Timeout | BackendError::Unavailable
+    )
+}
+
+fn response_refuses_ranges(response: &zed_reqwest::Response) -> bool {
+    let Some(value) = response
+        .headers()
+        .get(ACCEPT_RANGES)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let mut units = value.split(',').map(str::trim);
+    units.any(|unit| unit.eq_ignore_ascii_case("none"))
 }
 
 fn response_has_identity_encoding(response: &zed_reqwest::Response) -> bool {
@@ -429,17 +627,51 @@ fn response_has_identity_encoding(response: &zed_reqwest::Response) -> bool {
         .is_none_or(|encoding| encoding.eq_ignore_ascii_case("identity"))
 }
 
-fn response_validator(response: &zed_reqwest::Response) -> Option<HeaderValue> {
+fn response_validator(response: &zed_reqwest::Response) -> Option<Validator> {
     response
         .headers()
         .get(ETAG)
-        .filter(|value| {
-            value
-                .to_str()
-                .is_ok_and(|value| !value.trim_start().starts_with("W/"))
-        })
-        .or_else(|| response.headers().get(LAST_MODIFIED))
+        .filter(|value| value.to_str().is_ok_and(is_strong_etag))
         .cloned()
+        .map(Validator)
+}
+
+fn validate_response_validator(
+    response: &zed_reqwest::Response,
+    expected: &Validator,
+    required: bool,
+) -> Result<(), BackendError> {
+    match response.headers().get(ETAG) {
+        Some(value) if value.to_str().is_ok_and(is_strong_etag) && value == expected.value() => {
+            Ok(())
+        }
+        Some(_) => Err(BackendError::RepresentationChanged),
+        None if required => Err(BackendError::RepresentationChanged),
+        None => Ok(()),
+    }
+}
+
+fn is_strong_etag(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2
+        && bytes.first() == Some(&b'"')
+        && bytes.last() == Some(&b'"')
+        && bytes[1..bytes.len() - 1]
+            .iter()
+            .all(|byte| *byte == 0x21 || (0x23..=0x7e).contains(byte))
+}
+
+#[cfg(test)]
+#[test]
+fn a_denied_refresh_reservation_does_not_release_the_active_reservation() {
+    let refresh_used = AtomicBool::new(false);
+    let active = RefreshReservation::acquire(&refresh_used).unwrap();
+
+    assert!(RefreshReservation::acquire(&refresh_used).is_none());
+    assert!(refresh_used.load(Ordering::Acquire));
+
+    active.complete();
+    assert!(refresh_used.load(Ordering::Acquire));
 }
 
 pub(super) fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {

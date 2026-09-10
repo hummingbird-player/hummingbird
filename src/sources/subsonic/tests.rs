@@ -193,6 +193,17 @@ impl Server {
             .unwrap()
             .unwrap()
     }
+
+    async fn assert_no_detailed_request(&mut self) {
+        if let Ok(Some(request)) =
+            tokio::time::timeout(Duration::from_millis(50), self.request_details.recv()).await
+        {
+            panic!(
+                "the client made an unexpected additional request to {}",
+                request.url
+            );
+        }
+    }
 }
 
 impl Drop for Server {
@@ -789,6 +800,7 @@ async fn range_reads_reject_servers_that_ignore_the_range_header() {
             headers: vec![
                 ("Content-Type", "audio/flac".into()),
                 ("Accept-Ranges", "bytes".into()),
+                ("ETag", "\"audio-v1\"".into()),
             ],
             body: b"0123456789".to_vec(),
             stall: false,
@@ -796,7 +808,10 @@ async fn range_reads_reject_servers_that_ignore_the_range_header() {
         },
         Reply {
             status: 200,
-            headers: vec![("Content-Type", "audio/flac".into())],
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
             body: b"0123456789".to_vec(),
             stall: false,
             stall_body: false,
@@ -811,6 +826,622 @@ async fn range_reads_reject_servers_that_ignore_the_range_header() {
         range_reader.read_range(3, 2).await,
         Err(BackendError::Unsupported)
     );
+}
+
+#[tokio::test]
+async fn omitted_accept_ranges_is_probed_only_when_a_range_is_requested() {
+    let mut server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+
+    let media = backend.media("song/id").await.unwrap();
+    let range_reader = media
+        .range_reader
+        .expect("an omitted Accept-Ranges header should be probed lazily");
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/stream.view"
+    );
+    server.assert_no_detailed_request().await;
+
+    let range = range_reader.read_range(3, 2).await.unwrap();
+    assert_eq!(&*range.bytes, b"34");
+    assert_eq!(range.total_len, 10);
+    let request = server.detailed_request().await;
+    assert_eq!(request.headers["range"], "bytes=3-4");
+    assert_eq!(request.headers["if-range"], "\"audio-v1\"");
+}
+
+#[tokio::test]
+async fn content_range_supplies_an_unknown_initial_length() {
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Transfer-Encoding", "chunked".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 7-9/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+
+    let media = backend.media("song/id").await.unwrap();
+    assert_eq!(media.byte_len, None);
+    let range = media.range_reader.unwrap().read_range(7, 8).await.unwrap();
+    assert_eq!(&*range.bytes, b"789");
+    assert_eq!(range.total_len, 10);
+}
+
+#[tokio::test]
+async fn ranged_reads_require_a_trustworthy_validator() {
+    let untrustworthy = [
+        ("ETag", "W/\"audio-v1\""),
+        ("ETag", "not-an-entity-tag"),
+        ("ETag", "\"audio v1\""),
+        ("ETag", "\"audio-v1\", \"audio-v2\""),
+        ("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT"),
+    ];
+    for (name, value) in untrustworthy {
+        let server = Server::new(vec![Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Accept-Ranges", "bytes".into()),
+                (name, value.into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        }])
+        .await;
+        let backend = server.backend(password());
+
+        assert!(
+            backend
+                .media("song/id")
+                .await
+                .unwrap()
+                .range_reader
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn changed_same_sized_media_is_not_combined_with_old_ranges() {
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Accept-Ranges", "bytes".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v2\"".into()),
+            ],
+            body: b"XX".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let range_reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    assert_eq!(
+        range_reader.read_range(3, 2).await,
+        Err(BackendError::RepresentationChanged)
+    );
+}
+
+#[tokio::test]
+async fn weak_or_malformed_returned_etags_are_representation_changes() {
+    for etag in [
+        "W/\"audio-v2\"",
+        "not-an-entity-tag",
+        "\"audio v2\"",
+        "\"audio-v1\", \"audio-v2\"",
+    ] {
+        let server = Server::new(vec![
+            Reply {
+                status: 200,
+                headers: vec![
+                    ("Content-Type", "audio/flac".into()),
+                    ("ETag", "\"audio-v1\"".into()),
+                ],
+                body: b"0123456789".to_vec(),
+                stall: false,
+                stall_body: false,
+            },
+            Reply {
+                status: 206,
+                headers: vec![
+                    ("Content-Range", "bytes 3-4/10".into()),
+                    ("ETag", etag.into()),
+                ],
+                body: b"34".to_vec(),
+                stall: false,
+                stall_body: false,
+            },
+        ])
+        .await;
+        let backend = server.backend(password());
+        let reader = backend
+            .media("song/id")
+            .await
+            .unwrap()
+            .range_reader
+            .unwrap();
+
+        assert_eq!(
+            reader.read_range(3, 2).await,
+            Err(BackendError::RepresentationChanged)
+        );
+    }
+}
+
+#[tokio::test]
+async fn changed_media_length_is_not_combined_with_old_ranges() {
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/11".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let range_reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    assert_eq!(
+        range_reader.read_range(3, 2).await,
+        Err(BackendError::RepresentationChanged)
+    );
+}
+
+#[tokio::test]
+async fn malformed_range_headers_lengths_and_encodings_are_rejected() {
+    let malformed = [
+        (
+            vec![("Content-Range", "bytes 2-3/10".into())],
+            b"34".as_slice(),
+        ),
+        (
+            vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("Content-Length", "3".into()),
+            ],
+            b"34".as_slice(),
+        ),
+        (
+            vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("Content-Encoding", "gzip".into()),
+            ],
+            b"34".as_slice(),
+        ),
+        (
+            vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("Transfer-Encoding", "chunked".into()),
+            ],
+            b"3".as_slice(),
+        ),
+        (
+            vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("Transfer-Encoding", "chunked".into()),
+            ],
+            b"345".as_slice(),
+        ),
+    ];
+
+    for (index, (headers, body)) in malformed.into_iter().enumerate() {
+        let server = Server::new(vec![
+            Reply {
+                status: 200,
+                headers: vec![
+                    ("Content-Type", "audio/flac".into()),
+                    ("ETag", "\"audio-v1\"".into()),
+                ],
+                body: b"0123456789".to_vec(),
+                stall: false,
+                stall_body: false,
+            },
+            Reply {
+                status: 206,
+                headers,
+                body: body.to_vec(),
+                stall: false,
+                stall_body: false,
+            },
+        ])
+        .await;
+        let backend = server.backend(password());
+        let reader = backend
+            .media("song/id")
+            .await
+            .unwrap()
+            .range_reader
+            .unwrap();
+        assert_eq!(
+            reader.read_range(3, 2).await,
+            Err(BackendError::MalformedResponse),
+            "malformed range fixture {index} was accepted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_expired_signed_url_is_refreshed_once_without_forwarding_credentials() {
+    let mut server = Server::new(vec![
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=old".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(403),
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=new".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(403),
+    ])
+    .await;
+    let backend = server.backend(password());
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    let range = reader.read_range(3, 2).await.unwrap();
+    assert_eq!(&*range.bytes, b"34");
+    assert_eq!(reader.read_range(5, 2).await, Err(BackendError::Forbidden));
+
+    let authenticated = server.detailed_request().await;
+    assert_eq!(authenticated.url.path(), "/proxy/music/rest/stream.view");
+    assert!(query(&authenticated.url).contains_key("u"));
+    let old_cdn = server.detailed_request().await;
+    assert_eq!(query(&old_cdn.url)["token"], "old");
+    assert!(!query(&old_cdn.url).contains_key("u"));
+    let expired = server.detailed_request().await;
+    assert_eq!(query(&expired.url)["token"], "old");
+    assert!(!query(&expired.url).contains_key("u"));
+    let refresh = server.detailed_request().await;
+    assert_eq!(refresh.url.path(), "/proxy/music/rest/stream.view");
+    assert!(query(&refresh.url).contains_key("u"));
+    let new_cdn = server.detailed_request().await;
+    assert_eq!(query(&new_cdn.url)["token"], "new");
+    assert!(!query(&new_cdn.url).contains_key("u"));
+    let second_expiry = server.detailed_request().await;
+    assert_eq!(query(&second_expiry.url)["token"], "new");
+    server.assert_no_detailed_request().await;
+}
+
+#[tokio::test]
+async fn a_refreshed_signed_url_must_confirm_the_existing_validator() {
+    let server = Server::new(vec![
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=old".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(403),
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=new".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 206,
+            headers: vec![("Content-Range", "bytes 3-4/10".into())],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    assert_eq!(
+        reader.read_range(3, 2).await,
+        Err(BackendError::RepresentationChanged)
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_signed_url_refresh_does_not_consume_the_refresh_budget() {
+    let mut server = Server::new(vec![
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=old".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(403),
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=cancelled".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+                ("Content-Length", "2".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: true,
+        },
+        Reply::status(403),
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=fresh".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+    server.detailed_request().await;
+    server.detailed_request().await;
+
+    let cancelled = {
+        let reader = reader.clone();
+        tokio::spawn(async move { reader.read_range(3, 2).await })
+    };
+    let expired = server.detailed_request().await;
+    assert_eq!(query(&expired.url)["token"], "old");
+    let refresh = server.detailed_request().await;
+    assert_eq!(refresh.url.path(), "/proxy/music/rest/stream.view");
+    let stalled = server.detailed_request().await;
+    assert_eq!(query(&stalled.url)["token"], "cancelled");
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+
+    let range = tokio::time::timeout(Duration::from_secs(2), reader.read_range(3, 2))
+        .await
+        .expect("the cancelled refresh should release its reservation")
+        .unwrap();
+    assert_eq!(&*range.bytes, b"34");
+    let second_expiry = server.detailed_request().await;
+    assert_eq!(query(&second_expiry.url)["token"], "old");
+    let second_refresh = server.detailed_request().await;
+    assert_eq!(second_refresh.url.path(), "/proxy/music/rest/stream.view");
+    let fresh = server.detailed_request().await;
+    assert_eq!(query(&fresh.url)["token"], "fresh");
+}
+
+#[tokio::test]
+async fn a_failed_signed_url_refresh_consumes_the_refresh_budget() {
+    let mut server = Server::new(vec![
+        Reply {
+            headers: vec![("Location", "/signed/audio?token=old".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(403),
+        Reply {
+            stall: true,
+            ..Reply::status(200)
+        },
+        Reply::status(403),
+        Reply::status(403),
+        Reply::status(500),
+    ])
+    .await;
+    let mut backend = server.backend(password());
+    backend.client.timeout = Duration::from_millis(40);
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Timeout));
+    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Forbidden));
+    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Forbidden));
+
+    let initial = server.detailed_request().await;
+    assert_eq!(initial.url.path(), "/proxy/music/rest/stream.view");
+    let initial_cdn = server.detailed_request().await;
+    assert_eq!(query(&initial_cdn.url)["token"], "old");
+    let expired = server.detailed_request().await;
+    assert_eq!(query(&expired.url)["token"], "old");
+    let failed_refresh = server.detailed_request().await;
+    assert_eq!(failed_refresh.url.path(), "/proxy/music/rest/stream.view");
+    let second_expiry = server.detailed_request().await;
+    assert_eq!(query(&second_expiry.url)["token"], "old");
+    let third_expiry = server.detailed_request().await;
+    assert_eq!(query(&third_expiry.url)["token"], "old");
+    server.assert_no_detailed_request().await;
+}
+
+#[tokio::test]
+async fn one_transient_range_failure_is_retried() {
+    let mut server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::status(503),
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    assert_eq!(&*reader.read_range(3, 2).await.unwrap().bytes, b"34");
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/stream.view"
+    );
+    assert_eq!(
+        server.detailed_request().await.headers["range"],
+        "bytes=3-4"
+    );
+    assert_eq!(
+        server.detailed_request().await.headers["range"],
+        "bytes=3-4"
+    );
+    server.assert_no_detailed_request().await;
 }
 
 #[tokio::test]
@@ -1030,7 +1661,10 @@ async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
         bytes.extend_from_slice(&chunk.unwrap());
     }
     assert_eq!(bytes, b"redirected audio");
-    assert_eq!(&*range_reader.read_range(3, 5).await.unwrap(), b"irect");
+    assert_eq!(
+        &*range_reader.read_range(3, 5).await.unwrap().bytes,
+        b"irect"
+    );
 
     let authenticated = server.detailed_request().await;
     assert_eq!(authenticated.url.path(), "/proxy/music/rest/stream.view");

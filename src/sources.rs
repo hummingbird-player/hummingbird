@@ -48,9 +48,15 @@ impl MediaDescriptor {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MediaByteRange {
+    pub bytes: Box<[u8]>,
+    pub total_len: u64,
+}
+
 #[async_trait]
 pub(crate) trait MediaByteRangeReader: Send + Sync {
-    async fn read_range(&self, start: u64, length: usize) -> Result<Box<[u8]>, BackendError>;
+    async fn read_range(&self, start: u64, length: usize) -> Result<MediaByteRange, BackendError>;
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -185,6 +191,8 @@ pub enum BackendError {
     Redirect,
     #[error("The server returned an invalid response")]
     MalformedResponse,
+    #[error("The remote media changed while it was being read")]
+    RepresentationChanged,
     #[error("The server response exceeded the size limit")]
     ResponseTooLarge,
     #[error("Could not store downloaded media")]

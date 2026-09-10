@@ -131,19 +131,24 @@ impl Decoder {
 
     /// Seek to the specified time in seconds.
     pub fn seek(&mut self, time: f64, token: &MediaSeekToken) -> Result<(), SeekError> {
-        if self
+        let seek_in_place = self
             .current_track
             .as_ref()
             .is_some_and(|track| !track.source().is_local())
             && self
                 .media_stream
                 .as_ref()
-                .is_some_and(|stream| stream.is_seekable())
-            && let Some(stream) = &mut self.media_stream
-            && stream.seek_with_token(time, token).is_ok()
-        {
-            token.complete();
-            return Ok(());
+                .is_some_and(|stream| stream.is_seekable());
+        if seek_in_place {
+            let result = self
+                .media_stream
+                .as_mut()
+                .expect("the seekable stream was present")
+                .seek_with_token(time, token);
+            if result.is_ok() {
+                token.complete();
+            }
+            return result;
         }
         if let Some(track) = self.current_track.as_ref() {
             let input = self
@@ -319,6 +324,68 @@ mod tests {
         }
     }
 
+    struct FailingSeekFile {
+        file: File,
+        fail: Arc<AtomicBool>,
+    }
+
+    impl Read for FailingSeekFile {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.file.read(buffer)
+        }
+    }
+
+    impl Seek for FailingSeekFile {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            if self.fail.load(Ordering::SeqCst) && position != SeekFrom::Current(0) {
+                Err(std::io::Error::other("in-place seek failed"))
+            } else {
+                self.file.seek(position)
+            }
+        }
+    }
+
+    impl MediaSource for FailingSeekFile {
+        fn is_seekable(&self) -> bool {
+            true
+        }
+
+        fn byte_len(&self) -> Option<u64> {
+            self.file.metadata().ok().map(|metadata| metadata.len())
+        }
+    }
+
+    struct FailingInPlaceResolver {
+        path: PathBuf,
+        fail: Arc<AtomicBool>,
+        offsets: Mutex<Vec<f64>>,
+    }
+
+    impl MediaResolver for FailingInPlaceResolver {
+        fn resolve(&self, _track: &TrackRef) -> Result<MediaInput, PlaybackStartError> {
+            Ok(MediaInput {
+                source: Box::new(FailingSeekFile {
+                    file: File::open(&self.path)
+                        .map_err(|error| PlaybackStartError::MediaError(error.to_string()))?,
+                    fail: self.fail.clone(),
+                }),
+                extension: self.path.extension().map(Into::into),
+            })
+        }
+
+        fn resolve_at(
+            &self,
+            _track: &TrackRef,
+            time: f64,
+            _token: &MediaSeekToken,
+        ) -> Result<Option<MediaSeekInput>, PlaybackStartError> {
+            self.offsets.lock().unwrap().push(time);
+            Err(PlaybackStartError::MediaError(
+                "resolve_at must not follow an in-place failure".into(),
+            ))
+        }
+    }
+
     struct OffsetResolver {
         path: PathBuf,
         offsets: Mutex<Vec<f64>>,
@@ -490,5 +557,27 @@ mod tests {
             "a range-capable stream should not open a replacement response"
         );
         assert!(decoder.position_ms().unwrap() > 0);
+    }
+
+    #[test]
+    fn failed_in_place_seek_does_not_reopen_the_remote_stream() {
+        crate::test_support::register_test_media_providers();
+        let fail = Arc::new(AtomicBool::new(false));
+        let resolver = Arc::new(FailingInPlaceResolver {
+            path: fixture(),
+            fail: fail.clone(),
+            offsets: Mutex::new(Vec::new()),
+        });
+        let mut decoder = Decoder::with_resolver(resolver.clone());
+        decoder.open(track()).unwrap();
+        fail.store(true, Ordering::SeqCst);
+        let target = decoder.duration_ms().unwrap() as f64 / 2_000.0;
+
+        assert!(decoder.seek(target, &MediaSeekToken::new()).is_err());
+        assert!(
+            resolver.offsets.lock().unwrap().is_empty(),
+            "a failed in-place range seek must not reopen from byte zero"
+        );
+        assert!(decoder.channels().is_ok());
     }
 }

@@ -47,6 +47,8 @@ struct RegistryState {
     backend_epochs: HashMap<SourceId, SourceEpoch>,
     disabled: std::collections::HashSet<SourceId>,
     deliveries: HashMap<TrackRef, MediaDelivery>,
+    /// Tracks that definitively rejected byte ranges in the recorded source epoch.
+    sequential_ranges: HashMap<TrackRef, SourceEpoch>,
     downloads: HashMap<TrackRef, OfflineEntry>,
 }
 
@@ -61,6 +63,8 @@ impl RegistryState {
             .expect("source registry epoch overflow");
         let epoch = SourceEpoch(self.next_epoch);
         self.source_epochs.insert(source.clone(), epoch);
+        self.sequential_ranges
+            .retain(|track, _| track.source() != *source);
         epoch
     }
 
@@ -376,19 +380,32 @@ impl SourceRegistry {
             .or_else(|| state.deliveries.get(track).cloned())
     }
 
-    fn remember_delivery(
+    fn prepare_descriptor(
         &self,
         track: &TrackRef,
         backend: &Arc<dyn LibraryBackend>,
         epoch: SourceEpoch,
-        delivery: MediaDelivery,
-    ) -> bool {
+        mut descriptor: MediaDescriptor,
+    ) -> Option<MediaDescriptor> {
         let mut state = self.state.write().expect("source registry poisoned");
         if !state.backend_is_current(&track.source(), epoch, backend) {
-            return false;
+            return None;
         }
-        state.deliveries.insert(track.clone(), delivery);
-        true
+        state
+            .deliveries
+            .insert(track.clone(), descriptor.delivery.clone());
+        if state.sequential_ranges.get(track) == Some(&epoch) {
+            descriptor.range_reader = None;
+        } else if let Some(reader) = descriptor.range_reader.take() {
+            descriptor.range_reader = Some(Arc::new(EpochRangeReader {
+                reader,
+                state: self.state.clone(),
+                track: track.clone(),
+                backend: backend.clone(),
+                epoch,
+            }));
+        }
+        Some(descriptor)
     }
 
     fn offline_entry(&self, track: &TrackRef) -> Option<OfflineEntry> {
@@ -454,6 +471,39 @@ impl SourceRegistry {
     }
 }
 
+struct EpochRangeReader {
+    reader: Arc<dyn MediaByteRangeReader>,
+    state: Arc<RwLock<RegistryState>>,
+    track: TrackRef,
+    backend: Arc<dyn LibraryBackend>,
+    epoch: SourceEpoch,
+}
+
+#[async_trait::async_trait]
+impl MediaByteRangeReader for EpochRangeReader {
+    async fn read_range(
+        &self,
+        start: u64,
+        length: usize,
+    ) -> Result<super::MediaByteRange, BackendError> {
+        let result = self.reader.read_range(start, length).await;
+        if result
+            .as_ref()
+            .is_err_and(|error| *error == BackendError::Unsupported)
+        {
+            // A stale stream must not make a capability decision for its replacement backend.
+            let mut state = self.state.write().expect("source registry poisoned");
+            let source = self.track.source();
+            if state.backend_is_current(&source, self.epoch, &self.backend) {
+                state
+                    .sequential_ranges
+                    .insert(self.track.clone(), self.epoch);
+            }
+        }
+        result
+    }
+}
+
 impl gpui::Global for SourceRegistry {}
 
 impl MediaResolver for SourceRegistry {
@@ -480,9 +530,9 @@ impl MediaResolver for SourceRegistry {
         let descriptor = crate::RUNTIME
             .block_on(backend.media(location))
             .map_err(backend_playback_error)?;
-        if !self.remember_delivery(track, &backend, epoch, descriptor.delivery.clone()) {
-            return Err(stale_backend_playback());
-        }
+        let descriptor = self
+            .prepare_descriptor(track, &backend, epoch, descriptor)
+            .ok_or_else(stale_backend_playback)?;
         Ok(self.streaming_input(descriptor))
     }
 
@@ -534,9 +584,9 @@ impl MediaResolver for SourceRegistry {
         if token.is_cancelled() {
             return Err(seek_cancelled_playback());
         }
-        if !self.remember_delivery(track, &backend, epoch, descriptor.delivery.clone()) {
-            return Err(stale_backend_playback());
-        }
+        let descriptor = self
+            .prepare_descriptor(track, &backend, epoch, descriptor)
+            .ok_or_else(stale_backend_playback)?;
         let input = self.streaming_input_with_cancellation(descriptor, Some(cancellation));
         Ok(Some(if timeline_offset == 0.0 {
             MediaSeekInput::from_start(input)
@@ -798,17 +848,18 @@ impl Read for StreamingMediaSource {
                 if state_changed {
                     continue;
                 }
-                let chunk = range
+                let range = range
                     .expect("a range result is present unless cancellation changed")
-                    .map_err(|error| io::Error::other(error.to_string()))?;
-                if chunk.is_empty() {
+                    .map_err(io::Error::other)?;
+                if range.bytes.is_empty() {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "the remote range response was empty",
                     ));
                 }
+                self.byte_len = Some(range.total_len);
                 self.current_start = range_start;
-                self.current = Cursor::new(chunk);
+                self.current = Cursor::new(range.bytes);
                 self.current.set_position(self.position - range_start);
                 self.range_window_bytes = RANGE_WINDOW_BYTES;
                 self.range_lookbehind_bytes = 0;
@@ -841,7 +892,7 @@ impl Read for StreamingMediaSource {
                     self.current_start = self.position;
                     self.current = Cursor::new(chunk);
                 }
-                Some(Err(error)) => return Err(io::Error::other(error.to_string())),
+                Some(Err(error)) => return Err(io::Error::other(error)),
                 None => return Ok(0),
             }
         }
@@ -938,11 +989,18 @@ mod tests {
 
     #[async_trait::async_trait]
     impl MediaByteRangeReader for TestRangeReader {
-        async fn read_range(&self, start: u64, length: usize) -> Result<Box<[u8]>, BackendError> {
+        async fn read_range(
+            &self,
+            start: u64,
+            length: usize,
+        ) -> Result<super::super::MediaByteRange, BackendError> {
             self.calls.lock().unwrap().push((start, length));
             let start = usize::try_from(start).map_err(|_| BackendError::InvalidRequest)?;
             let end = start.saturating_add(length).min(self.body.len());
-            Ok(self.body[start..end].into())
+            Ok(super::super::MediaByteRange {
+                bytes: self.body[start..end].into(),
+                total_len: self.body.len() as u64,
+            })
         }
     }
 
@@ -950,9 +1008,65 @@ mod tests {
 
     #[async_trait::async_trait]
     impl MediaByteRangeReader for PendingRangeReader {
-        async fn read_range(&self, _start: u64, _length: usize) -> Result<Box<[u8]>, BackendError> {
+        async fn read_range(
+            &self,
+            _start: u64,
+            _length: usize,
+        ) -> Result<super::super::MediaByteRange, BackendError> {
             let _ = self.0.try_send(());
             futures::future::pending().await
+        }
+    }
+
+    struct UnsupportedRangeReader;
+
+    #[async_trait::async_trait]
+    impl MediaByteRangeReader for UnsupportedRangeReader {
+        async fn read_range(
+            &self,
+            _start: u64,
+            _length: usize,
+        ) -> Result<super::super::MediaByteRange, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+    }
+
+    struct RangeFallbackBackend {
+        source: SourceId,
+        opens: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl LibraryBackend for RangeFallbackBackend {
+        fn source_id(&self) -> &SourceId {
+            &self.source
+        }
+
+        async fn connect(&self) -> Result<super::super::BackendInfo, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn catalog_page(
+            &self,
+            _request: super::super::CatalogRequest,
+        ) -> Result<super::super::CatalogPage, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn album(
+            &self,
+            _album: &super::super::RemoteAlbumRef,
+        ) -> Result<super::super::RemoteAlbum, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(
+                MediaDescriptor::new(Some("flac".into()), Some(10), MediaDelivery::default(), rx)
+                    .with_range_reader(Arc::new(UnsupportedRangeReader)),
+            )
         }
     }
 
@@ -1259,6 +1373,76 @@ mod tests {
             1,
             "backward seeks inside the retained range must not reach the network"
         );
+    }
+
+    #[test]
+    fn a_range_response_teaches_the_stream_its_unknown_length() {
+        let directory = crate::test_support::TestDir::new("remote-unknown-range-length");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let reader = Arc::new(TestRangeReader {
+            body: Arc::from(&b"0123456789"[..]),
+            calls: Mutex::new(Vec::new()),
+        });
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(tx);
+        let mut input = registry.streaming_input(
+            MediaDescriptor::new(Some("flac".into()), None, Default::default(), rx)
+                .with_range_reader(reader),
+        );
+
+        assert_eq!(input.source.byte_len(), None);
+        assert_eq!(input.source.seek(SeekFrom::Start(7)).unwrap(), 7);
+        let mut suffix = [0; 3];
+        input.source.read_exact(&mut suffix).unwrap();
+        assert_eq!(&suffix, b"789");
+        assert_eq!(input.source.byte_len(), Some(10));
+    }
+
+    #[test]
+    fn sequential_range_fallback_is_remembered_only_for_the_current_source_epoch() {
+        let directory = crate::test_support::TestDir::new("remote-range-fallback");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let source = SourceId("server".into());
+        let track = TrackRef::Remote {
+            source: source.clone(),
+            location: "track".into(),
+        };
+        let opens = Arc::new(AtomicUsize::new(0));
+        registry.register(Arc::new(RangeFallbackBackend {
+            source: source.clone(),
+            opens: opens.clone(),
+        }));
+
+        let mut stale = registry.resolve(&track).unwrap();
+        assert!(stale.source.is_seekable());
+        registry.register(Arc::new(RangeFallbackBackend {
+            source: source.clone(),
+            opens: opens.clone(),
+        }));
+        stale.source.seek(SeekFrom::Start(1)).unwrap();
+        assert!(stale.source.read(&mut [0]).is_err());
+
+        let mut current = registry.resolve(&track).unwrap();
+        assert!(current.source.is_seekable());
+        current.source.seek(SeekFrom::Start(1)).unwrap();
+        assert!(current.source.read(&mut [0]).is_err());
+        let sequential = registry.resolve(&track).unwrap();
+        assert!(!sequential.source.is_seekable());
+        assert_eq!(opens.load(Ordering::SeqCst), 3);
+
+        registry.register(Arc::new(RangeFallbackBackend {
+            source,
+            opens: opens.clone(),
+        }));
+        let after_replacement = registry.resolve(&track).unwrap();
+        assert!(after_replacement.source.is_seekable());
+        assert_eq!(opens.load(Ordering::SeqCst), 4);
     }
 
     #[test]
