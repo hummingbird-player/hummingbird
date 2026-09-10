@@ -1,18 +1,21 @@
+#[cfg(test)]
 use std::path::Path;
+use std::sync::Arc;
 
 use tracing::info;
 
 use crate::{
     devices::format::ChannelSpec,
+    library::source::TrackRef,
     media::{
         errors::{
             ChannelRetrievalError, FrameDurationError, PlaybackReadError, PlaybackStartError,
             SeekError, TrackDurationError,
         },
-        lookup_table::try_open_media,
+        lookup_table::try_open_input,
         metadata::Metadata,
         pipeline::{AudioBlock, DecodeResult},
-        traits::{MediaProviderFeatures, MediaStream},
+        traits::{MediaProviderFeatures, MediaResolver, MediaStream, local_media_resolver},
     },
 };
 
@@ -32,14 +35,20 @@ type MediaOpener = Box<dyn FnMut(&Path) -> Result<Box<dyn MediaStream>, Playback
 /// Opens and uses media streams on the decoder thread, including closing them when finished.
 pub struct Decoder {
     media_stream: Option<Box<dyn MediaStream>>,
+    resolver: Arc<dyn MediaResolver>,
     #[cfg(test)]
     pub(super) opener: Option<MediaOpener>,
 }
 
 impl Decoder {
     pub fn new() -> Self {
+        Self::with_resolver(local_media_resolver())
+    }
+
+    pub fn with_resolver(resolver: Arc<dyn MediaResolver>) -> Self {
         Self {
             media_stream: None,
+            resolver,
             #[cfg(test)]
             opener: None,
         }
@@ -49,14 +58,15 @@ impl Decoder {
     ///
     /// Returns information about the opened media file that can be used
     /// to configure the audio pipeline and device.
-    pub fn open(&mut self, path: &Path) -> Result<MediaInfo, PlaybackStartError> {
-        info!("Opening track '{}'", path.display());
+    pub fn open(&mut self, track: impl Into<TrackRef>) -> Result<MediaInfo, PlaybackStartError> {
+        let track = track.into();
+        info!("Opening track '{}'", track.display());
 
         // replacing a source also cleans up its decoder here on the worker
         self.close();
 
         #[cfg(test)]
-        if let Some(opener) = &mut self.opener {
+        if let (Some(opener), Some(path)) = (&mut self.opener, track.local_path()) {
             let mut stream = opener(path)?;
             stream.start_playback()?;
             let info = MediaInfo {
@@ -67,7 +77,8 @@ impl Decoder {
             return Ok(info);
         }
 
-        let src = try_open_media(path, MediaProviderFeatures::PROVIDES_DECODER);
+        let input = self.resolver.resolve(&track)?;
+        let src = try_open_input(input, MediaProviderFeatures::PROVIDES_DECODER);
 
         if let Err(e) = src {
             return Err(PlaybackStartError::MediaError(format!(

@@ -990,6 +990,7 @@ pub trait LibraryAccess {
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
     fn get_track_by_id(&self, track_id: i64) -> sqlx::Result<Arc<Track>>;
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>>;
+    fn get_track_by_reference(&self, track: &TrackRef) -> sqlx::Result<Option<Arc<Track>>>;
     fn create_playlist(&self, name: &str) -> sqlx::Result<i64>;
     fn delete_playlist(&self, playlist_id: i64) -> sqlx::Result<()>;
     fn rename_playlist(&self, playlist_id: i64, name: &str) -> sqlx::Result<()>;
@@ -1066,6 +1067,11 @@ impl LibraryAccess for App {
     fn get_track_by_path(&self, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(get_track_by_path(&pool.0, path))
+    }
+
+    fn get_track_by_reference(&self, track: &TrackRef) -> sqlx::Result<Option<Arc<Track>>> {
+        let pool: &Pool = self.global();
+        crate::RUNTIME.block_on(get_track_by_reference(&pool.0, track))
     }
 
     fn create_playlist(&self, name: &str) -> sqlx::Result<i64> {

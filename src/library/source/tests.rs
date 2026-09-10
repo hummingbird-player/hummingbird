@@ -180,6 +180,8 @@ async fn lookups_listings_and_playlists_preserve_source_identity() {
         .unwrap()
         .unwrap();
     assert!(local.source.is_local());
+    let mut availability = AvailabilityState::with_mounts([], MountSnapshot::default());
+    availability.set_remote_sources([SourceId("a".into()), SourceId("b".into())]);
     for (source, id) in [("a", a), ("b", b)] {
         let reference = TrackRef::from_location(SourceId(source.into()), "/music/song.flac".into());
         let track = db::get_track_by_reference(&pool, &reference)
@@ -189,6 +191,7 @@ async fn lookups_listings_and_playlists_preserve_source_identity() {
         assert_eq!(track.id, id);
         assert_eq!(track.reference(), reference);
         assert!(track.local_path().is_none());
+        assert!(availability.is_track_available(&track));
     }
     assert_eq!(db::get_all_tracks(&pool).await.unwrap().len(), 3);
     for sort in [
@@ -383,8 +386,13 @@ fn remote_references_do_not_normalize_paths_or_probe_local_files() {
     let remote = TrackRef::from_location(SourceId("server".into()), path.to_str().unwrap().into());
     assert!(local.is_local_file_present());
     assert!(!remote.is_local_file_present());
-    let availability = AvailabilityState::with_mounts([], MountSnapshot::default()).snapshot();
-    assert!(!availability.is_reference_available(&remote));
+    let mut availability = AvailabilityState::with_mounts([], MountSnapshot::default());
+    assert!(!availability.snapshot().is_reference_available(&remote));
+    assert!(availability.set_remote_sources([SourceId("server".into())]));
+    let availability = availability.snapshot();
+    assert!(availability.is_reference_available(&remote));
+    let unknown = TrackRef::from_location(SourceId("other".into()), "song".into());
+    assert!(!availability.is_reference_available(&unknown));
     let a = TrackRef::from_location(SourceId("server".into()), "song//a".into());
     let b = TrackRef::from_location(SourceId("server".into()), "song/a".into());
     assert_ne!(a, b);

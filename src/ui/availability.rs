@@ -11,6 +11,7 @@ use crate::{
         availability::{self, AvailabilitySnapshot, AvailabilityState},
         db::LibraryAccess,
         scan::ScanInterface,
+        source::TrackRef,
         types::Track,
     },
     ui::models::Models,
@@ -27,9 +28,13 @@ pub fn is_track_path_available<C: AppContext>(cx: &C, path: &Path) -> bool {
 }
 
 pub fn is_track_available<C: AppContext>(cx: &C, track: &Track) -> bool {
-    track
-        .local_path()
-        .is_some_and(|path| is_track_path_available(cx, path))
+    cx.read_global(|models: &Models, app| models.availability.read(app).is_track_available(track))
+}
+
+pub fn is_reference_available<C: AppContext>(cx: &C, track: &TrackRef) -> bool {
+    cx.read_global(|models: &Models, app| {
+        models.availability.read(app).is_reference_available(track)
+    })
 }
 
 pub fn has_available_tracks<C: AppContext>(cx: &C, tracks: &[Track]) -> bool {

@@ -19,8 +19,8 @@ pub struct MediaProjection {
 impl MediaProjection {
     pub fn project(&mut self, event: &PlaybackEvent) -> Option<MediaEvent> {
         match event {
-            PlaybackEvent::SongChanged(path) => {
-                let track = TrackRef::Local(path.clone());
+            PlaybackEvent::SongChanged(track) => {
+                let track = track.clone();
                 self.track = Some(track.clone());
                 self.metadata = None;
                 self.duration = None;

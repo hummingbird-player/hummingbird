@@ -278,7 +278,7 @@ impl PlaybackInterface {
                     }
                     PlaybackEvent::SongChanged(path) => {
                         playback_info.current_track.update(cx, |m, cx| {
-                            *m = Some(CurrentTrack::new(path.clone()));
+                            *m = Some(CurrentTrack::from_reference(path.clone()));
                             cx.notify()
                         });
                     }

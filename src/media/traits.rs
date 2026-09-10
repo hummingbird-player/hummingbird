@@ -1,8 +1,16 @@
-use std::{ffi::OsStr, fs::File};
+use std::{
+    ffi::{OsStr, OsString},
+    fs::File,
+    io::{Read, Seek},
+    sync::Arc,
+};
 
 use bitflags::bitflags;
 
-use crate::devices::format::{ChannelSpec, SampleFormat};
+use crate::{
+    devices::format::{ChannelSpec, SampleFormat},
+    library::source::TrackRef,
+};
 
 use super::{
     errors::{
@@ -12,6 +20,72 @@ use super::{
     metadata::Metadata,
     pipeline::{AudioBlock, DecodeResult},
 };
+
+/// A host-owned byte input for a codec provider.
+///
+/// Seeking is an optional capability even though `Seek` is part of the interface. Streaming
+/// sources return `Unsupported` for seeks they cannot satisfy.
+pub trait MediaSource: Read + Seek + Send + Sync {
+    fn is_seekable(&self) -> bool;
+    fn byte_len(&self) -> Option<u64>;
+
+    /// Exposes a filesystem file to metadata providers that require `File` specifically.
+    ///
+    /// Decoder providers should consume the generic `Read + Seek` interface instead.
+    fn as_file_mut(&mut self) -> Option<&mut File> {
+        None
+    }
+}
+
+impl MediaSource for File {
+    fn is_seekable(&self) -> bool {
+        self.metadata().is_ok_and(|metadata| metadata.is_file())
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.metadata().ok().map(|metadata| metadata.len())
+    }
+
+    fn as_file_mut(&mut self) -> Option<&mut File> {
+        Some(self)
+    }
+}
+
+pub struct MediaInput {
+    pub source: Box<dyn MediaSource>,
+    pub extension: Option<OsString>,
+}
+
+impl MediaInput {
+    pub fn file(path: &std::path::Path) -> std::io::Result<Self> {
+        Ok(Self {
+            source: Box::new(File::open(path)?),
+            extension: path.extension().map(OsStr::to_owned),
+        })
+    }
+}
+
+pub trait MediaResolver: Send + Sync {
+    fn resolve(&self, track: &TrackRef) -> Result<MediaInput, PlaybackStartError>;
+}
+
+#[derive(Default)]
+pub struct LocalMediaResolver;
+
+impl MediaResolver for LocalMediaResolver {
+    fn resolve(&self, track: &TrackRef) -> Result<MediaInput, PlaybackStartError> {
+        let path = track.local_path().ok_or_else(|| {
+            PlaybackStartError::MediaError(
+                "This library source is not available for playback".into(),
+            )
+        })?;
+        MediaInput::file(path).map_err(|error| PlaybackStartError::MediaError(error.to_string()))
+    }
+}
+
+pub fn local_media_resolver() -> Arc<dyn MediaResolver> {
+    Arc::new(LocalMediaResolver)
+}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,10 +108,13 @@ bitflags! {
 /// Metadata retrieval, decoding, or both. This allows for a decoding Provider to retrieve
 /// in-codec metadata without opening the file twice.
 pub trait MediaProvider: Send + Sync {
-    /// Requests the Provider open the specified file. The file is provided as a File object, and
-    /// the extension is provided as an Option<&OsStr>. If the extension is not provided, the
-    /// Provider attempts to determine the file type based off of the file's contents.
-    fn open(&self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError>;
+    /// Requests the Provider open the specified input. If the extension is not provided, the
+    /// Provider attempts to determine the file type from the input.
+    fn open(
+        &self,
+        source: Box<dyn MediaSource>,
+        ext: Option<&OsStr>,
+    ) -> Result<Box<dyn MediaStream>, OpenError>;
 
     /// Returns a list of file extensions the plugin supports.
     fn supported_extensions(&self) -> &[&str];

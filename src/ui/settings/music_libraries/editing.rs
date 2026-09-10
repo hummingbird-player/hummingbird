@@ -55,6 +55,7 @@ pub(super) enum EditingEvent {
     },
     Remove(usize),
     Refresh(usize),
+    ClearCache(usize),
 }
 
 pub(super) struct MusicLibraryEditor {

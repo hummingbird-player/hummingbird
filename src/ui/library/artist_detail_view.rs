@@ -440,7 +440,7 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.all_tracks.iter().any(|track| {
-                    track.local_path() == Some(current_track.get_path().as_path())
+                    track.reference() == *current_track.reference()
                         && availability.is_track_available(track)
                 })
             });
@@ -453,7 +453,7 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.liked_tracks.iter().any(|track| {
-                    track.local_path() == Some(current_track.get_path().as_path())
+                    track.reference() == *current_track.reference()
                         && availability.is_track_available(track)
                 })
             });
@@ -466,7 +466,7 @@ impl Render for ArtistDetailView {
             .clone()
             .is_some_and(|current_track| {
                 self.standalone_tracks.iter().any(|track| {
-                    track.local_path() == Some(current_track.get_path().as_path())
+                    track.reference() == *current_track.reference()
                         && availability.is_track_available(track)
                 })
             });

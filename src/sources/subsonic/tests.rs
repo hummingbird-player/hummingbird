@@ -1,4 +1,10 @@
-use super::*;
+use std::{collections::BTreeMap, time::Duration};
+
+use super::{
+    client::{RESPONSE_LIMIT, retry_after},
+    media::{MAX_MEDIA_REDIRECTS, is_safe_media_redirect},
+    *,
+};
 use crate::sources::credentials::Secret;
 use serde_json::{Value, json};
 use tokio::{
@@ -7,6 +13,7 @@ use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
     task::JoinHandle,
 };
+use url::Url;
 
 struct Reply {
     status: u16,
@@ -456,11 +463,11 @@ async fn deadlines_and_cancellation_close_stalled_connections() {
     ])
     .await;
     let mut backend = server.backend(password());
-    backend.timeout = Duration::from_millis(40);
+    backend.client.timeout = Duration::from_millis(40);
     assert_eq!(backend.connect().await, Err(BackendError::Timeout));
     server.request().await;
     assert!(backend.cached_info().is_none());
-    backend.timeout = Duration::from_secs(2);
+    backend.client.timeout = Duration::from_secs(2);
     assert!(backend.connect().await.is_ok());
 
     let mut server = Server::new(vec![
@@ -523,10 +530,10 @@ async fn response_body_reads_have_the_same_deadline_as_the_request() {
     ])
     .await;
     let mut backend = server.backend(password());
-    backend.timeout = Duration::from_millis(40);
+    backend.client.timeout = Duration::from_millis(40);
     assert_eq!(backend.connect().await, Err(BackendError::Timeout));
     server.request().await;
-    backend.timeout = Duration::from_secs(2);
+    backend.client.timeout = Duration::from_secs(2);
     assert!(backend.connect().await.is_ok());
 }
 
@@ -536,7 +543,7 @@ async fn connections_to_the_same_server_do_not_share_credentials_or_capabilities
     let first = server.backend(password());
     let second = SubsonicBackend::new(
         SourceId("connection-b".into()),
-        first.server.clone(),
+        first.client.server.clone(),
         Credentials::Password {
             username: "other-account".into(),
             password: Secret::new("other-password".into()),
@@ -641,6 +648,145 @@ async fn malformed_catalog_cursors_and_mismatched_album_ids_are_rejected() {
             .await,
         Err(BackendError::MalformedResponse)
     ));
+}
+
+#[tokio::test]
+async fn original_media_streams_with_authentication_and_a_bounded_body_channel() {
+    let mut server = Server::new(vec![Reply {
+        status: 200,
+        headers: vec![("Content-Type", "audio/flac; charset=binary".into())],
+        body: b"original audio bytes".to_vec(),
+        stall: false,
+        stall_body: false,
+    }])
+    .await;
+    let backend = server.backend(password());
+    let mut media = backend.media("song/id").await.unwrap();
+    assert_eq!(media.extension.as_deref(), Some("flac"));
+    assert_eq!(media.byte_len, Some(20));
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = media.chunks.recv().await {
+        bytes.extend_from_slice(&chunk.unwrap());
+    }
+    assert_eq!(bytes, b"original audio bytes");
+
+    let request = server.request().await;
+    assert_eq!(request.path(), "/proxy/music/rest/stream.view");
+    let query = query(&request);
+    assert_eq!(query["id"], "song/id");
+    assert_eq!(query["format"], "raw");
+    assert_eq!(query["u"], "name & ü");
+}
+
+#[tokio::test]
+async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
+    let mut server = Server::new(vec![
+        Reply {
+            headers: vec![("Location", "/signed/audio?download=token".into())],
+            ..Reply::status(302)
+        },
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/flac".into())],
+            body: b"redirected audio".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let mut media = backend.media("song").await.unwrap();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = media.chunks.recv().await {
+        bytes.extend_from_slice(&chunk.unwrap());
+    }
+    assert_eq!(bytes, b"redirected audio");
+
+    let authenticated = server.request().await;
+    assert_eq!(authenticated.path(), "/proxy/music/rest/stream.view");
+    assert_eq!(query(&authenticated)["u"], "name & ü");
+    let redirected = server.request().await;
+    assert_eq!(redirected.path(), "/signed/audio");
+    let redirected_query = query(&redirected);
+    assert_eq!(redirected_query["download"], "token");
+    assert!(!redirected_query.contains_key("u"));
+    assert!(!redirected_query.contains_key("t"));
+    assert!(!redirected_query.contains_key("s"));
+}
+
+#[test]
+fn media_redirects_reject_https_downgrades_credentials_and_long_chains() {
+    let https = Url::parse("https://music.example/rest/stream.view").unwrap();
+    let cdn = Url::parse("https://cdn.example/audio?token=signed").unwrap();
+    let insecure = Url::parse("http://cdn.example/audio").unwrap();
+    let credentials = Url::parse("https://name:password@cdn.example/audio").unwrap();
+    assert!(is_safe_media_redirect(Some(&https), &cdn, 1));
+    assert!(!is_safe_media_redirect(Some(&https), &insecure, 1));
+    assert!(!is_safe_media_redirect(Some(&https), &credentials, 1));
+    assert!(!is_safe_media_redirect(
+        Some(&https),
+        &cdn,
+        MAX_MEDIA_REDIRECTS
+    ));
+}
+
+#[tokio::test]
+async fn stream_body_timeouts_are_reported_after_response_headers() {
+    let server = Server::new(vec![Reply {
+        status: 200,
+        headers: vec![
+            ("Content-Type", "audio/flac".into()),
+            ("Transfer-Encoding", "chunked".into()),
+        ],
+        body: Vec::new(),
+        stall: false,
+        stall_body: true,
+    }])
+    .await;
+    let mut backend = server.backend(password());
+    backend.client.timeout = Duration::from_millis(40);
+    let mut media = backend.media("song").await.unwrap();
+    assert_eq!(
+        media.chunks.recv().await.unwrap(),
+        Err(BackendError::Timeout)
+    );
+}
+
+#[tokio::test]
+async fn dropping_a_media_receiver_cancels_a_stalled_response_body() {
+    let mut server = Server::new(vec![Reply {
+        status: 200,
+        headers: vec![
+            ("Content-Type", "audio/flac".into()),
+            ("Transfer-Encoding", "chunked".into()),
+        ],
+        body: Vec::new(),
+        stall: false,
+        stall_body: true,
+    }])
+    .await;
+    let backend = server.backend(password());
+    let media = backend.media("song").await.unwrap();
+    server.request().await;
+    drop(media);
+    tokio::time::timeout(Duration::from_secs(1), &mut server.task)
+        .await
+        .expect("dropping playback should close the HTTP response")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn structured_api_errors_are_not_passed_to_the_decoder_as_audio() {
+    let mut reply = failed(40);
+    reply
+        .headers
+        .push(("Content-Type", "application/json".into()));
+    let server = Server::new(vec![reply]).await;
+    assert_eq!(
+        server.backend(password()).media("song").await.err(),
+        Some(BackendError::Authentication)
+    );
 }
 
 #[test]

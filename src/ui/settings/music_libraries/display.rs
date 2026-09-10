@@ -26,6 +26,7 @@ pub(super) enum DisplayEvent {
     Add,
     Edit(usize),
     Refresh(usize),
+    ClearCache(usize),
     Remove(usize),
     Changed { index: usize, library: MusicLibrary },
 }
@@ -33,7 +34,7 @@ pub(super) enum DisplayEvent {
 #[derive(Clone, Copy)]
 enum Confirmation {
     Remove(usize),
-    ClearCache,
+    ClearCache(usize),
 }
 
 pub(super) struct MusicLibrariesDisplay {
@@ -166,7 +167,7 @@ impl MusicLibrariesDisplay {
                                 clear_entity
                                     .update(cx, |this, cx| {
                                         this.menu_open = None;
-                                        this.confirmation = Some(Confirmation::ClearCache);
+                                        this.confirmation = Some(Confirmation::ClearCache(index));
                                         cx.notify();
                                     })
                                     .ok();
@@ -233,7 +234,7 @@ impl MusicLibrariesDisplay {
                     },
                 ))
             }
-            Confirmation::ClearCache => {
+            Confirmation::ClearCache(index) => {
                 let clear_entity = entity.clone();
                 ActionDialog::new(
                     tr!("MUSIC_LIBRARY_CLEAR_CACHE_TITLE"),
@@ -249,6 +250,7 @@ impl MusicLibrariesDisplay {
                         clear_entity
                             .update(cx, |this, cx| {
                                 this.confirmation = None;
+                                cx.emit(DisplayEvent::ClearCache(index));
                                 cx.notify();
                             })
                             .ok();

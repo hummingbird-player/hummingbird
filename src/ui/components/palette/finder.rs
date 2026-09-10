@@ -849,8 +849,19 @@ where
         let item_data = self.item_data.clone();
         let on_accept_override = self.on_accept_override.clone();
         let is_enabled = self.is_enabled;
+        let source_origin = T::has_source_indicator_slot()
+            .then(|| {
+                self.item_data.as_ref().and_then(|item| {
+                    item.supports_source_indicator()
+                        .then(|| source_origin(cx, item.source_id(), self.idx))
+                        .flatten()
+                })
+            })
+            .flatten();
+        let right = self.right.clone();
 
         let item = div()
+            .w_full()
             .px(px(10.0))
             .py(px(6.0))
             .flex()
@@ -934,35 +945,41 @@ where
                     .text_ellipsis()
                     .child(self.middle.clone()),
             )
-            .when(T::has_source_indicator_slot(), |div_outer| {
-                let origin = self.item_data.as_ref().and_then(|item| {
-                    item.supports_source_indicator()
-                        .then(|| source_origin(cx, item.source_id(), self.idx))
-                        .flatten()
-                });
-                div_outer.child(
-                    source_indicator_slot(
-                        (self.id.clone(), "source"),
-                        origin,
-                        theme.text_secondary,
+            .when(
+                T::has_source_indicator_slot() || right.is_some(),
+                |div_outer| {
+                    div_outer.child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex()
+                            .items_center()
+                            .ml_auto()
+                            .pl(px(8.0))
+                            .flex_shrink(1.0)
+                            .when(T::has_source_indicator_slot(), |this| {
+                                this.child(source_indicator_slot(
+                                    (self.id.clone(), "source"),
+                                    source_origin,
+                                    theme.text_secondary,
+                                ))
+                            })
+                            .when_some(right, |this, right| {
+                                this.child(
+                                    div()
+                                        .min_w(px(0.0))
+                                        .pl(px(8.0))
+                                        .flex_shrink(1.0)
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .text_right()
+                                        .text_sm()
+                                        .text_color(theme.text_secondary)
+                                        .child(right),
+                                )
+                            }),
                     )
-                    .ml_auto()
-                    .ml(px(8.0)),
-                )
-            })
-            .when_some(self.right.clone(), |div_outer, right| {
-                div_outer.child(
-                    div()
-                        .when(!T::has_source_indicator_slot(), |this| this.ml_auto())
-                        .pl(px(8.0))
-                        .flex_shrink(1.0)
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .text_sm()
-                        .text_color(theme.text_secondary)
-                        .child(right),
-                )
-            });
+                },
+            );
 
         let context_menu = self
             .item_data

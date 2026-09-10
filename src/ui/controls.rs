@@ -23,7 +23,7 @@ use crate::{
         },
         library::context_menus::{
             info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
-            navigate_to_track_artist, resolve_library_track_by_path,
+            navigate_to_track_artist, resolve_library_track_by_reference,
         },
         models::{
             CurrentTrack, HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates,
@@ -140,13 +140,28 @@ impl HasLikedState for InfoSection {
     }
 }
 
+fn merge_track_metadata(
+    track_name: &mut Option<SharedString>,
+    artist_name: &mut Option<SharedString>,
+    metadata: &crate::media::metadata::Metadata,
+) {
+    if let Some(name) = metadata.name.clone() {
+        *track_name = Some(name.into());
+    }
+    if let Some(artist) = metadata.artist.clone().or(metadata.album_artist.clone()) {
+        *artist_name = Some(artist.into());
+    }
+}
+
 fn update_track_metadata(this: &mut InfoSection, metadata: &crate::media::metadata::Metadata) {
-    this.track_name = metadata.name.clone().map(SharedString::from);
-    this.artist_name = metadata
-        .artist
-        .clone()
-        .or(metadata.album_artist.clone())
-        .map(SharedString::from);
+    merge_track_metadata(&mut this.track_name, &mut this.artist_name, metadata);
+}
+
+fn current_track_matches(
+    current: Option<&CurrentTrack>,
+    item: &crate::library::source::TrackRef,
+) -> bool {
+    current.is_some_and(|current| item == current.reference())
 }
 
 fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSection>) {
@@ -166,11 +181,8 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
 
     let Some(item) = item else { return };
 
-    if this
-        .current_track_path
-        .as_ref()
-        .is_none_or(|path| item.local_path() != Some(path))
-    {
+    let current_track = this.playback_info.current_track.read(cx);
+    if !current_track_matches(current_track.as_ref(), item.reference()) {
         return;
     }
 
@@ -200,6 +212,38 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
             this.artist_name = data.artist_name;
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::{current_track_matches, merge_track_metadata};
+    use crate::{
+        library::source::{SourceId, TrackRef},
+        media::metadata::Metadata,
+        ui::models::CurrentTrack,
+    };
+
+    #[test]
+    fn empty_decoder_metadata_preserves_indexed_display_names() {
+        let mut track_name = Some("Indexed title".into());
+        let mut artist_name = Some("Indexed artist".into());
+
+        merge_track_metadata(&mut track_name, &mut artist_name, &Metadata::default());
+
+        assert_eq!(track_name.as_deref(), Some("Indexed title"));
+        assert_eq!(artist_name.as_deref(), Some("Indexed artist"));
+    }
+
+    #[test]
+    fn a_remote_queue_reference_matches_the_current_track() {
+        let reference = TrackRef::Remote {
+            source: SourceId("subsonic-home".into()),
+            location: "song-1".into(),
+        };
+        let current = CurrentTrack::from_reference(reference.clone());
+
+        assert!(current_track_matches(Some(&current), &reference));
     }
 }
 
@@ -243,10 +287,10 @@ impl InfoSection {
             let initial_current_track = current_track_model.read(cx).clone();
             let current_track_path = initial_current_track
                 .as_ref()
-                .map(|track| track.get_path().clone());
+                .and_then(|track| track.local_path().cloned());
             let current_library_track = initial_current_track
                 .as_ref()
-                .and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
+                .and_then(|track| resolve_library_track_by_reference(cx, track.reference()));
             let can_navigate_to_album = current_library_track
                 .as_ref()
                 .is_some_and(|track| track.album_id.is_some());
@@ -452,20 +496,6 @@ impl Render for InfoSection {
                                                 .child(self.track_name.clone().unwrap_or_else(
                                                     || tr!("UNKNOWN_TRACK", "Unknown Track").into(),
                                                 )),
-                                        )
-                                        .when_some(
-                                            source_origin(
-                                                cx,
-                                                source_id.as_deref(),
-                                                track_id.unwrap_or_default() as usize,
-                                            ),
-                                            |this, origin| {
-                                                this.child(source_indicator(
-                                                    "info-section-source",
-                                                    origin,
-                                                    theme.text_secondary,
-                                                ))
-                                            },
                                         ),
                                 )
                                 .child(
@@ -488,39 +518,59 @@ impl Render for InfoSection {
                         )
                         .when(has_track, |e| {
                             e.child(
-                                div().pb(px(6.0)).h_full().flex().ml_auto().child(
-                                    div()
-                                        .id("info-like")
-                                        .my_auto()
-                                        .rounded_sm()
-                                        .p(px(4.0))
-                                        .cursor_pointer()
-                                        .hover(|this| this.bg(theme.button_secondary_hover))
-                                        .active(|this| this.bg(theme.button_secondary_active))
-                                        .child(
-                                            icon(if is_liked.is_some() {
-                                                STAR_FILLED
-                                            } else {
-                                                STAR
+                                div()
+                                    .pb(px(6.0))
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.0))
+                                    .ml_auto()
+                                    .when_some(
+                                        source_origin(
+                                            cx,
+                                            source_id.as_deref(),
+                                            track_id.unwrap_or_default() as usize,
+                                        ),
+                                        |this, origin| {
+                                            this.child(source_indicator(
+                                                "info-section-source",
+                                                origin,
+                                                theme.text_secondary,
+                                            ))
+                                        },
+                                    )
+                                    .child(
+                                        div()
+                                            .id("info-like")
+                                            .rounded_sm()
+                                            .p(px(4.0))
+                                            .cursor_pointer()
+                                            .hover(|this| this.bg(theme.button_secondary_hover))
+                                            .active(|this| this.bg(theme.button_secondary_active))
+                                            .child(
+                                                icon(if is_liked.is_some() {
+                                                    STAR_FILLED
+                                                } else {
+                                                    STAR
+                                                })
+                                                .size(px(14.0))
+                                                .text_color(if is_liked.is_some() {
+                                                    theme.liked_song
+                                                } else {
+                                                    theme.text_secondary
+                                                }),
+                                            )
+                                            .when(is_liked.is_some(), |this| {
+                                                this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
                                             })
-                                            .size(px(14.0))
-                                            .text_color(if is_liked.is_some() {
-                                                theme.liked_song
-                                            } else {
-                                                theme.text_secondary
-                                            }),
-                                        )
-                                        .when(is_liked.is_some(), |this| {
-                                            this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
-                                        })
-                                        .when(is_liked.is_none(), |this| {
-                                            this.tooltip(build_tooltip(tr!("LIKE", "Like")))
-                                        })
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            let Some(track_id) = track_id else { return };
-                                            toggle_like(track_id, cx.entity().clone(), cx);
-                                        })),
-                                ),
+                                            .when(is_liked.is_none(), |this| {
+                                                this.tooltip(build_tooltip(tr!("LIKE", "Like")))
+                                            })
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                let Some(track_id) = track_id else { return };
+                                                toggle_like(track_id, cx.entity().clone(), cx);
+                                            })),
+                                    ),
                             )
                         })
                     }),
@@ -557,11 +607,11 @@ fn update_current_track_state(
     current_track: Option<&CurrentTrack>,
     cx: &App,
 ) {
-    this.current_track_path = current_track.map(|track| track.get_path().clone());
+    this.current_track_path = current_track.and_then(|track| track.local_path().cloned());
     this.track_name = None;
     this.artist_name = None;
     this.current_library_track =
-        current_track.and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
+        current_track.and_then(|track| resolve_library_track_by_reference(cx, track.reference()));
     this.can_navigate_to_album = this
         .current_library_track
         .as_ref()

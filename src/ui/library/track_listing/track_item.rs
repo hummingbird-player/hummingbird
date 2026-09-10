@@ -422,17 +422,13 @@ impl Render for TrackItem {
                                         )
                                     })
                                     .when_some(current_track, |this, track| {
-                                        this.bg(
-                                            if self.track.local_path()
-                                                == Some(track.get_path().as_path())
-                                            {
-                                                theme.list_item_current
-                                            } else if self.index % 2 == 1 {
-                                                theme.list_item_alternate
-                                            } else {
-                                                theme.list_item
-                                            },
-                                        )
+                                        this.bg(if self.track.reference() == *track.reference() {
+                                            theme.list_item_current
+                                        } else if self.index % 2 == 1 {
+                                            theme.list_item_alternate
+                                        } else {
+                                            theme.list_item
+                                        })
                                     })
                                     .max_w_full()
                                     .when(self.left_field == TrackItemLeftField::TrackNum, |this| {

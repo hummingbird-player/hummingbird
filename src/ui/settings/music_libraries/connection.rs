@@ -4,6 +4,8 @@ use gpui::{
     ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px,
 };
+#[cfg(feature = "libre-services")]
+use std::sync::Arc;
 
 use crate::ui::{
     components::{
@@ -21,7 +23,7 @@ use crate::{
         source::SourceId,
     },
     sources::{
-        LibraryBackend,
+        LibraryBackend, SourceRegistry,
         credentials::{CredentialRef, CredentialStore, Credentials, OsCredentialStore, Secret},
         import_catalog,
         subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
@@ -138,8 +140,11 @@ impl MusicLibraryConnection {
             AuthenticationMode::ApiKey => Credentials::ApiKey(Secret::new(secret.to_string())),
         };
         let reference = CredentialRef::new();
-        let backend = SubsonicBackend::new(source.clone(), server, credentials.clone())
-            .expect("validated source and server");
+        let backend = Arc::new(
+            SubsonicBackend::new(source.clone(), server, credentials.clone())
+                .expect("validated source and server"),
+        );
+        let registry = cx.global::<SourceRegistry>().clone();
         let pool = cx.global::<Pool>().0.clone();
         let cleanup_pool = pool.clone();
         let cleanup_source = source.clone();
@@ -150,19 +155,24 @@ impl MusicLibraryConnection {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = async {
+                let connect_backend = backend.clone();
                 let backend = crate::RUNTIME
                     .spawn(async move {
-                        backend.connect().await.map_err(|error| error.to_string())?;
-                        Ok::<_, String>(backend)
+                        connect_backend
+                            .connect()
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok::<_, String>(connect_backend)
                     })
                     .await
                     .map_err(|_| "The connection task stopped unexpectedly.".to_string())??;
                 cx.update(|cx| OsCredentialStore(cx).write(&reference, &credentials))
                     .await
                     .map_err(|error| error.to_string())?;
+                let import_backend = backend.clone();
                 let import_result = crate::RUNTIME
                     .spawn(async move {
-                        import_catalog(&backend, &pool, |_| {})
+                        import_catalog(import_backend.as_ref(), &pool, |_| {})
                             .await
                             .map_err(|error| error.to_string())
                     })
@@ -197,6 +207,7 @@ impl MusicLibraryConnection {
                     }
                     return Err(error);
                 }
+                registry.register(backend);
                 Ok::<_, String>(())
             }
             .await;

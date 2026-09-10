@@ -2,7 +2,7 @@ pub mod album;
 pub mod info_section;
 pub mod track;
 
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use camino::Utf8PathBuf;
 use cntp_i18n::tr;
@@ -210,8 +210,11 @@ pub fn track_show_in_file_manager_label() -> SharedString {
     }
 }
 
-pub fn resolve_library_track_by_path(cx: &App, path: &Path) -> Option<Rc<Track>> {
-    cx.get_track_by_path(path)
+pub fn resolve_library_track_by_reference(
+    cx: &App,
+    reference: &crate::library::source::TrackRef,
+) -> Option<Rc<Track>> {
+    cx.get_track_by_reference(reference)
         .ok()
         .flatten()
         .map(|track| Rc::new((*track).clone()))

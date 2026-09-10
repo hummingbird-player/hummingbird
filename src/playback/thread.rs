@@ -22,6 +22,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     library::source::TrackRef,
     media::errors::PlaybackStartError,
+    media::traits::MediaResolver,
     playback::{
         commands, dsp::spectrum::spectrum_tap, events::RepeatState,
         session_storage::PlaybackSessionData,
@@ -111,7 +112,7 @@ pub struct PlaybackThread {
 
 struct PendingTrack {
     serial: u64,
-    path: std::path::PathBuf,
+    track: TrackRef,
     queue_position: Option<usize>,
     duration_ms: u64,
     metadata: Option<media_controller::CompleteMetadata>,
@@ -119,12 +120,31 @@ struct PendingTrack {
 
 impl PlaybackThread {
     /// Creates a new playback interface and starts the playback thread.
+    #[cfg(not(feature = "libre-services"))]
     pub fn start(
         queue: Arc<RwLock<Vec<QueueItemData>>>,
         playback_settings: PlaybackSettings,
         last_volume: f64,
         session: PlaybackSessionData,
         storage_tx: watch::Sender<PlaybackSessionData>,
+    ) -> PlaybackInterface {
+        Self::start_with_resolver(
+            queue,
+            playback_settings,
+            last_volume,
+            session,
+            storage_tx,
+            crate::media::traits::local_media_resolver(),
+        )
+    }
+
+    pub fn start_with_resolver(
+        queue: Arc<RwLock<Vec<QueueItemData>>>,
+        playback_settings: PlaybackSettings,
+        last_volume: f64,
+        session: PlaybackSessionData,
+        storage_tx: watch::Sender<PlaybackSessionData>,
+        resolver: Arc<dyn MediaResolver>,
     ) -> PlaybackInterface {
         let (commands_tx, commands_rx) = commands::channel();
         let (events_tx, events_rx) = unbounded_channel();
@@ -148,7 +168,7 @@ impl PlaybackThread {
                     last_timestamp: u64::MAX,
                     last_broadcast_timestamp: u64::MAX,
                     position_broadcast_active: true,
-                    engine: AudioEngine::new(engine_events_tx, tap),
+                    engine: AudioEngine::with_resolver(engine_events_tx, tap, resolver),
                     queue: queue_manager,
                     initial_volume: last_volume,
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
@@ -258,7 +278,7 @@ impl PlaybackThread {
             if let Some(position) = track.queue_position {
                 self.send_event(PlaybackEvent::QueuePositionChanged(position));
             }
-            self.send_event(PlaybackEvent::SongChanged(track.path));
+            self.send_event(PlaybackEvent::SongChanged(track.track));
             self.send_event(PlaybackEvent::DurationChanged(track.duration_ms));
             if let Some(metadata) = track.metadata {
                 self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));
@@ -384,17 +404,12 @@ impl PlaybackThread {
         track: &TrackRef,
         preserve_resampler: bool,
     ) -> Result<(), PlaybackStartError> {
-        let path = track.local_path().ok_or_else(|| {
-            PlaybackStartError::MediaError(
-                "This library source is not available for playback".into(),
-            )
-        })?;
-        info!("Opening track '{}'", path.display());
+        info!("Opening track '{}'", track.display());
 
         self.last_track_gain = None;
         self.last_album_gain = None;
 
-        let serial = self.engine.open(path, preserve_resampler)?;
+        let serial = self.engine.open(track, preserve_resampler)?;
         if !preserve_resampler {
             self.pending_tracks.clear();
         }
@@ -405,7 +420,7 @@ impl PlaybackThread {
 
         self.pending_tracks.push_back(PendingTrack {
             serial,
-            path: path.to_owned(),
+            track: track.clone(),
             queue_position: if preserve_resampler {
                 self.queue.current_position()
             } else {
@@ -586,7 +601,7 @@ impl PlaybackThread {
         self.refresh_rg_auto_hint();
 
         if self.state() == PlaybackState::Stopped {
-            if !item.reference().is_local_file_present() {
+            if !item.reference().is_potentially_available() {
                 self.send_event(PlaybackEvent::QueueUpdated);
                 return;
             }
@@ -615,7 +630,7 @@ impl PlaybackThread {
         let first = items
             .iter()
             .enumerate()
-            .find(|(_, item)| item.reference().is_local_file_present())
+            .find(|(_, item)| item.reference().is_potentially_available())
             .map(|(idx, item)| (idx, item.clone()));
         let first_index = self.queue.queue_items(items);
         self.refresh_rg_auto_hint();
@@ -680,8 +695,7 @@ impl PlaybackThread {
                 self.refresh_rg_auto_hint();
 
                 if previous_state != PlaybackState::Stopped {
-                    let should_reopen = self.engine.current_path()
-                        != current_path.local_path().map(|path| path.as_path());
+                    let should_reopen = self.engine.current_track() != Some(&current_path);
 
                     if should_reopen {
                         if let Err(err) = self.open(&current_path) {
@@ -799,7 +813,7 @@ impl PlaybackThread {
                 self.refresh_rg_auto_hint();
                 // If stopped, start playing the inserted item
                 if self.state() == PlaybackState::Stopped {
-                    if !item.reference().is_local_file_present() {
+                    if !item.reference().is_potentially_available() {
                         self.send_event(PlaybackEvent::QueueUpdated);
                         return;
                     }
@@ -822,7 +836,7 @@ impl PlaybackThread {
 
                 // If stopped, start playing the inserted item
                 if self.state() == PlaybackState::Stopped {
-                    if !item.reference().is_local_file_present() {
+                    if !item.reference().is_potentially_available() {
                         self.send_event(PlaybackEvent::QueueUpdated);
                         return;
                     }
@@ -858,7 +872,7 @@ impl PlaybackThread {
         let first = items
             .iter()
             .enumerate()
-            .find(|(_, item)| item.reference().is_local_file_present())
+            .find(|(_, item)| item.reference().is_potentially_available())
             .map(|(idx, item)| (idx, item.clone()));
 
         match self.queue.insert_items(position, items) {

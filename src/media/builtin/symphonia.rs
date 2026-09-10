@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, fs::File};
+use std::ffi::OsStr;
 use symphonia::{
     core::{
         audio::sample::SampleFormat as SymphSampleFormat,
@@ -405,8 +405,36 @@ impl SymphoniaStream {
 }
 
 impl SymphoniaProvider {
-    fn open_stream(&self, file: File, ext: Option<&OsStr>) -> Result<SymphoniaStream, OpenError> {
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    fn open_stream(
+        &self,
+        source: Box<dyn crate::media::traits::MediaSource>,
+        ext: Option<&OsStr>,
+    ) -> Result<SymphoniaStream, OpenError> {
+        struct Source(Box<dyn crate::media::traits::MediaSource>);
+
+        impl std::io::Read for Source {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(output)
+            }
+        }
+
+        impl std::io::Seek for Source {
+            fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+                self.0.seek(position)
+            }
+        }
+
+        impl symphonia::core::io::MediaSource for Source {
+            fn is_seekable(&self) -> bool {
+                self.0.is_seekable()
+            }
+
+            fn byte_len(&self) -> Option<u64> {
+                self.0.byte_len()
+            }
+        }
+
+        let mss = MediaSourceStream::new(Box::new(Source(source)), Default::default());
         let meta_opts: MetadataOptions = Default::default();
         let fmt_opts: FormatOptions = Default::default();
 
@@ -436,8 +464,12 @@ impl SymphoniaProvider {
 }
 
 impl MediaProvider for SymphoniaProvider {
-    fn open(&self, file: File, ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError> {
-        Ok(Box::new(self.open_stream(file, ext)?))
+    fn open(
+        &self,
+        source: Box<dyn crate::media::traits::MediaSource>,
+        ext: Option<&OsStr>,
+    ) -> Result<Box<dyn MediaStream>, OpenError> {
+        Ok(Box::new(self.open_stream(source, ext)?))
     }
 
     fn supported_extensions(&self) -> &[&str] {
@@ -1032,7 +1064,7 @@ mod tests {
             .join(name);
         let file = std::fs::File::open(&path).unwrap();
         SymphoniaProvider
-            .open_stream(file, path.extension())
+            .open_stream(Box::new(file), path.extension())
             .unwrap()
     }
 

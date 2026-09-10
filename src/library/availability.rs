@@ -72,6 +72,7 @@ pub struct AvailabilityState {
     roots: Vec<RootAvailability>,
     mounts: MountSnapshot,
     unavailable_mountpoints: Vec<PathBuf>,
+    remote_sources: HashSet<super::source::SourceId>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +80,7 @@ pub struct AvailabilitySnapshot {
     roots: Arc<[RootAvailability]>,
     mounts: MountSnapshot,
     unavailable_mountpoints: Arc<[PathBuf]>,
+    remote_sources: Arc<HashSet<super::source::SourceId>>,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +134,7 @@ impl AvailabilityState {
             roots,
             mounts: mounts.clone(),
             unavailable_mountpoints: Vec::new(),
+            remote_sources: HashSet::new(),
         };
         let _ = state.reconcile_mounts(&mounts);
         state
@@ -275,6 +278,23 @@ impl AvailabilityState {
         self.is_path_available(path) && path.exists()
     }
 
+    pub fn is_track_available(&self, track: &super::types::Track) -> bool {
+        if track.source.is_local() {
+            track
+                .local_path()
+                .is_some_and(|path| self.is_track_path_available(path))
+        } else {
+            self.remote_sources.contains(&track.source)
+        }
+    }
+
+    pub fn is_reference_available(&self, track: &super::source::TrackRef) -> bool {
+        match track {
+            super::source::TrackRef::Local(path) => self.is_track_path_available(path),
+            super::source::TrackRef::Remote { source, .. } => self.remote_sources.contains(source),
+        }
+    }
+
     pub fn snapshot(&self) -> AvailabilitySnapshot {
         AvailabilitySnapshot {
             roots: Arc::from(self.roots.clone().into_boxed_slice()),
@@ -282,7 +302,20 @@ impl AvailabilityState {
             unavailable_mountpoints: Arc::from(
                 self.unavailable_mountpoints.clone().into_boxed_slice(),
             ),
+            remote_sources: Arc::new(self.remote_sources.clone()),
         }
+    }
+
+    pub fn set_remote_sources(
+        &mut self,
+        sources: impl IntoIterator<Item = super::source::SourceId>,
+    ) -> bool {
+        let sources = sources.into_iter().collect::<HashSet<_>>();
+        if self.remote_sources == sources {
+            return false;
+        }
+        self.remote_sources = sources;
+        true
     }
 
     pub fn configured_roots(&self) -> Vec<PathBuf> {
@@ -292,15 +325,20 @@ impl AvailabilityState {
 
 impl AvailabilitySnapshot {
     pub fn is_track_available(&self, track: &super::types::Track) -> bool {
-        track
-            .local_path()
-            .is_some_and(|path| self.is_track_path_available(path))
+        if track.source.is_local() {
+            track
+                .local_path()
+                .is_some_and(|path| self.is_track_path_available(path))
+        } else {
+            self.remote_sources.contains(&track.source)
+        }
     }
 
     pub fn is_reference_available(&self, track: &super::source::TrackRef) -> bool {
-        track
-            .local_path()
-            .is_some_and(|path| self.is_track_path_available(path))
+        match track {
+            super::source::TrackRef::Local(path) => self.is_track_path_available(path),
+            super::source::TrackRef::Remote { source, .. } => self.remote_sources.contains(source),
+        }
     }
 
     pub fn is_path_available(&self, path: &Path) -> bool {
@@ -483,6 +521,7 @@ mod tests {
                 .collect(),
             mounts,
             unavailable_mountpoints: Vec::new(),
+            remote_sources: HashSet::new(),
         }
     }
 

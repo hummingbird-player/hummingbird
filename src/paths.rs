@@ -22,6 +22,11 @@ pub fn data_dir() -> PathBuf {
     project_dirs().data_dir().to_path_buf()
 }
 
+#[cfg(feature = "libre-services")]
+pub fn cache_dir() -> PathBuf {
+    project_dirs().cache_dir().to_path_buf()
+}
+
 pub fn log_dir() -> PathBuf {
     log_dir_in(
         project_dirs(),

@@ -137,7 +137,7 @@ impl Lyrics {
         cx: &App,
     ) -> (Option<String>, Option<Vec<LrcLine>>) {
         let content = track
-            .and_then(|t| cx.get_track_by_path(t.get_path()).ok().flatten())
+            .and_then(|t| cx.get_track_by_reference(t.reference()).ok().flatten())
             .and_then(|t| cx.lyrics_for_track(t.id).ok().flatten());
         let parsed = content.as_ref().and_then(|c| parse_lrc(c));
         (content, parsed)

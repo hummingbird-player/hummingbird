@@ -124,22 +124,58 @@ pub struct Models {
 
 impl Global for Models {}
 
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
-pub struct CurrentTrack(PathBuf);
+#[derive(Clone, PartialEq, Debug)]
+pub struct CurrentTrack(crate::library::source::TrackRef);
 
 impl CurrentTrack {
     pub fn new(path: PathBuf) -> Self {
-        CurrentTrack(path)
+        Self(crate::library::source::TrackRef::Local(path))
     }
 
-    pub fn get_path(&self) -> &PathBuf {
+    pub fn from_reference(track: crate::library::source::TrackRef) -> Self {
+        Self(track)
+    }
+
+    pub fn reference(&self) -> &crate::library::source::TrackRef {
         &self.0
+    }
+
+    pub fn local_path(&self) -> Option<&PathBuf> {
+        self.0.local_path()
+    }
+}
+
+impl Serialize for CurrentTrack {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CurrentTrack {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StoredCurrentTrack {
+            Reference(crate::library::source::TrackRef),
+            LegacyPath(PathBuf),
+        }
+
+        Ok(match StoredCurrentTrack::deserialize(deserializer)? {
+            StoredCurrentTrack::Reference(track) => Self(track),
+            StoredCurrentTrack::LegacyPath(path) => Self::new(path),
+        })
     }
 }
 
 impl PartialEq<std::path::PathBuf> for CurrentTrack {
     fn eq(&self, other: &std::path::PathBuf) -> bool {
-        &self.0 == other
+        self.local_path() == Some(other)
     }
 }
 
@@ -225,6 +261,25 @@ mod media_tests {
     use crate::{library::source::TrackRef, services::mmb::MediaEvent};
     use async_trait::async_trait;
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+
+    #[test]
+    fn current_track_storage_accepts_legacy_paths_and_preserves_remote_identity() {
+        let legacy: CurrentTrack = serde_json::from_str(r#""/music/song.flac""#).unwrap();
+        assert_eq!(
+            legacy.reference(),
+            &TrackRef::Local("/music/song.flac".into())
+        );
+
+        let remote = CurrentTrack::from_reference(TrackRef::Remote {
+            source: crate::library::source::SourceId("server".into()),
+            location: "opaque/song/id".into(),
+        });
+        let stored = serde_json::to_string(&remote).unwrap();
+        assert_eq!(
+            serde_json::from_str::<CurrentTrack>(&stored).unwrap(),
+            remote
+        );
+    }
 
     struct Recorder(UnboundedSender<MediaEvent>);
 

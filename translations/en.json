@@ -191,6 +191,7 @@
   "MUSIC_LIBRARY_QUALITY_CUSTOM_DESCRIPTION": "Always request the selected format and bitrate.",
   "MUSIC_LIBRARY_QUALITY_ORIGINAL": "Original",
   "MUSIC_LIBRARY_QUALITY_ORIGINAL_DESCRIPTION": "Use the original file without server conversion.",
+  "MUSIC_LIBRARY_QUALITY_ORIGINAL_TOOLTIP": "Original quality",
   "MUSIC_LIBRARY_REFRESH_DAILY": "Daily",
   "MUSIC_LIBRARY_REFRESH_FREQUENCY": "Refresh frequency",
   "MUSIC_LIBRARY_REFRESH_HOURLY": "Hourly",

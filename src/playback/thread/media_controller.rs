@@ -1,7 +1,8 @@
+#[cfg(test)]
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
-    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, SyncSender, TryRecvError},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -24,12 +25,14 @@ impl Drop for WorkerExit {
 
 use crate::{
     devices::format::ChannelSpec,
+    library::source::TrackRef,
     media::{
         errors::{
             ChannelRetrievalError, FrameDurationError, PlaybackReadError, PlaybackStartError,
             SeekError,
         },
         pipeline::{AudioBlock, DecodeResult},
+        traits::MediaResolver,
     },
 };
 
@@ -37,7 +40,7 @@ use super::decoder::Decoder;
 pub use super::decoder::{CompleteMetadata, MediaInfo};
 
 enum Request {
-    Open(PathBuf),
+    Open(TrackRef),
     Decode(AudioBlock, bool),
     Seek(f64),
     Close,
@@ -129,7 +132,7 @@ pub struct MediaController {
     /// Of the three reusable blocks, DSP holds one. The other two move between this list,
     /// the worker, and its replies.
     free: Vec<AudioBlock>,
-    current_path: Option<PathBuf>,
+    current_track: Option<TrackRef>,
     looping: bool,
     decode_enabled: bool,
     failed: bool,
@@ -138,8 +141,8 @@ pub struct MediaController {
 }
 
 impl MediaController {
-    pub fn new() -> Self {
-        Self::with_decoder(Decoder::new)
+    pub fn with_resolver(resolver: Arc<dyn MediaResolver>) -> Self {
+        Self::with_decoder(move || Decoder::with_resolver(resolver.clone()))
     }
 
     pub(super) fn with_decoder(factory: impl Fn() -> Decoder + Send + Sync + 'static) -> Self {
@@ -208,7 +211,7 @@ impl MediaController {
             opened: None,
             ready: None,
             free: Vec::with_capacity(2),
-            current_path: None,
+            current_track: None,
             looping: false,
             decode_enabled: false,
             failed: false,
@@ -358,8 +361,8 @@ impl MediaController {
         self.retired_done = Some(old.worker_done.clone());
         self.looping = old.looping;
         self.decode_enabled = old.decode_enabled;
-        if let Some(path) = old.current_path.take() {
-            self.open(&path);
+        if let Some(track) = old.current_track.take() {
+            self.open(&track);
             self.seek_after_open = old.seek_target.or(old.seek_after_open);
             self.seek_target = self.seek_after_open;
         }
@@ -423,11 +426,12 @@ impl MediaController {
         self.snapshot = Some(snapshot);
     }
 
-    pub fn open(&mut self, path: &Path) {
+    pub fn open(&mut self, track: impl Into<TrackRef>) {
+        let track = track.into();
         if self.failed {
             self.poll();
             if self.retired.is_none() {
-                self.current_path = Some(path.to_owned());
+                self.current_track = Some(track.clone());
                 self.seek_target = None;
                 self.seek_after_open = None;
                 self.recover_worker();
@@ -439,11 +443,11 @@ impl MediaController {
         self.snapshot = None;
         self.opened = None;
         self.free.clear();
-        self.current_path = Some(path.to_owned());
+        self.current_track = Some(track.clone());
         self.seek_target = None;
         self.seek_position = None;
         self.seek_after_open = None;
-        self.replace(Request::Open(path.to_owned()));
+        self.replace(Request::Open(track));
     }
 
     pub fn take_opened(&mut self) -> Option<Result<MediaInfo, PlaybackStartError>> {
@@ -460,21 +464,21 @@ impl MediaController {
         self.snapshot = None;
         self.seek_after_open = None;
         self.opened = None;
-        self.current_path = None;
+        self.current_track = None;
         self.free.clear();
         if !self.failed {
             self.replace(Request::Close);
         }
     }
 
-    pub fn current_path(&self) -> Option<&Path> {
-        self.current_path.as_deref()
+    pub fn current_track(&self) -> Option<&TrackRef> {
+        self.current_track.as_ref()
     }
 
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         self.seek_target = Some(time);
         if !self.has_stream() {
-            if self.current_path.is_some() {
+            if self.current_track.is_some() {
                 self.seek_after_open = Some(time);
                 return Ok(());
             }

@@ -671,7 +671,7 @@ impl Render for ReleaseView {
             .clone()
             .is_some_and(|current_track| {
                 self.tracks.iter().any(|track| {
-                    track.local_path() == Some(current_track.get_path().as_path())
+                    track.reference() == *current_track.reference()
                         && availability.is_track_available(track)
                 })
             });

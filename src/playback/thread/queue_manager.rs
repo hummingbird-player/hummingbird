@@ -253,7 +253,7 @@ impl QueueManager {
     }
 
     fn item_is_playable(item: &QueueItemData) -> bool {
-        item.local_path().is_some_and(|path| path.exists())
+        item.reference().is_potentially_available()
     }
 
     fn first_playable_index(queue: &[QueueItemData]) -> Option<usize> {
@@ -1340,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn navigation_preserves_remote_items_without_opening_them_as_local_paths() {
+    fn navigation_treats_remote_items_as_playable_without_probing_them_as_paths() {
         use super::{JumpResult, QueueNavigationResult};
         use crate::library::source::{SourceId, TrackRef};
 
@@ -1356,10 +1356,23 @@ mod tests {
             "track": TrackRef::from_location(SourceId("server".into()), path.to_str().unwrap().into()),
         })).unwrap();
         let mut manager = manager_with_queue(vec![remote.clone(), local.clone(), remote.clone()]);
-        assert!(matches!(manager.jump(0), JumpResult::OutOfBounds));
+        assert!(matches!(
+            manager.jump(0),
+            JumpResult::Jumped {
+                path: TrackRef::Remote { .. }
+            }
+        ));
         assert!(matches!(
             manager.next(true),
             QueueNavigationResult::Changed { index: 1, .. }
+        ));
+        assert!(matches!(
+            manager.next(true),
+            QueueNavigationResult::Changed {
+                index: 2,
+                path: TrackRef::Remote { .. },
+                ..
+            }
         ));
         assert!(matches!(
             manager.next(true),

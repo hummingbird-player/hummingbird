@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tracing::{debug, error, info, trace_span, warn};
@@ -12,9 +9,11 @@ use crate::{
         mix::{ChannelMixer, MixOptions},
         resample::Resampler,
     },
+    library::source::TrackRef,
     media::{
         errors::{PlaybackStartError, SeekError},
         pipeline::{AudioPipeline, DEFAULT_BUFFER_FRAMES, DecodeResult, output_frame_bound},
+        traits::MediaResolver,
     },
     playback::{
         dsp::{
@@ -133,8 +132,16 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     pub fn new(events_tx: UnboundedSender<PlaybackEvent>, tap: SpectrumTap) -> Self {
+        Self::with_resolver(events_tx, tap, crate::media::traits::local_media_resolver())
+    }
+
+    pub fn with_resolver(
+        events_tx: UnboundedSender<PlaybackEvent>,
+        tap: SpectrumTap,
+        resolver: std::sync::Arc<dyn MediaResolver>,
+    ) -> Self {
         Self {
-            media: MediaController::new(),
+            media: MediaController::with_resolver(resolver),
             device: DeviceController::new(),
             pipeline: None,
             resampler: None,
@@ -191,7 +198,7 @@ impl AudioEngine {
 
     pub fn open(
         &mut self,
-        path: &Path,
+        track: impl Into<TrackRef>,
         preserve_resampler: bool,
     ) -> Result<u64, PlaybackStartError> {
         if preserve_resampler {
@@ -219,7 +226,7 @@ impl AudioEngine {
         self.opened = None;
         self.opening = Some(preserve_resampler);
         self.state = EngineState::Playing;
-        self.media.open(path);
+        self.media.open(track);
         Ok(self.track_serial)
     }
 
@@ -287,8 +294,8 @@ impl AudioEngine {
         media_info: super::media_controller::MediaInfo,
         preserve_resampler: bool,
     ) -> Result<Option<u64>, PlaybackStartError> {
-        let path = self.media.current_path().unwrap();
-        info!("AudioEngine: Opening track '{}'", path.display());
+        let track = self.media.current_track().unwrap();
+        info!("AudioEngine: Opening track '{}'", track.display());
         if preserve_resampler
             && let Some(previous) = &mut self.previous_pipeline
             && (previous.source_rate != self.media.sample_rate().unwrap_or(previous.source_rate)
@@ -415,7 +422,7 @@ impl AudioEngine {
 
     fn retry_device(&mut self) {
         if self.state == EngineState::Idle
-            || self.media.current_path().is_none()
+            || self.media.current_track().is_none()
             || self.device.has_stream()
             || self.device_retry_at.is_some_and(|at| at > Instant::now())
         {
@@ -561,9 +568,9 @@ impl AudioEngine {
         self.timing.position
     }
 
-    /// Get the currently loaded track path, if any.
-    pub fn current_path(&self) -> Option<&Path> {
-        self.media.current_path()
+    /// Get the currently loaded track reference, if any.
+    pub fn current_track(&self) -> Option<&TrackRef> {
+        self.media.current_track()
     }
 
     /// Check for metadata updates and return them if available.
@@ -627,7 +634,7 @@ impl AudioEngine {
             return EngineCycleResult::Pending;
         }
         if !self.media.has_stream() {
-            return if self.media.current_path().is_some() {
+            return if self.media.current_track().is_some() {
                 EngineCycleResult::Pending
             } else {
                 EngineCycleResult::NothingToDo

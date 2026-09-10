@@ -1,6 +1,6 @@
 //! References to local and remote library tracks.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,8 +35,16 @@ impl TrackRef {
         self
     }
 
+    #[cfg(test)]
     pub fn is_local_file_present(&self) -> bool {
         self.local_path().is_some_and(|path| path.exists())
+    }
+
+    pub fn is_potentially_available(&self) -> bool {
+        match self {
+            Self::Local(path) => path.exists(),
+            Self::Remote { .. } => true,
+        }
     }
 
     pub fn from_location(source: SourceId, location: String) -> Self {
@@ -72,6 +80,36 @@ impl TrackRef {
 impl From<PathBuf> for TrackRef {
     fn from(path: PathBuf) -> Self {
         Self::Local(path)
+    }
+}
+
+impl From<&Path> for TrackRef {
+    fn from(path: &Path) -> Self {
+        Self::Local(path.to_path_buf())
+    }
+}
+
+impl From<&PathBuf> for TrackRef {
+    fn from(path: &PathBuf) -> Self {
+        Self::Local(path.clone())
+    }
+}
+
+impl From<&TrackRef> for TrackRef {
+    fn from(track: &TrackRef) -> Self {
+        track.clone()
+    }
+}
+
+impl From<String> for TrackRef {
+    fn from(path: String) -> Self {
+        Self::Local(path.into())
+    }
+}
+
+impl From<&str> for TrackRef {
+    fn from(path: &str) -> Self {
+        Self::Local(path.into())
     }
 }
 

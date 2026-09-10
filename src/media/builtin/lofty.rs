@@ -334,8 +334,8 @@ fn tags_by_priority(tags: &[Tag], has_id3v2: bool) -> Vec<&Tag> {
         .collect()
 }
 
-fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
-    let tagged_file = lofty::read_from(&mut file).map_err(|_| OpenError::UnsupportedFormat)?;
+fn read_tags_from_file(file: &mut File) -> Result<TagsFromFile, OpenError> {
+    let tagged_file = lofty::read_from(&mut *file).map_err(|_| OpenError::UnsupportedFormat)?;
 
     let mut metadata = Metadata::default();
     let mut image: Option<Box<[u8]>> = None;
@@ -350,7 +350,7 @@ fn read_tags_from_file(mut file: File) -> Result<TagsFromFile, OpenError> {
         .iter()
         .any(|tag| tag.tag_type() == TagType::Id3v2);
     let id3v2_version = has_id3v2
-        .then(|| read_id3v2_version(&mut file, tagged_file.file_type()))
+        .then(|| read_id3v2_version(file, tagged_file.file_type()))
         .flatten();
 
     let mut artist_names = ArtistNames::default();
@@ -397,7 +397,12 @@ pub struct LoftyStream {
 }
 
 impl MediaProvider for LoftyProvider {
-    fn open(&self, file: File, _ext: Option<&OsStr>) -> Result<Box<dyn MediaStream>, OpenError> {
+    fn open(
+        &self,
+        mut source: Box<dyn crate::media::traits::MediaSource>,
+        _ext: Option<&OsStr>,
+    ) -> Result<Box<dyn MediaStream>, OpenError> {
+        let file = source.as_file_mut().ok_or(OpenError::UnsupportedFormat)?;
         let tags = read_tags_from_file(file)?;
 
         Ok(Box::new(LoftyStream {
@@ -505,7 +510,7 @@ mod tests {
         let path = fixture_path(name);
         let file = File::open(&path).unwrap_or_else(|err| panic!("failed to open {name}: {err}"));
         let mut stream = LoftyProvider
-            .open(file, path.extension())
+            .open(Box::new(file), path.extension())
             .unwrap_or_else(|err| panic!("failed to read {name}: {err}"));
 
         stream.start_playback().unwrap();

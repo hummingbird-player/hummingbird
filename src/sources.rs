@@ -2,6 +2,7 @@
 
 pub mod credentials;
 mod import;
+mod media;
 pub mod subsonic;
 
 use std::time::Duration;
@@ -11,6 +12,27 @@ use async_trait::async_trait;
 use crate::{library::source::SourceId, media::metadata::Metadata};
 
 pub use import::import_catalog;
+pub use media::SourceRegistry;
+
+pub struct MediaDescriptor {
+    pub extension: Option<String>,
+    pub byte_len: Option<u64>,
+    chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
+}
+
+impl MediaDescriptor {
+    pub(crate) fn new(
+        extension: Option<String>,
+        byte_len: Option<u64>,
+        chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
+    ) -> Self {
+        Self {
+            extension,
+            byte_len,
+            chunks,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogRequest {
@@ -103,6 +125,9 @@ pub trait LibraryBackend: Send + Sync {
     async fn connect(&self) -> Result<BackendInfo, BackendError>;
     async fn catalog_page(&self, request: CatalogRequest) -> Result<CatalogPage, BackendError>;
     async fn album(&self, album: &RemoteAlbumRef) -> Result<RemoteAlbum, BackendError>;
+    async fn media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+        Err(BackendError::Unsupported)
+    }
 }
 
 #[cfg(test)]

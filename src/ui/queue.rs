@@ -4,7 +4,7 @@ use crate::{
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     settings::SettingsGlobal,
     ui::{
-        availability::is_track_path_available,
+        availability::is_reference_available,
         components::{
             context::context,
             drag_drop::{
@@ -242,8 +242,7 @@ impl Render for QueueItem {
         let is_available = self
             .item
             .as_ref()
-            .and_then(|queue_item| queue_item.local_path())
-            .is_some_and(|path| is_track_path_available(cx, path));
+            .is_some_and(|queue_item| is_reference_available(cx, queue_item.reference()));
         let is_selected = self.selection.read(cx).contains(self.idx);
 
         if let Some(item) = ui_data.as_ref() {
@@ -468,12 +467,12 @@ impl Render for QueueItem {
                                         .flex()
                                         .w_full()
                                         .max_w_full()
-                                        .justify_between()
                                         .child(
                                             div()
                                                 .text_ellipsis()
                                                 .text_sm()
                                                 .overflow_x_hidden()
+                                                .mr_auto()
                                                 .flex_shrink(1.0)
                                                 .text_color(theme.text_secondary)
                                                 .child(item.artist_name.clone().unwrap_or_else(

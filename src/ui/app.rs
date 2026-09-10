@@ -17,10 +17,17 @@ use tracing::debug;
 
 #[cfg(feature = "proprietary-services")]
 use crate::services::mmb::lastfm;
+#[cfg(feature = "libre-services")]
+use crate::sources::{
+    SourceRegistry,
+    credentials::{CredentialRef, CredentialStore, OsCredentialStore},
+    subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
+};
 use crate::{
     library::{
         db::create_pool,
         scan::{ScanEvent, ScanInterface, start_scanner},
+        source::SourceId,
     },
     paths,
     playback::{
@@ -69,6 +76,48 @@ use super::{
     theme::setup_theme,
     util::drop_image_from_app,
 };
+
+#[cfg(feature = "libre-services")]
+fn load_source_registry(
+    cx: &mut App,
+    registry: SourceRegistry,
+    libraries: Vec<crate::settings::services::MusicLibrarySettings>,
+    restored_track: Option<(SourceId, usize)>,
+) {
+    for library in libraries.into_iter().filter(|library| library.enabled) {
+        let Ok(reference) = CredentialRef::try_from(library.credential_reference) else {
+            continue;
+        };
+        let credentials = OsCredentialStore(cx).read(&reference);
+        let registry = registry.clone();
+        let restore_position = restored_track
+            .as_ref()
+            .filter(|(source, _)| source.0 == library.id)
+            .map(|(_, position)| *position);
+        cx.spawn(async move |cx| {
+            let Some(credentials) = credentials.await.ok().flatten() else {
+                return;
+            };
+            let Ok(server) = ServerUrl::parse(&library.address, HttpPolicy::HttpsOnly) else {
+                return;
+            };
+            match SubsonicBackend::new(SourceId(library.id), server, credentials) {
+                Ok(backend) => {
+                    registry.register(Arc::new(backend));
+                    if let Some(position) = restore_position {
+                        cx.update(|cx| {
+                            let playback = cx.global::<PlaybackInterface>();
+                            playback.jump(position);
+                            playback.pause();
+                        });
+                    }
+                }
+                Err(error) => tracing::warn!(?error, "could not restore remote library backend"),
+            }
+        })
+        .detach();
+    }
+}
 
 struct MainWindow {
     pub controls: Entity<Controls>,
@@ -416,8 +465,12 @@ pub fn run() -> anyhow::Result<()> {
             .filter(|position| *position < playback_session.queue.len());
         let initial_track = initial_position
             .and_then(|position| playback_session.queue.get(position))
-            .and_then(|item| item.local_path().cloned())
-            .map(CurrentTrack::new);
+            .map(|item| CurrentTrack::from_reference(item.reference().clone()));
+        #[cfg(feature = "libre-services")]
+        let initial_remote_source = initial_track.as_ref().and_then(|track| {
+            let source = track.reference().source();
+            (!source.is_local()).then_some(source)
+        });
 
         let queue: Arc<RwLock<Vec<QueueItemData>>> =
             Arc::new(RwLock::new(playback_session.queue.clone()));
@@ -433,6 +486,7 @@ pub fn run() -> anyhow::Result<()> {
         let language = settings.interface.language.clone();
         let playback_settings = settings.playback.clone();
         let scanning_settings = settings.scanning.clone();
+        let music_libraries = settings.services.music_libraries.clone();
         #[cfg(feature = "update")]
         let update_settings = settings.update.clone();
         let initial_repeat = if playback_settings.always_repeat
@@ -453,6 +507,22 @@ pub fn run() -> anyhow::Result<()> {
             playback_session.shuffle,
             initial_repeat,
         );
+        let availability_model = cx.global::<Models>().availability.clone();
+        availability_model.update(cx, |availability, cx| {
+            availability.set_remote_sources(
+                music_libraries
+                    .iter()
+                    .filter(|library| library.enabled)
+                    .map(|library| SourceId(library.id.clone())),
+            );
+            cx.notify();
+        });
+        #[cfg(feature = "libre-services")]
+        let source_registry = {
+            let registry = SourceRegistry::new(paths::cache_dir());
+            cx.set_global(registry.clone());
+            registry
+        };
 
         super::keymap::load_default_keymap(cx);
 
@@ -461,16 +531,29 @@ pub fn run() -> anyhow::Result<()> {
         let settings_model = cx.global::<SettingsGlobal>().model.clone();
         let availability_model = cx.global::<Models>().availability.clone();
         cx.observe(&settings_model, move |_, cx| {
-            let roots = cx
-                .global::<SettingsGlobal>()
-                .model
-                .read(cx)
-                .scanning
-                .paths
-                .iter()
-                .map(|path| path.as_std_path().to_path_buf())
-                .collect();
+            let (roots, remote_sources) = {
+                let settings = cx.global::<SettingsGlobal>().model.read(cx);
+                let roots = settings
+                    .scanning
+                    .paths
+                    .iter()
+                    .map(|path| path.as_std_path().to_path_buf())
+                    .collect();
+                let remote_sources = settings
+                    .services
+                    .music_libraries
+                    .iter()
+                    .filter(|library| library.enabled)
+                    .map(|library| SourceId(library.id.clone()))
+                    .collect::<Vec<_>>();
+                (roots, remote_sources)
+            };
             availability::update_roots(&availability_model, roots, cx);
+            availability_model.update(cx, |availability, cx| {
+                if availability.set_remote_sources(remote_sources) {
+                    cx.notify();
+                }
+            });
             cx.refresh_windows();
         })
         .detach();
@@ -534,6 +617,16 @@ pub fn run() -> anyhow::Result<()> {
 
         let last_volume = *cx.global::<PlaybackInfo>().volume.read(cx);
 
+        #[cfg(feature = "libre-services")]
+        let mut playback_interface: PlaybackInterface = PlaybackThread::start_with_resolver(
+            queue.clone(),
+            playback_settings,
+            last_volume,
+            playback_session,
+            queue_tx,
+            Arc::new(source_registry.clone()),
+        );
+        #[cfg(not(feature = "libre-services"))]
         let mut playback_interface: PlaybackInterface = PlaybackThread::start(
             queue.clone(),
             playback_settings,
@@ -543,13 +636,30 @@ pub fn run() -> anyhow::Result<()> {
         );
         playback_interface.start_broadcast(cx);
 
-        if !parse_args_and_prepare(cx, &playback_interface)
+        let prepared_from_args = parse_args_and_prepare(cx, &playback_interface);
+        cx.set_global(playback_interface);
+        #[cfg(feature = "libre-services")]
+        load_source_registry(
+            cx,
+            source_registry,
+            music_libraries,
+            (!prepared_from_args)
+                .then(|| initial_remote_source.clone().zip(initial_position))
+                .flatten(),
+        );
+        #[cfg(feature = "libre-services")]
+        let restore_immediately = initial_remote_source.is_none();
+        #[cfg(not(feature = "libre-services"))]
+        let restore_immediately = true;
+
+        if !prepared_from_args
+            && restore_immediately
             && let Some(pos) = initial_position
         {
+            let playback_interface = cx.global::<PlaybackInterface>();
             playback_interface.jump(pos);
             playback_interface.pause();
         }
-        cx.set_global(playback_interface);
 
         let toast_layer_entity = ToastLayer::new(cx, toast_receiver);
         toast_layer

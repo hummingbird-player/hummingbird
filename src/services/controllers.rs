@@ -214,7 +214,7 @@ pub fn register_pbc_event_handlers(cx: &mut App) {
 
     cx.observe(&track, |e, cx| {
         if let Some(track) = e.read(cx)
-            && let path = track.get_path().clone()
+            && let Some(path) = track.local_path().cloned()
             && let PbcHandle(tx, _) = cx.global()
             && let Err(err) = tx.send(PbcEvent::NewFile(path))
         {

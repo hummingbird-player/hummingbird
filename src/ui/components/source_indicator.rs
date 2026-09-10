@@ -73,7 +73,10 @@ impl SourceOrigin {
                     Self {
                         name: library.name.clone().into(),
                         description,
-                        detail: None,
+                        detail: Some(
+                            tr!("MUSIC_LIBRARY_QUALITY_ORIGINAL_TOOLTIP", "Original quality")
+                                .into(),
+                        ),
                     }
                 })
         })

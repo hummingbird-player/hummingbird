@@ -261,11 +261,17 @@ impl Storage {
                     .map_err(|e| e.into())
                     .map(|data: StorageData| match &data.current_track {
                         // validate whether path still exists
-                        Some(current_track) if !current_track.get_path().exists() => StorageData {
-                            current_track: None,
-                            // Preserve other settings when invalidating current_track
-                            ..data
-                        },
+                        Some(current_track)
+                            if current_track
+                                .local_path()
+                                .is_some_and(|path| !path.exists()) =>
+                        {
+                            StorageData {
+                                current_track: None,
+                                // Preserve other settings when invalidating current_track
+                                ..data
+                            }
+                        }
                         _ => data,
                     })
             })
@@ -379,7 +385,10 @@ mod tests {
         let loaded = storage.load_or_default();
 
         assert_eq!(
-            loaded.current_track.as_ref().map(CurrentTrack::get_path),
+            loaded
+                .current_track
+                .as_ref()
+                .and_then(CurrentTrack::local_path),
             Some(&track_path)
         );
         assert_eq!(loaded.volume, expected.volume);

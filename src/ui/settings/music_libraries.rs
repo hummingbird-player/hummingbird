@@ -1,6 +1,8 @@
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div,
 };
+#[cfg(feature = "libre-services")]
+use std::sync::Arc;
 
 #[cfg(feature = "libre-services")]
 use crate::{
@@ -10,7 +12,7 @@ use crate::{
     },
     settings::{SettingsGlobal, save_settings},
     sources::{
-        LibraryBackend,
+        LibraryBackend, SourceRegistry,
         credentials::{CredentialRef, CredentialStore, Credentials, OsCredentialStore, Secret},
         import_catalog,
         subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
@@ -75,11 +77,19 @@ impl MusicLibrariesSettings {
                 DisplayEvent::Add => this.open_connection(AuthenticationMode::Password, cx),
                 DisplayEvent::Edit(index) => this.open_editor(*index, false, cx),
                 DisplayEvent::Refresh(index) => this.refresh(*index, cx),
+                DisplayEvent::ClearCache(index) => this.clear_cache(*index, cx),
                 DisplayEvent::Remove(index) => this.remove(*index, cx),
                 DisplayEvent::Changed { index, library } => {
                     this.save_edited_library(*index, library, cx);
                     if library.enabled {
+                        #[cfg(feature = "libre-services")]
+                        cx.global::<SourceRegistry>()
+                            .enable(&SourceId(library.id.to_string()));
                         this.refresh(*index, cx);
+                    } else {
+                        #[cfg(feature = "libre-services")]
+                        cx.global::<SourceRegistry>()
+                            .unregister(&SourceId(library.id.to_string()));
                     }
                 }
             })
@@ -155,6 +165,7 @@ impl MusicLibrariesSettings {
             ),
             EditingEvent::Remove(index) => this.remove(*index, cx),
             EditingEvent::Refresh(index) => this.refresh(*index, cx),
+            EditingEvent::ClearCache(index) => this.clear_cache(*index, cx),
         })
         .detach();
         self.active_page = ActivePage::Editing(editor);
@@ -227,20 +238,26 @@ impl MusicLibrariesSettings {
         let backend = server
             .map_err(|error| error.to_string())
             .and_then(|server| {
-                SubsonicBackend::new(source, server, credentials.clone())
+                SubsonicBackend::new(source.clone(), server, credentials.clone())
+                    .map(Arc::new)
                     .map_err(|error| error.to_string())
             });
         let pool = cx.global::<Pool>().0.clone();
+        let registry = cx.global::<SourceRegistry>().clone();
 
         cx.spawn(async move |this, cx| {
             let result = async {
                 let reference = reference
                     .map_err(|_| "The saved credential reference is invalid.".to_string())?;
                 let backend = backend?;
+                let connect_backend = backend.clone();
                 let backend = crate::RUNTIME
                     .spawn(async move {
-                        backend.connect().await.map_err(|error| error.to_string())?;
-                        Ok::<_, String>(backend)
+                        connect_backend
+                            .connect()
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok::<_, String>(connect_backend)
                     })
                     .await
                     .map_err(|_| "The connection task stopped unexpectedly.".to_string())??;
@@ -252,9 +269,10 @@ impl MusicLibrariesSettings {
                 cx.update(|cx| OsCredentialStore(cx).write(&reference, &credentials))
                     .await
                     .map_err(|error| error.to_string())?;
+                let import_backend = backend.clone();
                 let import_result = crate::RUNTIME
                     .spawn(async move {
-                        import_catalog(&backend, &pool, |_| {})
+                        import_catalog(import_backend.as_ref(), &pool, |_| {})
                             .await
                             .map_err(|error| error.to_string())
                     })
@@ -273,6 +291,7 @@ impl MusicLibrariesSettings {
                     }
                     return Err(error);
                 }
+                registry.register(backend);
                 Ok::<_, String>(())
             }
             .await;
@@ -353,6 +372,10 @@ impl MusicLibrariesSettings {
                     });
                 if let Some(library) = removed {
                     let source = SourceId(library.id.to_string());
+                    cx.global::<SourceRegistry>().unregister(&source);
+                    if let Err(error) = cx.global::<SourceRegistry>().clear_cache(&source) {
+                        tracing::warn!(?error, "failed to clear removed source cache");
+                    }
                     let pool = cx.global::<Pool>().0.clone();
                     let delete_credentials =
                         CredentialRef::try_from(library.credential_reference.to_string())
@@ -390,6 +413,22 @@ impl MusicLibrariesSettings {
         self.show_display(cx);
     }
 
+    fn clear_cache(&self, index: usize, cx: &mut Context<Self>) {
+        if self.fixture_mode {
+            return;
+        }
+        #[cfg(feature = "libre-services")]
+        if let Some(library) = self.display.read(cx).library(index)
+            && let Err(error) = cx
+                .global::<SourceRegistry>()
+                .clear_cache(&SourceId(library.id.to_string()))
+        {
+            tracing::warn!(?error, "failed to clear remote source cache");
+        }
+        #[cfg(not(feature = "libre-services"))]
+        let _ = (index, cx);
+    }
+
     fn refresh(&mut self, index: usize, cx: &mut Context<Self>) {
         self.display
             .update(cx, |display, cx| display.mark_importing(index, cx));
@@ -415,6 +454,7 @@ impl MusicLibrariesSettings {
             .map(|reference| OsCredentialStore(cx).read(reference));
         let pool = cx.global::<Pool>().0.clone();
         let display = self.display.clone();
+        let registry = cx.global::<SourceRegistry>().clone();
 
         cx.spawn(async move |_, cx| {
             let result = async {
@@ -424,17 +464,24 @@ impl MusicLibrariesSettings {
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "The saved credentials could not be found.".to_string())?;
-                let backend = SubsonicBackend::new(source, server, credentials)
-                    .map_err(|error| error.to_string())?;
+                let backend = Arc::new(
+                    SubsonicBackend::new(source, server, credentials)
+                        .map_err(|error| error.to_string())?,
+                );
+                let refresh_backend = backend.clone();
                 crate::RUNTIME
                     .spawn(async move {
-                        backend.connect().await.map_err(|error| error.to_string())?;
-                        import_catalog(&backend, &pool, |_| {})
+                        refresh_backend
+                            .connect()
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        import_catalog(refresh_backend.as_ref(), &pool, |_| {})
                             .await
                             .map_err(|error| error.to_string())
                     })
                     .await
                     .map_err(|_| "The refresh task stopped unexpectedly.".to_string())??;
+                registry.register(backend);
                 Ok::<_, String>(())
             }
             .await;

@@ -82,6 +82,7 @@ impl MusicLibraryEditor {
                         clear_entity
                             .update(cx, |this, cx| {
                                 this.confirmation = None;
+                                cx.emit(EditingEvent::ClearCache(this.index));
                                 cx.notify();
                             })
                             .ok();
