@@ -9,6 +9,7 @@ use crate::library::scan::database::{
 
 use super::{
     BackendError, CatalogRequest, LibraryBackend, RemoteAlbum, RemoteArtworkData, RemoteArtworkMap,
+    SourceEpoch, SourceRegistry,
 };
 
 const CATALOG_PAGE_SIZE: usize = 100;
@@ -29,20 +30,53 @@ pub struct CatalogImportResult {
     pub generation: i64,
 }
 
-pub async fn import_catalog(
+#[cfg(test)]
+async fn import_catalog(
+    backend: &dyn LibraryBackend,
+    pool: &SqlitePool,
+    on_progress: impl FnMut(CatalogImportProgress),
+) -> Result<CatalogImportResult, BackendError> {
+    import_catalog_while_current(backend, pool, on_progress, || true).await
+}
+
+pub(crate) async fn import_catalog_for_epoch(
+    backend: &dyn LibraryBackend,
+    pool: &SqlitePool,
+    registry: &SourceRegistry,
+    epoch: SourceEpoch,
+    on_progress: impl FnMut(CatalogImportProgress),
+) -> Result<CatalogImportResult, BackendError> {
+    let source = backend.source_id().clone();
+    import_catalog_while_current(backend, pool, on_progress, || {
+        registry.epoch_is_current(&source, epoch)
+    })
+    .await
+}
+
+async fn import_catalog_while_current(
     backend: &dyn LibraryBackend,
     pool: &SqlitePool,
     mut on_progress: impl FnMut(CatalogImportProgress),
+    is_current: impl Fn() -> bool,
 ) -> Result<CatalogImportResult, BackendError> {
+    if !is_current() {
+        return Err(BackendError::Unavailable);
+    }
     let source = backend.source_id();
     let generation = begin_remote_sync(pool, source)
         .await
         .map_err(|_| BackendError::Server)?;
+    if !is_current() {
+        return Err(BackendError::Unavailable);
+    }
     let mut request = CatalogRequest::first(CATALOG_PAGE_SIZE);
     let mut seen_cursors = HashSet::new();
     let mut progress = CatalogImportProgress::default();
 
     for _ in 0..MAX_CATALOG_PAGES {
+        if !is_current() {
+            return Err(BackendError::Unavailable);
+        }
         if let Some(cursor) = request.cursor.as_ref()
             && !seen_cursors.insert(cursor.clone())
         {
@@ -57,6 +91,9 @@ pub async fn import_catalog(
             .await?;
 
         let artwork = fetch_artwork(backend, &albums).await;
+        if !is_current() {
+            return Err(BackendError::Unavailable);
+        }
         write_remote_batch_with_artwork(pool, source, generation, &albums, &artwork)
             .await
             .map_err(|_| BackendError::Server)?;
@@ -66,6 +103,9 @@ pub async fn import_catalog(
         on_progress(progress);
 
         let Some(next_cursor) = page.next_cursor else {
+            if !is_current() {
+                return Err(BackendError::Unavailable);
+            }
             finish_remote_sync(pool, source, generation)
                 .await
                 .map_err(|_| BackendError::Server)?;
@@ -132,7 +172,7 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         sync::{
-            Mutex,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         time::Duration,
@@ -454,6 +494,56 @@ mod tests {
 
         assert!(backend.max_active_artwork_requests() > 1);
         assert!(backend.max_active_artwork_requests() <= ARTWORK_FETCH_CONCURRENCY);
+    }
+
+    #[tokio::test]
+    async fn invalidated_source_epoch_prevents_metadata_and_artwork_publication() {
+        let (directory, pool) = create_test_pool("remote-import-stale-epoch").await;
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let source = SourceId("remote-a".into());
+        let epoch = registry.begin_reconfiguration(&source);
+        let backend = Arc::new(
+            FakeBackend::new(
+                "remote-a",
+                [page(&["a"], None)],
+                [with_artwork(album("a", "Stale"), "cover")],
+            )
+            .with_artwork([("cover", Ok(png(255, 0, 0)))])
+            .with_artwork_delay(Duration::from_millis(25)),
+        );
+        let import = {
+            let backend = backend.clone();
+            let pool = pool.clone();
+            let registry = registry.clone();
+            tokio::spawn(async move {
+                import_catalog_for_epoch(backend.as_ref(), &pool, &registry, epoch, |_| {}).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.artwork_requests.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("artwork request should start");
+
+        registry.unregister(&source);
+
+        assert_eq!(import.await.unwrap(), Err(BackendError::Unavailable));
+        let album_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM album WHERE source = 'remote-a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let artwork_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(album_count, 0);
+        assert_eq!(artwork_count, 0);
     }
 
     #[tokio::test]

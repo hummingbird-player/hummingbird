@@ -14,7 +14,7 @@ use crate::{
     sources::{
         LibraryBackend, SourceRegistry,
         credentials::{CredentialRef, CredentialStore, Credentials, OsCredentialStore, Secret},
-        import_catalog,
+        import_catalog_for_epoch,
         subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
     },
     ui::{app::Pool, models::Models},
@@ -246,6 +246,7 @@ impl MusicLibrariesSettings {
             });
         let pool = cx.global::<Pool>().0.clone();
         let registry = cx.global::<SourceRegistry>().clone();
+        let epoch = registry.begin_reconfiguration(&source);
 
         cx.spawn(async move |this, cx| {
             let result = async {
@@ -272,19 +273,29 @@ impl MusicLibrariesSettings {
                     .await
                     .map_err(|error| error.to_string())?;
                 let import_backend = backend.clone();
+                let import_registry = registry.clone();
                 let import_result = crate::RUNTIME
                     .spawn(async move {
-                        import_catalog(import_backend.as_ref(), &pool, |_| {})
-                            .await
-                            .map_err(|error| error.to_string())
+                        import_catalog_for_epoch(
+                            import_backend.as_ref(),
+                            &pool,
+                            &import_registry,
+                            epoch,
+                            |_| {},
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
                     })
                     .await
                     .map_err(|_| "The import task stopped unexpectedly.".to_string())
                     .and_then(|result| result);
                 if let Err(error) = import_result {
-                    if let Err(restore_error) = cx
-                        .update(|cx| OsCredentialStore(cx).write(&reference, &previous_credentials))
-                        .await
+                    if registry.epoch_is_current(&source, epoch)
+                        && let Err(restore_error) = cx
+                            .update(|cx| {
+                                OsCredentialStore(cx).write(&reference, &previous_credentials)
+                            })
+                            .await
                     {
                         tracing::error!(
                             ?restore_error,
@@ -293,24 +304,31 @@ impl MusicLibrariesSettings {
                     }
                     return Err(error);
                 }
-                registry.register(backend);
+                if !registry.register_if_current(backend, epoch) {
+                    return Err("The library connection was replaced or disabled.".to_string());
+                }
                 Ok::<_, String>(())
             }
             .await;
 
-            this.update(cx, |this, cx| match result {
-                Ok(()) => {
-                    this.finish_editor_save(index, &library, cx);
-                    let scan_state = cx.global::<Models>().scan_state.clone();
-                    scan_state.update(cx, |state, cx| {
-                        *state = ScanEvent::ScanCompleteIdle;
-                        cx.notify();
-                    });
+            this.update(cx, |this, cx| {
+                if !registry.epoch_is_current(&source, epoch) {
+                    return;
                 }
-                Err(error) => {
-                    editor.update(cx, |editor, cx| {
-                        editor.finish_save(Some(error.into()), cx);
-                    });
+                match result {
+                    Ok(()) => {
+                        this.finish_editor_save(index, &library, cx);
+                        let scan_state = cx.global::<Models>().scan_state.clone();
+                        scan_state.update(cx, |state, cx| {
+                            *state = ScanEvent::ScanCompleteIdle;
+                            cx.notify();
+                        });
+                    }
+                    Err(error) => {
+                        editor.update(cx, |editor, cx| {
+                            editor.finish_save(Some(error.into()), cx);
+                        });
+                    }
                 }
             })
         })
@@ -461,6 +479,7 @@ impl MusicLibrariesSettings {
         let pool = cx.global::<Pool>().0.clone();
         let display = self.display.clone();
         let registry = cx.global::<SourceRegistry>().clone();
+        let epoch = registry.begin_reconfiguration(&source);
 
         cx.spawn(async move |_, cx| {
             let result = async {
@@ -471,44 +490,58 @@ impl MusicLibrariesSettings {
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "The saved credentials could not be found.".to_string())?;
                 let backend = Arc::new(
-                    SubsonicBackend::new(source, server, credentials)
+                    SubsonicBackend::new(source.clone(), server, credentials)
                         .map(|backend| backend.with_quality(quality))
                         .map_err(|error| error.to_string())?,
                 );
                 let refresh_backend = backend.clone();
+                let import_registry = registry.clone();
                 crate::RUNTIME
                     .spawn(async move {
                         refresh_backend
                             .connect()
                             .await
                             .map_err(|error| error.to_string())?;
-                        import_catalog(refresh_backend.as_ref(), &pool, |_| {})
-                            .await
-                            .map_err(|error| error.to_string())
+                        import_catalog_for_epoch(
+                            refresh_backend.as_ref(),
+                            &pool,
+                            &import_registry,
+                            epoch,
+                            |_| {},
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
                     })
                     .await
                     .map_err(|_| "The refresh task stopped unexpectedly.".to_string())??;
-                registry.register(backend);
+                if !registry.register_if_current(backend, epoch) {
+                    return Err("The library connection was replaced or disabled.".to_string());
+                }
                 Ok::<_, String>(())
             }
             .await;
 
-            display.update(cx, |display, cx| match result {
-                Ok(()) => {
-                    display.set_status(&source_id, model::LibraryStatus::Updated, None, cx);
-                    let scan_state = cx.global::<Models>().scan_state.clone();
-                    scan_state.update(cx, |state, cx| {
-                        *state = ScanEvent::ScanCompleteIdle;
-                        cx.notify();
-                    });
+            display.update(cx, |display, cx| {
+                if !registry.epoch_is_current(&source, epoch) {
+                    return;
                 }
-                Err(error) => {
-                    display.set_status(
-                        &source_id,
-                        model::LibraryStatus::Offline,
-                        Some(error.into()),
-                        cx,
-                    );
+                match result {
+                    Ok(()) => {
+                        display.set_status(&source_id, model::LibraryStatus::Updated, None, cx);
+                        let scan_state = cx.global::<Models>().scan_state.clone();
+                        scan_state.update(cx, |state, cx| {
+                            *state = ScanEvent::ScanCompleteIdle;
+                            cx.notify();
+                        });
+                    }
+                    Err(error) => {
+                        display.set_status(
+                            &source_id,
+                            model::LibraryStatus::Offline,
+                            Some(error.into()),
+                            cx,
+                        );
+                    }
                 }
             })
         })

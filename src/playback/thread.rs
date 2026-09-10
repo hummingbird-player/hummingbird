@@ -97,7 +97,6 @@ pub struct PlaybackThread {
     /// Whether position updates should be emitted at full frequency.
     position_broadcast_active: bool,
     pending_seek_serial: Option<SeekSerial>,
-    resolver: Arc<dyn MediaResolver>,
     engine: AudioEngine,
     queue: QueueManager,
     /// The volume to apply on startup (restored from persisted settings).
@@ -162,7 +161,6 @@ impl PlaybackThread {
                 drop(wakeup);
                 let queue_manager =
                     QueueManager::new(queue, playback_settings.clone(), session, storage_tx);
-                let engine_resolver = resolver.clone();
 
                 let mut thread = PlaybackThread {
                     pending_tracks: std::collections::VecDeque::new(),
@@ -173,8 +171,7 @@ impl PlaybackThread {
                     last_broadcast_timestamp: u64::MAX,
                     position_broadcast_active: true,
                     pending_seek_serial: None,
-                    resolver,
-                    engine: AudioEngine::with_resolver(engine_events_tx, tap, engine_resolver),
+                    engine: AudioEngine::with_resolver(engine_events_tx, tap, resolver),
                     queue: queue_manager,
                     initial_volume: last_volume,
                     rg_auto_hint: ReplayGainAutoHint::PreferTrack,
@@ -405,9 +402,6 @@ impl PlaybackThread {
             }
             self.queue.set_position(index);
             self.send_event(PlaybackEvent::QueuePositionChanged(index));
-            if let Some(next) = self.queue.next_reference() {
-                self.resolver.prefetch(&next);
-            }
         }
     }
 
@@ -453,9 +447,6 @@ impl PlaybackThread {
         self.update_ts(true);
 
         self.send_event(PlaybackEvent::StateChanged(PlaybackState::Playing));
-        if let Some(next) = self.queue.next_reference() {
-            self.resolver.prefetch(&next);
-        }
 
         Ok(())
     }

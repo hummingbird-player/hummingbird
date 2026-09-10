@@ -171,12 +171,6 @@ impl Default for MediaSeekToken {
 pub trait MediaResolver: Send + Sync {
     fn resolve(&self, track: &TrackRef) -> Result<MediaInput, PlaybackStartError>;
 
-    /// Begin bounded read-ahead for a likely next track.
-    ///
-    /// Implementations must return immediately and replace obsolete work rather than accumulating
-    /// unbounded background requests.
-    fn prefetch(&self, _track: &TrackRef) {}
-
     /// Resolve a fresh stream for seeking, identifying where that input starts in the track.
     ///
     /// An implementation may return an exact transport-level offset or reopen from the beginning

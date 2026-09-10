@@ -37,15 +37,62 @@ pub struct SourceRegistry {
     download_root: Arc<PathBuf>,
     download_slots: Arc<tokio::sync::Semaphore>,
     download_locks: Arc<Mutex<HashMap<TrackRef, Weak<tokio::sync::Mutex<()>>>>>,
-    prefetch: Arc<Mutex<PrefetchState>>,
 }
 
 #[derive(Default)]
 struct RegistryState {
+    next_epoch: u64,
+    source_epochs: HashMap<SourceId, SourceEpoch>,
     backends: HashMap<SourceId, Arc<dyn LibraryBackend>>,
+    backend_epochs: HashMap<SourceId, SourceEpoch>,
     disabled: std::collections::HashSet<SourceId>,
     deliveries: HashMap<TrackRef, MediaDelivery>,
     downloads: HashMap<TrackRef, OfflineEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceEpoch(u64);
+
+impl RegistryState {
+    fn advance_epoch(&mut self, source: &SourceId) -> SourceEpoch {
+        self.next_epoch = self
+            .next_epoch
+            .checked_add(1)
+            .expect("source registry epoch overflow");
+        let epoch = SourceEpoch(self.next_epoch);
+        self.source_epochs.insert(source.clone(), epoch);
+        epoch
+    }
+
+    fn epoch(&self, source: &SourceId) -> SourceEpoch {
+        self.source_epochs
+            .get(source)
+            .copied()
+            .unwrap_or(SourceEpoch(0))
+    }
+
+    fn invalidate_work(&mut self, source: &SourceId) -> SourceEpoch {
+        let epoch = self.advance_epoch(source);
+        if self.backends.contains_key(source) {
+            self.backend_epochs.insert(source.clone(), epoch);
+        }
+        epoch
+    }
+
+    fn backend_is_current(
+        &self,
+        source: &SourceId,
+        epoch: SourceEpoch,
+        backend: &Arc<dyn LibraryBackend>,
+    ) -> bool {
+        !self.disabled.contains(source)
+            && self.epoch(source) == epoch
+            && self.backend_epochs.get(source) == Some(&epoch)
+            && self
+                .backends
+                .get(source)
+                .is_some_and(|current| Arc::ptr_eq(current, backend))
+    }
 }
 
 #[derive(Clone)]
@@ -54,15 +101,6 @@ struct OfflineEntry {
     manifest_path: PathBuf,
     extension: Option<String>,
     byte_len: u64,
-}
-
-#[derive(Default)]
-struct PrefetchState {
-    generation: u64,
-    track: Option<TrackRef>,
-    backend: Option<Arc<dyn LibraryBackend>>,
-    descriptor: Option<MediaDescriptor>,
-    task: Option<tokio::task::AbortHandle>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -86,7 +124,6 @@ impl SourceRegistry {
             download_root: Arc::new(download_root),
             download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_CONCURRENCY)),
             download_locks: Arc::new(Mutex::new(HashMap::new())),
-            prefetch: Arc::new(Mutex::new(PrefetchState::default())),
         }
     }
 
@@ -94,11 +131,41 @@ impl SourceRegistry {
         let source = backend.source_id().clone();
         let mut state = self.state.write().expect("source registry poisoned");
         if !state.disabled.contains(backend.source_id()) {
+            let epoch = state.advance_epoch(&source);
             state.backends.insert(backend.source_id().clone(), backend);
+            state.backend_epochs.insert(source.clone(), epoch);
             state.deliveries.retain(|track, _| track.source() != source);
         }
-        drop(state);
-        self.invalidate_prefetch(&source);
+    }
+
+    pub(crate) fn begin_reconfiguration(&self, source: &SourceId) -> SourceEpoch {
+        let mut state = self.state.write().expect("source registry poisoned");
+        let epoch = state.invalidate_work(source);
+        state
+            .deliveries
+            .retain(|track, _| track.source() != *source);
+        epoch
+    }
+
+    pub(crate) fn register_if_current(
+        &self,
+        backend: Arc<dyn LibraryBackend>,
+        epoch: SourceEpoch,
+    ) -> bool {
+        let source = backend.source_id().clone();
+        let mut state = self.state.write().expect("source registry poisoned");
+        if state.disabled.contains(&source) || state.epoch(&source) != epoch {
+            return false;
+        }
+        state.backends.insert(source.clone(), backend);
+        state.backend_epochs.insert(source.clone(), epoch);
+        state.deliveries.retain(|track, _| track.source() != source);
+        true
+    }
+
+    pub(crate) fn epoch_is_current(&self, source: &SourceId, epoch: SourceEpoch) -> bool {
+        let state = self.state.read().expect("source registry poisoned");
+        !state.disabled.contains(source) && state.epoch(source) == epoch
     }
 
     pub fn enable(&self, source: &SourceId) {
@@ -113,13 +180,13 @@ impl SourceRegistry {
     /// cannot register it again.
     pub fn unregister(&self, source: &SourceId) {
         let mut state = self.state.write().expect("source registry poisoned");
+        state.advance_epoch(source);
         state.disabled.insert(source.clone());
         state.backends.remove(source);
+        state.backend_epochs.remove(source);
         state
             .deliveries
             .retain(|track, _| track.source() != *source);
-        drop(state);
-        self.invalidate_prefetch(source);
     }
 
     pub fn clear_cache(&self, source: &SourceId) -> io::Result<()> {
@@ -133,16 +200,14 @@ impl SourceRegistry {
 
     pub fn clear_downloads(&self, source: &SourceId) -> io::Result<()> {
         let directory = source_cache_directory(&self.download_root, source);
+        let mut state = self.state.write().expect("source registry poisoned");
+        state.invalidate_work(source);
         match fs::remove_dir_all(directory) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        self.state
-            .write()
-            .expect("source registry poisoned")
-            .downloads
-            .retain(|track, _| track.source() != *source);
+        state.downloads.retain(|track, _| track.source() != *source);
         Ok(())
     }
 
@@ -178,7 +243,9 @@ impl SourceRegistry {
         if self.is_downloaded(track) {
             return Ok(());
         }
-        let backend = self.backend(source).ok_or(BackendError::Unavailable)?;
+        let (backend, epoch) = self
+            .backend_with_epoch(source)
+            .ok_or(BackendError::Unavailable)?;
         let mut descriptor = backend.original_media(location).await?;
         if descriptor.delivery.transcoded {
             return Err(BackendError::MalformedResponse);
@@ -224,27 +291,18 @@ impl SourceRegistry {
         tokio::fs::write(&temporary_manifest, manifest_bytes)
             .await
             .map_err(|_| BackendError::Storage)?;
-        tokio::fs::rename(&temporary_path, &path)
-            .await
-            .map_err(|_| BackendError::Storage)?;
+
+        let mut state = self.state.write().expect("source registry poisoned");
+        if !state.backend_is_current(source, epoch, &backend) {
+            return Err(BackendError::Unavailable);
+        }
+        fs::rename(&temporary_path, &path).map_err(|_| BackendError::Storage)?;
         cleanup.media_moved_to(&path);
-        if tokio::fs::rename(&temporary_manifest, &manifest_path)
-            .await
-            .is_err()
-        {
-            let _ = tokio::fs::remove_file(&path).await;
+        if fs::rename(&temporary_manifest, &manifest_path).is_err() {
             return Err(BackendError::Storage);
         }
         cleanup.commit_pair();
 
-        let mut state = self.state.write().expect("source registry poisoned");
-        if state.disabled.contains(source) || !state.backends.contains_key(source) {
-            drop(state);
-            let _ = fs::remove_file(&path);
-            let _ = fs::remove_file(&manifest_path);
-            remove_empty_parent(&path);
-            return Err(BackendError::Unavailable);
-        }
         state.downloads.insert(
             track.clone(),
             OfflineEntry {
@@ -285,13 +343,24 @@ impl SourceRegistry {
         remove_if_present(&entry.manifest_path)
     }
 
-    fn backend(&self, source: &SourceId) -> Option<Arc<dyn LibraryBackend>> {
-        self.state
-            .read()
-            .expect("source registry poisoned")
+    fn backend_with_epoch(
+        &self,
+        source: &SourceId,
+    ) -> Option<(Arc<dyn LibraryBackend>, SourceEpoch)> {
+        let state = self.state.read().expect("source registry poisoned");
+        let epoch = state.epoch(source);
+        if state.disabled.contains(source) || state.backend_epochs.get(source) != Some(&epoch) {
+            return None;
+        }
+        state
             .backends
             .get(source)
             .cloned()
+            .map(|backend| (backend, epoch))
+    }
+
+    fn backend(&self, source: &SourceId) -> Option<Arc<dyn LibraryBackend>> {
+        self.backend_with_epoch(source).map(|(backend, _)| backend)
     }
 
     pub fn delivery(&self, track: &TrackRef) -> Option<MediaDelivery> {
@@ -307,12 +376,19 @@ impl SourceRegistry {
             .or_else(|| state.deliveries.get(track).cloned())
     }
 
-    fn remember_delivery(&self, track: &TrackRef, delivery: MediaDelivery) {
-        self.state
-            .write()
-            .expect("source registry poisoned")
-            .deliveries
-            .insert(track.clone(), delivery);
+    fn remember_delivery(
+        &self,
+        track: &TrackRef,
+        backend: &Arc<dyn LibraryBackend>,
+        epoch: SourceEpoch,
+        delivery: MediaDelivery,
+    ) -> bool {
+        let mut state = self.state.write().expect("source registry poisoned");
+        if !state.backend_is_current(&track.source(), epoch, backend) {
+            return false;
+        }
+        state.deliveries.insert(track.clone(), delivery);
+        true
     }
 
     fn offline_entry(&self, track: &TrackRef) -> Option<OfflineEntry> {
@@ -348,53 +424,6 @@ impl SourceRegistry {
             .map_err(|error| PlaybackStartError::MediaError(error.to_string()))?;
         input.extension = entry.extension.map(OsString::from);
         Ok(Some(input))
-    }
-
-    fn invalidate_prefetch(&self, source: &SourceId) {
-        let mut state = self.prefetch.lock().expect("source prefetch poisoned");
-        if state
-            .track
-            .as_ref()
-            .is_some_and(|track| track.source() == *source)
-        {
-            if let Some(task) = state.task.take() {
-                task.abort();
-            }
-            state.generation = state.generation.wrapping_add(1);
-            state.track = None;
-            state.backend = None;
-            state.descriptor = None;
-        }
-    }
-
-    fn take_prefetched(
-        &self,
-        track: &TrackRef,
-        backend: &Arc<dyn LibraryBackend>,
-    ) -> Option<MediaDescriptor> {
-        let mut state = self.prefetch.lock().expect("source prefetch poisoned");
-        if state.track.as_ref() == Some(track)
-            && state
-                .backend
-                .as_ref()
-                .is_some_and(|prefetched| Arc::ptr_eq(prefetched, backend))
-        {
-            state.track = None;
-            state.backend = None;
-            state.task = None;
-            state.descriptor.take()
-        } else {
-            if state.track.as_ref() == Some(track) {
-                if let Some(task) = state.task.take() {
-                    task.abort();
-                }
-                state.generation = state.generation.wrapping_add(1);
-                state.track = None;
-                state.backend = None;
-                state.descriptor = None;
-            }
-            None
-        }
     }
 
     /// Adapts a live response directly to the decoder. Persistent files are reserved for an
@@ -444,73 +473,17 @@ impl MediaResolver for SourceRegistry {
                 });
         };
 
-        let backend = self.backend(source).ok_or_else(|| {
+        let (backend, epoch) = self.backend_with_epoch(source).ok_or_else(|| {
             PlaybackStartError::MediaError("This remote library is disabled or unavailable".into())
         })?;
 
-        let descriptor = if let Some(descriptor) = self.take_prefetched(track, &backend) {
-            descriptor
-        } else {
-            crate::RUNTIME
-                .block_on(backend.media(location))
-                .map_err(backend_playback_error)?
-        };
-        self.remember_delivery(track, descriptor.delivery.clone());
+        let descriptor = crate::RUNTIME
+            .block_on(backend.media(location))
+            .map_err(backend_playback_error)?;
+        if !self.remember_delivery(track, &backend, epoch, descriptor.delivery.clone()) {
+            return Err(stale_backend_playback());
+        }
         Ok(self.streaming_input(descriptor))
-    }
-
-    fn prefetch(&self, track: &TrackRef) {
-        let TrackRef::Remote { source, location } = track else {
-            return;
-        };
-        if self.is_downloaded(track) {
-            return;
-        }
-        let Some(backend) = self.backend(source) else {
-            return;
-        };
-
-        let mut state = self.prefetch.lock().expect("source prefetch poisoned");
-        if !self
-            .backend(source)
-            .is_some_and(|current| Arc::ptr_eq(&current, &backend))
-        {
-            return;
-        }
-        if state.track.as_ref() == Some(track)
-            && state
-                .backend
-                .as_ref()
-                .is_some_and(|prefetched| Arc::ptr_eq(prefetched, &backend))
-        {
-            return;
-        }
-        if let Some(task) = state.task.take() {
-            task.abort();
-        }
-        state.generation = state.generation.wrapping_add(1);
-        let generation = state.generation;
-        state.track = Some(track.clone());
-        state.backend = Some(backend.clone());
-        state.descriptor = None;
-        let registry = self.clone();
-        let track = track.clone();
-        let location = location.clone();
-        let task = crate::RUNTIME.spawn(async move {
-            let descriptor = backend.media(&location).await.ok();
-            let mut state = registry.prefetch.lock().expect("source prefetch poisoned");
-            if state.generation == generation
-                && state.track.as_ref() == Some(&track)
-                && state
-                    .backend
-                    .as_ref()
-                    .is_some_and(|prefetched| Arc::ptr_eq(prefetched, &backend))
-            {
-                state.descriptor = descriptor;
-                state.task = None;
-            }
-        });
-        state.task = Some(task.abort_handle());
     }
 
     fn resolve_at(
@@ -525,7 +498,7 @@ impl MediaResolver for SourceRegistry {
         let TrackRef::Remote { source, location } = track else {
             return Ok(None);
         };
-        let backend = self.backend(source).ok_or_else(|| {
+        let (backend, epoch) = self.backend_with_epoch(source).ok_or_else(|| {
             PlaybackStartError::MediaError("This remote library is disabled or unavailable".into())
         })?;
         let mut cancellation = token.subscribe();
@@ -561,7 +534,9 @@ impl MediaResolver for SourceRegistry {
         if token.is_cancelled() {
             return Err(seek_cancelled_playback());
         }
-        self.remember_delivery(track, descriptor.delivery.clone());
+        if !self.remember_delivery(track, &backend, epoch, descriptor.delivery.clone()) {
+            return Err(stale_backend_playback());
+        }
         let input = self.streaming_input_with_cancellation(descriptor, Some(cancellation));
         Ok(Some(if timeline_offset == 0.0 {
             MediaSeekInput::from_start(input)
@@ -577,6 +552,10 @@ fn backend_playback_error(error: BackendError) -> PlaybackStartError {
 
 fn seek_cancelled_playback() -> PlaybackStartError {
     PlaybackStartError::MediaError("remote seek replaced".into())
+}
+
+fn stale_backend_playback() -> PlaybackStartError {
+    PlaybackStartError::MediaError("remote library changed while resolving media".into())
 }
 
 async fn wait_for_seek_cancellation(
@@ -940,7 +919,7 @@ impl MediaSource for StreamingMediaSource {
 mod tests {
     use std::{
         sync::{
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             mpsc,
         },
         time::Duration,
@@ -1106,11 +1085,97 @@ mod tests {
         }
     }
 
+    struct GatedBackend {
+        source: SourceId,
+        body: Arc<[u8]>,
+        started: Arc<AtomicBool>,
+        gate: Arc<tokio::sync::Notify>,
+    }
+
+    impl GatedBackend {
+        fn new(source: &str, body: &[u8]) -> (Self, Arc<AtomicBool>, Arc<tokio::sync::Notify>) {
+            let started = Arc::new(AtomicBool::new(false));
+            let gate = Arc::new(tokio::sync::Notify::new());
+            (
+                Self {
+                    source: SourceId(source.into()),
+                    body: body.into(),
+                    started: started.clone(),
+                    gate: gate.clone(),
+                },
+                started,
+                gate,
+            )
+        }
+
+        async fn descriptor(&self) -> MediaDescriptor {
+            self.started.store(true, Ordering::SeqCst);
+            self.gate.notified().await;
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tx.try_send(Ok(self.body.to_vec().into_boxed_slice()))
+                .unwrap();
+            drop(tx);
+            MediaDescriptor::new(
+                Some("flac".into()),
+                Some(self.body.len() as u64),
+                MediaDelivery {
+                    format: Some("flac".into()),
+                    bitrate_kbps: None,
+                    transcoded: false,
+                },
+                rx,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LibraryBackend for GatedBackend {
+        fn source_id(&self) -> &SourceId {
+            &self.source
+        }
+
+        async fn connect(&self) -> Result<super::super::BackendInfo, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn catalog_page(
+            &self,
+            _request: super::super::CatalogRequest,
+        ) -> Result<super::super::CatalogPage, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn album(
+            &self,
+            _album: &super::super::RemoteAlbumRef,
+        ) -> Result<super::super::RemoteAlbum, BackendError> {
+            Err(BackendError::Unsupported)
+        }
+
+        async fn media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+            Ok(self.descriptor().await)
+        }
+
+        async fn original_media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+            Ok(self.descriptor().await)
+        }
+    }
+
     fn remote_track(source: &str, location: &str) -> TrackRef {
         TrackRef::Remote {
             source: SourceId(source.into()),
             location: location.into(),
         }
+    }
+
+    async fn wait_until_started(started: &AtomicBool) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("gated backend request should start");
     }
 
     fn input(
@@ -1519,8 +1584,7 @@ mod tests {
             directory.path().to_path_buf(),
             directory.path().to_path_buf(),
         );
-        let mut backend = DownloadBackend::new("server", b"media");
-        backend.delay = Duration::from_millis(25);
+        let (backend, started, gate) = GatedBackend::new("server", b"media");
         let track = remote_track("server", "track");
         registry.register(Arc::new(backend));
 
@@ -1529,9 +1593,10 @@ mod tests {
             let track = track.clone();
             tokio::spawn(async move { registry.download(&track).await })
         };
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        wait_until_started(&started).await;
         registry.unregister(&track.source());
         registry.clear_downloads(&track.source()).unwrap();
+        gate.notify_one();
 
         assert!(download.await.unwrap().is_err());
         assert!(!registry.is_downloaded(&track));
@@ -1541,73 +1606,126 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prefetch_is_consumed_without_a_second_request() {
-        let directory = crate::test_support::TestDir::new("remote-prefetch");
+    #[tokio::test]
+    async fn replacing_a_backend_prevents_an_old_download_from_becoming_ready() {
+        let directory = crate::test_support::TestDir::new("remote-offline-replace-race");
         let registry = SourceRegistry::new(
             directory.path().to_path_buf(),
             directory.path().to_path_buf(),
         );
-        let backend = Arc::new(DownloadBackend::new("server", b"prefetched"));
-        let calls = backend.calls.clone();
+        let (backend, started, gate) = GatedBackend::new("server", b"stale");
         let track = remote_track("server", "track");
-        registry.register(backend);
+        registry.register(Arc::new(backend));
+        let download = {
+            let registry = registry.clone();
+            let track = track.clone();
+            tokio::spawn(async move { registry.download(&track).await })
+        };
+        wait_until_started(&started).await;
 
-        registry.prefetch(&track);
-        for _ in 0..100 {
-            if registry
-                .prefetch
-                .lock()
-                .expect("source prefetch poisoned")
-                .descriptor
-                .is_some()
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        let mut input = registry.resolve(&track).unwrap();
-        let mut bytes = Vec::new();
-        input.source.read_to_end(&mut bytes).unwrap();
-        assert_eq!(bytes, b"prefetched");
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        registry.register(Arc::new(DownloadBackend::new("server", b"fresh")));
+        gate.notify_one();
+
+        assert_eq!(download.await.unwrap(), Err(BackendError::Unavailable));
+        assert!(!registry.is_downloaded(&track));
+        assert!(
+            !source_cache_directory(&registry.download_root, &track.source()).exists(),
+            "a replaced backend must not publish its completed files"
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_downloads_invalidates_an_in_flight_commit() {
+        let directory = crate::test_support::TestDir::new("remote-offline-clear-race");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let (backend, started, gate) = GatedBackend::new("server", b"stale");
+        let track = remote_track("server", "track");
+        registry.register(Arc::new(backend));
+        let download = {
+            let registry = registry.clone();
+            let track = track.clone();
+            tokio::spawn(async move { registry.download(&track).await })
+        };
+        wait_until_started(&started).await;
+
+        registry.clear_downloads(&track.source()).unwrap();
+        gate.notify_one();
+
+        assert_eq!(download.await.unwrap(), Err(BackendError::Unavailable));
+        assert!(!registry.is_downloaded(&track));
+        assert!(!source_cache_directory(&registry.download_root, &track.source()).exists());
+        assert!(registry.backend(&track.source()).is_some());
     }
 
     #[test]
-    fn replacing_a_backend_invalidates_its_prefetched_response() {
-        let directory = crate::test_support::TestDir::new("remote-prefetch-replacement");
+    fn only_the_latest_reconfiguration_can_register_its_backend() {
+        let directory = crate::test_support::TestDir::new("remote-registration-epoch");
         let registry = SourceRegistry::new(
             directory.path().to_path_buf(),
             directory.path().to_path_buf(),
         );
-        let original = Arc::new(DownloadBackend::new("server", b"stale"));
-        let original_calls = original.calls.clone();
+        let source = SourceId("server".into());
+        let stale = registry.begin_reconfiguration(&source);
+        let current = registry.begin_reconfiguration(&source);
+        let stale_backend: Arc<dyn LibraryBackend> =
+            Arc::new(DownloadBackend::new("server", b"stale"));
+        let current_backend: Arc<dyn LibraryBackend> =
+            Arc::new(DownloadBackend::new("server", b"current"));
+
+        assert!(!registry.register_if_current(stale_backend, stale));
+        assert!(registry.register_if_current(current_backend.clone(), current));
+        assert!(
+            registry
+                .backend(&source)
+                .is_some_and(|backend| Arc::ptr_eq(&backend, &current_backend))
+        );
+    }
+
+    #[test]
+    fn replacing_a_backend_while_resolution_is_gated_rejects_the_old_stream() {
+        let directory = crate::test_support::TestDir::new("remote-resolution-replace-race");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let (backend, started, gate) = GatedBackend::new("server", b"stale");
         let track = remote_track("server", "track");
-        registry.register(original);
-        registry.prefetch(&track);
-        for _ in 0..100 {
-            if registry
-                .prefetch
-                .lock()
-                .expect("source prefetch poisoned")
-                .descriptor
-                .is_some()
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
+        registry.register(Arc::new(backend));
+        let resolution = {
+            let registry = registry.clone();
+            let track = track.clone();
+            std::thread::spawn(move || registry.resolve(&track).map(|_| ()))
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !started.load(Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "gated resolution should start"
+            );
+            std::thread::yield_now();
         }
 
-        let replacement = Arc::new(DownloadBackend::new("server", b"fresh"));
-        let replacement_calls = replacement.calls.clone();
-        registry.register(replacement);
+        registry.register(Arc::new(DownloadBackend::new("server", b"fresh")));
+        gate.notify_one();
+
+        let error = resolution
+            .join()
+            .unwrap()
+            .expect_err("the replaced backend must not publish a stream");
+        assert!(
+            error
+                .to_string()
+                .contains("remote library changed while resolving media")
+        );
+        assert_eq!(registry.delivery(&track), None);
+
         let mut input = registry.resolve(&track).unwrap();
         let mut bytes = Vec::new();
         input.source.read_to_end(&mut bytes).unwrap();
-
         assert_eq!(bytes, b"fresh");
-        assert_eq!(original_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(replacement_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

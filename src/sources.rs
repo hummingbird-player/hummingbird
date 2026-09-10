@@ -11,7 +11,8 @@ use async_trait::async_trait;
 
 use crate::{library::source::SourceId, media::metadata::Metadata};
 
-pub use import::import_catalog;
+pub(crate) use import::import_catalog_for_epoch;
+pub(crate) use media::SourceEpoch;
 pub use media::SourceRegistry;
 
 pub struct MediaDescriptor {

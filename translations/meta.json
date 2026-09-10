@@ -919,13 +919,13 @@
   },
   "MUSIC_LIBRARY_ADD_DESCRIPTION": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:295",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:305",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_ADD_TITLE": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:292",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:302",
     "plural": false,
     "description": null
   },
@@ -979,7 +979,7 @@
   },
   "MUSIC_LIBRARY_CONNECT": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:352",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:362",
     "plural": false,
     "description": null
   },
@@ -1279,13 +1279,13 @@
   },
   "MUSIC_LIBRARY_USE_API_KEY": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:312",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:322",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_USE_PASSWORD": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:310",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:320",
     "plural": false,
     "description": null
   },

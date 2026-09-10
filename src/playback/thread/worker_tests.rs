@@ -42,7 +42,6 @@ fn test_player() -> (
         last_broadcast_timestamp: u64::MAX,
         position_broadcast_active: true,
         pending_seek_serial: None,
-        resolver: crate::media::traits::local_media_resolver(),
         engine,
         queue: QueueManager::new(
             Arc::new(RwLock::new(Vec::new())),

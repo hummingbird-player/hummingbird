@@ -25,7 +25,7 @@ use crate::{
     sources::{
         LibraryBackend, SourceRegistry,
         credentials::{CredentialRef, CredentialStore, Credentials, OsCredentialStore, Secret},
-        import_catalog,
+        import_catalog_for_epoch,
         subsonic::{HttpPolicy, ServerUrl, SubsonicBackend},
     },
     ui::{app::Pool, models::Models},
@@ -148,6 +148,7 @@ impl MusicLibraryConnection {
                 .expect("validated source and server"),
         );
         let registry = cx.global::<SourceRegistry>().clone();
+        let epoch = registry.begin_reconfiguration(&source);
         let pool = cx.global::<Pool>().0.clone();
         let cleanup_pool = pool.clone();
         let cleanup_source = source.clone();
@@ -173,11 +174,18 @@ impl MusicLibraryConnection {
                     .await
                     .map_err(|error| error.to_string())?;
                 let import_backend = backend.clone();
+                let import_registry = registry.clone();
                 let import_result = crate::RUNTIME
                     .spawn(async move {
-                        import_catalog(import_backend.as_ref(), &pool, |_| {})
-                            .await
-                            .map_err(|error| error.to_string())
+                        import_catalog_for_epoch(
+                            import_backend.as_ref(),
+                            &pool,
+                            &import_registry,
+                            epoch,
+                            |_| {},
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
                     })
                     .await
                     .map_err(|_| "The import task stopped unexpectedly.".to_string())
@@ -210,7 +218,9 @@ impl MusicLibraryConnection {
                     }
                     return Err(error);
                 }
-                registry.register(backend);
+                if !registry.register_if_current(backend, epoch) {
+                    return Err("The library connection was replaced or disabled.".to_string());
+                }
                 Ok::<_, String>(())
             }
             .await;
