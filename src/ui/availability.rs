@@ -18,7 +18,12 @@ use crate::{
 };
 
 pub fn snapshot<C: AppContext>(cx: &C) -> AvailabilitySnapshot {
-    cx.read_global(|models: &Models, app| models.availability.read(app).snapshot())
+    let snapshot = cx.read_global(|models: &Models, app| models.availability.read(app).snapshot());
+    #[cfg(feature = "libre-services")]
+    let snapshot = snapshot.with_offline_tracks(
+        cx.read_global(|registry: &crate::sources::SourceRegistry, _| registry.downloaded_tracks()),
+    );
+    snapshot
 }
 
 pub fn is_track_path_available<C: AppContext>(cx: &C, path: &Path) -> bool {
@@ -29,12 +34,35 @@ pub fn is_track_path_available<C: AppContext>(cx: &C, path: &Path) -> bool {
 
 pub fn is_track_available<C: AppContext>(cx: &C, track: &Track) -> bool {
     cx.read_global(|models: &Models, app| models.availability.read(app).is_track_available(track))
+        || {
+            #[cfg(feature = "libre-services")]
+            {
+                cx.read_global(|registry: &crate::sources::SourceRegistry, _| {
+                    registry.is_downloaded(&track.reference())
+                })
+            }
+            #[cfg(not(feature = "libre-services"))]
+            {
+                false
+            }
+        }
 }
 
 pub fn is_reference_available<C: AppContext>(cx: &C, track: &TrackRef) -> bool {
     cx.read_global(|models: &Models, app| {
         models.availability.read(app).is_reference_available(track)
-    })
+    }) || {
+        #[cfg(feature = "libre-services")]
+        {
+            cx.read_global(|registry: &crate::sources::SourceRegistry, _| {
+                registry.is_downloaded(track)
+            })
+        }
+        #[cfg(not(feature = "libre-services"))]
+        {
+            false
+        }
+    }
 }
 
 pub fn has_available_tracks<C: AppContext>(cx: &C, tracks: &[Track]) -> bool {

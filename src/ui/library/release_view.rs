@@ -144,10 +144,7 @@ impl ReleaseView {
             });
 
             let all_liked = compute_all_liked(cx, &tracks);
-            let img_path = album
-                .source
-                .is_local()
-                .then(|| SharedString::from(format!("!db://album/{album_id}/full")));
+            let img_path = Some(SharedString::from(format!("!db://album/{album_id}/full")));
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
             cx.subscribe(&playlist_tracker, |this: &mut Self, _, ev, cx| {

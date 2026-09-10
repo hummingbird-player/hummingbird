@@ -4,22 +4,24 @@ use gpui::{
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
 };
 
-use crate::ui::{
-    components::{
-        checkbox::checkbox,
-        dropdown::dropdown,
-        icons::{FOLDER_SEARCH, icon},
-        label::label,
-        labeled_slider::labeled_slider,
-        segmented_control::segmented_control,
+use crate::{
+    settings::services::{
+        MusicLibraryAudioQuality as AudioQuality, MusicLibraryTranscodeFormat as CustomFormat,
     },
-    theme::Theme,
+    ui::{
+        components::{
+            checkbox::checkbox,
+            dropdown::dropdown,
+            icons::{FOLDER_SEARCH, icon},
+            label::label,
+            labeled_slider::labeled_slider,
+            segmented_control::segmented_control,
+        },
+        theme::Theme,
+    },
 };
 
-use super::{
-    connection_fields::render_field,
-    editing::{AudioQuality, CustomFormat, MusicLibraryEditor},
-};
+use super::{connection_fields::render_field, editing::MusicLibraryEditor};
 
 #[derive(Clone, Copy)]
 enum FolderKind {
@@ -37,7 +39,7 @@ impl MusicLibraryEditor {
                 "MUSIC_LIBRARY_QUALITY_ORIGINAL_DESCRIPTION",
                 "Use the original file without server conversion."
             ),
-            AudioQuality::Auto => tr!(
+            AudioQuality::Automatic => tr!(
                 "MUSIC_LIBRARY_QUALITY_AUTO_DESCRIPTION",
                 "Choose a format and bitrate automatically for this connection."
             ),
@@ -67,7 +69,7 @@ impl MusicLibraryEditor {
                             tr!("MUSIC_LIBRARY_QUALITY_ORIGINAL", "Original"),
                         )
                         .option(
-                            AudioQuality::Auto,
+                            AudioQuality::Automatic,
                             tr!("MUSIC_LIBRARY_QUALITY_AUTO", "Auto"),
                         )
                         .option(

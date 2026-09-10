@@ -5,6 +5,9 @@ use gpui::{
     div, prelude::FluentBuilder, px,
 };
 
+use crate::settings::services::{
+    MusicLibraryAudioQuality as AudioQuality, MusicLibraryTranscodeFormat as CustomFormat,
+};
 use crate::ui::{
     components::{
         button::{ButtonIntent, ButtonSize, ButtonStyle, button},
@@ -25,21 +28,6 @@ use super::{
     model::{LibraryStatus, MusicLibrary, address_error, secret_error, username_error},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AudioQuality {
-    Original,
-    Auto,
-    Custom,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CustomFormat {
-    Opus,
-    Mp3,
-    Aac,
-    Flac,
-}
-
 #[derive(Clone, Copy)]
 pub(super) enum Confirmation {
     Remove,
@@ -50,7 +38,7 @@ pub(super) enum EditingEvent {
     Cancel,
     Save {
         index: usize,
-        library: MusicLibrary,
+        library: Box<MusicLibrary>,
         replacement_secret: Option<SharedString>,
     },
     Remove(usize),
@@ -95,6 +83,9 @@ impl MusicLibraryEditor {
         });
         let authentication = library.authentication;
         let report_playback = library.report_playback;
+        let quality = library.audio_quality;
+        let format = library.transcode_format;
+        let bitrate = library.transcode_bitrate as f32;
 
         Self {
             index,
@@ -103,9 +94,9 @@ impl MusicLibraryEditor {
             fields,
             name,
             authentication,
-            quality: AudioQuality::Original,
-            format: CustomFormat::Opus,
-            bitrate: 192.0,
+            quality,
+            format,
+            bitrate,
             report_playback,
             connection_expanded: expanded,
             advanced_expanded: expanded,
@@ -220,6 +211,9 @@ impl MusicLibraryEditor {
         library.username = username;
         library.authentication = self.authentication;
         library.report_playback = self.report_playback;
+        library.audio_quality = self.quality;
+        library.transcode_format = self.format;
+        library.transcode_bitrate = self.bitrate.round() as u32;
         library.error = None;
         library.status = if library.enabled {
             LibraryStatus::Updated
@@ -229,7 +223,7 @@ impl MusicLibraryEditor {
         self.saving = replacement_secret.is_some();
         cx.emit(EditingEvent::Save {
             index: self.index,
-            library,
+            library: Box::new(library),
             replacement_secret,
         });
     }

@@ -2,10 +2,10 @@ use std::{collections::BTreeMap, time::Duration};
 
 use super::{
     client::{RESPONSE_LIMIT, retry_after},
-    media::{MAX_MEDIA_REDIRECTS, is_safe_media_redirect},
+    media::{MAX_MEDIA_REDIRECTS, is_safe_media_redirect, parse_content_range},
     *,
 };
-use crate::sources::credentials::Secret;
+use crate::sources::{MediaQuality, RemoteArtworkRef, TranscodeFormat, credentials::Secret};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -45,7 +45,15 @@ impl Reply {
 struct Server {
     url: String,
     requests: UnboundedReceiver<Url>,
+    request_details: UnboundedReceiver<CapturedRequest>,
     task: JoinHandle<()>,
+}
+
+struct CapturedRequest {
+    method: String,
+    url: Url,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
 }
 
 impl Server {
@@ -53,6 +61,7 @@ impl Server {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (tx, requests) = mpsc::unbounded_channel();
+        let (details_tx, request_details) = mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
             for reply in replies {
                 let (mut stream, _) = listener.accept().await.unwrap();
@@ -63,11 +72,48 @@ impl Server {
                     assert!(read > 0 && bytes.len() < 64 * 1024);
                     bytes.extend_from_slice(&buffer[..read]);
                 }
-                let request = String::from_utf8(bytes).unwrap();
-                let mut line = request.lines().next().unwrap().split_whitespace();
-                assert_eq!(line.next(), Some("GET"));
-                let target = line.next().unwrap();
-                tx.send(Url::parse(&format!("http://fixture{target}")).unwrap())
+                let header_end = bytes.windows(4).position(|b| b == b"\r\n\r\n").unwrap() + 4;
+                let (method, target, headers, content_length) = {
+                    let headers = std::str::from_utf8(&bytes[..header_end]).unwrap();
+                    let parsed_headers = headers
+                        .lines()
+                        .skip(1)
+                        .filter_map(|line| line.split_once(':'))
+                        .map(|(name, value)| {
+                            (name.trim().to_ascii_lowercase(), value.trim().to_owned())
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or_default();
+                    let mut line = headers.lines().next().unwrap().split_whitespace();
+                    (
+                        line.next().unwrap().to_owned(),
+                        line.next().unwrap().to_owned(),
+                        parsed_headers,
+                        content_length,
+                    )
+                };
+                while bytes.len() < header_end + content_length {
+                    let mut buffer = [0; 1024];
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0 && bytes.len() < 64 * 1024);
+                    bytes.extend_from_slice(&buffer[..read]);
+                }
+                let request_url = Url::parse(&format!("http://fixture{target}")).unwrap();
+                tx.send(request_url.clone()).unwrap();
+                details_tx
+                    .send(CapturedRequest {
+                        method,
+                        url: request_url,
+                        headers,
+                        body: bytes[header_end..header_end + content_length].to_vec(),
+                    })
                     .unwrap();
                 if reply.stall {
                     // keep the connection open until the client cancels or reaches its deadline
@@ -116,6 +162,7 @@ impl Server {
         Self {
             url,
             requests,
+            request_details,
             task,
         }
     }
@@ -135,6 +182,13 @@ impl Server {
 
     async fn request(&mut self) -> Url {
         tokio::time::timeout(Duration::from_secs(2), self.requests.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn detailed_request(&mut self) -> CapturedRequest {
+        tokio::time::timeout(Duration::from_secs(2), self.request_details.recv())
             .await
             .unwrap()
             .unwrap()
@@ -170,6 +224,16 @@ fn extensions(versions: &[u32]) -> Reply {
     }}))
 }
 
+fn named_extensions(extensions: &[(&str, &[u32])]) -> Reply {
+    Reply::json(json!({"subsonic-response": {
+        "status": "ok", "version": "1.16.1",
+        "openSubsonicExtensions": extensions
+            .iter()
+            .map(|(name, versions)| json!({"name": name, "versions": versions}))
+            .collect::<Vec<_>>()
+    }}))
+}
+
 fn failed(code: u32) -> Reply {
     Reply::json(json!({"subsonic-response": {
         "status": "failed", "version": "1.16.1",
@@ -194,6 +258,7 @@ fn album_detail(id: &str) -> Reply {
             "artist": "Album Artist",
             "year": 2024,
             "musicBrainzId": "album-mbid",
+            "coverArt": "album-cover",
             "genre": "Electronic",
             "genres": [{"name": "Ambient"}],
             "albumArtists": [{"name": "Album Artist"}],
@@ -209,6 +274,7 @@ fn album_detail(id: &str) -> Reply {
                     "track": 1,
                     "discNumber": 2,
                     "duration": 183,
+                    "coverArt": "track-cover",
                     "genres": [{"name": "Electronic"}],
                     "artists": [{"name": "Track Artist"}],
                     "albumArtists": [{"name": "Album Artist"}]
@@ -608,12 +674,24 @@ async fn catalog_pagination_and_album_details_use_authenticated_subsonic_endpoin
     assert_eq!(album.location, "album-1");
     assert_eq!(album.metadata.album.as_deref(), Some("Server Album"));
     assert_eq!(album.metadata.sort_album.as_deref(), Some("Album, Server"));
+    assert_eq!(
+        album.artwork,
+        Some(RemoteArtworkRef {
+            location: "album-cover".into()
+        })
+    );
     assert_eq!(album.metadata.year, Some(2024));
     assert_eq!(album.metadata.genres.as_slice(), ["Electronic", "Ambient"]);
     assert_eq!(album.tracks.len(), 1);
     let track = &album.tracks[0];
     assert_eq!(track.location, "song-1");
     assert_eq!(track.duration_seconds, 183);
+    assert_eq!(
+        track.artwork,
+        Some(RemoteArtworkRef {
+            location: "track-cover".into()
+        })
+    );
     assert_eq!(track.metadata.name.as_deref(), Some("First Song"));
     assert_eq!(track.metadata.track_current, Some(1));
     assert_eq!(track.metadata.disc_current, Some(2));
@@ -680,6 +758,241 @@ async fn original_media_streams_with_authentication_and_a_bounded_body_channel()
 }
 
 #[tokio::test]
+async fn offline_downloads_remain_sequential_even_when_the_server_supports_ranges() {
+    let server = Server::new(vec![Reply {
+        status: 200,
+        headers: vec![
+            ("Content-Type", "audio/flac".into()),
+            ("Accept-Ranges", "bytes".into()),
+            ("ETag", "\"audio-v1\"".into()),
+        ],
+        body: b"original audio bytes".to_vec(),
+        stall: false,
+        stall_body: false,
+    }])
+    .await;
+    let backend = server.backend(password());
+
+    let media = backend.original_media("song/id").await.unwrap();
+
+    assert!(
+        media.range_reader.is_none(),
+        "explicit downloads must use the complete sequential response"
+    );
+}
+
+#[tokio::test]
+async fn range_reads_reject_servers_that_ignore_the_range_header() {
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Accept-Ranges", "bytes".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/flac".into())],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let media = backend.media("song/id").await.unwrap();
+    let range_reader = media.range_reader.unwrap();
+
+    assert_eq!(
+        range_reader.read_range(3, 2).await,
+        Err(BackendError::Unsupported)
+    );
+}
+
+#[tokio::test]
+async fn legacy_transcoding_sends_the_configured_format_bitrate_and_offset() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcodeOffset", &[1])]),
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/mpeg".into())],
+            body: b"transcoded audio".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Transcode {
+            format: TranscodeFormat::Mp3,
+            bitrate_kbps: 192,
+        });
+    backend.connect().await.unwrap();
+    let mut media = backend.media_at("song/id", 12.5).await.unwrap();
+    assert!(media.range_reader.is_none());
+    assert_eq!(
+        media.delivery,
+        crate::sources::MediaDelivery {
+            format: Some("mp3".into()),
+            bitrate_kbps: Some(192),
+            transcoded: true,
+        }
+    );
+    while media.chunks.recv().await.is_some() {}
+
+    assert_eq!(server.request().await.path(), "/proxy/music/rest/ping.view");
+    assert_eq!(
+        server.request().await.path(),
+        "/proxy/music/rest/getOpenSubsonicExtensions.view"
+    );
+    let request = server.request().await;
+    assert_eq!(request.path(), "/proxy/music/rest/stream.view");
+    let query = query(&request);
+    assert_eq!(query["id"], "song/id");
+    assert_eq!(query["format"], "mp3");
+    assert_eq!(query["maxBitRate"], "192");
+    assert_eq!(query["timeOffset"], "12.5");
+}
+
+#[tokio::test]
+async fn open_subsonic_transcoding_discovers_capabilities_lazily_then_streams_the_decision() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::json(json!({"subsonic-response": {
+            "status": "ok",
+            "version": "1.16.1",
+            "transcodeDecision": {
+                "canDirectPlay": false,
+                "canTranscode": true,
+                "transcodeParams": "profile=opus-96",
+                "transcodeStream": {
+                    "protocol": "http",
+                    "container": "opus",
+                    "audioBitrate": 96000
+                }
+            }
+        }})),
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/ogg; codecs=opus".into())],
+            body: b"opus audio".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Transcode {
+            format: TranscodeFormat::Opus,
+            bitrate_kbps: 96,
+        });
+    let mut media = backend.media("song").await.unwrap();
+    assert_eq!(
+        media.delivery,
+        crate::sources::MediaDelivery {
+            format: Some("opus".into()),
+            bitrate_kbps: Some(96),
+            transcoded: true,
+        }
+    );
+    while media.chunks.recv().await.is_some() {}
+
+    let ping = server.detailed_request().await;
+    assert_eq!(ping.method, "GET");
+    let extensions = server.detailed_request().await;
+    assert_eq!(extensions.method, "GET");
+    let decision = server.detailed_request().await;
+    assert_eq!(decision.method, "POST");
+    assert_eq!(
+        decision.url.path(),
+        "/proxy/music/rest/getTranscodeDecision.view"
+    );
+    let decision_query = query(&decision.url);
+    assert_eq!(decision_query["mediaId"], "song");
+    assert_eq!(decision_query["mediaType"], "song");
+    let capabilities: Value = serde_json::from_slice(&decision.body).unwrap();
+    assert_eq!(capabilities["name"], "Hummingbird");
+    assert_eq!(capabilities["maxAudioBitrate"], 96_000);
+    assert_eq!(capabilities["transcodingProfiles"][0]["audioCodec"], "opus");
+
+    let stream = server.detailed_request().await;
+    assert_eq!(stream.method, "GET");
+    assert_eq!(
+        stream.url.path(),
+        "/proxy/music/rest/getTranscodeStream.view"
+    );
+    let stream_query = query(&stream.url);
+    assert_eq!(stream_query["mediaId"], "song");
+    assert_eq!(stream_query["mediaType"], "song");
+    assert_eq!(stream_query["transcodeParams"], "profile=opus-96");
+}
+
+#[tokio::test]
+async fn original_offline_media_ignores_the_playback_transcoding_profile() {
+    let mut server = Server::new(vec![Reply {
+        status: 200,
+        headers: vec![("Content-Type", "audio/flac".into())],
+        body: b"original".to_vec(),
+        stall: false,
+        stall_body: false,
+    }])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Transcode {
+            format: TranscodeFormat::Opus,
+            bitrate_kbps: 96,
+        });
+    let mut media = backend.original_media("song").await.unwrap();
+    while media.chunks.recv().await.is_some() {}
+
+    let request = server.request().await;
+    let query = query(&request);
+    assert_eq!(query["format"], "raw");
+    assert!(!query.contains_key("maxBitRate"));
+}
+
+#[tokio::test]
+async fn cover_art_uses_the_authenticated_endpoint_and_rejects_structured_errors() {
+    let mut error = failed(70);
+    error
+        .headers
+        .push(("Content-Type", "application/json".into()));
+    let mut server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "image/png".into())],
+            body: b"png bytes".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        error,
+    ])
+    .await;
+    let backend = server.backend(password());
+    let artwork = RemoteArtworkRef {
+        location: "cover/id".into(),
+    };
+
+    assert_eq!(&*backend.artwork(&artwork).await.unwrap(), b"png bytes");
+    let request = server.request().await;
+    assert_eq!(request.path(), "/proxy/music/rest/getCoverArt.view");
+    let query = query(&request);
+    assert_eq!(query["id"], "cover/id");
+    assert_eq!(query["u"], "name & ü");
+
+    assert_eq!(backend.artwork(&artwork).await, Err(BackendError::NotFound));
+}
+
+#[tokio::test]
 async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
     let mut server = Server::new(vec![
         Reply {
@@ -688,8 +1001,19 @@ async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
         },
         Reply {
             status: 200,
-            headers: vec![("Content-Type", "audio/flac".into())],
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Accept-Ranges", "bytes".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
             body: b"redirected audio".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![("Content-Range", "bytes 3-7/16".into())],
+            body: b"irect".to_vec(),
             stall: false,
             stall_body: false,
         },
@@ -697,22 +1021,33 @@ async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
     .await;
     let backend = server.backend(password());
     let mut media = backend.media("song").await.unwrap();
+    let range_reader = media
+        .range_reader
+        .clone()
+        .expect("the redirected CDN response advertises byte ranges");
     let mut bytes = Vec::new();
     while let Some(chunk) = media.chunks.recv().await {
         bytes.extend_from_slice(&chunk.unwrap());
     }
     assert_eq!(bytes, b"redirected audio");
+    assert_eq!(&*range_reader.read_range(3, 5).await.unwrap(), b"irect");
 
-    let authenticated = server.request().await;
-    assert_eq!(authenticated.path(), "/proxy/music/rest/stream.view");
-    assert_eq!(query(&authenticated)["u"], "name & ü");
-    let redirected = server.request().await;
-    assert_eq!(redirected.path(), "/signed/audio");
-    let redirected_query = query(&redirected);
+    let authenticated = server.detailed_request().await;
+    assert_eq!(authenticated.url.path(), "/proxy/music/rest/stream.view");
+    assert_eq!(query(&authenticated.url)["u"], "name & ü");
+    assert_eq!(authenticated.headers["accept-encoding"], "identity");
+    let redirected = server.detailed_request().await;
+    assert_eq!(redirected.url.path(), "/signed/audio");
+    let redirected_query = query(&redirected.url);
     assert_eq!(redirected_query["download"], "token");
     assert!(!redirected_query.contains_key("u"));
     assert!(!redirected_query.contains_key("t"));
     assert!(!redirected_query.contains_key("s"));
+    let range = server.detailed_request().await;
+    assert_eq!(range.url, redirected.url);
+    assert_eq!(range.headers["range"], "bytes=3-7");
+    assert_eq!(range.headers["if-range"], "\"audio-v1\"");
+    assert_eq!(range.headers["accept-encoding"], "identity");
 }
 
 #[test]
@@ -729,6 +1064,15 @@ fn media_redirects_reject_https_downgrades_credentials_and_long_chains() {
         &cdn,
         MAX_MEDIA_REDIRECTS
     ));
+}
+
+#[test]
+fn content_ranges_are_parsed_strictly() {
+    assert_eq!(parse_content_range("bytes 3-7/16"), Some((3, 7, 16)));
+    assert_eq!(parse_content_range("items 3-7/16"), None);
+    assert_eq!(parse_content_range("bytes 7-3/16"), None);
+    assert_eq!(parse_content_range("bytes 3-16/16"), None);
+    assert_eq!(parse_content_range("bytes */16"), None);
 }
 
 #[tokio::test]

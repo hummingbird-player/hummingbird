@@ -81,6 +81,7 @@ pub struct AvailabilitySnapshot {
     mounts: MountSnapshot,
     unavailable_mountpoints: Arc<[PathBuf]>,
     remote_sources: Arc<HashSet<super::source::SourceId>>,
+    offline_tracks: Arc<HashSet<super::source::TrackRef>>,
 }
 
 #[derive(Clone, Debug)]
@@ -303,6 +304,7 @@ impl AvailabilityState {
                 self.unavailable_mountpoints.clone().into_boxed_slice(),
             ),
             remote_sources: Arc::new(self.remote_sources.clone()),
+            offline_tracks: Arc::new(HashSet::new()),
         }
     }
 
@@ -331,14 +333,25 @@ impl AvailabilitySnapshot {
                 .is_some_and(|path| self.is_track_path_available(path))
         } else {
             self.remote_sources.contains(&track.source)
+                || self.offline_tracks.contains(&track.reference())
         }
     }
 
     pub fn is_reference_available(&self, track: &super::source::TrackRef) -> bool {
         match track {
             super::source::TrackRef::Local(path) => self.is_track_path_available(path),
-            super::source::TrackRef::Remote { source, .. } => self.remote_sources.contains(source),
+            super::source::TrackRef::Remote { source, .. } => {
+                self.remote_sources.contains(source) || self.offline_tracks.contains(track)
+            }
         }
+    }
+
+    pub fn with_offline_tracks(
+        mut self,
+        tracks: impl IntoIterator<Item = super::source::TrackRef>,
+    ) -> Self {
+        self.offline_tracks = Arc::new(tracks.into_iter().collect());
+        self
     }
 
     pub fn is_path_available(&self, path: &Path) -> bool {

@@ -22,7 +22,7 @@ use crate::ui::{
     availability::is_track_available,
     components::{
         context::context,
-        source_indicator::{source_indicator_slot, source_origin},
+        source_indicator::{source_indicator_slot, source_origin_for_track},
     },
     library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
     models::PlaybackInfo,
@@ -118,7 +118,7 @@ impl TrackItem {
                 is_liked: cx
                     .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
                     .unwrap_or_default(),
-                album_art: track.source.is_local().then(|| match track.album_id {
+                album_art: Some(match track.album_id {
                     Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
                     None => format!("!db://track/{}/thumb", track.id).into(),
                 }),
@@ -444,9 +444,9 @@ impl Render for TrackItem {
                                     .child(
                                         source_indicator_slot(
                                             ("track-source", track_id as usize),
-                                            source_origin(
+                                            source_origin_for_track(
                                                 cx,
-                                                Some(&self.track.source.0),
+                                                &self.track.reference(),
                                                 track_id as usize,
                                             ),
                                             theme.text_secondary,

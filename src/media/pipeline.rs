@@ -168,6 +168,12 @@ impl AudioBlock {
         self.position_ms
     }
 
+    pub(crate) fn offset_position_ms(&mut self, offset_ms: u64) {
+        self.position_ms = self
+            .position_ms
+            .map(|position| position.saturating_add(offset_ms));
+    }
+
     pub fn discontinuity(&self) -> Option<AudioDiscontinuity> {
         self.discontinuity
     }

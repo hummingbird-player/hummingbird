@@ -23,7 +23,7 @@ use crate::{
 use super::{
     PlaylistMenuInfo, TrackContextMenuContext, navigate_to_track_album, navigate_to_track_artist,
     play_track_next, play_track_now, queue_track, remove_from_playlist, rescan_track,
-    track_show_in_file_manager_label,
+    set_tracks_downloaded, track_show_in_file_manager_label,
 };
 use crate::ui::app::Pool;
 
@@ -76,6 +76,15 @@ impl RenderOnce for TrackContextMenu {
             .local_path()
             .is_some_and(|path| is_track_path_available(cx, path));
         let can_rescan = track_for_rescan.source.is_local();
+        let remote_reference = (!track.source.is_local()).then(|| track.reference());
+        #[cfg(feature = "libre-services")]
+        let is_downloaded = remote_reference.as_ref().is_some_and(|track| {
+            cx.global::<crate::sources::SourceRegistry>()
+                .is_downloaded(track)
+        });
+        #[cfg(not(feature = "libre-services"))]
+        let is_downloaded = false;
+        let track_for_download = remote_reference.clone();
         let show_add_to = self.show_add_to;
         let play_from_here = self.context.play_from_here.clone();
         let playlist_info = self.playlist_info;
@@ -177,6 +186,25 @@ impl RenderOnce for TrackContextMenu {
                     },
                 )
                 .disabled(!can_rescan),
+            )
+            .when(
+                cfg!(feature = "libre-services") && remote_reference.is_some(),
+                |menu| {
+                    menu.item(menu_item(
+                        "track_offline_download",
+                        None::<SharedString>,
+                        if is_downloaded {
+                            tr!("REMOVE_OFFLINE_DOWNLOAD", "Remove offline download")
+                        } else {
+                            tr!("DOWNLOAD_FOR_OFFLINE", "Download for offline playback")
+                        },
+                        move |_, _, cx| {
+                            if let Some(track) = track_for_download.clone() {
+                                set_tracks_downloaded(vec![track], !is_downloaded, cx);
+                            }
+                        },
+                    ))
+                },
             )
             .item(menu_separator())
             .item(

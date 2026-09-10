@@ -32,7 +32,7 @@ use crate::{
             SeekError,
         },
         pipeline::{AudioBlock, DecodeResult},
-        traits::MediaResolver,
+        traits::{MediaResolver, MediaSeekToken},
     },
 };
 
@@ -42,7 +42,7 @@ pub use super::decoder::{CompleteMetadata, MediaInfo};
 enum Request {
     Open(TrackRef),
     Decode(AudioBlock, bool),
-    Seek(f64),
+    Seek(f64, MediaSeekToken),
     Close,
 }
 
@@ -76,7 +76,7 @@ enum Reply {
         Result<DecodeResult, PlaybackReadError>,
         Snapshot,
     ),
-    Seek(Result<(), SeekError>, Snapshot),
+    Seek(Result<(), SeekError>, Snapshot, MediaSeekToken),
     Closed,
 }
 
@@ -88,9 +88,9 @@ fn execute(decoder: &mut Decoder, request: Request) -> Reply {
             let result = decoder.decode_into(&mut block);
             Reply::Decode(block, result, Snapshot::read(decoder))
         }
-        Request::Seek(time) => {
-            let result = decoder.seek(time);
-            Reply::Seek(result, Snapshot::read(decoder))
+        Request::Seek(time, token) => {
+            let result = decoder.seek(time, &token);
+            Reply::Seek(result, Snapshot::read(decoder), token)
         }
         Request::Close => {
             decoder.close();
@@ -112,15 +112,17 @@ pub struct MediaController {
     worker_done: Arc<AtomicBool>,
     retired_done: Option<Arc<AtomicBool>>,
     factory: DecoderFactory,
+    resolver: Option<Arc<dyn MediaResolver>>,
     cancelled_since: Option<Instant>,
     seek_target: Option<f64>,
+    seek_token: Option<MediaSeekToken>,
     seek_position: Option<Option<u64>>,
     busy: bool,
     /// Ignore the current operation's result when it arrives, even if more requests come in
     /// before it finishes.
     discard_reply: bool,
     pending: Option<Request>,
-    seek_after_open: Option<f64>,
+    seek_after_open: Option<(f64, MediaSeekToken)>,
     snapshot: Option<Snapshot>,
     opened: Option<Result<MediaInfo, PlaybackStartError>>,
     ready: Option<(
@@ -142,7 +144,11 @@ pub struct MediaController {
 
 impl MediaController {
     pub fn with_resolver(resolver: Arc<dyn MediaResolver>) -> Self {
-        Self::with_decoder(move || Decoder::with_resolver(resolver.clone()))
+        let decoder_resolver = resolver.clone();
+        let mut controller =
+            Self::with_decoder(move || Decoder::with_resolver(decoder_resolver.clone()));
+        controller.resolver = Some(resolver);
+        controller
     }
 
     pub(super) fn with_decoder(factory: impl Fn() -> Decoder + Send + Sync + 'static) -> Self {
@@ -200,8 +206,10 @@ impl MediaController {
             worker_done,
             retired_done: None,
             factory,
+            resolver: None,
             cancelled_since: None,
             seek_target: None,
+            seek_token: None,
             seek_position: None,
             busy: false,
             discard_reply: false,
@@ -228,9 +236,6 @@ impl MediaController {
 
     fn submit(&mut self, request: Request) {
         assert!(!self.busy);
-        if matches!(request, Request::Seek(_)) {
-            self.cancelled_since.get_or_insert_with(Instant::now);
-        }
         if self.requests.as_ref().unwrap().try_send(request).is_ok() {
             self.busy = true;
         } else {
@@ -239,6 +244,7 @@ impl MediaController {
     }
 
     fn worker_failed(&mut self) {
+        self.cancel_seek();
         self.failed = true;
         self.busy = false;
         self.cancelled_since = None;
@@ -250,7 +256,7 @@ impl MediaController {
 
     fn replace(&mut self, request: Request) {
         if let Some((mut block, _, _)) = self.ready.take()
-            && matches!(request, Request::Seek(_))
+            && matches!(request, Request::Seek(..))
         {
             block.clear();
             self.free.push(block);
@@ -269,14 +275,6 @@ impl MediaController {
             let _ = self.retired.take().unwrap().join();
             self.retired_done = None;
         }
-        if self.busy
-            && self.retired.is_none()
-            && self
-                .cancelled_since
-                .is_some_and(|start| start.elapsed() >= CANCEL_GRACE)
-        {
-            self.recover_worker();
-        }
         if self.failed {
             return;
         }
@@ -292,6 +290,17 @@ impl MediaController {
         } else {
             None
         };
+        // A superseded operation may have completed during the grace period. Consume that result
+        // before deciding the worker is stuck so a late poll cannot discard completed work.
+        if reply.is_none()
+            && self.busy
+            && self.retired.is_none()
+            && self
+                .cancelled_since
+                .is_some_and(|start| start.elapsed() >= CANCEL_GRACE)
+        {
+            self.recover_worker();
+        }
         if let Some(reply) = reply {
             self.busy = false;
             self.cancelled_since = None;
@@ -315,8 +324,8 @@ impl MediaController {
                             }));
                             self.snapshot = Some(snapshot);
                             opened_source = true;
-                            if let Some(time) = self.seek_after_open.take() {
-                                self.pending = Some(Request::Seek(time));
+                            if let Some((time, token)) = self.seek_after_open.take() {
+                                self.pending = Some(Request::Seek(time, token));
                             }
                         }
                         Err(e) => self.opened = Some(Err(e)),
@@ -324,7 +333,9 @@ impl MediaController {
                     Reply::Decode(block, result, snapshot) => {
                         self.ready = Some((block, result, snapshot));
                     }
-                    Reply::Seek(result, snapshot) => {
+                    Reply::Seek(result, snapshot, token) => {
+                        token.complete();
+                        self.seek_token = None;
                         if result.is_ok() {
                             self.seek_position = Some(snapshot.position);
                         }
@@ -337,7 +348,7 @@ impl MediaController {
                     Reply::Closed => {}
                 }
             } else if let Reply::Decode(mut block, _, _) = reply
-                && matches!(self.pending, Some(Request::Seek(_)))
+                && matches!(self.pending, Some(Request::Seek(..)))
             {
                 block.clear();
                 self.free.push(block);
@@ -359,12 +370,20 @@ impl MediaController {
         old.requests.take();
         self.retired = old.worker.take();
         self.retired_done = Some(old.worker_done.clone());
+        self.resolver = old.resolver.clone();
         self.looping = old.looping;
         self.decode_enabled = old.decode_enabled;
         if let Some(track) = old.current_track.take() {
             self.open(&track);
-            self.seek_after_open = old.seek_target.or(old.seek_after_open);
-            self.seek_target = self.seek_after_open;
+            self.seek_after_open = old
+                .seek_target
+                .zip(old.seek_token.take())
+                .or_else(|| old.seek_after_open.take());
+            self.seek_target = self.seek_after_open.as_ref().map(|(time, _)| *time);
+            self.seek_token = self
+                .seek_after_open
+                .as_ref()
+                .map(|(_, token)| token.clone());
         }
         // dropping the old reply receiver disconnects late results; its decoder closes on exit
     }
@@ -402,6 +421,7 @@ impl MediaController {
 
     /// Called after the playback command loop exits, never while it is handling commands.
     pub fn shutdown(&mut self) {
+        self.cancel_seek();
         self.requests.take();
         self.replies = mpsc::sync_channel(1).1;
         let deadline = Instant::now() + Duration::from_millis(50);
@@ -428,6 +448,7 @@ impl MediaController {
 
     pub fn open(&mut self, track: impl Into<TrackRef>) {
         let track = track.into();
+        self.cancel_seek();
         if self.failed {
             self.poll();
             if self.retired.is_none() {
@@ -459,6 +480,7 @@ impl MediaController {
     }
 
     pub fn close(&mut self) {
+        self.cancel_seek();
         self.seek_target = None;
         self.seek_position = None;
         self.snapshot = None;
@@ -476,16 +498,26 @@ impl MediaController {
     }
 
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
+        self.cancel_seek();
+        let token = MediaSeekToken::new();
+        self.seek_token = Some(token.clone());
         self.seek_target = Some(time);
         if !self.has_stream() {
             if self.current_track.is_some() {
-                self.seek_after_open = Some(time);
+                self.seek_after_open = Some((time, token));
                 return Ok(());
             }
+            self.seek_token = None;
             return Err(SeekError::InvalidState);
         }
-        self.replace(Request::Seek(time));
+        self.replace(Request::Seek(time, token));
         Ok(())
+    }
+
+    fn cancel_seek(&mut self) {
+        if let Some(token) = self.seek_token.take() {
+            token.cancel();
+        }
     }
 
     pub fn decode_into(
@@ -551,6 +583,7 @@ impl MediaController {
 
 impl Drop for MediaController {
     fn drop(&mut self) {
+        self.cancel_seek();
         self.requests.take();
         // a native read may never return; cleanup stays on the worker when it does return
         if let Some(worker) = self.worker.take()
@@ -608,6 +641,15 @@ mod tests {
         controller.close();
         controller.open(Path::new("second"));
         assert!(wait_for_open(&mut controller).is_err());
+    }
+
+    #[test]
+    fn an_ordinary_seek_does_not_schedule_worker_recovery() {
+        let mut controller = MediaController::with_decoder(Decoder::new);
+
+        controller.submit(Request::Seek(1.0, MediaSeekToken::new()));
+
+        assert_eq!(controller.next_poll_delay(), None);
     }
 
     #[test]

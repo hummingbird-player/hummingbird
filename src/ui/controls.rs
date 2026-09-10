@@ -17,7 +17,7 @@ use crate::{
             },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_check_item, menu_item},
-            source_indicator::{source_indicator, source_origin},
+            source_indicator::{source_indicator, source_origin_for_track},
             tooltip::build_tooltip,
             volume_tooltip::build_volume_tooltip,
         },
@@ -346,7 +346,6 @@ impl Render for InfoSection {
         let image_key = self
             .current_library_track
             .as_ref()
-            .filter(|track| track.source.is_local())
             .map(|track| ManagedImageKey::Track(track.id))
             .or_else(|| {
                 self.current_track_path
@@ -354,10 +353,10 @@ impl Render for InfoSection {
                     .map(|p| ManagedImageKey::TrackFile(p.clone()))
             });
         let image_element_key = self.image_element_key;
-        let source_id = self
+        let source_reference = self
             .current_library_track
             .as_ref()
-            .map(|track| track.source.0.clone());
+            .map(|track| track.reference());
         let theme = cx.global::<Theme>();
         let state = self.playback_info.playback_state.read(cx);
 
@@ -526,11 +525,13 @@ impl Render for InfoSection {
                                     .gap(px(4.0))
                                     .ml_auto()
                                     .when_some(
-                                        source_origin(
-                                            cx,
-                                            source_id.as_deref(),
-                                            track_id.unwrap_or_default() as usize,
-                                        ),
+                                        source_reference.as_ref().and_then(|track| {
+                                            source_origin_for_track(
+                                                cx,
+                                                track,
+                                                track_id.unwrap_or_default() as usize,
+                                            )
+                                        }),
                                         |this, origin| {
                                             this.child(source_indicator(
                                                 "info-section-source",

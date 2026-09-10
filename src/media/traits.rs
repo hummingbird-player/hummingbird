@@ -2,7 +2,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::File,
     io::{Read, Seek},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use bitflags::bitflags;
@@ -28,6 +28,11 @@ use super::{
 pub trait MediaSource: Read + Seek + Send + Sync {
     fn is_seekable(&self) -> bool;
     fn byte_len(&self) -> Option<u64>;
+
+    /// Returns the cancellation control used while seeking this source, when supported.
+    fn seek_control(&self) -> Option<MediaSeekControl> {
+        None
+    }
 
     /// Exposes a filesystem file to metadata providers that require `File` specifically.
     ///
@@ -65,8 +70,125 @@ impl MediaInput {
     }
 }
 
+pub struct MediaSeekInput {
+    pub input: MediaInput,
+    /// Position represented by timestamp zero in the replacement input.
+    pub timeline_offset_seconds: f64,
+}
+
+impl MediaSeekInput {
+    pub fn exact(input: MediaInput, time: f64) -> Self {
+        Self {
+            input,
+            timeline_offset_seconds: time,
+        }
+    }
+
+    pub fn from_start(input: MediaInput) -> Self {
+        Self {
+            input,
+            timeline_offset_seconds: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MediaSeekState {
+    Active,
+    Cancelled,
+    Complete,
+}
+
+#[derive(Clone)]
+pub struct MediaSeekToken {
+    state: tokio::sync::watch::Sender<MediaSeekState>,
+}
+
+#[derive(Clone, Default)]
+pub struct MediaSeekControl {
+    receiver: Arc<Mutex<Option<tokio::sync::watch::Receiver<MediaSeekState>>>>,
+}
+
+impl MediaSeekControl {
+    pub(crate) fn new(receiver: Option<tokio::sync::watch::Receiver<MediaSeekState>>) -> Self {
+        Self {
+            receiver: Arc::new(Mutex::new(receiver)),
+        }
+    }
+
+    pub(crate) fn begin(&self, token: &MediaSeekToken) {
+        *self.receiver.lock().unwrap() = Some(token.subscribe());
+    }
+
+    pub(crate) fn receiver(&self) -> Option<tokio::sync::watch::Receiver<MediaSeekState>> {
+        self.receiver.lock().unwrap().clone()
+    }
+}
+
+impl MediaSeekToken {
+    pub fn new() -> Self {
+        let (state, _) = tokio::sync::watch::channel(MediaSeekState::Active);
+        Self { state }
+    }
+
+    pub fn cancel(&self) -> bool {
+        self.transition_from_active(MediaSeekState::Cancelled)
+    }
+
+    pub fn complete(&self) -> bool {
+        self.transition_from_active(MediaSeekState::Complete)
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.state.borrow() == MediaSeekState::Cancelled
+    }
+
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<MediaSeekState> {
+        self.state.subscribe()
+    }
+
+    fn transition_from_active(&self, next: MediaSeekState) -> bool {
+        let mut transitioned = false;
+        self.state.send_if_modified(|state| {
+            if *state == MediaSeekState::Active {
+                *state = next;
+                transitioned = true;
+                true
+            } else {
+                false
+            }
+        });
+        transitioned
+    }
+}
+
+impl Default for MediaSeekToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait MediaResolver: Send + Sync {
     fn resolve(&self, track: &TrackRef) -> Result<MediaInput, PlaybackStartError>;
+
+    /// Begin bounded read-ahead for a likely next track.
+    ///
+    /// Implementations must return immediately and replace obsolete work rather than accumulating
+    /// unbounded background requests.
+    fn prefetch(&self, _track: &TrackRef) {}
+
+    /// Resolve a fresh stream for seeking, identifying where that input starts in the track.
+    ///
+    /// An implementation may return an exact transport-level offset or reopen from the beginning
+    /// so the decoder can perform a forward seek. `None` asks the decoder to seek the current input.
+    fn resolve_at(
+        &self,
+        _track: &TrackRef,
+        _time: f64,
+        _token: &MediaSeekToken,
+    ) -> Result<Option<MediaSeekInput>, PlaybackStartError> {
+        Ok(None)
+    }
 }
 
 #[derive(Default)]
@@ -150,6 +272,16 @@ pub trait MediaStream {
     /// Requests the Provider seek to the specified time in the current file. The time is provided
     /// in seconds. If no file is opened, this function should return an error.
     fn seek(&mut self, time: f64) -> Result<(), SeekError>;
+
+    /// Seek with an operation token that cancellable media sources can observe.
+    fn seek_with_token(&mut self, time: f64, _token: &MediaSeekToken) -> Result<(), SeekError> {
+        self.seek(time)
+    }
+
+    /// Whether the underlying input supports efficient random access.
+    fn is_seekable(&self) -> bool {
+        false
+    }
 
     /// Returns the normal duration of the PlaybackFrames returned by this provider for the current
     /// open file. If no file is opened, an error should be returned. Note that a PlaybackFrame may

@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use crate::{
+    library::source::TrackRef,
     settings::SettingsGlobal,
     ui::{
         components::{
@@ -56,7 +57,12 @@ impl SourceOrigin {
         tr!("MUSIC_LIBRARY_FIXTURE_NAME", "Home music").into()
     }
 
-    fn remote_library<C: AppContext>(source_id: &str, cx: &C) -> Self {
+    fn remote_library<C: AppContext>(
+        source_id: &str,
+        delivery: Option<crate::sources::MediaDelivery>,
+        available_offline: bool,
+        cx: &C,
+    ) -> Self {
         cx.read_global(|settings: &SettingsGlobal, app| {
             settings
                 .model
@@ -70,13 +76,24 @@ impl SourceOrigin {
                         .ok()
                         .and_then(|url| url.host_str().map(str::to_owned))
                         .map(|host| format!("Subsonic · {host}").into());
+                    let quality = delivery
+                        .as_ref()
+                        .map(delivery_description)
+                        .unwrap_or_else(|| quality_description(library));
+                    let detail = if available_offline {
+                        tr!(
+                            "MUSIC_LIBRARY_AVAILABLE_OFFLINE_QUALITY",
+                            "Available offline · {{quality}}",
+                            quality = quality.as_ref()
+                        )
+                        .into()
+                    } else {
+                        quality
+                    };
                     Self {
                         name: library.name.clone().into(),
                         description,
-                        detail: Some(
-                            tr!("MUSIC_LIBRARY_QUALITY_ORIGINAL_TOOLTIP", "Original quality")
-                                .into(),
-                        ),
+                        detail: Some(detail),
                     }
                 })
         })
@@ -110,6 +127,51 @@ impl SourceOrigin {
     }
 }
 
+fn quality_description(library: &crate::settings::services::MusicLibrarySettings) -> SharedString {
+    use crate::settings::services::MusicLibraryAudioQuality;
+
+    match library.audio_quality {
+        MusicLibraryAudioQuality::Original => {
+            tr!("MUSIC_LIBRARY_QUALITY_ORIGINAL_TOOLTIP", "Original quality").into()
+        }
+        MusicLibraryAudioQuality::Automatic => {
+            tr!("MUSIC_LIBRARY_QUALITY_AUTO_TOOLTIP", "Automatic quality").into()
+        }
+        MusicLibraryAudioQuality::Custom => match library.media_quality() {
+            crate::sources::MediaQuality::Transcode {
+                format,
+                bitrate_kbps,
+            } if format.parameter() != "flac" => format!(
+                "{} · {bitrate_kbps} kb/s",
+                format.parameter().to_ascii_uppercase()
+            )
+            .into(),
+            crate::sources::MediaQuality::Transcode { format, .. } => {
+                format.parameter().to_ascii_uppercase().into()
+            }
+            _ => unreachable!("custom settings produce a transcode profile"),
+        },
+    }
+}
+
+fn delivery_description(delivery: &crate::sources::MediaDelivery) -> SharedString {
+    let format = delivery
+        .format
+        .as_deref()
+        .unwrap_or(if delivery.transcoded {
+            "transcode"
+        } else {
+            "original"
+        });
+    match delivery.bitrate_kbps {
+        Some(bitrate) => format!("{} · {bitrate} kb/s", format.to_ascii_uppercase()).into(),
+        None if delivery.transcoded => {
+            format!("Streaming as {}", format.to_ascii_uppercase()).into()
+        }
+        None => format!("Original: {}", format.to_ascii_uppercase()).into(),
+    }
+}
+
 pub fn source_origin<C: AppContext>(
     cx: &C,
     source_id: Option<&str>,
@@ -128,8 +190,38 @@ pub fn source_origin<C: AppContext>(
     fixture.or_else(|| {
         source_id
             .filter(|source_id| *source_id != "local")
-            .map(|source_id| SourceOrigin::remote_library(source_id, cx))
+            .map(|source_id| SourceOrigin::remote_library(source_id, None, false, cx))
     })
+}
+
+pub fn source_origin_for_track<C: AppContext>(
+    cx: &C,
+    track: &TrackRef,
+    fixture_key: usize,
+) -> Option<SourceOrigin> {
+    if let Some(fixture) = source_origin(cx, None, fixture_key) {
+        return Some(fixture);
+    }
+    let TrackRef::Remote { source, .. } = track else {
+        return None;
+    };
+    #[cfg(feature = "libre-services")]
+    let delivery =
+        cx.read_global(|registry: &crate::sources::SourceRegistry, _| registry.delivery(track));
+    #[cfg(feature = "libre-services")]
+    let available_offline = cx
+        .read_global(|registry: &crate::sources::SourceRegistry, _| registry.is_downloaded(track));
+    #[cfg(not(feature = "libre-services"))]
+    let delivery = None;
+    #[cfg(not(feature = "libre-services"))]
+    let available_offline = false;
+
+    Some(SourceOrigin::remote_library(
+        &source.0,
+        delivery,
+        available_offline,
+        cx,
+    ))
 }
 
 pub fn source_indicator(

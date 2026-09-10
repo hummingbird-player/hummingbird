@@ -259,13 +259,13 @@
   },
   "ADD_TO_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:205",
+    "definedIn": "src/ui/library/context_menus/track.rs:233",
     "plural": false,
     "description": null
   },
   "ADD_TO_QUEUE": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:120",
+    "definedIn": "src/ui/library/context_menus/track.rs:129",
     "plural": false,
     "description": null
   },
@@ -277,7 +277,7 @@
   },
   "ADVANCED": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:416",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:410",
     "plural": false,
     "description": null
   },
@@ -289,7 +289,7 @@
   },
   "APP_NAME": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:455",
+    "definedIn": "src/ui/controls.rs:454",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -325,13 +325,13 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:834",
+    "definedIn": "src/ui/queue.rs:829",
     "plural": false,
     "description": null
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:845",
+    "definedIn": "src/ui/queue.rs:840",
     "plural": false,
     "description": null
   },
@@ -355,13 +355,13 @@
   },
   "COLUMN_ALBUM": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:354",
+    "definedIn": "src/library/types/table.rs:350",
     "plural": false,
     "description": null
   },
   "COLUMN_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:604",
+    "definedIn": "src/library/types/table.rs:596",
     "plural": false,
     "description": null
   },
@@ -397,13 +397,13 @@
   },
   "COLUMN_LENGTH": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:357",
+    "definedIn": "src/library/types/table.rs:353",
     "plural": false,
     "description": null
   },
   "COLUMN_NAME": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:603",
+    "definedIn": "src/library/types/table.rs:595",
     "plural": false,
     "description": null
   },
@@ -415,7 +415,7 @@
   },
   "COLUMN_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:605",
+    "definedIn": "src/library/types/table.rs:597",
     "plural": false,
     "description": null
   },
@@ -452,6 +452,18 @@
   "DISCORD": {
     "context": "global_actions.rs",
     "definedIn": "src/ui/global_actions.rs:145",
+    "plural": false,
+    "description": null
+  },
+  "DOWNLOAD_ALBUM_FOR_OFFLINE": {
+    "context": "album.rs",
+    "definedIn": "src/ui/library/context_menus/album.rs:137",
+    "plural": false,
+    "description": null
+  },
+  "DOWNLOAD_FOR_OFFLINE": {
+    "context": "track.rs",
+    "definedIn": "src/ui/library/context_menus/track.rs:199",
     "plural": false,
     "description": null
   },
@@ -649,13 +661,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:608",
+    "definedIn": "src/ui/queue.rs:603",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:627",
+    "definedIn": "src/ui/queue.rs:622",
     "plural": false,
     "description": null
   },
@@ -853,7 +865,7 @@
   },
   "LIKE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:567",
+    "definedIn": "src/ui/controls.rs:568",
     "plural": false,
     "description": null
   },
@@ -865,7 +877,7 @@
   },
   "LIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:396",
+    "definedIn": "src/ui/library/release_view.rs:393",
     "plural": false,
     "description": null
   },
@@ -877,7 +889,7 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1251",
+    "definedIn": "src/ui/controls.rs:1252",
     "plural": false,
     "description": null
   },
@@ -895,7 +907,7 @@
   },
   "MUSIC_LIBRARY_ADDRESS_ERROR": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:8",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:9",
     "plural": false,
     "description": null
   },
@@ -907,13 +919,13 @@
   },
   "MUSIC_LIBRARY_ADD_DESCRIPTION": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:289",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:295",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_ADD_TITLE": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:286",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:292",
     "plural": false,
     "description": null
   },
@@ -925,13 +937,19 @@
   },
   "MUSIC_LIBRARY_API_KEY_ERROR": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:20",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:21",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_AVAILABLE_OFFLINE": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:94",
+    "definedIn": "src/ui/components/source_indicator.rs:111",
+    "plural": false,
+    "description": null
+  },
+  "MUSIC_LIBRARY_AVAILABLE_OFFLINE_QUALITY": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:85",
     "plural": false,
     "description": null
   },
@@ -961,25 +979,25 @@
   },
   "MUSIC_LIBRARY_CONNECT": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:346",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:352",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_CONNECTION": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:380",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:374",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_CUSTOM_BITRATE": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:122",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:124",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_CUSTOM_FORMAT": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:94",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:96",
     "plural": false,
     "description": null
   },
@@ -997,61 +1015,61 @@
   },
   "MUSIC_LIBRARY_FIXTURE_AUTH_ERROR": {
     "context": "fixtures.rs",
-    "definedIn": "src/ui/settings/music_libraries/fixtures.rs:115",
+    "definedIn": "src/ui/settings/music_libraries/fixtures.rs:118",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FIXTURE_NAME": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:56",
+    "definedIn": "src/ui/components/source_indicator.rs:57",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FIXTURE_ORIGINAL_FORMAT": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:108",
+    "definedIn": "src/ui/components/source_indicator.rs:125",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FIXTURE_STREAM_FORMAT": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:103",
+    "definedIn": "src/ui/components/source_indicator.rs:120",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FOLDERS": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:240",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:242",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FOLDERS_DESCRIPTION": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:243",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:245",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FOLDER_AUDIOBOOKS": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:261",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:263",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_FOLDER_MUSIC": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:254",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:256",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_NAME": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:165",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:167",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_NAME_PLACEHOLDER": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:92",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:80",
     "plural": false,
     "description": null
   },
@@ -1063,7 +1081,7 @@
   },
   "MUSIC_LIBRARY_PASSWORD_ERROR": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:22",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:23",
     "plural": false,
     "description": null
   },
@@ -1075,73 +1093,79 @@
   },
   "MUSIC_LIBRARY_QUALITY": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:57",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:59",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_AUTO": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:71",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:73",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_AUTO_DESCRIPTION": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:41",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:43",
+    "plural": false,
+    "description": null
+  },
+  "MUSIC_LIBRARY_QUALITY_AUTO_TOOLTIP": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:138",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_CUSTOM": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:75",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:77",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_CUSTOM_DESCRIPTION": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:45",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:47",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_ORIGINAL": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:67",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:69",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_ORIGINAL_DESCRIPTION": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:37",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:39",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_QUALITY_ORIGINAL_TOOLTIP": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:77",
+    "definedIn": "src/ui/components/source_indicator.rs:135",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_REFRESH_DAILY": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:182",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:184",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_REFRESH_FREQUENCY": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:171",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:173",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_REFRESH_HOURLY": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:181",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:183",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_REFRESH_MANUAL": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:180",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:182",
     "plural": false,
     "description": null
   },
@@ -1177,13 +1201,13 @@
   },
   "MUSIC_LIBRARY_REPORT_PLAYBACK": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:397",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:391",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_REPORT_PLAYBACK_DESCRIPTION": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:400",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:394",
     "plural": false,
     "description": null
   },
@@ -1195,49 +1219,49 @@
   },
   "MUSIC_LIBRARY_STATUS_CONNECTING": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:39",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:40",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STATUS_DISABLED": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:52",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:53",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STATUS_IMPORTING": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:41",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:42",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STATUS_OFFLINE": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:47",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:48",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STATUS_SIGN_IN": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:51",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:52",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STATUS_UPDATED": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:45",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:46",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STORAGE_DESCRIPTION": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:203",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:205",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_STORAGE_LIMIT": {
     "context": "editing_sections.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:200",
+    "definedIn": "src/ui/settings/music_libraries/editing_sections.rs:202",
     "plural": false,
     "description": null
   },
@@ -1249,25 +1273,25 @@
   },
   "MUSIC_LIBRARY_USERNAME_ERROR": {
     "context": "model.rs",
-    "definedIn": "src/ui/settings/music_libraries/model.rs:15",
+    "definedIn": "src/ui/settings/music_libraries/model.rs:16",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_USE_API_KEY": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:306",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:312",
     "plural": false,
     "description": null
   },
   "MUSIC_LIBRARY_USE_PASSWORD": {
     "context": "connection.rs",
-    "definedIn": "src/ui/settings/music_libraries/connection.rs:304",
+    "definedIn": "src/ui/settings/music_libraries/connection.rs:310",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1186",
+    "definedIn": "src/ui/controls.rs:1187",
     "plural": false,
     "description": null
   },
@@ -1279,13 +1303,37 @@
   },
   "NEXT_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:834",
+    "definedIn": "src/ui/controls.rs:835",
     "plural": false,
     "description": null
   },
   "NO_LYRICS": {
     "context": "lyrics.rs",
     "definedIn": "src/ui/lyrics.rs:186",
+    "plural": false,
+    "description": null
+  },
+  "OFFLINE_DOWNLOAD_COMPLETE": {
+    "context": "context_menus.rs",
+    "definedIn": "src/ui/library/context_menus.rs:195",
+    "plural": false,
+    "description": null
+  },
+  "OFFLINE_DOWNLOAD_ERROR": {
+    "context": "context_menus.rs",
+    "definedIn": "src/ui/library/context_menus.rs:178",
+    "plural": false,
+    "description": null
+  },
+  "OFFLINE_DOWNLOAD_REMOVED": {
+    "context": "context_menus.rs",
+    "definedIn": "src/ui/library/context_menus.rs:169",
+    "plural": false,
+    "description": null
+  },
+  "OFFLINE_DOWNLOAD_REMOVE_ERROR": {
+    "context": "context_menus.rs",
+    "definedIn": "src/ui/library/context_menus.rs:164",
     "plural": false,
     "description": null
   },
@@ -1405,13 +1453,13 @@
   },
   "PLAY_FROM_HERE": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:110",
+    "definedIn": "src/ui/library/context_menus/track.rs:119",
     "plural": false,
     "description": null
   },
   "PLAY_NEXT": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:97",
+    "definedIn": "src/ui/library/context_menus/track.rs:106",
     "plural": false,
     "description": null
   },
@@ -1423,13 +1471,13 @@
   },
   "PREVIOUS_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:752",
+    "definedIn": "src/ui/controls.rs:753",
     "plural": false,
     "description": null
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:827",
+    "definedIn": "src/ui/queue.rs:822",
     "plural": false,
     "description": null
   },
@@ -1447,13 +1495,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:517",
+    "definedIn": "src/ui/library/release_view.rs:514",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:532",
+    "definedIn": "src/ui/library/release_view.rs:529",
     "plural": false,
     "description": null
   },
@@ -1471,19 +1519,25 @@
   },
   "REMOTE_LIBRARY": {
     "context": "source_indicator.rs",
-    "definedIn": "src/ui/components/source_indicator.rs:84",
+    "definedIn": "src/ui/components/source_indicator.rs:101",
+    "plural": false,
+    "description": null
+  },
+  "REMOVE_ALBUM_OFFLINE_DOWNLOADS": {
+    "context": "album.rs",
+    "definedIn": "src/ui/library/context_menus/album.rs:134",
     "plural": false,
     "description": null
   },
   "REMOVE_FROM_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:220",
+    "definedIn": "src/ui/library/context_menus/track.rs:248",
     "plural": false,
     "description": null
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:685",
+    "definedIn": "src/ui/queue.rs:680",
     "plural": false,
     "description": null
   },
@@ -1495,8 +1549,14 @@
   },
   "REMOVE_N_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:585",
+    "definedIn": "src/ui/queue.rs:580",
     "plural": true,
+    "description": null
+  },
+  "REMOVE_OFFLINE_DOWNLOAD": {
+    "context": "track.rs",
+    "definedIn": "src/ui/library/context_menus/track.rs:197",
+    "plural": false,
     "description": null
   },
   "RENAME": {
@@ -1513,19 +1573,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:912",
+    "definedIn": "src/ui/controls.rs:913",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:902",
+    "definedIn": "src/ui/controls.rs:903",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:921",
+    "definedIn": "src/ui/controls.rs:922",
     "plural": false,
     "description": null
   },
@@ -1537,13 +1597,13 @@
   },
   "RESCAN_ALBUM": {
     "context": "album.rs",
-    "definedIn": "src/ui/library/context_menus/album.rs:106",
+    "definedIn": "src/ui/library/context_menus/album.rs:124",
     "plural": false,
     "description": null
   },
   "RESCAN_TRACK": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:174",
+    "definedIn": "src/ui/library/context_menus/track.rs:183",
     "plural": false,
     "description": null
   },
@@ -1585,7 +1645,7 @@
   },
   "SAVE": {
     "context": "editing.rs",
-    "definedIn": "src/ui/settings/music_libraries/editing.rs:450",
+    "definedIn": "src/ui/settings/music_libraries/editing.rs:444",
     "plural": false,
     "description": null
   },
@@ -1945,19 +2005,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:207",
+    "definedIn": "src/ui/library/context_menus.rs:281",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:209",
+    "definedIn": "src/ui/library/context_menus.rs:283",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:205",
+    "definedIn": "src/ui/library/context_menus.rs:279",
     "plural": false,
     "description": null
   },
@@ -2047,19 +2107,19 @@
   },
   "STOP_AFTER_CURRENT_TOOLTIP": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:799",
+    "definedIn": "src/ui/controls.rs:800",
     "plural": false,
     "description": null
   },
   "STOP_REPEATING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:880",
+    "definedIn": "src/ui/controls.rs:881",
     "plural": false,
     "description": null
   },
   "STOP_SHUFFLING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:722",
+    "definedIn": "src/ui/controls.rs:723",
     "plural": false,
     "description": null
   },
@@ -2071,13 +2131,13 @@
   },
   "TABLE_ARTISTS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:623",
+    "definedIn": "src/library/types/table.rs:615",
     "plural": false,
     "description": null
   },
   "TABLE_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:429",
+    "definedIn": "src/library/types/table.rs:425",
     "plural": false,
     "description": null
   },
@@ -2143,7 +2203,7 @@
   },
   "TRACK_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:352",
+    "definedIn": "src/library/types/table.rs:348",
     "plural": false,
     "description": null
   },
@@ -2161,31 +2221,31 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:515",
+    "definedIn": "src/ui/controls.rs:514",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:497",
+    "definedIn": "src/ui/controls.rs:496",
     "plural": false,
     "description": null
   },
   "UNLIKE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:564",
+    "definedIn": "src/ui/controls.rs:565",
     "plural": false,
     "description": null
   },
   "UNLIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:394",
+    "definedIn": "src/ui/library/release_view.rs:391",
     "plural": false,
     "description": null
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1179",
+    "definedIn": "src/ui/controls.rs:1180",
     "plural": false,
     "description": null
   },

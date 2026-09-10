@@ -11,6 +11,29 @@ pub enum MusicLibraryAuthentication {
     ApiKey,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MusicLibraryAudioQuality {
+    #[default]
+    Original,
+    Automatic,
+    Custom,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MusicLibraryTranscodeFormat {
+    #[default]
+    Opus,
+    Mp3,
+    Aac,
+    Flac,
+}
+
+fn default_transcode_bitrate() -> u32 {
+    192
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MusicLibrarySettings {
     pub id: String,
@@ -25,6 +48,32 @@ pub struct MusicLibrarySettings {
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub report_playback: bool,
+    #[serde(default)]
+    pub audio_quality: MusicLibraryAudioQuality,
+    #[serde(default)]
+    pub transcode_format: MusicLibraryTranscodeFormat,
+    #[serde(default = "default_transcode_bitrate")]
+    pub transcode_bitrate: u32,
+}
+
+impl MusicLibrarySettings {
+    pub fn media_quality(&self) -> crate::sources::MediaQuality {
+        use crate::sources::{MediaQuality, TranscodeFormat};
+
+        match self.audio_quality {
+            MusicLibraryAudioQuality::Original => MediaQuality::Original,
+            MusicLibraryAudioQuality::Automatic => MediaQuality::Automatic,
+            MusicLibraryAudioQuality::Custom => MediaQuality::Transcode {
+                format: match self.transcode_format {
+                    MusicLibraryTranscodeFormat::Opus => TranscodeFormat::Opus,
+                    MusicLibraryTranscodeFormat::Mp3 => TranscodeFormat::Mp3,
+                    MusicLibraryTranscodeFormat::Aac => TranscodeFormat::Aac,
+                    MusicLibraryTranscodeFormat::Flac => TranscodeFormat::Flac,
+                },
+                bitrate_kbps: self.transcode_bitrate.clamp(32, 320),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,6 +115,9 @@ mod tests {
                 credential_reference: "hummingbird-source-0123456789abcdef0123456789abcdef".into(),
                 enabled: true,
                 report_playback: false,
+                audio_quality: MusicLibraryAudioQuality::Custom,
+                transcode_format: MusicLibraryTranscodeFormat::Opus,
+                transcode_bitrate: 192,
             }],
             ..ServicesSettings::default()
         };
@@ -77,6 +129,27 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ServicesSettings>(&json).unwrap(),
             settings
+        );
+    }
+
+    #[test]
+    fn older_library_settings_default_to_original_quality() {
+        let settings: MusicLibrarySettings = serde_json::from_str(
+            r#"{
+                "id":"subsonic-a",
+                "name":"Home music",
+                "address":"https://music.example.com",
+                "authentication":"password",
+                "credential_reference":"hummingbird-source-a"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.audio_quality, MusicLibraryAudioQuality::Original);
+        assert_eq!(settings.transcode_bitrate, 192);
+        assert_eq!(
+            settings.media_quality(),
+            crate::sources::MediaQuality::Original
         );
     }
 }

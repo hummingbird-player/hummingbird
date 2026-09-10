@@ -18,7 +18,7 @@ use crate::{
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
             scrollbar::{ScrollableHandle, floating_scrollbar},
-            source_indicator::{source_indicator_slot, source_origin},
+            source_indicator::{source_indicator_slot, source_origin_for_track},
             tooltip::build_tooltip,
         },
         library::{
@@ -254,20 +254,13 @@ impl Render for QueueItem {
                     && scroll_handle.should_draw_vertical_scrollbar()
             };
             let is_current = self.current == self.idx;
-            let source_id = self
-                .item
-                .as_ref()
-                .map(|item| item.reference().source().0.clone());
-            let is_remote = source_id.as_deref().is_some_and(|source| source != "local");
-            let image_key = (!is_remote)
-                .then(|| track_id.map(ManagedImageKey::Track))
-                .flatten()
-                .or_else(|| {
-                    self.item
-                        .as_ref()
-                        .and_then(|i| i.local_path())
-                        .map(|path| ManagedImageKey::TrackFile(path.clone()))
-                });
+            let source_reference = self.item.as_ref().map(|item| item.reference().clone());
+            let image_key = track_id.map(ManagedImageKey::Track).or_else(|| {
+                self.item
+                    .as_ref()
+                    .and_then(|i| i.local_path())
+                    .map(|path| ManagedImageKey::TrackFile(path.clone()))
+            });
             let idx = self.idx;
             let current = self.current;
             let selection = self.selection.clone();
@@ -482,7 +475,9 @@ impl Render for QueueItem {
                                         .child(
                                             source_indicator_slot(
                                                 ("queue-source", idx),
-                                                source_origin(cx, source_id.as_deref(), idx),
+                                                source_reference.as_ref().and_then(|track| {
+                                                    source_origin_for_track(cx, track, idx)
+                                                }),
                                                 theme.text_secondary,
                                             )
                                             .ml(px(6.0)),

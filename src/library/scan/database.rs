@@ -32,9 +32,11 @@ pub(crate) use genre_links::recompute_album_genres;
 use genre_links::sync_track_genres;
 pub use genre_links::{flush_album_genres, sweep_orphan_genres};
 pub use relocate::relocate_track;
+#[cfg(test)]
+pub(crate) use remote::write_remote_batch;
 #[cfg(feature = "libre-services")]
 pub(crate) use remote::{
-    begin_remote_sync, finish_remote_sync, remove_remote_source, write_remote_batch,
+    begin_remote_sync, finish_remote_sync, remove_remote_source, write_remote_batch_with_artwork,
 };
 pub use tracks::{AlbumPathCacheKey, TrackWriteOutcome};
 use tracks::{delete_lyrics, insert_track, upsert_lyrics};

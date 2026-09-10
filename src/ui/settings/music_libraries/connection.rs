@@ -108,6 +108,9 @@ impl MusicLibraryConnection {
                 credential_reference: "hummingbird-source-00000000000000000000000000000000".into(),
                 enabled: true,
                 report_playback: true,
+                audio_quality: Default::default(),
+                transcode_format: Default::default(),
+                transcode_bitrate: 192,
                 status: LibraryStatus::Connecting,
                 error: None,
             }));
@@ -231,6 +234,9 @@ impl MusicLibraryConnection {
                             credential_reference: String::from(reference).into(),
                             enabled: true,
                             report_playback: true,
+                            audio_quality: Default::default(),
+                            transcode_format: Default::default(),
+                            transcode_bitrate: 192,
                             status: LibraryStatus::Updated,
                             error: None,
                         }));

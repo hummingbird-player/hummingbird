@@ -5,7 +5,7 @@ mod import;
 mod media;
 pub mod subsonic;
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
 
@@ -17,19 +17,74 @@ pub use media::SourceRegistry;
 pub struct MediaDescriptor {
     pub extension: Option<String>,
     pub byte_len: Option<u64>,
+    pub delivery: MediaDelivery,
     chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
+    range_reader: Option<std::sync::Arc<dyn MediaByteRangeReader>>,
 }
 
 impl MediaDescriptor {
     pub(crate) fn new(
         extension: Option<String>,
         byte_len: Option<u64>,
+        delivery: MediaDelivery,
         chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
     ) -> Self {
         Self {
             extension,
             byte_len,
+            delivery,
             chunks,
+            range_reader: None,
+        }
+    }
+
+    pub(crate) fn with_range_reader(
+        mut self,
+        range_reader: std::sync::Arc<dyn MediaByteRangeReader>,
+    ) -> Self {
+        self.range_reader = Some(range_reader);
+        self
+    }
+}
+
+#[async_trait]
+pub(crate) trait MediaByteRangeReader: Send + Sync {
+    async fn read_range(&self, start: u64, length: usize) -> Result<Box<[u8]>, BackendError>;
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MediaDelivery {
+    pub format: Option<String>,
+    pub bitrate_kbps: Option<u32>,
+    pub transcoded: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MediaQuality {
+    #[default]
+    Original,
+    Automatic,
+    Transcode {
+        format: TranscodeFormat,
+        bitrate_kbps: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscodeFormat {
+    Opus,
+    Mp3,
+    Aac,
+    Flac,
+}
+
+impl TranscodeFormat {
+    pub fn parameter(self) -> &'static str {
+        match self {
+            Self::Opus => "opus",
+            Self::Mp3 => "mp3",
+            Self::Aac => "aac",
+            Self::Flac => "flac",
         }
     }
 }
@@ -63,6 +118,7 @@ pub struct RemoteAlbumRef {
 #[derive(Clone, Debug)]
 pub struct RemoteAlbum {
     pub location: String,
+    pub artwork: Option<RemoteArtworkRef>,
     pub metadata: Metadata,
     pub tracks: Vec<RemoteTrack>,
 }
@@ -70,9 +126,23 @@ pub struct RemoteAlbum {
 #[derive(Clone, Debug)]
 pub struct RemoteTrack {
     pub location: String,
+    pub artwork: Option<RemoteArtworkRef>,
     pub duration_seconds: u64,
     pub metadata: Metadata,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RemoteArtworkRef {
+    pub location: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct RemoteArtworkData {
+    pub hash: u64,
+    pub bytes: Box<[u8]>,
+}
+
+pub(crate) type RemoteArtworkMap = HashMap<String, RemoteArtworkData>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackendInfo {
@@ -116,6 +186,8 @@ pub enum BackendError {
     MalformedResponse,
     #[error("The server response exceeded the size limit")]
     ResponseTooLarge,
+    #[error("Could not store downloaded media")]
+    Storage,
 }
 
 /// A remote library connection. Dropping a connection future cancels its network work.
@@ -126,6 +198,23 @@ pub trait LibraryBackend: Send + Sync {
     async fn catalog_page(&self, request: CatalogRequest) -> Result<CatalogPage, BackendError>;
     async fn album(&self, album: &RemoteAlbumRef) -> Result<RemoteAlbum, BackendError>;
     async fn media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+        Err(BackendError::Unsupported)
+    }
+    /// Fetch original media for an explicit offline download.
+    ///
+    /// This is separate from [`Self::media`] so a playback transcoding policy can never silently
+    /// turn an offline download into a lossy cached copy.
+    async fn original_media(&self, _location: &str) -> Result<MediaDescriptor, BackendError> {
+        Err(BackendError::Unsupported)
+    }
+    async fn media_at(
+        &self,
+        _location: &str,
+        _offset_seconds: f64,
+    ) -> Result<MediaDescriptor, BackendError> {
+        Err(BackendError::Unsupported)
+    }
+    async fn artwork(&self, _artwork: &RemoteArtworkRef) -> Result<Box<[u8]>, BackendError> {
         Err(BackendError::Unsupported)
     }
 }

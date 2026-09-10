@@ -162,10 +162,10 @@ impl Element for Slider {
             window.with_optional_element_state(
                 id,
                 #[allow(clippy::type_complexity)]
-                move |v: Option<Option<Rc<RefCell<(bool, Instant, f32)>>>>, cx| {
-                    let drag_state = v
-                        .flatten()
-                        .unwrap_or_else(|| Rc::new(RefCell::new((false, Instant::now(), 0.0))));
+                move |v: Option<Option<Rc<RefCell<(bool, Instant, f32, f32)>>>>, cx| {
+                    let drag_state = v.flatten().unwrap_or_else(|| {
+                        Rc::new(RefCell::new((false, Instant::now(), 0.0, 0.0)))
+                    });
                     let func = func.clone();
                     let func_move = func.clone();
                     let func_release = func.clone();
@@ -200,6 +200,7 @@ impl Element for Slider {
                         state.0 = true;
                         state.1 = Instant::now();
                         state.2 = value;
+                        state.3 = value;
                     });
 
                     let drag_state_2 = drag_state.clone();
@@ -221,6 +222,7 @@ impl Element for Slider {
                         if now.duration_since(state.1) >= min_interval {
                             (func_move.borrow_mut())(value, window, cx);
                             state.1 = now;
+                            state.3 = value;
                         }
                     });
 
@@ -229,8 +231,9 @@ impl Element for Slider {
 
                     cx.on_mouse_event(move |_ev: &MouseUpEvent, _, window, cx| {
                         let mut state = drag_state_3.borrow_mut();
-                        if state.0 && flush_on_release {
+                        if state.0 && flush_on_release && state.2 != state.3 {
                             (func_release.borrow_mut())(state.2, window, cx);
+                            state.3 = state.2;
                         }
                         state.0 = false;
                     });

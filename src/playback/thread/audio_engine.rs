@@ -1359,7 +1359,12 @@ mod tests {
         if change_rate {
             let mut reference = crate::playback::thread::decoder::Decoder::new();
             reference.open(&path).unwrap();
-            reference.seek(position as f64 / 1000.0).unwrap();
+            reference
+                .seek(
+                    position as f64 / 1000.0,
+                    &crate::media::traits::MediaSeekToken::new(),
+                )
+                .unwrap();
             let expected_position = reference.position_ms().unwrap();
             reference.close();
             while engine.media.is_seeking() {

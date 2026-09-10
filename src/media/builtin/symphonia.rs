@@ -38,7 +38,9 @@ use crate::{
             AudioBlock, AudioBlockError, AudioDiscontinuity, DecodeResult, MAX_AUDIO_CHANNELS,
             MAX_PACKET_FRAMES,
         },
-        traits::{MediaProvider, MediaProviderFeatures, MediaStream},
+        traits::{
+            MediaProvider, MediaProviderFeatures, MediaSeekControl, MediaSeekToken, MediaStream,
+        },
     },
 };
 
@@ -159,6 +161,8 @@ pub struct SymphoniaStream {
     loop_end_seconds: Option<f64>,
     pending_loop_seek: bool,
     needs_loop_start_trim: bool,
+    source_seekable: bool,
+    seek_control: Option<MediaSeekControl>,
 }
 
 /// Storage for a decoded packet that didn't fit in the caller's block.
@@ -410,6 +414,8 @@ impl SymphoniaProvider {
         source: Box<dyn crate::media::traits::MediaSource>,
         ext: Option<&OsStr>,
     ) -> Result<SymphoniaStream, OpenError> {
+        let source_seekable = source.is_seekable();
+        let seek_control = source.seek_control();
         struct Source(Box<dyn crate::media::traits::MediaSource>);
 
         impl std::io::Read for Source {
@@ -458,6 +464,8 @@ impl SymphoniaProvider {
 
         stream.read_base_metadata(&mut *format);
         stream.format = Some(format);
+        stream.source_seekable = source_seekable;
+        stream.seek_control = seek_control;
 
         Ok(stream)
     }
@@ -648,6 +656,17 @@ impl MediaStream for SymphoniaStream {
         }
 
         Ok(())
+    }
+
+    fn seek_with_token(&mut self, time: f64, token: &MediaSeekToken) -> Result<(), SeekError> {
+        if let Some(control) = &self.seek_control {
+            control.begin(token);
+        }
+        self.seek(time)
+    }
+
+    fn is_seekable(&self) -> bool {
+        self.source_seekable
     }
 
     fn channels(&self) -> Result<ChannelSpec, ChannelRetrievalError> {

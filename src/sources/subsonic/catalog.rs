@@ -5,7 +5,8 @@ use serde::Deserialize;
 use crate::{
     media::metadata::{Metadata, MetadataTag, apply_tag},
     sources::{
-        BackendError, CatalogPage, CatalogRequest, RemoteAlbum, RemoteAlbumRef, RemoteTrack,
+        BackendError, CatalogPage, CatalogRequest, RemoteAlbum, RemoteAlbumRef, RemoteArtworkRef,
+        RemoteTrack,
     },
 };
 
@@ -114,6 +115,7 @@ fn normalize_album(album: AlbumResponse, expected_id: &str) -> Result<RemoteAlbu
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RemoteAlbum {
         location: album.id,
+        artwork: artwork_ref(album.cover_art),
         metadata,
         tracks,
     })
@@ -171,9 +173,16 @@ fn normalize_song(
 
     Ok(RemoteTrack {
         location: song.id,
+        artwork: artwork_ref(song.cover_art),
         duration_seconds: song.duration.unwrap_or_default(),
         metadata,
     })
+}
+
+fn artwork_ref(location: Option<String>) -> Option<RemoteArtworkRef> {
+    location
+        .filter(|location| !location.trim().is_empty())
+        .map(|location| RemoteArtworkRef { location })
 }
 
 fn contributor_names(contributors: Vec<Contributor>) -> Vec<String> {
@@ -223,6 +232,7 @@ struct AlbumSummary {
 struct AlbumResponse {
     id: String,
     name: String,
+    cover_art: Option<String>,
     artist: Option<String>,
     sort_name: Option<String>,
     year: Option<u32>,
@@ -241,6 +251,7 @@ struct AlbumResponse {
 struct Song {
     id: String,
     title: String,
+    cover_art: Option<String>,
     album: Option<String>,
     artist: Option<String>,
     album_artist: Option<String>,

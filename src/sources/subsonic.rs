@@ -8,7 +8,7 @@ use crate::library::source::SourceId;
 
 use super::{
     BackendError, BackendInfo, CatalogPage, CatalogRequest, LibraryBackend, MediaDescriptor,
-    RemoteAlbum, RemoteAlbumRef, credentials::Credentials,
+    MediaQuality, RemoteAlbum, RemoteAlbumRef, RemoteArtworkRef, credentials::Credentials,
 };
 use client::SubsonicClient;
 use media::MediaReader;
@@ -20,6 +20,7 @@ pub struct SubsonicBackend {
     source: SourceId,
     client: SubsonicClient,
     media: MediaReader,
+    quality: MediaQuality,
 }
 
 impl SubsonicBackend {
@@ -35,7 +36,13 @@ impl SubsonicBackend {
             source,
             client: SubsonicClient::new(server, credentials)?,
             media: MediaReader::new()?,
+            quality: MediaQuality::Original,
         })
+    }
+
+    pub fn with_quality(mut self, quality: MediaQuality) -> Self {
+        self.quality = quality;
+        self
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -68,7 +75,35 @@ impl LibraryBackend for SubsonicBackend {
     }
 
     async fn media(&self, location: &str) -> Result<MediaDescriptor, BackendError> {
-        self.media.read(&self.client, location).await
+        self.media
+            .read(&self.client, location, self.quality, None, true)
+            .await
+    }
+
+    async fn original_media(&self, location: &str) -> Result<MediaDescriptor, BackendError> {
+        self.media
+            .read(&self.client, location, MediaQuality::Original, None, false)
+            .await
+    }
+
+    async fn media_at(
+        &self,
+        location: &str,
+        offset_seconds: f64,
+    ) -> Result<MediaDescriptor, BackendError> {
+        self.media
+            .read(
+                &self.client,
+                location,
+                self.quality,
+                Some(offset_seconds),
+                true,
+            )
+            .await
+    }
+
+    async fn artwork(&self, artwork: &RemoteArtworkRef) -> Result<Box<[u8]>, BackendError> {
+        self.media.artwork(&self.client, artwork).await
     }
 }
 

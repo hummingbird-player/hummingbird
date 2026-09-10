@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
 use url::Url;
 use zed_reqwest::{Client, StatusCode};
@@ -126,6 +126,13 @@ impl SubsonicClient {
         Ok(info)
     }
 
+    pub(super) async fn ensure_connected(&self) -> Result<(), BackendError> {
+        if self.discovery.lock().await.is_some() {
+            return Ok(());
+        }
+        self.connect().await.map(drop)
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn cached_info(&self) -> Option<BackendInfo> {
         self.discovery
@@ -146,6 +153,15 @@ impl SubsonicClient {
                     .map(|discovery| supports_api_key(&discovery.extensions))
             })
             .unwrap_or(false)
+    }
+
+    pub(super) async fn supports_extension(&self, name: &str, version: u32) -> bool {
+        self.discovery
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|discovery| discovery.extensions.get(name))
+            .is_some_and(|versions| versions.contains(&version))
     }
 
     pub(super) async fn request<T>(
@@ -174,6 +190,32 @@ impl SubsonicClient {
         let mut response = self
             .client
             .get(url)
+            .timeout(self.timeout)
+            .send()
+            .await
+            .map_err(network_error)?;
+        check_http_status(&response)?;
+        let body = read_body(&mut response).await?;
+        parse_response(&body)
+    }
+
+    pub(super) async fn post_json<T, B>(
+        &self,
+        endpoint: &str,
+        parameters: &[(&str, String)],
+        body: &B,
+    ) -> Result<ApiResponse<T>, BackendError>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let url = self.request_url(endpoint, true, parameters);
+        let body = serde_json::to_vec(body).map_err(|_| BackendError::InvalidRequest)?;
+        let mut response = self
+            .client
+            .post(url)
+            .header(zed_reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
             .timeout(self.timeout)
             .send()
             .await
@@ -286,15 +328,22 @@ pub(super) fn check_http_status(response: &zed_reqwest::Response) -> Result<(), 
 pub(super) async fn read_body(
     response: &mut zed_reqwest::Response,
 ) -> Result<Vec<u8>, BackendError> {
+    read_limited_body(response, RESPONSE_LIMIT).await
+}
+
+pub(super) async fn read_limited_body(
+    response: &mut zed_reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, BackendError> {
     if response
         .content_length()
-        .is_some_and(|length| length > RESPONSE_LIMIT as u64)
+        .is_some_and(|length| length > limit as u64)
     {
         return Err(BackendError::ResponseTooLarge);
     }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(network_error)? {
-        if chunk.len() > RESPONSE_LIMIT - body.len() {
+        if chunk.len() > limit - body.len() {
             return Err(BackendError::ResponseTooLarge);
         }
         body.extend_from_slice(&chunk);

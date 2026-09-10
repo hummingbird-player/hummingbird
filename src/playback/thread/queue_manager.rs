@@ -472,6 +472,24 @@ impl QueueManager {
         (position < self.len()).then_some(position)
     }
 
+    pub fn next_reference(&self) -> Option<TrackRef> {
+        let queue = self.queue.read().expect("poisoned queue lock");
+        if self.repeat == RepeatState::RepeatingOne {
+            return self
+                .queue_next
+                .checked_sub(1)
+                .and_then(|index| queue.get(index))
+                .map(|item| item.reference().clone());
+        }
+        Self::next_playable_from(&queue, self.queue_next)
+            .or_else(|| {
+                (self.repeat == RepeatState::Repeating)
+                    .then(|| Self::first_playable_index(&queue))
+                    .flatten()
+            })
+            .map(|index| queue[index].reference().clone())
+    }
+
     /// Get the current repeat state.
     pub fn repeat_state(&self) -> RepeatState {
         self.repeat

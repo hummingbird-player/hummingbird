@@ -38,6 +38,7 @@ fn test_player() -> (
         last_timestamp: u64::MAX,
         last_broadcast_timestamp: u64::MAX,
         position_broadcast_active: true,
+        resolver: crate::media::traits::local_media_resolver(),
         engine,
         queue: QueueManager::new(
             Arc::new(RwLock::new(Vec::new())),
@@ -131,6 +132,7 @@ struct FakeStream {
     reads: Arc<std::sync::atomic::AtomicUsize>,
     metadata_pending: bool,
     position: u64,
+    seek_delay: Duration,
     // deliberately not Send: only the factory crosses threads
     _local: Rc<()>,
 }
@@ -161,6 +163,7 @@ impl MediaStream for FakeStream {
     }
     fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         self.check_thread();
+        std::thread::sleep(self.seek_delay);
         self.position = (time * 1000.0) as u64;
         Ok(())
     }
@@ -234,6 +237,10 @@ impl BlockedOperation {
     fn blocks_open(self) -> bool {
         matches!(self, Self::OpenThenStop | Self::OpenThenSeek)
     }
+
+    fn delays_seek(self) -> bool {
+        matches!(self, Self::DecodeThenRecoverSeek)
+    }
 }
 
 fn blocked_operation(operation: BlockedOperation) {
@@ -277,6 +284,11 @@ fn blocked_operation(operation: BlockedOperation) {
                 reads: worker_reads.clone(),
                 metadata_pending: true,
                 position: 0,
+                seek_delay: if operation.delays_seek() {
+                    Duration::from_millis(350)
+                } else {
+                    Duration::ZERO
+                },
                 _local: Rc::new(()),
             }))
         }));
@@ -316,8 +328,13 @@ fn blocked_operation(operation: BlockedOperation) {
         BlockedOperation::DecodeThenRecoverSeek => {
             commands.send(PlaybackCommand::Seek(1.2)).unwrap();
             commands.send(PlaybackCommand::Seek(1.4)).unwrap();
+            let mut released_retired_worker = false;
             loop {
                 player.main_loop();
+                if !released_retired_worker && opened.lock().unwrap().len() == 2 {
+                    release.0.try_send(()).unwrap();
+                    released_retired_worker = true;
+                }
                 if player.engine.position_ms() == Some(1400) {
                     break;
                 }
@@ -331,6 +348,13 @@ fn blocked_operation(operation: BlockedOperation) {
             let opens = opened.lock().unwrap();
             assert_eq!(opens.len(), 2);
             assert_ne!(opens[0].1, opens[1].1);
+            drop(opens);
+            let stability_deadline = Instant::now() + Duration::from_millis(300);
+            while Instant::now() < stability_deadline {
+                player.main_loop();
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            assert_eq!(opened.lock().unwrap().len(), 2);
         }
         BlockedOperation::DecodeWhilePaused => {
             release.0.try_send(()).unwrap();

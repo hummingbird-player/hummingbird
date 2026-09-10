@@ -85,6 +85,7 @@ fn load_source_registry(
     restored_track: Option<(SourceId, usize)>,
 ) {
     for library in libraries.into_iter().filter(|library| library.enabled) {
+        let quality = library.media_quality();
         let Ok(reference) = CredentialRef::try_from(library.credential_reference) else {
             continue;
         };
@@ -101,7 +102,9 @@ fn load_source_registry(
             let Ok(server) = ServerUrl::parse(&library.address, HttpPolicy::HttpsOnly) else {
                 return;
             };
-            match SubsonicBackend::new(SourceId(library.id), server, credentials) {
+            match SubsonicBackend::new(SourceId(library.id), server, credentials)
+                .map(|backend| backend.with_quality(quality))
+            {
                 Ok(backend) => {
                     registry.register(Arc::new(backend));
                     if let Some(position) = restore_position {
@@ -519,7 +522,7 @@ pub fn run() -> anyhow::Result<()> {
         });
         #[cfg(feature = "libre-services")]
         let source_registry = {
-            let registry = SourceRegistry::new(paths::cache_dir());
+            let registry = SourceRegistry::new(paths::cache_dir(), paths::data_dir());
             cx.set_global(registry.clone());
             registry
         };

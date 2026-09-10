@@ -207,15 +207,11 @@ impl TableData<AlbumColumn> for Album {
     }
 
     fn get_image_path(&self) -> Option<SharedString> {
-        self.source
-            .is_local()
-            .then(|| format!("!db://album/{}/thumb", self.id).into())
+        Some(format!("!db://album/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        self.source
-            .is_local()
-            .then_some(ManagedImageKey::Album(self.id))
+        Some(ManagedImageKey::Album(self.id))
     }
 
     fn has_images() -> bool {
@@ -491,15 +487,11 @@ impl TableData<TrackColumn> for Track {
 
     fn get_image_path(&self) -> Option<SharedString> {
         // every track has its own artwork association (shared with the album when identical)
-        self.source
-            .is_local()
-            .then(|| format!("!db://track/{}/thumb", self.id).into())
+        Some(format!("!db://track/{}/thumb", self.id).into())
     }
 
     fn get_full_image_key(&self) -> Option<ManagedImageKey> {
-        self.source
-            .is_local()
-            .then_some(ManagedImageKey::Track(self.id))
+        Some(ManagedImageKey::Track(self.id))
     }
 
     fn has_images() -> bool {

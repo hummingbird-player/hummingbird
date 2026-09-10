@@ -1,14 +1,19 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use futures::{StreamExt, TryStreamExt, stream};
 use sqlx::SqlitePool;
 
-use crate::library::scan::database::{begin_remote_sync, finish_remote_sync, write_remote_batch};
+use crate::library::scan::database::{
+    begin_remote_sync, finish_remote_sync, write_remote_batch_with_artwork,
+};
 
-use super::{BackendError, CatalogRequest, LibraryBackend};
+use super::{
+    BackendError, CatalogRequest, LibraryBackend, RemoteAlbum, RemoteArtworkData, RemoteArtworkMap,
+};
 
 const CATALOG_PAGE_SIZE: usize = 100;
 const ALBUM_FETCH_CONCURRENCY: usize = 8;
+const ARTWORK_FETCH_CONCURRENCY: usize = 4;
 const MAX_CATALOG_PAGES: usize = 100_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,7 +56,8 @@ pub async fn import_catalog(
             .try_collect::<Vec<_>>()
             .await?;
 
-        write_remote_batch(pool, source, generation, &albums)
+        let artwork = fetch_artwork(backend, &albums).await;
+        write_remote_batch_with_artwork(pool, source, generation, &albums, &artwork)
             .await
             .map_err(|_| BackendError::Server)?;
 
@@ -78,6 +84,49 @@ pub async fn import_catalog(
     Err(BackendError::MalformedResponse)
 }
 
+async fn fetch_artwork(backend: &dyn LibraryBackend, albums: &[RemoteAlbum]) -> RemoteArtworkMap {
+    let references = albums
+        .iter()
+        .flat_map(|album| {
+            album.artwork.iter().chain(
+                album
+                    .tracks
+                    .iter()
+                    .filter_map(|track| track.artwork.as_ref()),
+            )
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    stream::iter(references)
+        .map(|artwork| async move {
+            let location = artwork.location.clone();
+            let result = backend.artwork(&artwork).await;
+            result
+                .map(|bytes| {
+                    let hash = xxhash_rust::xxh3::xxh3_64(&bytes);
+                    (location, RemoteArtworkData { hash, bytes })
+                })
+                .map_err(|error| (artwork, error))
+        })
+        .buffer_unordered(ARTWORK_FETCH_CONCURRENCY)
+        .filter_map(|result| async move {
+            match result {
+                Ok(artwork) => Some(artwork),
+                Err((artwork, error)) => {
+                    tracing::warn!(
+                        ?error,
+                        artwork = %artwork.location,
+                        "could not fetch remote artwork"
+                    );
+                    None
+                }
+            }
+        })
+        .collect::<HashMap<_, _>>()
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -92,7 +141,10 @@ mod tests {
     use async_trait::async_trait;
 
     use crate::{
-        library::{scan::database::remove_remote_source, source::SourceId},
+        library::{
+            scan::database::{remove_remote_source, write_remote_batch},
+            source::SourceId,
+        },
         media::metadata::Metadata,
         sources::{BackendInfo, CatalogPage, RemoteAlbum, RemoteAlbumRef, RemoteTrack},
         test_support::create_test_pool,
@@ -107,6 +159,11 @@ mod tests {
         delay: Duration,
         active_requests: AtomicUsize,
         max_active_requests: AtomicUsize,
+        artwork: HashMap<String, Result<Vec<u8>, BackendError>>,
+        artwork_delay: Duration,
+        artwork_requests: AtomicUsize,
+        active_artwork_requests: AtomicUsize,
+        max_active_artwork_requests: AtomicUsize,
     }
 
     impl FakeBackend {
@@ -125,6 +182,11 @@ mod tests {
                 delay: Duration::ZERO,
                 active_requests: AtomicUsize::new(0),
                 max_active_requests: AtomicUsize::new(0),
+                artwork: HashMap::new(),
+                artwork_delay: Duration::ZERO,
+                artwork_requests: AtomicUsize::new(0),
+                active_artwork_requests: AtomicUsize::new(0),
+                max_active_artwork_requests: AtomicUsize::new(0),
             }
         }
 
@@ -135,6 +197,27 @@ mod tests {
 
         fn max_active_requests(&self) -> usize {
             self.max_active_requests.load(Ordering::SeqCst)
+        }
+
+        fn with_artwork<I, K>(mut self, artwork: I) -> Self
+        where
+            I: IntoIterator<Item = (K, Result<Vec<u8>, BackendError>)>,
+            K: Into<String>,
+        {
+            self.artwork = artwork
+                .into_iter()
+                .map(|(location, result)| (location.into(), result))
+                .collect();
+            self
+        }
+
+        fn with_artwork_delay(mut self, delay: Duration) -> Self {
+            self.artwork_delay = delay;
+            self
+        }
+
+        fn max_active_artwork_requests(&self) -> usize {
+            self.max_active_artwork_requests.load(Ordering::SeqCst)
         }
     }
 
@@ -172,6 +255,32 @@ mod tests {
                 .cloned()
                 .ok_or(BackendError::NotFound)
         }
+
+        async fn artwork(
+            &self,
+            artwork: &super::super::RemoteArtworkRef,
+        ) -> Result<Box<[u8]>, BackendError> {
+            self.artwork_requests.fetch_add(1, Ordering::SeqCst);
+            let active = self.active_artwork_requests.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active_artwork_requests
+                .fetch_max(active, Ordering::SeqCst);
+            tokio::time::sleep(self.artwork_delay).await;
+            self.active_artwork_requests.fetch_sub(1, Ordering::SeqCst);
+            self.artwork
+                .get(&artwork.location)
+                .cloned()
+                .unwrap_or(Err(BackendError::NotFound))
+                .map(Vec::into_boxed_slice)
+        }
+    }
+
+    fn png(r: u8, g: u8, b: u8) -> Vec<u8> {
+        let image = image::RgbImage::from_pixel(16, 16, image::Rgb([r, g, b]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
     }
 
     fn album(id: &str, title: &str) -> RemoteAlbum {
@@ -190,9 +299,11 @@ mod tests {
 
         RemoteAlbum {
             location: id.into(),
+            artwork: None,
             metadata,
             tracks: vec![RemoteTrack {
                 location: format!("{id}-track"),
+                artwork: None,
                 duration_seconds: 180,
                 metadata: track_metadata,
             }],
@@ -209,6 +320,13 @@ mod tests {
                 .collect(),
             next_cursor: next_cursor.map(str::to_owned),
         })
+    }
+
+    fn with_artwork(mut album: RemoteAlbum, artwork: &str) -> RemoteAlbum {
+        album.artwork = Some(super::super::RemoteArtworkRef {
+            location: artwork.into(),
+        });
+        album
     }
 
     #[tokio::test]
@@ -230,6 +348,112 @@ mod tests {
         assert_eq!(result.tracks, 12);
         assert!(backend.max_active_requests() > 1);
         assert!(backend.max_active_requests() <= ALBUM_FETCH_CONCURRENCY);
+    }
+
+    #[tokio::test]
+    async fn stores_deduplicated_artwork_and_applies_album_fallback_to_tracks() {
+        let (_dir, pool) = create_test_pool("remote-import-artwork").await;
+        let albums = [
+            with_artwork(album("a", "A"), "shared-cover"),
+            with_artwork(album("b", "B"), "shared-cover"),
+        ];
+        let backend = FakeBackend::new("remote-a", [page(&["a", "b"], None)], albums.clone())
+            .with_artwork([("shared-cover", Ok(png(255, 0, 0)))]);
+
+        import_catalog(&backend, &pool, |_| {}).await.unwrap();
+
+        let links: Vec<(Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT album.artwork_id, track.artwork_id \
+             FROM album JOIN track ON track.album_id = album.id \
+             WHERE album.source = 'remote-a' ORDER BY album.title",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(
+            links
+                .iter()
+                .all(|(album, track)| album.is_some() && album == track)
+        );
+        assert_eq!(links[0].0, links[1].0);
+        let artwork_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(artwork_count, 1);
+        assert_eq!(backend.artwork_requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn artwork_failure_preserves_the_previous_image_and_missing_reference_clears_it() {
+        let (_dir, pool) = create_test_pool("remote-import-artwork-preserve").await;
+        let initial_album = with_artwork(album("a", "A"), "cover");
+        let initial = FakeBackend::new("remote-a", [page(&["a"], None)], [initial_album.clone()])
+            .with_artwork([("cover", Ok(png(0, 255, 0)))]);
+        import_catalog(&initial, &pool, |_| {}).await.unwrap();
+        let original_artwork: i64 =
+            sqlx::query_scalar("SELECT artwork_id FROM album WHERE source = 'remote-a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let unavailable = FakeBackend::new("remote-a", [page(&["a"], None)], [initial_album])
+            .with_artwork([("cover", Err(BackendError::Network))]);
+        import_catalog(&unavailable, &pool, |_| {}).await.unwrap();
+        let preserved_artwork: i64 =
+            sqlx::query_scalar("SELECT artwork_id FROM album WHERE source = 'remote-a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(preserved_artwork, original_artwork);
+
+        let removed = FakeBackend::new(
+            "remote-a",
+            [page(&["a"], None)],
+            [album("a", "A without art")],
+        );
+        import_catalog(&removed, &pool, |_| {}).await.unwrap();
+        let artwork: Option<i64> =
+            sqlx::query_scalar("SELECT artwork_id FROM album WHERE source = 'remote-a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(artwork, None);
+        let artwork_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(artwork_count, 0);
+    }
+
+    #[tokio::test]
+    async fn artwork_fetching_is_concurrent_with_a_fixed_bound() {
+        let (_dir, pool) = create_test_pool("remote-import-artwork-concurrency").await;
+        let albums = (0..8)
+            .map(|index| {
+                let artwork = format!("cover-{index}");
+                with_artwork(
+                    album(&format!("album-{index}"), &format!("Album {index}")),
+                    &artwork,
+                )
+            })
+            .collect::<Vec<_>>();
+        let ids = albums
+            .iter()
+            .map(|album| album.location.as_str())
+            .collect::<Vec<_>>();
+        let artwork = (0..8)
+            .map(|index| (format!("cover-{index}"), Ok(png(index, 0, 0))))
+            .collect::<Vec<_>>();
+        let backend = FakeBackend::new("remote-a", [page(&ids, None)], albums)
+            .with_artwork(artwork)
+            .with_artwork_delay(Duration::from_millis(10));
+
+        import_catalog(&backend, &pool, |_| {}).await.unwrap();
+
+        assert!(backend.max_active_artwork_requests() > 1);
+        assert!(backend.max_active_artwork_requests() <= ARTWORK_FETCH_CONCURRENCY);
     }
 
     #[tokio::test]

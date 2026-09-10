@@ -2,6 +2,7 @@ use cntp_i18n::tr;
 use gpui::SharedString;
 
 use super::connection_fields::AuthenticationMode;
+use crate::settings::services::{MusicLibraryAudioQuality, MusicLibraryTranscodeFormat};
 
 pub(super) fn address_error() -> SharedString {
     tr!(
@@ -66,6 +67,9 @@ pub(super) struct MusicLibrary {
     pub(super) credential_reference: SharedString,
     pub(super) enabled: bool,
     pub(super) report_playback: bool,
+    pub(super) audio_quality: MusicLibraryAudioQuality,
+    pub(super) transcode_format: MusicLibraryTranscodeFormat,
+    pub(super) transcode_bitrate: u32,
     pub(super) status: LibraryStatus,
     pub(super) error: Option<SharedString>,
 }
@@ -89,6 +93,9 @@ impl MusicLibrary {
             credential_reference: settings.credential_reference.clone().into(),
             enabled: settings.enabled,
             report_playback: settings.report_playback,
+            audio_quality: settings.audio_quality,
+            transcode_format: settings.transcode_format,
+            transcode_bitrate: settings.transcode_bitrate,
             status: if settings.enabled {
                 LibraryStatus::Updated
             } else {
@@ -108,6 +115,9 @@ impl MusicLibrary {
             credential_reference: self.credential_reference.to_string(),
             enabled: self.enabled,
             report_playback: self.report_playback,
+            audio_quality: self.audio_quality,
+            transcode_format: self.transcode_format,
+            transcode_bitrate: self.transcode_bitrate,
         }
     }
 }

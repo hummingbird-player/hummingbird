@@ -159,7 +159,7 @@ impl MusicLibrariesSettings {
             } => this.save_from_editor(
                 editor,
                 *index,
-                library.clone(),
+                library.as_ref().clone(),
                 replacement_secret.clone(),
                 cx,
             ),
@@ -224,6 +224,7 @@ impl MusicLibrariesSettings {
         cx: &mut Context<Self>,
     ) {
         let source = SourceId(library.id.to_string());
+        let quality = library.to_settings().media_quality();
         let server = ServerUrl::parse(library.address.as_ref(), HttpPolicy::HttpsOnly);
         let reference = CredentialRef::try_from(library.credential_reference.to_string());
         let credentials = match library.authentication {
@@ -239,6 +240,7 @@ impl MusicLibrariesSettings {
             .map_err(|error| error.to_string())
             .and_then(|server| {
                 SubsonicBackend::new(source.clone(), server, credentials.clone())
+                    .map(|backend| backend.with_quality(quality))
                     .map(Arc::new)
                     .map_err(|error| error.to_string())
             });
@@ -376,6 +378,9 @@ impl MusicLibrariesSettings {
                     if let Err(error) = cx.global::<SourceRegistry>().clear_cache(&source) {
                         tracing::warn!(?error, "failed to clear removed source cache");
                     }
+                    if let Err(error) = cx.global::<SourceRegistry>().clear_downloads(&source) {
+                        tracing::warn!(?error, "failed to clear removed source downloads");
+                    }
                     let pool = cx.global::<Pool>().0.clone();
                     let delete_credentials =
                         CredentialRef::try_from(library.credential_reference.to_string())
@@ -446,6 +451,7 @@ impl MusicLibrariesSettings {
         };
         let source_id = library.id.clone();
         let source = SourceId(source_id.to_string());
+        let quality = library.to_settings().media_quality();
         let server = ServerUrl::parse(library.address.as_ref(), HttpPolicy::HttpsOnly);
         let reference = CredentialRef::try_from(library.credential_reference.to_string());
         let read_credentials = reference
@@ -466,6 +472,7 @@ impl MusicLibrariesSettings {
                     .ok_or_else(|| "The saved credentials could not be found.".to_string())?;
                 let backend = Arc::new(
                     SubsonicBackend::new(source, server, credentials)
+                        .map(|backend| backend.with_quality(quality))
                         .map_err(|error| error.to_string())?,
                 );
                 let refresh_backend = backend.clone();

@@ -141,6 +141,80 @@ pub fn album_menu_for_table(
     (menu, Some(add_to.into_any_element()))
 }
 
+pub(crate) fn set_tracks_downloaded(
+    tracks: Vec<crate::library::source::TrackRef>,
+    downloaded: bool,
+    cx: &mut App,
+) {
+    #[cfg(feature = "libre-services")]
+    {
+        use futures::{StreamExt, stream};
+
+        let registry = cx.global::<crate::sources::SourceRegistry>().clone();
+        if !downloaded {
+            let mut failed = false;
+            for track in &tracks {
+                if let Err(error) = registry.remove_download(track) {
+                    failed = true;
+                    tracing::warn!(?error, track = %track, "failed to remove offline download");
+                }
+            }
+            if failed {
+                crate::toasts::emit_toast(crate::toasts::Toast::error(tr!(
+                    "OFFLINE_DOWNLOAD_REMOVE_ERROR",
+                    "Some offline downloads could not be removed."
+                )));
+            } else {
+                crate::toasts::emit_toast(crate::toasts::Toast::success(tr!(
+                    "OFFLINE_DOWNLOAD_REMOVED",
+                    "Offline download removed."
+                )));
+            }
+            cx.refresh_windows();
+            return;
+        }
+
+        let download_error = tr!(
+            "OFFLINE_DOWNLOAD_ERROR",
+            "Some music could not be saved for offline playback."
+        );
+        cx.spawn(async move |cx| {
+            let task = crate::RUNTIME.spawn(async move {
+                stream::iter(tracks)
+                    .map(|track| {
+                        let registry = registry.clone();
+                        async move { registry.download(&track).await }
+                    })
+                    .buffer_unordered(4)
+                    .collect::<Vec<_>>()
+                    .await
+            });
+            match task.await {
+                Ok(results) if results.iter().all(Result::is_ok) => {
+                    crate::toasts::emit_toast(crate::toasts::Toast::success(tr!(
+                        "OFFLINE_DOWNLOAD_COMPLETE",
+                        "Available offline."
+                    )));
+                }
+                Ok(results) => {
+                    for error in results.into_iter().filter_map(Result::err) {
+                        tracing::warn!(?error, "failed to download remote track");
+                    }
+                    crate::toasts::emit_toast(crate::toasts::Toast::error(download_error.clone()));
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "offline download task stopped");
+                    crate::toasts::emit_toast(crate::toasts::Toast::error(download_error));
+                }
+            }
+            cx.update(|cx| cx.refresh_windows());
+        })
+        .detach();
+    }
+    #[cfg(not(feature = "libre-services"))]
+    let _ = (tracks, downloaded, cx);
+}
+
 pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {
     if !is_track_available(cx, track) {
         return;
