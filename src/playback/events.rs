@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,7 +14,39 @@ use crate::{
 };
 
 use super::{queue::QueueItemData, thread::PlaybackState};
-use std::path::PathBuf;
+
+pub type SeekSerial = u64;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct SeekRequest {
+    pub position: f64,
+    pub serial: SeekSerial,
+}
+
+impl SeekRequest {
+    pub fn new(position: f64) -> Self {
+        static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
+
+        Self {
+            position,
+            serial: NEXT_SERIAL.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SeekResult {
+    Completed(SeekSerial),
+    Failed(SeekSerial),
+}
+
+impl SeekResult {
+    pub fn serial(self) -> SeekSerial {
+        match self {
+            Self::Completed(serial) | Self::Failed(serial) => serial,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize)]
 pub enum RepeatState {
@@ -63,7 +100,7 @@ pub enum PlaybackCommand {
     /// in the *unshuffled* queue, regardless of the current shuffle state.
     JumpUnshuffled(usize),
     /// Requests that the playback thread seek to the specified position in the current file.
-    Seek(f64),
+    Seek(SeekRequest),
     /// Requests that the playback thread set the volume to the specified level.
     SetVolume(f64),
     /// Requests that the playback thread replace the current queue with the specified queue.
@@ -128,6 +165,8 @@ pub enum PlaybackEvent {
     AlbumArtUpdate(Option<Box<[u8]>>),
     /// Indicates that the position in the current file has changed, in milliseconds.
     PositionChanged(u64),
+    /// Reports whether a numbered seek request completed or failed.
+    SeekFinished(SeekResult),
     /// Notification for when shuffling is disabled or enabled by the thread.
     ShuffleToggled(bool, usize),
     /// Indicates that repeat state has been changed.
@@ -138,4 +177,17 @@ pub enum PlaybackEvent {
     StopAfterCurrentChanged(bool),
     /// Indicates that the output stream's sample rate has changed.
     SampleRateChanged(u32),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SeekRequest;
+
+    #[test]
+    fn seek_request_serials_increase_process_wide() {
+        let first = SeekRequest::new(1.0);
+        let second = SeekRequest::new(2.0);
+
+        assert!(second.serial > first.serial);
+    }
 }

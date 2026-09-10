@@ -35,7 +35,7 @@ use crate::{
     },
     media::metadata::Metadata,
     playback::{
-        events::{PlaybackEvent, RepeatState},
+        events::{PlaybackEvent, RepeatState, SeekResult},
         interface::media_events::MediaProjection,
         queue::{QueueItemData, QueueItemUIData},
         thread::PlaybackState,
@@ -183,6 +183,7 @@ impl PartialEq<std::path::PathBuf> for CurrentTrack {
 pub struct PlaybackInfo {
     pub position: Entity<u64>,
     pub duration: Entity<u64>,
+    pub seek_result: Entity<Option<SeekResult>>,
     pub playback_state: Entity<PlaybackState>,
     pub current_track: Entity<Option<CurrentTrack>>,
     pub shuffling: Entity<bool>,
@@ -753,6 +754,7 @@ pub fn build_models(
 
     let position: Entity<u64> = cx.new(|_| 0);
     let duration: Entity<u64> = cx.new(|_| 0);
+    let seek_result = cx.new(|_| None);
     let default_playback_state = if initial_track.is_some() {
         PlaybackState::Paused
     } else {
@@ -770,6 +772,7 @@ pub fn build_models(
     cx.set_global(PlaybackInfo {
         position,
         duration,
+        seek_result,
         playback_state,
         current_track,
         shuffling,

@@ -99,6 +99,12 @@ fn execute(decoder: &mut Decoder, request: Request) -> Reply {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SeekOutcome {
+    Completed(Option<u64>),
+    Failed,
+}
+
 /// Sends work to the decoder thread and keeps the results needed by playback.
 /// The worker opens, uses, and closes the decoder; this controller never accesses it directly.
 ///
@@ -116,7 +122,7 @@ pub struct MediaController {
     cancelled_since: Option<Instant>,
     seek_target: Option<f64>,
     seek_token: Option<MediaSeekToken>,
-    seek_position: Option<Option<u64>>,
+    seek_outcome: Option<SeekOutcome>,
     busy: bool,
     /// Ignore the current operation's result when it arrives, even if more requests come in
     /// before it finishes.
@@ -210,7 +216,7 @@ impl MediaController {
             cancelled_since: None,
             seek_target: None,
             seek_token: None,
-            seek_position: None,
+            seek_outcome: None,
             busy: false,
             discard_reply: false,
             pending: None,
@@ -244,7 +250,7 @@ impl MediaController {
     }
 
     fn worker_failed(&mut self) {
-        self.cancel_seek();
+        self.fail_seek();
         self.failed = true;
         self.busy = false;
         self.cancelled_since = None;
@@ -328,7 +334,10 @@ impl MediaController {
                                 self.pending = Some(Request::Seek(time, token));
                             }
                         }
-                        Err(e) => self.opened = Some(Err(e)),
+                        Err(e) => {
+                            self.fail_seek();
+                            self.opened = Some(Err(e));
+                        }
                     },
                     Reply::Decode(block, result, snapshot) => {
                         self.ready = Some((block, result, snapshot));
@@ -336,12 +345,13 @@ impl MediaController {
                     Reply::Seek(result, snapshot, token) => {
                         token.complete();
                         self.seek_token = None;
-                        if result.is_ok() {
-                            self.seek_position = Some(snapshot.position);
-                        }
-                        if let Err(e) = result {
-                            tracing::warn!("decoder seek failed: {e}");
-                        }
+                        self.seek_outcome = Some(match result {
+                            Ok(()) => SeekOutcome::Completed(snapshot.position),
+                            Err(e) => {
+                                tracing::warn!("decoder seek failed: {e}");
+                                SeekOutcome::Failed
+                            }
+                        });
                         self.accept_snapshot(snapshot);
                         self.seek_target = None;
                     }
@@ -466,7 +476,7 @@ impl MediaController {
         self.free.clear();
         self.current_track = Some(track.clone());
         self.seek_target = None;
-        self.seek_position = None;
+        self.seek_outcome = None;
         self.seek_after_open = None;
         self.replace(Request::Open(track));
     }
@@ -482,7 +492,7 @@ impl MediaController {
     pub fn close(&mut self) {
         self.cancel_seek();
         self.seek_target = None;
-        self.seek_position = None;
+        self.seek_outcome = None;
         self.snapshot = None;
         self.seek_after_open = None;
         self.opened = None;
@@ -499,6 +509,7 @@ impl MediaController {
 
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         self.cancel_seek();
+        self.seek_outcome = None;
         let token = MediaSeekToken::new();
         self.seek_token = Some(token.clone());
         self.seek_target = Some(time);
@@ -508,10 +519,20 @@ impl MediaController {
                 return Ok(());
             }
             self.seek_token = None;
+            self.seek_target = None;
             return Err(SeekError::InvalidState);
         }
         self.replace(Request::Seek(time, token));
         Ok(())
+    }
+
+    fn fail_seek(&mut self) {
+        let had_target = self.seek_target.take().is_some();
+        let had_deferred_seek = self.seek_after_open.take().is_some();
+        self.cancel_seek();
+        if had_target || had_deferred_seek {
+            self.seek_outcome = Some(SeekOutcome::Failed);
+        }
     }
 
     fn cancel_seek(&mut self) {
@@ -547,8 +568,8 @@ impl MediaController {
         self.snapshot.as_mut()?.metadata.take()
     }
 
-    pub fn take_seek_position(&mut self) -> Option<Option<u64>> {
-        self.seek_position.take()
+    pub fn take_seek_outcome(&mut self) -> Option<SeekOutcome> {
+        self.seek_outcome.take()
     }
 
     pub fn is_seeking(&self) -> bool {

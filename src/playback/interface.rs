@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    events::{PlaybackCommand, PlaybackEvent},
+    events::{PlaybackCommand, PlaybackEvent, SeekRequest, SeekSerial},
     queue::QueueItemData,
     thread::PlaybackState,
 };
@@ -111,8 +111,11 @@ impl PlaybackInterface {
             .unwrap();
     }
 
-    pub fn seek(&self, position: f64) {
-        self.cmd_tx.send(PlaybackCommand::Seek(position)).unwrap();
+    pub fn seek(&self, position: f64) -> SeekSerial {
+        let request = SeekRequest::new(position);
+        let serial = request.serial;
+        self.cmd_tx.send(PlaybackCommand::Seek(request)).unwrap();
+        serial
     }
 
     pub fn set_volume(&self, volume: f64) {
@@ -267,6 +270,12 @@ impl PlaybackInterface {
                     PlaybackEvent::PositionChanged(v) => {
                         playback_info.position.update(cx, |m, cx| {
                             *m = v;
+                            cx.notify()
+                        });
+                    }
+                    PlaybackEvent::SeekFinished(result) => {
+                        playback_info.seek_result.update(cx, |m, cx| {
+                            *m = Some(result);
                             cx.notify()
                         });
                     }

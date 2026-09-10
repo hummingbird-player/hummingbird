@@ -21,7 +21,7 @@ use crate::{
             spectrum::{SpectrumTap, spectrum_tap},
         },
         events::PlaybackEvent,
-        thread::media_controller::CompleteMetadata,
+        thread::media_controller::{CompleteMetadata, SeekOutcome},
     },
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
 };
@@ -126,7 +126,7 @@ pub struct AudioEngine {
     previous_pipeline: Option<AudioPipeline>,
     previous_mixer: Option<ChannelMixer>,
     timing_delay_pending: bool,
-    seek_completed: bool,
+    seek_outcome: Option<SeekOutcome>,
     device_retry_at: Option<Instant>,
 }
 
@@ -163,7 +163,7 @@ impl AudioEngine {
             previous_pipeline: None,
             previous_mixer: None,
             timing_delay_pending: true,
-            seek_completed: false,
+            seek_outcome: None,
             device_retry_at: None,
         }
     }
@@ -216,7 +216,7 @@ impl AudioEngine {
             }
         }
         self.starts_track = true;
-        self.seek_completed = false;
+        self.seek_outcome = None;
         self.track_serial += 1;
         self.mixer = None;
         if !preserve_resampler {
@@ -396,9 +396,11 @@ impl AudioEngine {
         self.media
             .set_decode_enabled(self.state == EngineState::Playing && self.device.has_stream());
         self.media.poll();
-        if let Some(position) = self.media.take_seek_position() {
-            self.timing.seeked(position, self.track_serial);
-            self.seek_completed = true;
+        if let Some(outcome) = self.media.take_seek_outcome() {
+            if let SeekOutcome::Completed(position) = outcome {
+                self.timing.seeked(position, self.track_serial);
+            }
+            self.seek_outcome = Some(outcome);
         }
         if let Some(result) = self.media.take_opened() {
             let preserve = self.opening.take().unwrap_or(false);
@@ -497,7 +499,7 @@ impl AudioEngine {
 
     /// Seek to the specified time in seconds.
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
-        self.seek_completed = false;
+        self.seek_outcome = None;
         let result = self.media.seek(time);
         if result.is_ok() {
             self.timing.clear(self.timing.position);
@@ -559,8 +561,8 @@ impl AudioEngine {
             .map_err(|e| EngineError::DeviceError(format!("Failed to set RG: {:?}", e)))
     }
 
-    pub fn take_seek_completed(&mut self) -> bool {
-        std::mem::take(&mut self.seek_completed)
+    pub(super) fn take_seek_outcome(&mut self) -> Option<SeekOutcome> {
+        self.seek_outcome.take()
     }
 
     /// Position of the last frames accepted by the device, not the decoder's read position.

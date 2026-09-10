@@ -20,7 +20,7 @@ use crate::{
     media::metadata::Metadata,
     playback::{
         commands::CommandSender,
-        events::{PlaybackCommand, RepeatState},
+        events::{PlaybackCommand, RepeatState, SeekRequest},
         interface::PlaybackInterface,
         thread::PlaybackState,
     },
@@ -135,7 +135,7 @@ impl ControllerBridge {
 
     pub fn seek(&self, position: f64) {
         self.playback_thread
-            .send(PlaybackCommand::Seek(position))
+            .send(PlaybackCommand::Seek(SeekRequest::new(position)))
             .unwrap();
     }
 

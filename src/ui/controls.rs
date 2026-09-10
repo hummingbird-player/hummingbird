@@ -3,7 +3,9 @@ mod replaygain;
 use crate::{
     library::db::LibraryAccess,
     playback::{
-        events::RepeatState, interface::PlaybackInterface, queue::QueueItemUIData,
+        events::{RepeatState, SeekResult, SeekSerial},
+        interface::PlaybackInterface,
+        queue::QueueItemUIData,
         thread::PlaybackState,
     },
     settings::SettingsGlobal,
@@ -932,9 +934,65 @@ impl Render for PlaybackSection {
     }
 }
 
+#[derive(Debug, Default)]
+struct ScrubberState {
+    committed_position_ms: u64,
+    displayed_target_ms: Option<u64>,
+    pending_serial: Option<SeekSerial>,
+}
+
+impl ScrubberState {
+    fn displayed_position_ms(&self) -> u64 {
+        self.displayed_target_ms
+            .unwrap_or(self.committed_position_ms)
+    }
+
+    fn position_changed(&mut self, position_ms: u64) {
+        if self.pending_serial.is_none() {
+            self.committed_position_ms = position_ms;
+        }
+    }
+
+    fn seek_requested(&mut self, target_ms: u64, serial: SeekSerial) {
+        self.displayed_target_ms = Some(target_ms);
+        self.pending_serial = Some(serial);
+    }
+
+    fn seek_finished(&mut self, result: SeekResult, accepted_position_ms: u64) {
+        if self.pending_serial != Some(result.serial()) {
+            return;
+        }
+        if matches!(result, SeekResult::Completed(_)) {
+            self.committed_position_ms = accepted_position_ms;
+        }
+        self.displayed_target_ms = None;
+        self.pending_serial = None;
+    }
+
+    fn playback_state_changed(&mut self, playback_state: PlaybackState, position_ms: u64) -> bool {
+        if playback_state == PlaybackState::Stopped {
+            self.reset(position_ms);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn track_changed(&mut self, position_ms: u64) {
+        self.reset(position_ms);
+    }
+
+    fn reset(&mut self, position_ms: u64) {
+        self.committed_position_ms = position_ms;
+        self.displayed_target_ms = None;
+        self.pending_serial = None;
+    }
+}
+
 pub struct Scrubber {
     position: Entity<u64>,
     duration: Entity<u64>,
+    state: ScrubberState,
     playback_section: Entity<PlaybackSection>,
 }
 
@@ -943,8 +1001,13 @@ impl Scrubber {
         cx.new(|cx| {
             let position_model = cx.global::<PlaybackInfo>().position.clone();
             let duration_model = cx.global::<PlaybackInfo>().duration.clone();
+            let seek_result_model = cx.global::<PlaybackInfo>().seek_result.clone();
+            let playback_state_model = cx.global::<PlaybackInfo>().playback_state.clone();
+            let current_track_model = cx.global::<PlaybackInfo>().current_track.clone();
+            let initial_position = *position_model.read(cx);
 
-            cx.observe(&position_model, |_, _, cx| {
+            cx.observe(&position_model, |this: &mut Self, position, cx| {
+                this.state.position_changed(*position.read(cx));
                 cx.notify();
             })
             .detach();
@@ -954,25 +1017,73 @@ impl Scrubber {
             })
             .detach();
 
+            cx.observe(&seek_result_model, |this: &mut Self, result, cx| {
+                if let Some(result) = *result.read(cx) {
+                    let position_ms = *this.position.read(cx);
+                    this.state.seek_finished(result, position_ms);
+                    cx.notify();
+                }
+            })
+            .detach();
+
+            cx.observe(
+                &playback_state_model,
+                |this: &mut Self, playback_state, cx| {
+                    if this
+                        .state
+                        .playback_state_changed(*playback_state.read(cx), *this.position.read(cx))
+                    {
+                        cx.notify();
+                    }
+                },
+            )
+            .detach();
+
+            cx.observe(&current_track_model, |this: &mut Self, _, cx| {
+                this.state.track_changed(*this.position.read(cx));
+                cx.notify();
+            })
+            .detach();
+
             Self {
                 position: position_model,
                 duration: duration_model,
+                state: ScrubberState {
+                    committed_position_ms: initial_position,
+                    ..ScrubberState::default()
+                },
                 playback_section: PlaybackSection::new(cx),
             }
         })
+    }
+
+    fn seek_to_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
+        let duration_ms = *self.duration.read(cx);
+        let info = cx.global::<PlaybackInfo>();
+        if duration_ms == 0 || *info.playback_state.read(cx) == PlaybackState::Stopped {
+            return;
+        }
+
+        let target_seconds = f64::from(fraction) * duration_ms as f64 / 1_000.0;
+        let target_ms = (target_seconds * 1_000.0).round() as u64;
+        let serial = cx.global::<PlaybackInterface>().seek(target_seconds);
+        self.state.seek_requested(target_ms, serial);
+        cx.notify();
     }
 }
 
 impl Render for Scrubber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let position_ms = *self.position.read(cx);
+        let position_ms = self.state.displayed_position_ms();
         let duration_ms = *self.duration.read(cx);
         let position_secs = position_ms / 1_000;
         let duration_secs = duration_ms / 1_000;
         let remaining_secs = duration_secs.saturating_sub(position_secs);
 
         let window_width = window.viewport_size().width;
+        let scrubber_change = cx.weak_entity();
+        let scrubber_release = scrubber_change.clone();
 
         div()
             .pl(px(13.0))
@@ -1033,16 +1144,87 @@ impl Render for Scrubber {
                         0.0
                     })
                     .on_change(move |v, _, cx| {
-                        let info = cx.global::<PlaybackInfo>().clone();
-
-                        if duration_ms > 0
-                            && *info.playback_state.read(cx) != PlaybackState::Stopped
-                        {
-                            cx.global::<PlaybackInterface>()
-                                .seek(v as f64 * duration_ms as f64 / 1_000.0);
-                        }
+                        scrubber_change
+                            .update(cx, |this, cx| this.seek_to_fraction(v, cx))
+                            .ok();
+                    })
+                    .on_release(move |v, _, cx| {
+                        scrubber_release
+                            .update(cx, |this, cx| this.seek_to_fraction(v, cx))
+                            .ok();
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod scrubber_tests {
+    use super::{PlaybackState, ScrubberState};
+    use crate::playback::events::SeekResult;
+
+    #[test]
+    fn pointer_target_is_displayed_before_playback_replies() {
+        let mut state = ScrubberState {
+            committed_position_ms: 1_000,
+            ..ScrubberState::default()
+        };
+
+        state.seek_requested(8_000, 1);
+
+        assert_eq!(state.displayed_position_ms(), 8_000);
+        assert_eq!(state.committed_position_ms, 1_000);
+    }
+
+    #[test]
+    fn old_acknowledgements_and_position_updates_cannot_move_a_newer_target() {
+        let mut state = ScrubberState {
+            committed_position_ms: 1_000,
+            ..ScrubberState::default()
+        };
+        state.seek_requested(4_000, 1);
+        state.seek_requested(9_000, 2);
+
+        state.position_changed(4_000);
+        state.seek_finished(SeekResult::Completed(1), 4_000);
+
+        assert_eq!(state.displayed_position_ms(), 9_000);
+        assert_eq!(state.pending_serial, Some(2));
+    }
+
+    #[test]
+    fn matching_completion_commits_and_failure_returns_to_the_last_position() {
+        let mut state = ScrubberState {
+            committed_position_ms: 1_000,
+            ..ScrubberState::default()
+        };
+        state.seek_requested(8_000, 1);
+        state.seek_finished(SeekResult::Failed(1), 8_000);
+        assert_eq!(state.displayed_position_ms(), 1_000);
+
+        state.seek_requested(9_000, 2);
+        state.seek_finished(SeekResult::Completed(2), 8_750);
+        assert_eq!(state.displayed_position_ms(), 8_750);
+    }
+
+    #[test]
+    fn stop_and_track_change_clear_pending_targets() {
+        let mut state = ScrubberState {
+            committed_position_ms: 1_000,
+            ..ScrubberState::default()
+        };
+        state.seek_requested(8_000, 1);
+
+        assert!(!state.playback_state_changed(PlaybackState::Paused, 1_500));
+        assert_eq!(state.pending_serial, Some(1));
+
+        assert!(state.playback_state_changed(PlaybackState::Stopped, 1_500));
+        assert_eq!(state.displayed_position_ms(), 1_500);
+        assert_eq!(state.pending_serial, None);
+
+        state.seek_requested(9_000, 2);
+        state.track_changed(0);
+        assert_eq!(state.displayed_position_ms(), 0);
+        assert_eq!(state.pending_serial, None);
     }
 }
 

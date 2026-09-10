@@ -35,12 +35,13 @@ use crate::{
 };
 
 use super::{
-    events::{PlaybackCommand, PlaybackEvent},
+    events::{PlaybackCommand, PlaybackEvent, SeekResult, SeekSerial},
     interface::PlaybackInterface,
     queue::QueueItemData,
 };
 
 use audio_engine::{AudioEngine, EngineCycleResult, EngineState};
+use media_controller::SeekOutcome;
 use queue_manager::{
     DequeueManyResult, DequeueResult, InsertResult, JumpResult, MoveResult, QueueManager,
     QueueNavigationResult, ReplaceResult, Reshuffled, ShuffleResult, UndoResult,
@@ -95,6 +96,7 @@ pub struct PlaybackThread {
     last_broadcast_timestamp: u64,
     /// Whether position updates should be emitted at full frequency.
     position_broadcast_active: bool,
+    pending_seek_serial: Option<SeekSerial>,
     resolver: Arc<dyn MediaResolver>,
     engine: AudioEngine,
     queue: QueueManager,
@@ -170,6 +172,7 @@ impl PlaybackThread {
                     last_timestamp: u64::MAX,
                     last_broadcast_timestamp: u64::MAX,
                     position_broadcast_active: true,
+                    pending_seek_serial: None,
                     resolver,
                     engine: AudioEngine::with_resolver(engine_events_tx, tap, engine_resolver),
                     queue: queue_manager,
@@ -227,8 +230,16 @@ impl PlaybackThread {
 
         // Finish any deferred device work (e.g. an async pause fade) without blocking intake.
         self.engine.poll();
-        if self.engine.take_seek_completed() {
-            self.update_ts(true);
+        if let Some(outcome) = self.engine.take_seek_outcome() {
+            if matches!(outcome, SeekOutcome::Completed(_)) {
+                self.update_ts(true);
+            }
+            if let Some(serial) = self.pending_seek_serial.take() {
+                self.send_event(PlaybackEvent::SeekFinished(match outcome {
+                    SeekOutcome::Completed(_) => SeekResult::Completed(serial),
+                    SeekOutcome::Failed => SeekResult::Failed(serial),
+                }));
+            }
         }
         if let Some(result) = self.engine.take_opened() {
             match result {
@@ -321,7 +332,7 @@ impl PlaybackThread {
                 PlaybackCommand::ClearQueue => self.clear_queue(),
                 PlaybackCommand::Jump(v) => self.jump(v),
                 PlaybackCommand::JumpUnshuffled(v) => self.jump_unshuffled(v),
-                PlaybackCommand::Seek(v) => self.seek(v),
+                PlaybackCommand::Seek(request) => self.seek(request.position, Some(request.serial)),
                 PlaybackCommand::SetVolume(v) => self.set_volume(v),
                 PlaybackCommand::ReplaceQueue(v) => self.replace_queue(v),
                 PlaybackCommand::Stop => self.stop(),
@@ -412,6 +423,7 @@ impl PlaybackThread {
     ) -> Result<(), PlaybackStartError> {
         info!("Opening track '{}'", track.display());
 
+        self.fail_pending_seek();
         self.last_track_gain = None;
         self.last_album_gain = None;
 
@@ -557,7 +569,7 @@ impl PlaybackThread {
             && self.playback_settings.prev_track_jump_first
             && self.last_timestamp > 5_000
         {
-            self.seek(0_f64);
+            self.seek(0_f64, None);
             return;
         }
 
@@ -960,9 +972,18 @@ impl PlaybackThread {
     }
 
     /// Seek to the specified timestamp (in seconds).
-    fn seek(&mut self, timestamp: f64) {
+    fn seek(&mut self, timestamp: f64, serial: Option<SeekSerial>) {
+        self.fail_pending_seek();
+        self.pending_seek_serial = serial;
         if let Err(e) = self.engine.seek(timestamp) {
             warn!("Failed to seek: {:?}", e);
+            self.fail_pending_seek();
+        }
+    }
+
+    fn fail_pending_seek(&mut self) {
+        if let Some(serial) = self.pending_seek_serial.take() {
+            self.send_event(PlaybackEvent::SeekFinished(SeekResult::Failed(serial)));
         }
     }
 
@@ -1069,6 +1090,7 @@ impl PlaybackThread {
 
     fn publish_stopped(&mut self) {
         self.pending_tracks.clear();
+        self.fail_pending_seek();
         self.set_stop_after_current(false);
         self.last_track_gain = None;
         self.last_album_gain = None;

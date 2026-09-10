@@ -7,7 +7,10 @@ use crate::{
         pipeline::{AudioBlock, DecodeResult},
         traits::MediaStream,
     },
-    playback::tests::harness::{configure_dummy_device, engine_lock},
+    playback::{
+        events::{SeekRequest, SeekResult},
+        tests::harness::{configure_dummy_device, engine_lock},
+    },
 };
 use std::{
     rc::Rc,
@@ -38,6 +41,7 @@ fn test_player() -> (
         last_timestamp: u64::MAX,
         last_broadcast_timestamp: u64::MAX,
         position_broadcast_active: true,
+        pending_seek_serial: None,
         resolver: crate::media::traits::local_media_resolver(),
         engine,
         queue: QueueManager::new(
@@ -54,6 +58,15 @@ fn test_player() -> (
         no_progress_cycles: 0,
     };
     (player, commands, events)
+}
+
+fn take_seek_results(events: &mut UnboundedReceiver<PlaybackEvent>) -> Vec<SeekResult> {
+    std::iter::from_fn(|| events.try_recv().ok())
+        .filter_map(|event| match event {
+            PlaybackEvent::SeekFinished(result) => Some(result),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -133,6 +146,7 @@ struct FakeStream {
     metadata_pending: bool,
     position: u64,
     seek_delay: Duration,
+    fail_start: bool,
     // deliberately not Send: only the factory crosses threads
     _local: Rc<()>,
 }
@@ -156,7 +170,11 @@ impl MediaStream for FakeStream {
     }
     fn start_playback(&mut self) -> Result<(), PlaybackStartError> {
         self.check_thread();
-        Ok(())
+        if self.fail_start {
+            Err(PlaybackStartError::Undecodable)
+        } else {
+            Ok(())
+        }
     }
     fn stop_playback(&mut self) {
         self.check_thread();
@@ -227,6 +245,7 @@ impl MediaStream for FakeStream {
 #[derive(Clone, Copy)]
 enum BlockedOperation {
     OpenThenStop,
+    OpenThenFail,
     DecodeThenStop,
     OpenThenSeek,
     DecodeWhilePaused,
@@ -235,11 +254,18 @@ enum BlockedOperation {
 
 impl BlockedOperation {
     fn blocks_open(self) -> bool {
-        matches!(self, Self::OpenThenStop | Self::OpenThenSeek)
+        matches!(
+            self,
+            Self::OpenThenStop | Self::OpenThenFail | Self::OpenThenSeek
+        )
     }
 
     fn delays_seek(self) -> bool {
         matches!(self, Self::DecodeThenRecoverSeek)
+    }
+
+    fn fails_open(self) -> bool {
+        matches!(self, Self::OpenThenFail)
     }
 }
 
@@ -289,6 +315,7 @@ fn blocked_operation(operation: BlockedOperation) {
                 } else {
                     Duration::ZERO
                 },
+                fail_start: operation.fails_open(),
                 _local: Rc::new(()),
             }))
         }));
@@ -326,8 +353,10 @@ fn blocked_operation(operation: BlockedOperation) {
 
     match operation {
         BlockedOperation::DecodeThenRecoverSeek => {
-            commands.send(PlaybackCommand::Seek(1.2)).unwrap();
-            commands.send(PlaybackCommand::Seek(1.4)).unwrap();
+            let superseded = SeekRequest::new(1.2);
+            let latest = SeekRequest::new(1.4);
+            commands.send(PlaybackCommand::Seek(superseded)).unwrap();
+            commands.send(PlaybackCommand::Seek(latest)).unwrap();
             let mut released_retired_worker = false;
             loop {
                 player.main_loop();
@@ -355,6 +384,13 @@ fn blocked_operation(operation: BlockedOperation) {
                 std::thread::park_timeout(Duration::from_millis(1));
             }
             assert_eq!(opened.lock().unwrap().len(), 2);
+            assert_eq!(
+                take_seek_results(&mut events),
+                vec![
+                    SeekResult::Failed(superseded.serial),
+                    SeekResult::Completed(latest.serial),
+                ]
+            );
         }
         BlockedOperation::DecodeWhilePaused => {
             release.0.try_send(()).unwrap();
@@ -367,8 +403,10 @@ fn blocked_operation(operation: BlockedOperation) {
             assert!(capture.lock().unwrap().iter().all(Vec::is_empty));
         }
         BlockedOperation::OpenThenSeek => {
-            commands.send(PlaybackCommand::Seek(0.2)).unwrap();
-            commands.send(PlaybackCommand::Seek(0.4)).unwrap();
+            let superseded = SeekRequest::new(0.2);
+            let latest = SeekRequest::new(0.4);
+            commands.send(PlaybackCommand::Seek(superseded)).unwrap();
+            commands.send(PlaybackCommand::Seek(latest)).unwrap();
             player.main_loop();
             release.0.try_send(()).unwrap();
             loop {
@@ -382,6 +420,33 @@ fn blocked_operation(operation: BlockedOperation) {
                 );
             }
             assert_eq!(player.state(), PlaybackState::Paused);
+            assert_eq!(
+                take_seek_results(&mut events),
+                vec![
+                    SeekResult::Failed(superseded.serial),
+                    SeekResult::Completed(latest.serial),
+                ]
+            );
+        }
+        BlockedOperation::OpenThenFail => {
+            let request = SeekRequest::new(0.4);
+            commands.send(PlaybackCommand::Seek(request)).unwrap();
+            player.main_loop();
+            release.0.try_send(()).unwrap();
+            loop {
+                player.main_loop();
+                if player.state() == PlaybackState::Stopped {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "failed open did not stop playback"
+                );
+            }
+            assert_eq!(
+                take_seek_results(&mut events),
+                vec![SeekResult::Failed(request.serial)]
+            );
         }
         BlockedOperation::OpenThenStop | BlockedOperation::DecodeThenStop => {}
     }
@@ -430,8 +495,55 @@ fn blocked_operation(operation: BlockedOperation) {
 }
 
 #[test]
+fn seek_without_a_track_reports_the_matching_failure() {
+    let _guard = engine_lock();
+    configure_dummy_device(44_100, "S16", 2);
+    let (mut player, commands, mut events) = test_player();
+    let request = SeekRequest::new(1.0);
+    commands.send(PlaybackCommand::Seek(request)).unwrap();
+
+    player.main_loop();
+
+    assert_eq!(
+        take_seek_results(&mut events),
+        vec![SeekResult::Failed(request.serial)]
+    );
+}
+
+#[test]
+fn track_change_and_stop_report_pending_seek_failures() {
+    let _guard = engine_lock();
+    configure_dummy_device(44_100, "S16", 2);
+    let (mut player, _commands, mut events) = test_player();
+    player.open(&TrackRef::Local("first.wav".into())).unwrap();
+
+    let replaced = SeekRequest::new(0.2);
+    player.seek(replaced.position, Some(replaced.serial));
+    player.open(&TrackRef::Local("second.wav".into())).unwrap();
+    assert_eq!(player.pending_seek_serial, None);
+
+    let stopped = SeekRequest::new(0.4);
+    player.seek(stopped.position, Some(stopped.serial));
+    player.stop();
+    assert_eq!(player.pending_seek_serial, None);
+
+    assert_eq!(
+        take_seek_results(&mut events),
+        vec![
+            SeekResult::Failed(replaced.serial),
+            SeekResult::Failed(stopped.serial),
+        ]
+    );
+}
+
+#[test]
 fn blocked_open_does_not_block_playback_commands() {
     blocked_operation(BlockedOperation::OpenThenStop);
+}
+
+#[test]
+fn failed_open_reports_a_deferred_seek_failure() {
+    blocked_operation(BlockedOperation::OpenThenFail);
 }
 
 #[test]
