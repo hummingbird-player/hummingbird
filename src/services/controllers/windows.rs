@@ -243,7 +243,7 @@ impl PlaybackController for WindowsController {
     ) -> anyhow::Result<()> {
         let playback_state = match playback_state {
             PlaybackState::Stopped => MediaPlaybackStatus::Stopped,
-            PlaybackState::Playing => MediaPlaybackStatus::Playing,
+            PlaybackState::Playing | PlaybackState::Buffering => MediaPlaybackStatus::Playing,
             PlaybackState::Paused => MediaPlaybackStatus::Paused,
         };
 

@@ -14,7 +14,7 @@ use crate::{
         components::{
             context::context,
             icons::{
-                MENU, MICROPHONE, NEXT_TRACK, PAUSE, PLAY, PREV_TRACK, REPEAT, REPEAT_OFF,
+                MENU, MICROPHONE, NEXT_TRACK, PAUSE, PLAY, PREV_TRACK, REFRESH, REPEAT, REPEAT_OFF,
                 REPEAT_ONCE, SHUFFLE, STAR, STAR_FILLED, VOLUME, VOLUME_OFF, icon,
             },
             managed_image::{ManagedImageKey, managed_image},
@@ -780,11 +780,15 @@ impl Render for PlaybackSection {
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(Box::new(PlayPause), cx);
                                     })
+                                    .when(*state == PlaybackState::Buffering, |div| {
+                                        div.child(icon(REFRESH).size(px(16.0)))
+                                            .tooltip(build_tooltip(tr!("PAUSE")))
+                                    })
                                     .when(*state == PlaybackState::Playing, |div| {
                                         div.child(icon(PAUSE).size(px(16.0)))
                                             .tooltip(build_tooltip(tr!("PAUSE")))
                                     })
-                                    .when(*state != PlaybackState::Playing, |div| {
+                                    .when(!state.is_playing(), |div| {
                                         div.child(icon(PLAY).size(px(16.0)))
                                             .tooltip(build_tooltip(tr!("PLAY")))
                                     })

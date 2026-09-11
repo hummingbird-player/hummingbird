@@ -97,7 +97,7 @@ impl MprisControllerServer {
     async fn playback_status_int(&self) -> fdo::Result<PlaybackStatus> {
         let data = self.data.read().await;
         match data.last_playback_state {
-            Some(PlaybackState::Playing) => Ok(PlaybackStatus::Playing),
+            Some(PlaybackState::Playing | PlaybackState::Buffering) => Ok(PlaybackStatus::Playing),
             Some(PlaybackState::Paused) => Ok(PlaybackStatus::Paused),
             Some(PlaybackState::Stopped) => Ok(PlaybackStatus::Stopped),
             None => Ok(PlaybackStatus::Stopped),

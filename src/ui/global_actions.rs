@@ -254,7 +254,7 @@ fn play_pause(_: &PlayPause, cx: &mut App) {
         PlaybackState::Stopped => {
             interface.play();
         }
-        PlaybackState::Playing => {
+        PlaybackState::Playing | PlaybackState::Buffering => {
             interface.pause();
         }
         PlaybackState::Paused => {

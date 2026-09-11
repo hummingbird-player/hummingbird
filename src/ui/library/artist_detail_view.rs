@@ -12,7 +12,7 @@ use crate::{
         types::{Album, DBString, Track, table::AlbumColumn},
     },
     media::numbering::NumberDisplayMode,
-    playback::{queue::QueueItemData, thread::PlaybackState},
+    playback::queue::QueueItemData,
     ui::{
         availability::{has_available_tracks, snapshot},
         caching::hummingbird_cache,
@@ -429,8 +429,11 @@ impl Render for ArtistDetailView {
         let grid_render_counter = self.grid_render_counter.clone();
         let nav_model = self.nav_model.clone();
 
-        let is_playing =
-            cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let is_playing = cx
+            .global::<PlaybackInfo>()
+            .playback_state
+            .read(cx)
+            .is_playing();
         let availability = snapshot(cx);
 
         let current_track_in_artist = cx

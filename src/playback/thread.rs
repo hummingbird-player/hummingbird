@@ -68,7 +68,14 @@ pub enum PlaybackState {
     #[default]
     Stopped,
     Playing,
+    Buffering,
     Paused,
+}
+
+impl PlaybackState {
+    pub fn is_playing(self) -> bool {
+        matches!(self, Self::Playing | Self::Buffering)
+    }
 }
 
 impl From<EngineState> for PlaybackState {
@@ -108,6 +115,7 @@ pub struct PlaybackThread {
     /// Cached album gain from last metadata update.
     last_album_gain: Option<f64>,
     stop_after_current: bool,
+    buffering: bool,
     /// Consecutive no-progress cycles while playing; drives the backoff and skip.
     no_progress_cycles: u32,
 }
@@ -178,6 +186,7 @@ impl PlaybackThread {
                     last_track_gain: None,
                     last_album_gain: None,
                     stop_after_current: false,
+                    buffering: false,
                     no_progress_cycles: 0,
                 };
 
@@ -369,7 +378,7 @@ impl PlaybackThread {
                 warn!("Failed to pause: {:?}", e);
             }
 
-            self.send_event(PlaybackEvent::StateChanged(PlaybackState::Paused));
+            self.publish_state(PlaybackState::Paused);
         }
     }
 
@@ -387,7 +396,7 @@ impl PlaybackThread {
                 return;
             }
 
-            self.send_event(PlaybackEvent::StateChanged(PlaybackState::Playing));
+            self.publish_state(PlaybackState::Playing);
             return;
         }
 
@@ -446,7 +455,7 @@ impl PlaybackThread {
 
         self.update_ts(true);
 
-        self.send_event(PlaybackEvent::StateChanged(PlaybackState::Playing));
+        self.publish_state(PlaybackState::Playing);
 
         Ok(())
     }
@@ -1086,7 +1095,7 @@ impl PlaybackThread {
         self.last_track_gain = None;
         self.last_album_gain = None;
 
-        self.send_event(PlaybackEvent::StateChanged(PlaybackState::Stopped));
+        self.publish_state(PlaybackState::Stopped);
     }
 
     fn consume_current_track(&mut self) {
@@ -1185,18 +1194,22 @@ impl PlaybackThread {
     fn play_audio(&mut self) -> bool {
         match self.engine.process_cycle() {
             EngineCycleResult::Pending => {
+                self.set_buffering(self.engine.seek_is_buffering());
                 park_timeout(self.engine.pending_poll_delay());
                 true
             }
             EngineCycleResult::Continue => {
+                self.set_buffering(false);
                 self.update_ts(false);
                 true
             }
             EngineCycleResult::Backpressured => {
+                self.set_buffering(false);
                 park_timeout(std::time::Duration::from_millis(2));
                 true
             }
             EngineCycleResult::SourceEof => {
+                self.set_buffering(false);
                 self.process_metadata_update();
                 if !self.engine.source_has_pending_start() {
                     self.pending_tracks.pop_back();
@@ -1230,6 +1243,24 @@ impl PlaybackThread {
             }
             EngineCycleResult::NothingToDo => false,
         }
+    }
+
+    fn publish_state(&mut self, state: PlaybackState) {
+        self.buffering = false;
+        self.send_event(PlaybackEvent::StateChanged(state));
+    }
+
+    fn set_buffering(&mut self, buffering: bool) {
+        if self.buffering == buffering {
+            return;
+        }
+        self.buffering = buffering;
+        let state = if buffering {
+            PlaybackState::Buffering
+        } else {
+            self.state()
+        };
+        self.send_event(PlaybackEvent::StateChanged(state));
     }
 
     fn send_event(&mut self, event: PlaybackEvent) {

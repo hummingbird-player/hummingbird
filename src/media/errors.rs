@@ -62,6 +62,10 @@ pub enum TrackDurationError {
 pub enum SeekError {
     #[error("The media file is not valid and cannot be played")]
     InvalidState,
+    #[error("Seeking is not supported by this media")]
+    Unsupported,
+    #[error("Seek was cancelled")]
+    Cancelled,
     #[error("Unknown media provider error: `{0}`")]
     Unknown(String),
 }

@@ -99,9 +99,11 @@ impl MediaMetadataBroadcastService for ListenBrainz {
             MediaEvent::StateChanged(state) => {
                 let previous = self.progress.state;
                 self.progress.state = state;
-                if state != PlaybackState::Playing {
+                if matches!(state, PlaybackState::Paused | PlaybackState::Stopped) {
                     self.scrobble().await;
-                } else if previous != state {
+                } else if state == PlaybackState::Playing
+                    && !matches!(previous, PlaybackState::Playing | PlaybackState::Buffering)
+                {
                     self.now_playing().await;
                 }
                 if state == PlaybackState::Stopped {

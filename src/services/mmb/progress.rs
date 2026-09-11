@@ -65,6 +65,22 @@ mod tests {
     }
 
     #[test]
+    fn buffering_positions_do_not_count() {
+        let mut progress = ListenProgress {
+            state: PlaybackState::Playing,
+            ..ListenProgress::default()
+        };
+        progress.position_changed(0);
+        progress.position_changed(1);
+        progress.state = PlaybackState::Buffering;
+        progress.position_changed(2);
+        progress.position_changed(3);
+        progress.state = PlaybackState::Playing;
+        progress.position_changed(4);
+        assert_eq!(progress.accumulated, 2);
+    }
+
+    #[test]
     fn qualification_keeps_the_existing_thresholds() {
         let mut progress = ListenProgress {
             duration: 30,

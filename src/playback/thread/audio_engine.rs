@@ -191,6 +191,19 @@ impl AudioEngine {
         self.state
     }
 
+    pub fn seek_is_buffering(&self) -> bool {
+        self.media.is_seeking()
+            && self
+                .previous_pipeline
+                .as_ref()
+                .is_none_or(|pipeline| pipeline.device_input.potentially_available() == 0)
+            && self
+                .pipeline
+                .as_ref()
+                .is_none_or(|pipeline| pipeline.device_input.potentially_available() == 0)
+            && self.device.queued_frames() == 0
+    }
+
     #[cfg(test)]
     pub(super) fn replace_media(&mut self, media: MediaController) {
         self.media = media;
@@ -399,6 +412,7 @@ impl AudioEngine {
         if let Some(outcome) = self.media.take_seek_outcome() {
             if let SeekOutcome::Completed(position) = outcome {
                 self.timing.seeked(position, self.track_serial);
+                self.finish_seek();
             }
             self.seek_outcome = Some(outcome);
         }
@@ -500,26 +514,21 @@ impl AudioEngine {
     /// Seek to the specified time in seconds.
     pub fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         self.seek_outcome = None;
-        let result = self.media.seek(time);
-        if result.is_ok() {
-            self.timing.clear(self.timing.position);
-            self.previous_pipeline = None;
-            self.previous_mixer = None;
-            if let Some(pipeline) = &mut self.pipeline {
-                pipeline.flush_buffers();
-            }
-            self.reset_resampler();
-            // a seek out of the EOF region resumes normal decoding
-            self.drain = DrainState::Inactive;
-            self.rebuild_attempts = 0;
+        self.media.seek(time)
+    }
 
-            if self.state == EngineState::Playing {
-                self.flush_for_seek();
-            } else {
-                self.pending_reset = true;
-            }
+    fn finish_seek(&mut self) {
+        self.previous_pipeline = None;
+        self.previous_mixer = None;
+        self.drain = DrainState::Inactive;
+        self.rebuild_attempts = 0;
+
+        if self.state == EngineState::Playing {
+            self.flush_for_seek();
+        } else {
+            self.clear_seek_buffers();
+            self.pending_reset = true;
         }
-        result
     }
 
     /// Drop everything buffered before a seek: the device's own queue, both pipeline ring buffers,
@@ -533,18 +542,16 @@ impl AudioEngine {
             }
         }
 
-        if let Some(resampler) = &mut self.resampler {
-            resampler.reset();
-        }
-        if let Some(mixer) = &mut self.mixer {
-            mixer.reset();
-        }
+        self.clear_seek_buffers();
+        self.pending_reset = false;
+    }
+
+    fn clear_seek_buffers(&mut self) {
+        self.reset_resampler();
         self.eq.reset();
         if let Some(pipeline) = &mut self.pipeline {
             pipeline.flush_buffers();
         }
-
-        self.pending_reset = false;
     }
 
     /// Set the playback volume (0.0 to 1.0).
@@ -745,6 +752,10 @@ impl AudioEngine {
             EngineCycleResult::Continue => {}
             EngineCycleResult::Backpressured => return EngineCycleResult::Backpressured,
             other => return other,
+        }
+
+        if self.media.is_seeking() {
+            return EngineCycleResult::Pending;
         }
 
         let empty = match &self.pipeline {

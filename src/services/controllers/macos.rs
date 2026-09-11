@@ -175,7 +175,9 @@ impl MacMediaPlayerController {
             let media_center = MPNowPlayingInfoCenter::defaultCenter();
             media_center.setPlaybackState(match state {
                 PlaybackState::Stopped => MPNowPlayingPlaybackState::Stopped,
-                PlaybackState::Playing => MPNowPlayingPlaybackState::Playing,
+                PlaybackState::Playing | PlaybackState::Buffering => {
+                    MPNowPlayingPlaybackState::Playing
+                }
                 PlaybackState::Paused => MPNowPlayingPlaybackState::Paused,
             });
         }

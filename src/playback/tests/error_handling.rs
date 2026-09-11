@@ -31,9 +31,26 @@ fn seek_while_playing_flushes_and_continues() {
         engine.process_cycle();
     }
 
-    // seeking while playing must flush device + pipeline buffers and keep playing to EOF,
-    // rather than deferring the reset or hanging.
-    engine.seek(0.0).expect("seek while playing failed");
+    let resets_before_seek = dummy::reset_count();
+    engine.seek(0.1).expect("first seek while playing failed");
+    engine.seek(0.05).expect("second seek while playing failed");
+    engine.seek(0.0).expect("final seek while playing failed");
+    assert_eq!(
+        dummy::reset_count(),
+        resets_before_seek,
+        "queuing a seek must not reset the output device"
+    );
+    for _ in 0..MAX_CYCLES {
+        engine.process_cycle();
+        if dummy::reset_count() != resets_before_seek {
+            break;
+        }
+    }
+    assert_eq!(
+        dummy::reset_count(),
+        resets_before_seek + 1,
+        "the accepted seek must reset the output device once"
+    );
     run_to_eof(&mut engine, MAX_CYCLES);
     engine.stop();
 }

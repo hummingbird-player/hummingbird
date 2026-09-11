@@ -24,6 +24,14 @@ pub type CapturedPlanes = Arc<Mutex<Vec<Vec<f64>>>>;
 
 static CAPTURE: Mutex<Option<CapturedPlanes>> = Mutex::new(None);
 
+#[cfg(test)]
+static RESET_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub fn reset_count() -> usize {
+    RESET_COUNT.load(Ordering::Relaxed)
+}
+
 /// Install a sink that records every sample reaching the dummy device layer. Used by tests to
 /// capture the end result of the pipeline.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -256,6 +264,8 @@ impl OutputStream for DummyStream {
     }
 
     fn reset(&mut self) -> Result<(), crate::devices::errors::ResetError> {
+        #[cfg(test)]
+        RESET_COUNT.fetch_add(1, Ordering::Relaxed);
         debug!("Stream reset.");
         Ok(())
     }
@@ -331,6 +341,8 @@ impl OutputStream for BoundedDummyStream {
     }
 
     fn reset(&mut self) -> Result<(), crate::devices::errors::ResetError> {
+        #[cfg(test)]
+        RESET_COUNT.fetch_add(1, Ordering::Relaxed);
         self.fill = 0;
         Ok(())
     }

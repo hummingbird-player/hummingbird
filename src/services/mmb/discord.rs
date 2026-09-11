@@ -244,6 +244,9 @@ impl Discord {
                 self.update_start_time();
                 self.mark_dirty();
             }
+            PlaybackState::Buffering => {
+                self.needs_update_time = None;
+            }
             PlaybackState::Paused | PlaybackState::Stopped => {
                 self.needs_update_time = None;
                 self.clear_activity("paused/stopped playback").await;
@@ -457,6 +460,10 @@ mod tests {
 
         // ordinary progress doesn't send another update inside the rate limit
         discord.on_event(MediaEvent::PositionChanged(72)).await;
+        assert!(requests.try_recv().is_err());
+        discord
+            .on_event(MediaEvent::StateChanged(PlaybackState::Buffering))
+            .await;
         assert!(requests.try_recv().is_err());
         discord
             .on_event(MediaEvent::StateChanged(PlaybackState::Paused))

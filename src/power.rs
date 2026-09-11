@@ -46,7 +46,7 @@ impl PowerManagerInner {
     }
 
     fn set_state(&mut self, state: PlaybackState) {
-        let playing = state == PlaybackState::Playing;
+        let playing = state.is_playing();
         if self.playing == playing {
             return;
         }

@@ -14,7 +14,7 @@ use crate::{
             DBString, Track,
         },
     },
-    playback::{queue::QueueItemData, thread::PlaybackState},
+    playback::queue::QueueItemData,
     ui::{
         availability::{has_available_tracks, is_track_available, snapshot},
         caching::hummingbird_cache,
@@ -657,8 +657,11 @@ impl Render for ReleaseView {
 
         let theme = cx.global::<Theme>().clone();
 
-        let is_playing =
-            cx.global::<PlaybackInfo>().playback_state.read(cx) == &PlaybackState::Playing;
+        let is_playing = cx
+            .global::<PlaybackInfo>()
+            .playback_state
+            .read(cx)
+            .is_playing();
         let availability = snapshot(cx);
         // flag whether current track is part of the album
         let current_track_in_album = cx

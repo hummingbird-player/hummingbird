@@ -7,7 +7,7 @@ use symphonia::{
             audio::{AudioDecoder, AudioDecoderOptions},
             registry::CodecRegistry,
         },
-        errors::Error,
+        errors::{Error, SeekErrorKind},
         formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType, probe::Hint},
         io::MediaSourceStream,
         meta::{MetadataOptions, StandardTag, Tag, Visual},
@@ -162,6 +162,7 @@ pub struct SymphoniaStream {
     pending_loop_seek: bool,
     needs_loop_start_trim: bool,
     source_seekable: bool,
+    coarse_seek: bool,
     seek_control: Option<MediaSeekControl>,
 }
 
@@ -416,6 +417,7 @@ impl SymphoniaProvider {
     ) -> Result<SymphoniaStream, OpenError> {
         let source_seekable = source.is_seekable();
         let seek_control = source.seek_control();
+        let coarse_seek = source_seekable && seek_control.is_some();
         struct Source(Box<dyn crate::media::traits::MediaSource>);
 
         impl std::io::Read for Source {
@@ -465,9 +467,21 @@ impl SymphoniaProvider {
         stream.read_base_metadata(&mut *format);
         stream.format = Some(format);
         stream.source_seekable = source_seekable;
+        stream.coarse_seek = coarse_seek;
         stream.seek_control = seek_control;
 
         Ok(stream)
+    }
+}
+
+fn map_seek_error(error: Error) -> SeekError {
+    match error {
+        Error::IoError(error) if error.kind() == std::io::ErrorKind::ConnectionAborted => {
+            SeekError::Cancelled
+        }
+        Error::SeekError(SeekErrorKind::Unseekable | SeekErrorKind::ForwardOnly)
+        | Error::Unsupported(_) => SeekError::Unsupported,
+        error => SeekError::Unknown(error.to_string()),
     }
 }
 
@@ -633,21 +647,25 @@ impl MediaStream for SymphoniaStream {
             return Err(SeekError::InvalidState);
         };
 
-        self.pending_loop_seek = false;
-        self.needs_loop_start_trim = false;
-        self.conversion.clear();
-        self.pending_discontinuity = false;
-        self.decode_eof_pending = false;
-
         let seek = format
             .seek(
-                SeekMode::Accurate,
+                if self.coarse_seek {
+                    SeekMode::Coarse
+                } else {
+                    SeekMode::Accurate
+                },
                 SeekTo::Time {
                     time: Time::try_from_secs_f64(time).unwrap_or(Time::ZERO),
                     track_id: None,
                 },
             )
-            .map_err(|e| SeekError::Unknown(e.to_string()))?;
+            .map_err(map_seek_error)?;
+
+        self.pending_loop_seek = false;
+        self.needs_loop_start_trim = false;
+        self.conversion.clear();
+        self.pending_discontinuity = false;
+        self.decode_eof_pending = false;
 
         if let Some(timebase) = timebase
             && let Some(t) = timebase.calc_time(seek.actual_ts)
@@ -662,7 +680,12 @@ impl MediaStream for SymphoniaStream {
         if let Some(control) = &self.seek_control {
             control.begin(token);
         }
-        self.seek(time)
+        let result = self.seek(time);
+        if token.is_cancelled() {
+            Err(SeekError::Cancelled)
+        } else {
+            result
+        }
     }
 
     fn seek_control(&self) -> Option<MediaSeekControl> {
@@ -1060,6 +1083,37 @@ impl MediaStream for SymphoniaStream {
 mod tests {
     use super::*;
 
+    struct RangedRemoteFile {
+        file: std::fs::File,
+        control: MediaSeekControl,
+    }
+
+    impl std::io::Read for RangedRemoteFile {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            self.file.read(output)
+        }
+    }
+
+    impl std::io::Seek for RangedRemoteFile {
+        fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.file.seek(position)
+        }
+    }
+
+    impl crate::media::traits::MediaSource for RangedRemoteFile {
+        fn is_seekable(&self) -> bool {
+            true
+        }
+
+        fn byte_len(&self) -> Option<u64> {
+            self.file.metadata().ok().map(|metadata| metadata.len())
+        }
+
+        fn seek_control(&self) -> Option<MediaSeekControl> {
+            Some(self.control.clone())
+        }
+    }
+
     #[test]
     fn map_probe_error_treats_truncated_file_as_corrupt() {
         let err = Error::IoError(std::io::Error::new(
@@ -1081,6 +1135,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn map_seek_error_preserves_the_needed_distinctions() {
+        assert_eq!(
+            map_seek_error(Error::IoError(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "cancelled",
+            ))),
+            SeekError::Cancelled
+        );
+        assert_eq!(
+            map_seek_error(Error::SeekError(SeekErrorKind::Unseekable)),
+            SeekError::Unsupported
+        );
+        assert!(matches!(
+            map_seek_error(Error::SeekError(SeekErrorKind::OutOfRange)),
+            SeekError::Unknown(_)
+        ));
+    }
+
     fn open_fixture(name: &str) -> SymphoniaStream {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("assets/tests/audio-fixtures")
@@ -1089,6 +1162,38 @@ mod tests {
         SymphoniaProvider
             .open_stream(Box::new(file), path.extension())
             .unwrap()
+    }
+
+    fn open_ranged_fixture(name: &str) -> SymphoniaStream {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/tests/audio-fixtures")
+            .join(name);
+        let file = std::fs::File::open(&path).unwrap();
+        SymphoniaProvider
+            .open_stream(
+                Box::new(RangedRemoteFile {
+                    file,
+                    control: MediaSeekControl::new(None),
+                }),
+                path.extension(),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn ranged_remote_mp3_uses_coarse_seeks_repeatedly() {
+        let mut stream = open_ranged_fixture("fixture.mp3");
+        assert!(stream.coarse_seek);
+        assert!(!open_fixture("fixture.mp3").coarse_seek);
+        stream.start_playback().unwrap();
+        let duration = stream.duration_ms().unwrap();
+
+        for position_ms in [120, 30, 100, 10] {
+            stream
+                .seek_with_token(f64::from(position_ms) / 1000.0, &MediaSeekToken::new())
+                .unwrap();
+            assert!(stream.position_ms().unwrap() <= duration);
+        }
     }
 
     #[test]

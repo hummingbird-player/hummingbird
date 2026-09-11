@@ -54,6 +54,7 @@ fn test_player() -> (
         last_track_gain: None,
         last_album_gain: None,
         stop_after_current: false,
+        buffering: false,
         no_progress_cycles: 0,
     };
     (player, commands, events)
@@ -142,9 +143,11 @@ struct FakeStream {
     owner: std::thread::ThreadId,
     planes: Vec<Vec<f64>>,
     reads: Arc<std::sync::atomic::AtomicUsize>,
+    block_after_reads: usize,
     metadata_pending: bool,
     position: u64,
     seek_delay: Duration,
+    enter_seek: bool,
     fail_start: bool,
     seek_control: Option<MediaSeekControl>,
     // deliberately not Send: only the factory crosses threads
@@ -168,6 +171,11 @@ impl MediaStream for FakeStream {
     fn close(&mut self) {
         self.check_thread();
     }
+
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
     fn start_playback(&mut self) -> Result<(), PlaybackStartError> {
         self.check_thread();
         if self.fail_start {
@@ -181,6 +189,9 @@ impl MediaStream for FakeStream {
     }
     fn seek(&mut self, time: f64) -> Result<(), SeekError> {
         self.check_thread();
+        if self.enter_seek {
+            self.entered.send(()).unwrap();
+        }
         std::thread::sleep(self.seek_delay);
         self.position = (time * 1000.0) as u64;
         Ok(())
@@ -236,9 +247,12 @@ impl MediaStream for FakeStream {
     }
     fn decode_into(&mut self, output: &mut AudioBlock) -> Result<DecodeResult, PlaybackReadError> {
         self.check_thread();
-        self.reads
+        let read_index = self
+            .reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if let Some(control) = &self.seek_control {
+        if let Some(control) = &self.seek_control
+            && read_index >= self.block_after_reads
+        {
             let mut cancellation = control.receiver();
             self.entered.send(()).unwrap();
             futures::executor::block_on(async {
@@ -273,6 +287,7 @@ enum BlockedOperation {
     DecodeThenCancelStop,
     DecodeThenCancelOpen,
     DecodeThenRecoverSeek,
+    DecodeThenBufferSeek,
 }
 
 impl BlockedOperation {
@@ -284,7 +299,10 @@ impl BlockedOperation {
     }
 
     fn delays_seek(self) -> bool {
-        matches!(self, Self::DecodeThenRecoverSeek)
+        matches!(
+            self,
+            Self::DecodeThenRecoverSeek | Self::DecodeThenBufferSeek
+        )
     }
 
     fn cancellable_read(self) -> bool {
@@ -331,13 +349,19 @@ fn blocked_operation(operation: BlockedOperation) {
                 entered_tx.send(()).unwrap();
                 let _ = wait.recv();
             }
+            let read_gate = if operation == BlockedOperation::DecodeThenBufferSeek {
+                None
+            } else {
+                gate
+            };
             Ok(Box::new(FakeStream {
                 entered: entered_tx.clone(),
-                read_gate: gate,
+                read_gate,
                 cleanup: cleanup_tx.clone(),
                 owner: std::thread::current().id(),
                 planes: vec![vec![0.25; 882]; 2],
                 reads: worker_reads.clone(),
+                block_after_reads: 0,
                 metadata_pending: true,
                 position: 0,
                 seek_delay: if operation.delays_seek() {
@@ -345,6 +369,7 @@ fn blocked_operation(operation: BlockedOperation) {
                 } else {
                     Duration::ZERO
                 },
+                enter_seek: operation == BlockedOperation::DecodeThenBufferSeek,
                 fail_start: operation.fails_open(),
                 seek_control: operation
                     .cancellable_read()
@@ -360,24 +385,50 @@ fn blocked_operation(operation: BlockedOperation) {
         .send(PlaybackCommand::Open("blocked.wav".into()))
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        player.main_loop();
-        if entered.try_recv().is_ok() {
-            break;
+    if operation == BlockedOperation::DecodeThenBufferSeek {
+        loop {
+            player.main_loop();
+            let has_captured_audio = {
+                let capture = capture.lock().unwrap();
+                capture.iter().any(|channel| !channel.is_empty())
+            };
+            if has_captured_audio {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "buffered audio never reached the device"
+            );
         }
-        assert!(
-            Instant::now() < deadline,
-            "worker never entered the delayed call"
-        );
+    } else {
+        loop {
+            player.main_loop();
+            if entered.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker never entered the delayed call"
+            );
+        }
     }
     while events.try_recv().is_ok() {}
 
-    commands.send(PlaybackCommand::Pause).unwrap();
+    if operation != BlockedOperation::DecodeThenBufferSeek {
+        commands.send(PlaybackCommand::Pause).unwrap();
+    }
     commands.send(PlaybackCommand::SetVolume(0.25)).unwrap();
     let started = Instant::now();
     player.main_loop();
     assert!(started.elapsed() < Duration::from_millis(100));
-    assert_eq!(player.state(), PlaybackState::Paused);
+    assert_eq!(
+        player.state(),
+        if operation == BlockedOperation::DecodeThenBufferSeek {
+            PlaybackState::Playing
+        } else {
+            PlaybackState::Paused
+        }
+    );
     let mut saw_volume = false;
     while let Ok(event) = events.try_recv() {
         saw_volume |= matches!(event, PlaybackEvent::VolumeChanged(v) if v == 0.25);
@@ -436,6 +487,62 @@ fn blocked_operation(operation: BlockedOperation) {
                     SeekResult::Completed(latest.serial),
                 ]
             );
+        }
+        BlockedOperation::DecodeThenBufferSeek => {
+            let resets_before_seek = crate::devices::builtin::dummy::reset_count();
+            let request = SeekRequest::new(1.4);
+            commands.send(PlaybackCommand::Seek(request)).unwrap();
+
+            let mut buffering_events = 0;
+            while buffering_events == 0 {
+                player.main_loop();
+                while let Ok(event) = events.try_recv() {
+                    buffering_events +=
+                        usize::from(event == PlaybackEvent::StateChanged(PlaybackState::Buffering));
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "delayed seek never reported buffering"
+                );
+            }
+            assert_eq!(buffering_events, 1);
+            assert_eq!(
+                crate::devices::builtin::dummy::reset_count(),
+                resets_before_seek
+            );
+            assert_eq!(opened.lock().unwrap().len(), 1);
+
+            commands.send(PlaybackCommand::Pause).unwrap();
+            player.main_loop();
+            assert_eq!(player.state(), PlaybackState::Paused);
+
+            loop {
+                player.main_loop();
+                if player.engine.position_ms() == Some(1400) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "delayed seek did not complete while paused"
+                );
+            }
+            assert_eq!(
+                crate::devices::builtin::dummy::reset_count(),
+                resets_before_seek
+            );
+            assert_eq!(
+                take_seek_results(&mut events),
+                vec![SeekResult::Completed(request.serial)]
+            );
+
+            commands.send(PlaybackCommand::Play).unwrap();
+            player.main_loop();
+            assert_eq!(player.state(), PlaybackState::Playing);
+            assert_eq!(
+                crate::devices::builtin::dummy::reset_count(),
+                resets_before_seek + 1
+            );
+            assert_eq!(opened.lock().unwrap().len(), 1);
         }
         BlockedOperation::DecodeWhilePaused => {
             release.0.try_send(()).unwrap();
@@ -542,7 +649,17 @@ fn blocked_operation(operation: BlockedOperation) {
         assert!(Instant::now() < deadline, "late decoder was not cleaned up");
     }
     assert_eq!(player.state(), PlaybackState::Stopped);
-    assert!(capture.lock().unwrap().iter().all(Vec::is_empty));
+    if operation == BlockedOperation::DecodeThenBufferSeek {
+        assert!(
+            capture
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|channel| !channel.is_empty())
+        );
+    } else {
+        assert!(capture.lock().unwrap().iter().all(Vec::is_empty));
+    }
     while let Ok(event) = events.try_recv() {
         assert!(!matches!(
             event,
@@ -638,6 +755,11 @@ fn paused_decode_completion_does_not_request_more_audio() {
 #[test]
 fn a_cancellable_remote_read_does_not_trigger_worker_recovery() {
     blocked_operation(BlockedOperation::DecodeThenCancelSeek);
+}
+
+#[test]
+fn a_delayed_seek_reports_buffering_and_preserves_pause_intent() {
+    blocked_operation(BlockedOperation::DecodeThenBufferSeek);
 }
 
 #[test]

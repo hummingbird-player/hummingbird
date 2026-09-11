@@ -100,6 +100,12 @@ pub(super) async fn exercise_listens(service: &mut impl MediaMetadataBroadcastSe
             .await;
     }
     service
+        .on_event(MediaEvent::StateChanged(PlaybackState::Buffering))
+        .await;
+    service
+        .on_event(MediaEvent::StateChanged(PlaybackState::Playing))
+        .await;
+    service
         .on_event(MediaEvent::StateChanged(PlaybackState::Paused))
         .await;
     for position in 29..=40 {

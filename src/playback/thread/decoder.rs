@@ -40,6 +40,7 @@ pub struct Decoder {
     media_stream: Option<Box<dyn MediaStream>>,
     resolver: Arc<dyn MediaResolver>,
     current_track: Option<TrackRef>,
+    track_duration_ms: Option<u64>,
     timeline_offset_ms: u64,
     #[cfg(test)]
     pub(super) opener: Option<MediaOpener>,
@@ -55,6 +56,7 @@ impl Decoder {
             media_stream: None,
             resolver,
             current_track: None,
+            track_duration_ms: None,
             timeline_offset_ms: 0,
             #[cfg(test)]
             opener: None,
@@ -81,6 +83,9 @@ impl Decoder {
                 duration_ms: stream.duration_ms().ok(),
             };
             self.media_stream = Some(stream);
+            self.current_track = Some(track);
+            self.track_duration_ms = info.duration_ms;
+            self.timeline_offset_ms = 0;
             return Ok(info);
         }
 
@@ -112,6 +117,7 @@ impl Decoder {
 
         self.media_stream = Some(media_stream);
         self.current_track = Some(track);
+        self.track_duration_ms = duration_ms;
         self.timeline_offset_ms = 0;
 
         Ok(MediaInfo {
@@ -127,44 +133,45 @@ impl Decoder {
             stream.close();
         }
         self.current_track = None;
+        self.track_duration_ms = None;
         self.timeline_offset_ms = 0;
     }
 
     /// Seek to the specified time in seconds.
     pub fn seek(&mut self, time: f64, token: &MediaSeekToken) -> Result<(), SeekError> {
-        let seek_in_place = self
-            .current_track
-            .as_ref()
-            .is_some_and(|track| !track.source().is_local())
+        let timeline_offset = self.timeline_offset_ms as f64 / 1000.0;
+        if time >= timeline_offset
             && self
                 .media_stream
                 .as_ref()
-                .is_some_and(|stream| stream.is_seekable());
-        if seek_in_place {
+                .is_some_and(|stream| stream.is_seekable())
+        {
             let result = self
                 .media_stream
                 .as_mut()
                 .expect("the seekable stream was present")
-                .seek_with_token(time, token);
-            if result.is_ok() {
-                token.complete();
-            }
-            return result;
+                .seek_with_token(time - timeline_offset, token);
+            return match result {
+                Ok(()) if token.complete() => Ok(()),
+                Ok(()) => Err(SeekError::Cancelled),
+                Err(_) if token.is_cancelled() => Err(SeekError::Cancelled),
+                Err(error) => Err(error),
+            };
         }
         if let Some(track) = self.current_track.as_ref() {
             let input = self
                 .resolver
                 .resolve_at(track, time, token)
-                .map_err(|error| SeekError::Unknown(error.to_string()))?;
+                .map_err(|error| seek_failure(token, error))?;
             if let Some(input) = input {
                 let timeline_offset = input.timeline_offset_seconds.max(0.0);
                 let mut replacement =
                     try_open_input(input.input, MediaProviderFeatures::PROVIDES_DECODER)
-                        .map_err(|error| SeekError::Unknown(error.to_string()))?
+                        .map_err(|error| seek_failure(token, error))?
                         .ok_or_else(|| SeekError::Unknown("No media provider found".into()))?;
                 replacement
                     .start_playback()
-                    .map_err(|error| SeekError::Unknown(error.to_string()))?;
+                    .map_err(|error| seek_failure(token, error))?;
                 let relative_time = (time - timeline_offset).max(0.0);
                 if relative_time > 0.0
                     && let Err(error) = replacement.seek_with_token(relative_time, token)
@@ -176,7 +183,7 @@ impl Decoder {
                 if !token.complete() {
                     replacement.stop_playback();
                     replacement.close();
-                    return Err(SeekError::Unknown("remote seek replaced".into()));
+                    return Err(SeekError::Cancelled);
                 }
                 if let Some(mut previous) = self.media_stream.replace(replacement) {
                     previous.stop_playback();
@@ -185,16 +192,9 @@ impl Decoder {
                 self.timeline_offset_ms = (timeline_offset * 1000.0) as u64;
                 return Ok(());
             }
+            return Err(SeekError::Unsupported);
         }
-        if let Some(stream) = &mut self.media_stream {
-            let result = stream.seek(time);
-            if result.is_ok() {
-                token.complete();
-            }
-            result
-        } else {
-            Err(SeekError::InvalidState)
-        }
+        Err(SeekError::InvalidState)
     }
 
     /// Decode audio samples into the provided reusable block.
@@ -241,7 +241,8 @@ impl Decoder {
     }
 
     pub fn duration_ms(&self) -> Option<u64> {
-        self.media_stream.as_ref()?.duration_ms().ok()
+        self.media_stream.as_ref()?;
+        self.track_duration_ms
     }
 
     pub(super) fn seek_control(&self) -> Option<MediaSeekControl> {
@@ -278,6 +279,14 @@ impl Decoder {
     }
 }
 
+fn seek_failure(token: &MediaSeekToken, error: impl ToString) -> SeekError {
+    if token.is_cancelled() {
+        SeekError::Cancelled
+    } else {
+        SeekError::Unknown(error.to_string())
+    }
+}
+
 impl Default for Decoder {
     fn default() -> Self {
         Self::new()
@@ -299,7 +308,7 @@ mod tests {
     use crate::{
         library::source::{SourceId, TrackRef},
         media::{
-            errors::PlaybackStartError,
+            errors::{PlaybackStartError, SeekError},
             pipeline::AudioBlock,
             traits::{MediaInput, MediaResolver, MediaSeekInput, MediaSeekToken, MediaSource},
         },
@@ -440,8 +449,85 @@ mod tests {
         }
     }
 
+    struct FragmentResolver {
+        initial: PathBuf,
+        replacement: PathBuf,
+        offsets: Mutex<Vec<f64>>,
+    }
+
+    struct NoReplacementResolver(PathBuf);
+
+    struct CancelledResolver(PathBuf);
+
+    impl MediaResolver for NoReplacementResolver {
+        fn resolve(&self, _track: &TrackRef) -> Result<MediaInput, PlaybackStartError> {
+            Ok(MediaInput {
+                source: Box::new(
+                    File::open(&self.0)
+                        .map(NonSeekableFile)
+                        .map_err(|error| PlaybackStartError::MediaError(error.to_string()))?,
+                ),
+                extension: self.0.extension().map(Into::into),
+            })
+        }
+    }
+
+    impl MediaResolver for CancelledResolver {
+        fn resolve(&self, _track: &TrackRef) -> Result<MediaInput, PlaybackStartError> {
+            Ok(MediaInput {
+                source: Box::new(
+                    File::open(&self.0)
+                        .map(NonSeekableFile)
+                        .map_err(|error| PlaybackStartError::MediaError(error.to_string()))?,
+                ),
+                extension: self.0.extension().map(Into::into),
+            })
+        }
+
+        fn resolve_at(
+            &self,
+            _track: &TrackRef,
+            _time: f64,
+            token: &MediaSeekToken,
+        ) -> Result<Option<MediaSeekInput>, PlaybackStartError> {
+            token.cancel();
+            Err(PlaybackStartError::MediaError("request cancelled".into()))
+        }
+    }
+
+    impl MediaResolver for FragmentResolver {
+        fn resolve(&self, _track: &TrackRef) -> Result<MediaInput, PlaybackStartError> {
+            Ok(MediaInput {
+                source: Box::new(
+                    File::open(&self.initial)
+                        .map(NonSeekableFile)
+                        .map_err(|error| PlaybackStartError::MediaError(error.to_string()))?,
+                ),
+                extension: self.initial.extension().map(Into::into),
+            })
+        }
+
+        fn resolve_at(
+            &self,
+            _track: &TrackRef,
+            time: f64,
+            _token: &MediaSeekToken,
+        ) -> Result<Option<MediaSeekInput>, PlaybackStartError> {
+            self.offsets.lock().unwrap().push(time);
+            MediaInput::file(&self.replacement)
+                .map(|input| Some(MediaSeekInput::exact(input, time)))
+                .map_err(|error| PlaybackStartError::MediaError(error.to_string()))
+        }
+    }
+
+    fn fixture_named(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/tests/audio-fixtures")
+            .join(name)
+    }
+
     fn fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/tests/audio-fixtures/fixture.flac")
+        fixture_named("fixture.flac")
     }
 
     fn track() -> TrackRef {
@@ -476,6 +562,45 @@ mod tests {
     }
 
     #[test]
+    fn offset_fragment_preserves_the_initial_track_duration() {
+        crate::test_support::register_test_media_providers();
+        let initial = fixture_named("fixture.flac");
+        let replacement = fixture_named("fixture.aac");
+        let mut replacement_probe = Decoder::new();
+        let replacement_duration = replacement_probe.open(&replacement).unwrap().duration_ms;
+        replacement_probe.close();
+        let resolver = Arc::new(FragmentResolver {
+            initial,
+            replacement,
+            offsets: Mutex::new(Vec::new()),
+        });
+        let mut decoder = Decoder::with_resolver(resolver.clone());
+        let initial_duration = decoder.open(track()).unwrap().duration_ms;
+        assert_ne!(initial_duration, replacement_duration);
+
+        decoder.seek(0.1, &MediaSeekToken::new()).unwrap();
+
+        assert_eq!(decoder.duration_ms(), initial_duration);
+        assert!(decoder.position_ms().unwrap() >= 100);
+
+        decoder.seek(0.14, &MediaSeekToken::new()).unwrap();
+
+        assert_eq!(decoder.duration_ms(), initial_duration);
+        let position = decoder.position_ms().unwrap();
+        assert!(
+            (100..=initial_duration.unwrap()).contains(&position),
+            "reported position was {position}"
+        );
+        assert_eq!(*resolver.offsets.lock().unwrap(), [0.1]);
+
+        decoder.seek(0.05, &MediaSeekToken::new()).unwrap();
+
+        assert_eq!(*resolver.offsets.lock().unwrap(), [0.1, 0.05]);
+        assert_eq!(decoder.duration_ms(), initial_duration);
+        assert!(decoder.position_ms().unwrap() >= 50);
+    }
+
+    #[test]
     fn failed_transport_seek_keeps_the_current_stream_open() {
         crate::test_support::register_test_media_providers();
         let resolver = Arc::new(OffsetResolver {
@@ -491,7 +616,10 @@ mod tests {
 
         assert!(decoder.seek(3.0, &MediaSeekToken::new()).is_err());
         assert_eq!(decoder.duration_ms(), duration);
-        assert!(decoder.channels().is_ok());
+        let mut block =
+            AudioBlock::new(decoder.channels().unwrap(), decoder.sample_rate().unwrap()).unwrap();
+        decoder.decode_into(&mut block).unwrap();
+        assert_ne!(block.frames(), 0);
     }
 
     #[test]
@@ -585,6 +713,40 @@ mod tests {
             resolver.offsets.lock().unwrap().is_empty(),
             "a failed in-place range seek must not reopen from byte zero"
         );
-        assert!(decoder.channels().is_ok());
+        fail.store(false, Ordering::SeqCst);
+        let mut block =
+            AudioBlock::new(decoder.channels().unwrap(), decoder.sample_rate().unwrap()).unwrap();
+        assert!(decoder.decode_into(&mut block).is_ok());
+        assert_ne!(block.frames(), 0);
+    }
+
+    #[test]
+    fn a_nonseekable_stream_without_a_replacement_reports_unsupported() {
+        crate::test_support::register_test_media_providers();
+        let resolver = Arc::new(NoReplacementResolver(fixture()));
+        let mut decoder = Decoder::with_resolver(resolver);
+        decoder.open(track()).unwrap();
+
+        assert_eq!(
+            decoder.seek(0.05, &MediaSeekToken::new()),
+            Err(SeekError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn cancelled_replacement_is_reported_without_replacing_the_stream() {
+        crate::test_support::register_test_media_providers();
+        let resolver = Arc::new(CancelledResolver(fixture()));
+        let mut decoder = Decoder::with_resolver(resolver);
+        decoder.open(track()).unwrap();
+
+        assert_eq!(
+            decoder.seek(0.05, &MediaSeekToken::new()),
+            Err(SeekError::Cancelled)
+        );
+        let mut block =
+            AudioBlock::new(decoder.channels().unwrap(), decoder.sample_rate().unwrap()).unwrap();
+        decoder.decode_into(&mut block).unwrap();
+        assert_ne!(block.frames(), 0);
     }
 }

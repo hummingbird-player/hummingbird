@@ -107,7 +107,7 @@ impl Lyrics {
             let playback_state = cx.global::<PlaybackInfo>().playback_state.clone();
 
             cx.observe(&playback_state, |this, state, cx| {
-                if *state.read(cx) == PlaybackState::Playing {
+                if state.read(cx).is_playing() {
                     this.register_user_interaction();
                 }
 
@@ -244,14 +244,14 @@ impl Render for Lyrics {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, _, cx| {
-                        if playback_state == PlaybackState::Playing {
+                        if playback_state.is_playing() {
                             this.register_user_interaction();
                         }
                         cx.notify();
                     }),
                 )
                 .on_scroll_wheel(cx.listener(move |this, _, _, cx| {
-                    if playback_state == PlaybackState::Playing {
+                    if playback_state.is_playing() {
                         this.register_user_interaction();
                     }
                     cx.notify();
