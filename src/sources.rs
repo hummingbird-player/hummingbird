@@ -48,9 +48,8 @@ impl MediaDescriptor {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct MediaByteRange {
-    pub bytes: Box<[u8]>,
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
     pub total_len: u64,
 }
 

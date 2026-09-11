@@ -5,7 +5,12 @@ use super::{
     media::{MAX_MEDIA_REDIRECTS, is_safe_media_redirect, parse_content_range},
     *,
 };
-use crate::sources::{MediaQuality, RemoteArtworkRef, TranscodeFormat, credentials::Secret};
+use crate::{
+    library::source::SourceId,
+    sources::{
+        MediaByteRange, MediaQuality, RemoteArtworkRef, TranscodeFormat, credentials::Secret,
+    },
+};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -121,6 +126,11 @@ impl Server {
                     assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
                     continue;
                 }
+                let stall_after = reply
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("x-fixture-stall-after"))
+                    .map(|(_, value)| value.parse::<usize>().unwrap());
                 let mut headers = format!(
                     "HTTP/1.1 {} Response\r\nConnection: close\r\n",
                     reply.status
@@ -138,10 +148,20 @@ impl Server {
                     headers.push_str(&format!("Content-Length: {}\r\n", reply.body.len()));
                 }
                 for (key, value) in reply.headers {
+                    if key.eq_ignore_ascii_case("x-fixture-stall-after") {
+                        continue;
+                    }
                     headers.push_str(&format!("{key}: {value}\r\n"));
                 }
                 headers.push_str("\r\n");
                 if stream.write_all(headers.as_bytes()).await.is_ok() {
+                    if let Some(stall_after) = stall_after {
+                        assert!(stall_after <= reply.body.len());
+                        let _ = stream.write_all(&reply.body[..stall_after]).await;
+                        let mut byte = [0];
+                        assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
+                        continue;
+                    }
                     if reply.stall_body {
                         let mut byte = [0];
                         assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
@@ -210,6 +230,17 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+async fn collect_range(
+    range: Result<MediaByteRange, BackendError>,
+) -> Result<(Box<[u8]>, u64), BackendError> {
+    let mut range = range?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = range.chunks.recv().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    Ok((bytes.into_boxed_slice(), range.total_len))
 }
 
 fn password() -> Credentials {
@@ -823,7 +854,7 @@ async fn range_reads_reject_servers_that_ignore_the_range_header() {
     let range_reader = media.range_reader.unwrap();
 
     assert_eq!(
-        range_reader.read_range(3, 2).await,
+        collect_range(range_reader.read_range(3, 2).await).await,
         Err(BackendError::Unsupported)
     );
 }
@@ -865,12 +896,85 @@ async fn omitted_accept_ranges_is_probed_only_when_a_range_is_requested() {
     );
     server.assert_no_detailed_request().await;
 
-    let range = range_reader.read_range(3, 2).await.unwrap();
-    assert_eq!(&*range.bytes, b"34");
-    assert_eq!(range.total_len, 10);
+    let (bytes, total_len) = collect_range(range_reader.read_range(3, 2).await)
+        .await
+        .unwrap();
+    assert_eq!(&*bytes, b"34");
+    assert_eq!(total_len, 10);
     let request = server.detailed_request().await;
     assert_eq!(request.headers["range"], "bytes=3-4");
     assert_eq!(request.headers["if-range"], "\"audio-v1\"");
+}
+
+#[tokio::test]
+async fn range_chunks_arrive_progressively_and_dropping_them_cancels_the_response() {
+    let mut server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+                ("X-Fixture-Stall-After", "1".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let reader = backend
+        .media("song/id")
+        .await
+        .unwrap()
+        .range_reader
+        .unwrap();
+
+    let mut stalled = reader.read_range(3, 2).await.unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(2), stalled.chunks.recv())
+        .await
+        .expect("the first range chunk should not wait for the complete response")
+        .unwrap()
+        .unwrap();
+    assert_eq!(&*first, b"3");
+    drop(stalled);
+
+    let (bytes, total_len) = tokio::time::timeout(
+        Duration::from_secs(2),
+        collect_range(reader.read_range(3, 2).await),
+    )
+    .await
+    .expect("dropping the first stream should cancel its gated response")
+    .unwrap();
+    assert_eq!(&*bytes, b"34");
+    assert_eq!(total_len, 10);
+
+    server.detailed_request().await;
+    let first_range = server.detailed_request().await;
+    let second_range = server.detailed_request().await;
+    assert_eq!(first_range.headers["range"], "bytes=3-4");
+    assert_eq!(second_range.headers["range"], "bytes=3-4");
+    server.assert_no_detailed_request().await;
 }
 
 #[tokio::test]
@@ -903,9 +1007,68 @@ async fn content_range_supplies_an_unknown_initial_length() {
 
     let media = backend.media("song/id").await.unwrap();
     assert_eq!(media.byte_len, None);
-    let range = media.range_reader.unwrap().read_range(7, 8).await.unwrap();
-    assert_eq!(&*range.bytes, b"789");
-    assert_eq!(range.total_len, 10);
+    let (bytes, total_len) = collect_range(media.range_reader.unwrap().read_range(7, 8).await)
+        .await
+        .unwrap();
+    assert_eq!(&*bytes, b"789");
+    assert_eq!(total_len, 10);
+}
+
+#[tokio::test]
+async fn a_partial_range_pins_an_unknown_representation_length() {
+    let server = Server::new(vec![
+        Reply {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "audio/flac".into()),
+                ("Transfer-Encoding", "chunked".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"0123456789".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 3-4/10".into()),
+                ("ETag", "\"audio-v1\"".into()),
+                ("X-Fixture-Stall-After", "1".into()),
+            ],
+            body: b"34".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply {
+            status: 206,
+            headers: vec![
+                ("Content-Range", "bytes 5-6/11".into()),
+                ("ETag", "\"audio-v1\"".into()),
+            ],
+            body: b"56".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server.backend(password());
+    let media = backend.media("song/id").await.unwrap();
+    assert_eq!(media.byte_len, None);
+    let reader = media.range_reader.unwrap();
+
+    let mut first = reader.read_range(3, 2).await.unwrap();
+    let prefix = tokio::time::timeout(Duration::from_secs(2), first.chunks.recv())
+        .await
+        .expect("the partial range prefix should arrive")
+        .unwrap()
+        .unwrap();
+    assert_eq!(&*prefix, b"3");
+    drop(first);
+
+    assert_eq!(
+        collect_range(reader.read_range(5, 2).await).await,
+        Err(BackendError::RepresentationChanged)
+    );
 }
 
 #[tokio::test]
@@ -978,7 +1141,7 @@ async fn changed_same_sized_media_is_not_combined_with_old_ranges() {
         .unwrap();
 
     assert_eq!(
-        range_reader.read_range(3, 2).await,
+        collect_range(range_reader.read_range(3, 2).await).await,
         Err(BackendError::RepresentationChanged)
     );
 }
@@ -1023,7 +1186,7 @@ async fn weak_or_malformed_returned_etags_are_representation_changes() {
             .unwrap();
 
         assert_eq!(
-            reader.read_range(3, 2).await,
+            collect_range(reader.read_range(3, 2).await).await,
             Err(BackendError::RepresentationChanged)
         );
     }
@@ -1063,7 +1226,7 @@ async fn changed_media_length_is_not_combined_with_old_ranges() {
         .unwrap();
 
     assert_eq!(
-        range_reader.read_range(3, 2).await,
+        collect_range(range_reader.read_range(3, 2).await).await,
         Err(BackendError::RepresentationChanged)
     );
 }
@@ -1134,7 +1297,7 @@ async fn malformed_range_headers_lengths_and_encodings_are_rejected() {
             .range_reader
             .unwrap();
         assert_eq!(
-            reader.read_range(3, 2).await,
+            collect_range(reader.read_range(3, 2).await).await,
             Err(BackendError::MalformedResponse),
             "malformed range fixture {index} was accepted"
         );
@@ -1184,9 +1347,12 @@ async fn an_expired_signed_url_is_refreshed_once_without_forwarding_credentials(
         .range_reader
         .unwrap();
 
-    let range = reader.read_range(3, 2).await.unwrap();
-    assert_eq!(&*range.bytes, b"34");
-    assert_eq!(reader.read_range(5, 2).await, Err(BackendError::Forbidden));
+    let (bytes, _) = collect_range(reader.read_range(3, 2).await).await.unwrap();
+    assert_eq!(&*bytes, b"34");
+    assert_eq!(
+        collect_range(reader.read_range(5, 2).await).await,
+        Err(BackendError::Forbidden)
+    );
 
     let authenticated = server.detailed_request().await;
     assert_eq!(authenticated.url.path(), "/proxy/music/rest/stream.view");
@@ -1248,7 +1414,7 @@ async fn a_refreshed_signed_url_must_confirm_the_existing_validator() {
         .unwrap();
 
     assert_eq!(
-        reader.read_range(3, 2).await,
+        collect_range(reader.read_range(3, 2).await).await,
         Err(BackendError::RepresentationChanged)
     );
 }
@@ -1315,7 +1481,7 @@ async fn cancelling_a_signed_url_refresh_does_not_consume_the_refresh_budget() {
 
     let cancelled = {
         let reader = reader.clone();
-        tokio::spawn(async move { reader.read_range(3, 2).await })
+        tokio::spawn(async move { collect_range(reader.read_range(3, 2).await).await })
     };
     let expired = server.detailed_request().await;
     assert_eq!(query(&expired.url)["token"], "old");
@@ -1326,11 +1492,14 @@ async fn cancelling_a_signed_url_refresh_does_not_consume_the_refresh_budget() {
     cancelled.abort();
     assert!(cancelled.await.unwrap_err().is_cancelled());
 
-    let range = tokio::time::timeout(Duration::from_secs(2), reader.read_range(3, 2))
-        .await
-        .expect("the cancelled refresh should release its reservation")
-        .unwrap();
-    assert_eq!(&*range.bytes, b"34");
+    let (bytes, _) = tokio::time::timeout(
+        Duration::from_secs(2),
+        collect_range(reader.read_range(3, 2).await),
+    )
+    .await
+    .expect("the cancelled refresh should release its reservation")
+    .unwrap();
+    assert_eq!(&*bytes, b"34");
     let second_expiry = server.detailed_request().await;
     assert_eq!(query(&second_expiry.url)["token"], "old");
     let second_refresh = server.detailed_request().await;
@@ -1375,9 +1544,18 @@ async fn a_failed_signed_url_refresh_consumes_the_refresh_budget() {
         .range_reader
         .unwrap();
 
-    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Timeout));
-    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Forbidden));
-    assert_eq!(reader.read_range(3, 2).await, Err(BackendError::Forbidden));
+    assert_eq!(
+        collect_range(reader.read_range(3, 2).await).await,
+        Err(BackendError::Timeout)
+    );
+    assert_eq!(
+        collect_range(reader.read_range(3, 2).await).await,
+        Err(BackendError::Forbidden)
+    );
+    assert_eq!(
+        collect_range(reader.read_range(3, 2).await).await,
+        Err(BackendError::Forbidden)
+    );
 
     let initial = server.detailed_request().await;
     assert_eq!(initial.url.path(), "/proxy/music/rest/stream.view");
@@ -1428,7 +1606,13 @@ async fn one_transient_range_failure_is_retried() {
         .range_reader
         .unwrap();
 
-    assert_eq!(&*reader.read_range(3, 2).await.unwrap().bytes, b"34");
+    assert_eq!(
+        &*collect_range(reader.read_range(3, 2).await)
+            .await
+            .unwrap()
+            .0,
+        b"34"
+    );
     assert_eq!(
         server.detailed_request().await.url.path(),
         "/proxy/music/rest/stream.view"
@@ -1662,7 +1846,10 @@ async fn media_redirects_are_followed_without_replaying_subsonic_credentials() {
     }
     assert_eq!(bytes, b"redirected audio");
     assert_eq!(
-        &*range_reader.read_range(3, 5).await.unwrap().bytes,
+        &*collect_range(range_reader.read_range(3, 5).await)
+            .await
+            .unwrap()
+            .0,
         b"irect"
     );
 

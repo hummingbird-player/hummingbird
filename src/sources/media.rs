@@ -363,6 +363,7 @@ impl SourceRegistry {
             .map(|backend| (backend, epoch))
     }
 
+    #[cfg(test)]
     fn backend(&self, source: &SourceId) -> Option<Arc<dyn LibraryBackend>> {
         self.backend_with_epoch(source).map(|(backend, _)| backend)
     }
@@ -458,6 +459,7 @@ impl SourceRegistry {
             source: Box::new(StreamingMediaSource {
                 chunks: Some(descriptor.chunks),
                 range_reader: descriptor.range_reader,
+                range_window: None,
                 current: Cursor::new(Box::<[u8]>::default()),
                 current_start: 0,
                 position: 0,
@@ -768,6 +770,7 @@ impl Drop for TemporaryDownloads {
 struct StreamingMediaSource {
     chunks: Option<tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>>,
     range_reader: Option<Arc<dyn MediaByteRangeReader>>,
+    range_window: Option<RangeWindow>,
     current: Cursor<Box<[u8]>>,
     current_start: u64,
     position: u64,
@@ -775,6 +778,14 @@ struct StreamingMediaSource {
     range_window_bytes: usize,
     range_lookbehind_bytes: usize,
     seek_control: MediaSeekControl,
+}
+
+struct RangeWindow {
+    start: u64,
+    end: u64,
+    bytes: Vec<u8>,
+    chunks: tokio::sync::mpsc::Receiver<Result<Box<[u8]>, BackendError>>,
+    complete: bool,
 }
 
 impl StreamingMediaSource {
@@ -795,8 +806,70 @@ impl StreamingMediaSource {
 
 impl Read for StreamingMediaSource {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
         loop {
             let mut cancellation = self.active_cancellation()?;
+            if let Some(window) = &mut self.range_window {
+                let offset = usize::try_from(self.position.saturating_sub(window.start))
+                    .unwrap_or(usize::MAX);
+                if offset < window.bytes.len() {
+                    let read = output.len().min(window.bytes.len() - offset);
+                    output[..read].copy_from_slice(&window.bytes[offset..offset + read]);
+                    self.position = self.position.saturating_add(read as u64);
+                    return Ok(read);
+                }
+                if self.position >= window.end && window.complete {
+                    self.range_window = None;
+                    continue;
+                }
+
+                let (next, state_changed) = if let Some(cancellation) = &mut cancellation {
+                    futures::executor::block_on(async {
+                        tokio::select! {
+                            biased;
+                            changed = cancellation.changed() => match changed {
+                                Ok(()) if *cancellation.borrow() == MediaSeekState::Cancelled => {
+                                    Err(seek_cancelled())
+                                }
+                                Ok(()) => Ok((None, true)),
+                                Err(_) => Err(seek_cancelled()),
+                            },
+                            chunk = window.chunks.recv() => Ok((chunk, false)),
+                        }
+                    })?
+                } else {
+                    (window.chunks.blocking_recv(), false)
+                };
+                if state_changed {
+                    continue;
+                }
+                match next {
+                    Some(Ok(chunk)) => {
+                        let window_len = usize::try_from(window.end - window.start)
+                            .map_err(|_| io::Error::other("remote range window is too large"))?;
+                        if window.bytes.len().saturating_add(chunk.len()) > window_len {
+                            return Err(io::Error::other(BackendError::MalformedResponse));
+                        }
+                        window.bytes.extend_from_slice(&chunk);
+                    }
+                    Some(Err(error)) => return Err(io::Error::other(error)),
+                    None => {
+                        let expected = usize::try_from(window.end - window.start)
+                            .map_err(|_| io::Error::other("remote range window is too large"))?;
+                        if window.bytes.len() != expected {
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "the remote range response ended early",
+                            ));
+                        }
+                        window.complete = true;
+                    }
+                }
+                continue;
+            }
+
             let read = self.current.read(output)?;
             if read != 0 {
                 self.position = self.position.saturating_add(read as u64);
@@ -851,16 +924,23 @@ impl Read for StreamingMediaSource {
                 let range = range
                     .expect("a range result is present unless cancellation changed")
                     .map_err(io::Error::other)?;
-                if range.bytes.is_empty() {
+                let range_end = range_start
+                    .saturating_add(u64::try_from(length).unwrap_or(u64::MAX))
+                    .min(range.total_len);
+                if range_end <= range_start {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "the remote range response was empty",
                     ));
                 }
                 self.byte_len = Some(range.total_len);
-                self.current_start = range_start;
-                self.current = Cursor::new(range.bytes);
-                self.current.set_position(self.position - range_start);
+                self.range_window = Some(RangeWindow {
+                    start: range_start,
+                    end: range_end,
+                    bytes: Vec::with_capacity(range_end.saturating_sub(range_start) as usize),
+                    chunks: range.chunks,
+                    complete: false,
+                });
                 self.range_window_bytes = RANGE_WINDOW_BYTES;
                 self.range_lookbehind_bytes = 0;
                 continue;
@@ -937,8 +1017,16 @@ impl Seek for StreamingMediaSource {
         let current_end = self
             .current_start
             .saturating_add(self.current.get_ref().len() as u64);
-        if target >= self.current_start && target < current_end {
+        if self.range_window.is_none() && target >= self.current_start && target < current_end {
             self.current.set_position(target - self.current_start);
+            self.position = target;
+            return Ok(target);
+        }
+        if self
+            .range_window
+            .as_ref()
+            .is_some_and(|window| target >= window.start && target < window.end)
+        {
             self.position = target;
             return Ok(target);
         }
@@ -946,6 +1034,7 @@ impl Seek for StreamingMediaSource {
         self.current = Cursor::new(Box::<[u8]>::default());
         self.current_start = target;
         self.chunks = None;
+        self.range_window = None;
         self.range_window_bytes = SEEK_RANGE_WINDOW_BYTES;
         self.range_lookbehind_bytes = SEEK_RANGE_LOOKBEHIND_BYTES;
         Ok(target)
@@ -997,14 +1086,77 @@ mod tests {
             self.calls.lock().unwrap().push((start, length));
             let start = usize::try_from(start).map_err(|_| BackendError::InvalidRequest)?;
             let end = start.saturating_add(length).min(self.body.len());
+            let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            chunks_tx
+                .try_send(Ok(self.body[start..end].into()))
+                .unwrap();
+            drop(chunks_tx);
             Ok(super::super::MediaByteRange {
-                bytes: self.body[start..end].into(),
+                chunks,
                 total_len: self.body.len() as u64,
             })
         }
     }
 
-    struct PendingRangeReader(mpsc::SyncSender<()>);
+    struct ProgressiveRangeReader {
+        release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MediaByteRangeReader for ProgressiveRangeReader {
+        async fn read_range(
+            &self,
+            _start: u64,
+            _length: usize,
+        ) -> Result<super::super::MediaByteRange, BackendError> {
+            let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            chunks_tx.try_send(Ok((&b"012345"[..]).into())).unwrap();
+            let release = self.release.lock().unwrap().take().unwrap();
+            crate::RUNTIME.spawn(async move {
+                if release.await.is_ok() {
+                    let _ = chunks_tx.send(Ok((&b"6789"[..]).into())).await;
+                }
+            });
+            Ok(super::super::MediaByteRange {
+                chunks,
+                total_len: 10,
+            })
+        }
+    }
+
+    struct PendingRangeReader {
+        started: mpsc::SyncSender<()>,
+        closed: mpsc::SyncSender<()>,
+    }
+
+    struct DropObservedRangeReader {
+        closed: mpsc::SyncSender<()>,
+        total_len: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl MediaByteRangeReader for DropObservedRangeReader {
+        async fn read_range(
+            &self,
+            _start: u64,
+            length: usize,
+        ) -> Result<super::super::MediaByteRange, BackendError> {
+            let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            let first_len = length.min(SEEK_RANGE_LOOKBEHIND_BYTES + 1);
+            chunks_tx
+                .try_send(Ok(vec![7; first_len].into_boxed_slice()))
+                .unwrap();
+            let closed = self.closed.clone();
+            crate::RUNTIME.spawn(async move {
+                chunks_tx.closed().await;
+                let _ = closed.try_send(());
+            });
+            Ok(super::super::MediaByteRange {
+                chunks,
+                total_len: self.total_len,
+            })
+        }
+    }
 
     #[async_trait::async_trait]
     impl MediaByteRangeReader for PendingRangeReader {
@@ -1013,8 +1165,17 @@ mod tests {
             _start: u64,
             _length: usize,
         ) -> Result<super::super::MediaByteRange, BackendError> {
-            let _ = self.0.try_send(());
-            futures::future::pending().await
+            let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            let closed = self.closed.clone();
+            crate::RUNTIME.spawn(async move {
+                chunks_tx.closed().await;
+                let _ = closed.try_send(());
+            });
+            let _ = self.started.try_send(());
+            Ok(super::super::MediaByteRange {
+                chunks,
+                total_len: 10,
+            })
         }
     }
 
@@ -1485,6 +1646,77 @@ mod tests {
     }
 
     #[test]
+    fn a_range_window_exposes_received_bytes_before_the_response_finishes() {
+        let directory = crate::test_support::TestDir::new("remote-progressive-range");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let mut input = ranged_input(
+            &registry,
+            b"0123456789",
+            b"0123",
+            Arc::new(ProgressiveRangeReader {
+                release: Mutex::new(Some(release_rx)),
+            }),
+            None,
+        );
+        input.source.seek(SeekFrom::Start(4)).unwrap();
+
+        let mut first = [0; 2];
+        input.source.read_exact(&mut first).unwrap();
+        assert_eq!(&first, b"45");
+
+        input.source.seek(SeekFrom::Start(1)).unwrap();
+        let mut lookbehind = [0; 2];
+        input.source.read_exact(&mut lookbehind).unwrap();
+        assert_eq!(&lookbehind, b"12");
+
+        input.source.seek(SeekFrom::Start(6)).unwrap();
+        release_tx.send(()).unwrap();
+        let mut second = [0; 4];
+        input.source.read_exact(&mut second).unwrap();
+        assert_eq!(&second, b"6789");
+    }
+
+    #[test]
+    fn seeking_outside_the_current_window_cancels_its_response() {
+        let directory = crate::test_support::TestDir::new("remote-range-replacement");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let total_len = (RANGE_WINDOW_BYTES * 3) as u64;
+        let (closed_tx, closed_rx) = mpsc::sync_channel(1);
+        let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+        drop(chunks_tx);
+        let mut input = registry.streaming_input(
+            MediaDescriptor::new(
+                Some("flac".into()),
+                Some(total_len),
+                Default::default(),
+                chunks,
+            )
+            .with_range_reader(Arc::new(DropObservedRangeReader {
+                closed: closed_tx,
+                total_len,
+            })),
+        );
+
+        input.source.seek(SeekFrom::Start(100_000)).unwrap();
+        let mut byte = [0];
+        input.source.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [7]);
+
+        input
+            .source
+            .seek(SeekFrom::Start((RANGE_WINDOW_BYTES * 2) as u64))
+            .unwrap();
+        closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
     fn cancelling_a_blocked_range_read_is_terminal() {
         let directory = crate::test_support::TestDir::new("remote-range-cancel");
         let registry = SourceRegistry::new(
@@ -1493,11 +1725,15 @@ mod tests {
         );
         let token = MediaSeekToken::new();
         let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (closed_tx, closed_rx) = mpsc::sync_channel(1);
         let mut input = ranged_input(
             &registry,
             b"0123456789",
             b"0123",
-            Arc::new(PendingRangeReader(started_tx)),
+            Arc::new(PendingRangeReader {
+                started: started_tx,
+                closed: closed_tx,
+            }),
             None,
         );
         input.source.seek_control().unwrap().begin(&token);
@@ -1515,6 +1751,7 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
+        closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 
     #[test]

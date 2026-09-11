@@ -1,9 +1,6 @@
 //! Original-quality media requests and bounded response streaming.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -308,12 +305,12 @@ async fn descriptor_from_response(
         .then(|| {
             Arc::new(HttpMediaByteRangeReader {
                 request,
-                representation: Mutex::new(RangeRepresentation {
+                representation: Arc::new(Mutex::new(RangeRepresentation {
                     url: response.url().clone(),
                     byte_len,
-                }),
+                })),
                 validator,
-                refresh_used: AtomicBool::new(false),
+                refresh_budget: Arc::new(RefreshBudget::new()),
                 timeout,
             }) as Arc<dyn MediaByteRangeReader>
         })
@@ -371,6 +368,20 @@ struct RangeRepresentation {
     byte_len: Option<u64>,
 }
 
+struct ValidatedRangeResponse {
+    response: zed_reqwest::Response,
+    total_len: u64,
+    expected_len: usize,
+}
+
+struct RangeExpectation {
+    start: u64,
+    requested_end: u64,
+    known_len: Option<u64>,
+    refreshed: bool,
+    previous_url: Url,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Validator(HeaderValue);
 
@@ -380,43 +391,86 @@ impl Validator {
     }
 }
 
-struct RefreshReservation<'a> {
-    refresh_used: &'a AtomicBool,
+struct RefreshReservation {
+    budget: Arc<RefreshBudget>,
     completed: bool,
 }
 
-impl<'a> RefreshReservation<'a> {
-    fn acquire(refresh_used: &'a AtomicBool) -> Option<Self> {
-        if refresh_used
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return None;
+impl RefreshReservation {
+    async fn acquire(budget: &Arc<RefreshBudget>) -> Option<Self> {
+        let mut changes = budget.state.subscribe();
+        loop {
+            let state = *changes.borrow_and_update();
+            match state {
+                RefreshState::Available => {
+                    if budget.state.send_if_modified(|state| {
+                        if *state == RefreshState::Available {
+                            *state = RefreshState::Active;
+                            true
+                        } else {
+                            false
+                        }
+                    }) {
+                        return Some(Self {
+                            budget: budget.clone(),
+                            completed: false,
+                        });
+                    }
+                }
+                RefreshState::Active => {}
+                RefreshState::Used => return None,
+            }
+            changes
+                .changed()
+                .await
+                .expect("the refresh budget retains its sender");
         }
-        Some(Self {
-            refresh_used,
-            completed: false,
-        })
     }
 
     fn complete(mut self) {
         self.completed = true;
+        self.budget.state.send_replace(RefreshState::Used);
     }
 }
 
-impl Drop for RefreshReservation<'_> {
+impl Drop for RefreshReservation {
     fn drop(&mut self) {
         if !self.completed {
-            self.refresh_used.store(false, Ordering::Release);
+            self.budget.state.send_if_modified(|state| {
+                if *state == RefreshState::Active {
+                    *state = RefreshState::Available;
+                    true
+                } else {
+                    false
+                }
+            });
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RefreshState {
+    Available,
+    Active,
+    Used,
+}
+
+struct RefreshBudget {
+    state: tokio::sync::watch::Sender<RefreshState>,
+}
+
+impl RefreshBudget {
+    fn new() -> Self {
+        let (state, _) = tokio::sync::watch::channel(RefreshState::Available);
+        Self { state }
     }
 }
 
 struct HttpMediaByteRangeReader {
     request: RangeRequest,
-    representation: Mutex<RangeRepresentation>,
+    representation: Arc<Mutex<RangeRepresentation>>,
     validator: Validator,
-    refresh_used: AtomicBool,
+    refresh_budget: Arc<RefreshBudget>,
     timeout: std::time::Duration,
 }
 
@@ -431,8 +485,10 @@ impl MediaByteRangeReader for HttpMediaByteRangeReader {
             (representation.url.clone(), representation.byte_len)
         };
         if length == 0 || known_len.is_some_and(|byte_len| start >= byte_len) {
+            let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            drop(chunks_tx);
             return Ok(MediaByteRange {
-                bytes: Box::default(),
+                chunks,
                 total_len: known_len.unwrap_or(start),
             });
         }
@@ -447,17 +503,26 @@ impl MediaByteRangeReader for HttpMediaByteRangeReader {
         let mut refresh_reservation = None;
         let (response, refreshed) = match first {
             Err(error) if is_transient_range_error(&error) => {
-                (self.send_range(url, start, end).await?, false)
+                (self.send_range(url.clone(), start, end).await?, false)
             }
             Err(error) => return Err(error),
             Ok(response)
                 if signed_url_expired(&response)
                     && response.url() != &self.request.authenticated_url =>
             {
-                let Some(reservation) = RefreshReservation::acquire(&self.refresh_used) else {
-                    return self
-                        .validate_range(response, start, requested_end, known_len, false)
-                        .await;
+                let Some(reservation) = RefreshReservation::acquire(&self.refresh_budget).await
+                else {
+                    return self.start_range(
+                        response,
+                        RangeExpectation {
+                            start,
+                            requested_end,
+                            known_len,
+                            refreshed: false,
+                            previous_url: url,
+                        },
+                        None,
+                    );
                 };
                 match self
                     .send_range(self.request.authenticated_url.clone(), start, end)
@@ -476,17 +541,21 @@ impl MediaByteRangeReader for HttpMediaByteRangeReader {
                 }
             }
             Ok(response) if response.status().is_server_error() => {
-                (self.send_range(url, start, end).await?, false)
+                (self.send_range(url.clone(), start, end).await?, false)
             }
             Ok(response) => (response, false),
         };
-        let result = self
-            .validate_range(response, start, requested_end, known_len, refreshed)
-            .await;
-        if let Some(reservation) = refresh_reservation {
-            reservation.complete();
-        }
-        result
+        self.start_range(
+            response,
+            RangeExpectation {
+                start,
+                requested_end,
+                known_len,
+                refreshed,
+                previous_url: url,
+            },
+            refresh_reservation,
+        )
     }
 }
 
@@ -510,14 +579,133 @@ impl HttpMediaByteRangeReader {
             .map_err(network_error)
     }
 
-    async fn validate_range(
+    fn start_range(
         &self,
-        mut response: zed_reqwest::Response,
+        response: zed_reqwest::Response,
+        expectation: RangeExpectation,
+        mut refresh_reservation: Option<RefreshReservation>,
+    ) -> Result<MediaByteRange, BackendError> {
+        let validated = self.validate_range_headers(
+            response,
+            expectation.start,
+            expectation.requested_end,
+            expectation.known_len,
+            expectation.refreshed,
+        );
+        let validated = match validated {
+            Ok(validated) => validated,
+            Err(error) => {
+                if let Some(reservation) = refresh_reservation.take() {
+                    reservation.complete();
+                }
+                return Err(error);
+            }
+        };
+        let ValidatedRangeResponse {
+            mut response,
+            total_len,
+            expected_len,
+        } = validated;
+        {
+            let mut current = self
+                .representation
+                .lock()
+                .expect("range representation poisoned");
+            if current.url != expectation.previous_url
+                || current
+                    .byte_len
+                    .is_some_and(|byte_len| byte_len != total_len)
+            {
+                if let Some(reservation) = refresh_reservation.take() {
+                    reservation.complete();
+                }
+                return Err(BackendError::RepresentationChanged);
+            }
+            // Once bytes from this response can be observed, every later range must agree with
+            // its total even if this body is subsequently cancelled.
+            current.byte_len = Some(total_len);
+        }
+        let final_url = response.url().clone();
+        let representation = self.representation.clone();
+        let timeout = self.timeout;
+        let (chunks_tx, chunks) = tokio::sync::mpsc::channel(4);
+        crate::RUNTIME.spawn(async move {
+            let mut received = 0usize;
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = chunks_tx.closed() => break,
+                    next = tokio::time::timeout(timeout, response.chunk()) => next,
+                };
+                let chunk = match next {
+                    Ok(Ok(chunk)) => chunk,
+                    Ok(Err(error)) => {
+                        if let Some(reservation) = refresh_reservation.take() {
+                            reservation.complete();
+                        }
+                        let _ = chunks_tx.send(Err(network_error(error))).await;
+                        break;
+                    }
+                    Err(_) => {
+                        if let Some(reservation) = refresh_reservation.take() {
+                            reservation.complete();
+                        }
+                        let _ = chunks_tx.send(Err(BackendError::Timeout)).await;
+                        break;
+                    }
+                };
+                let Some(chunk) = chunk else {
+                    if received != expected_len {
+                        if let Some(reservation) = refresh_reservation.take() {
+                            reservation.complete();
+                        }
+                        let _ = chunks_tx.send(Err(BackendError::MalformedResponse)).await;
+                        break;
+                    }
+                    let mut current = representation
+                        .lock()
+                        .expect("range representation poisoned");
+                    if current.url == expectation.previous_url
+                        && current
+                            .byte_len
+                            .is_none_or(|byte_len| byte_len == total_len)
+                    {
+                        current.url = final_url;
+                        current.byte_len = Some(total_len);
+                    }
+                    if let Some(reservation) = refresh_reservation.take() {
+                        reservation.complete();
+                    }
+                    break;
+                };
+                if received.saturating_add(chunk.len()) > expected_len {
+                    if let Some(reservation) = refresh_reservation.take() {
+                        reservation.complete();
+                    }
+                    let _ = chunks_tx.send(Err(BackendError::MalformedResponse)).await;
+                    break;
+                }
+                received += chunk.len();
+                if chunks_tx
+                    .send(Ok(chunk.to_vec().into_boxed_slice()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Ok(MediaByteRange { chunks, total_len })
+    }
+
+    fn validate_range_headers(
+        &self,
+        response: zed_reqwest::Response,
         start: u64,
         requested_end: u64,
         known_len: Option<u64>,
         refreshed: bool,
-    ) -> Result<MediaByteRange, BackendError> {
+    ) -> Result<ValidatedRangeResponse, BackendError> {
         if response.status() == StatusCode::OK {
             // A matching full representation means the server ignored Range. A mismatch is an
             // If-Range representation change and must not become a sequential fallback.
@@ -563,32 +751,10 @@ impl HttpMediaByteRangeReader {
         {
             return Err(BackendError::MalformedResponse);
         }
-        let body = tokio::time::timeout(self.timeout, read_limited_body(&mut response, expected))
-            .await
-            .map_err(|_| BackendError::Timeout)?
-            .map_err(|error| match error {
-                BackendError::ResponseTooLarge => BackendError::MalformedResponse,
-                error => error,
-            })?;
-        if body.len() != expected {
-            return Err(BackendError::MalformedResponse);
-        }
-        let final_url = response.url().clone();
-        let mut representation = self
-            .representation
-            .lock()
-            .expect("range representation poisoned");
-        if representation
-            .byte_len
-            .is_some_and(|byte_len| byte_len != total)
-        {
-            return Err(BackendError::RepresentationChanged);
-        }
-        representation.url = final_url;
-        representation.byte_len = Some(total);
-        Ok(MediaByteRange {
-            bytes: body.into_boxed_slice(),
+        Ok(ValidatedRangeResponse {
+            response,
             total_len: total,
+            expected_len: expected,
         })
     }
 }
@@ -662,16 +828,39 @@ fn is_strong_etag(value: &str) -> bool {
 }
 
 #[cfg(test)]
-#[test]
-fn a_denied_refresh_reservation_does_not_release_the_active_reservation() {
-    let refresh_used = AtomicBool::new(false);
-    let active = RefreshReservation::acquire(&refresh_used).unwrap();
-
-    assert!(RefreshReservation::acquire(&refresh_used).is_none());
-    assert!(refresh_used.load(Ordering::Acquire));
-
+#[tokio::test]
+async fn a_waiting_refresh_reservation_cannot_release_the_active_reservation() {
+    let budget = Arc::new(RefreshBudget::new());
+    let active = RefreshReservation::acquire(&budget).await.unwrap();
+    let waiting = tokio::spawn({
+        let budget = budget.clone();
+        async move { RefreshReservation::acquire(&budget).await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
     active.complete();
-    assert!(refresh_used.load(Ordering::Acquire));
+    assert!(waiting.await.unwrap().is_none());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn cancelling_a_refresh_reservation_wakes_the_next_attempt() {
+    let budget = Arc::new(RefreshBudget::new());
+    let active = RefreshReservation::acquire(&budget).await.unwrap();
+    let waiting = tokio::spawn({
+        let budget = budget.clone();
+        async move { RefreshReservation::acquire(&budget).await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    drop(active);
+
+    let next = waiting
+        .await
+        .unwrap()
+        .expect("cancellation should restore the refresh budget");
+    next.complete();
 }
 
 pub(super) fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
