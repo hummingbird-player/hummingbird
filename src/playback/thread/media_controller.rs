@@ -32,7 +32,7 @@ use crate::{
             SeekError,
         },
         pipeline::{AudioBlock, DecodeResult},
-        traits::{MediaResolver, MediaSeekToken},
+        traits::{MediaResolver, MediaSeekControl, MediaSeekToken},
     },
 };
 
@@ -52,6 +52,7 @@ struct Snapshot {
     frame_duration: u64,
     position: Option<u64>,
     metadata: Option<CompleteMetadata>,
+    seek_control: Option<MediaSeekControl>,
 }
 
 impl Snapshot {
@@ -65,6 +66,7 @@ impl Snapshot {
             frame_duration: decoder.frame_duration().unwrap_or(1024),
             position: decoder.position_ms().ok(),
             metadata: decoder.check_metadata_update(),
+            seek_control: decoder.seek_control(),
         }
     }
 }
@@ -122,6 +124,7 @@ pub struct MediaController {
     cancelled_since: Option<Instant>,
     seek_target: Option<f64>,
     seek_token: Option<MediaSeekToken>,
+    active_seek_token: Option<MediaSeekToken>,
     seek_outcome: Option<SeekOutcome>,
     busy: bool,
     /// Ignore the current operation's result when it arrives, even if more requests come in
@@ -216,6 +219,7 @@ impl MediaController {
             cancelled_since: None,
             seek_target: None,
             seek_token: None,
+            active_seek_token: None,
             seek_outcome: None,
             busy: false,
             discard_reply: false,
@@ -242,8 +246,13 @@ impl MediaController {
 
     fn submit(&mut self, request: Request) {
         assert!(!self.busy);
+        let active_seek_token = match &request {
+            Request::Seek(_, token) => Some(token.clone()),
+            _ => None,
+        };
         if self.requests.as_ref().unwrap().try_send(request).is_ok() {
             self.busy = true;
+            self.active_seek_token = active_seek_token;
         } else {
             self.worker_failed();
         }
@@ -254,6 +263,7 @@ impl MediaController {
         self.failed = true;
         self.busy = false;
         self.cancelled_since = None;
+        self.active_seek_token = None;
         self.pending = None;
         self.opened = Some(Err(PlaybackStartError::MediaError(
             "decoder worker disconnected".into(),
@@ -268,11 +278,22 @@ impl MediaController {
             self.free.push(block);
         }
         self.discard_reply = self.busy;
-        if self.busy {
-            self.cancelled_since.get_or_insert_with(Instant::now);
-        }
         self.pending = Some(request);
         self.poll();
+    }
+
+    fn request_input_cancellation(&mut self) {
+        if self.busy && self.cancelled_since.is_none() {
+            // the old snapshot owns the remote read cancellation handle
+            let cancellation_requested = self
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.seek_control.as_ref())
+                .is_none_or(MediaSeekControl::cancel_read);
+            if cancellation_requested {
+                self.cancelled_since = Some(Instant::now());
+            }
+        }
     }
 
     pub fn poll(&mut self) {
@@ -310,6 +331,7 @@ impl MediaController {
         if let Some(reply) = reply {
             self.busy = false;
             self.cancelled_since = None;
+            self.active_seek_token = None;
             if !std::mem::take(&mut self.discard_reply) {
                 match reply {
                     Reply::Open(result) => match result {
@@ -459,6 +481,7 @@ impl MediaController {
     pub fn open(&mut self, track: impl Into<TrackRef>) {
         let track = track.into();
         self.cancel_seek();
+        self.request_input_cancellation();
         if self.failed {
             self.poll();
             if self.retired.is_none() {
@@ -491,6 +514,7 @@ impl MediaController {
 
     pub fn close(&mut self) {
         self.cancel_seek();
+        self.request_input_cancellation();
         self.seek_target = None;
         self.seek_outcome = None;
         self.snapshot = None;
@@ -522,6 +546,7 @@ impl MediaController {
             self.seek_target = None;
             return Err(SeekError::InvalidState);
         }
+        self.request_input_cancellation();
         self.replace(Request::Seek(time, token));
         Ok(())
     }
@@ -537,7 +562,14 @@ impl MediaController {
 
     fn cancel_seek(&mut self) {
         if let Some(token) = self.seek_token.take() {
-            token.cancel();
+            let active = self
+                .active_seek_token
+                .as_ref()
+                .is_some_and(|active| active.same_operation(&token));
+            if token.cancel() && active {
+                // active seeks use their own cancellation token
+                self.cancelled_since.get_or_insert_with(Instant::now);
+            }
         }
     }
 

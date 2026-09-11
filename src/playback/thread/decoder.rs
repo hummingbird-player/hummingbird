@@ -16,7 +16,8 @@ use crate::{
         metadata::Metadata,
         pipeline::{AudioBlock, DecodeResult},
         traits::{
-            MediaProviderFeatures, MediaResolver, MediaSeekToken, MediaStream, local_media_resolver,
+            MediaProviderFeatures, MediaResolver, MediaSeekControl, MediaSeekToken, MediaStream,
+            local_media_resolver,
         },
     },
 };
@@ -241,6 +242,12 @@ impl Decoder {
 
     pub fn duration_ms(&self) -> Option<u64> {
         self.media_stream.as_ref()?.duration_ms().ok()
+    }
+
+    pub(super) fn seek_control(&self) -> Option<MediaSeekControl> {
+        let control = self.media_stream.as_ref()?.seek_control()?;
+        control.prepare_read();
+        Some(control)
     }
 
     pub fn channels(&self) -> Result<ChannelSpec, ChannelRetrievalError> {

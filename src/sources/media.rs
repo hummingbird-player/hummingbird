@@ -792,15 +792,18 @@ impl StreamingMediaSource {
     fn active_cancellation(
         &self,
     ) -> io::Result<Option<tokio::sync::watch::Receiver<MediaSeekState>>> {
-        match self.seek_control.receiver() {
-            Some(cancellation) if *cancellation.borrow() == MediaSeekState::Cancelled => {
-                Err(seek_cancelled())
-            }
-            Some(cancellation) if *cancellation.borrow() == MediaSeekState::Active => {
-                Ok(Some(cancellation))
-            }
-            Some(_) | None => Ok(None),
+        let cancellation = self.seek_control.receiver();
+        let state = *cancellation.borrow();
+        match state {
+            MediaSeekState::Cancelled => Err(seek_cancelled()),
+            MediaSeekState::Active => Ok(Some(cancellation)),
+            MediaSeekState::Complete => Ok(None),
         }
+    }
+
+    fn discard_active_response(&mut self) {
+        self.chunks = None;
+        self.range_window = None;
     }
 }
 
@@ -810,7 +813,13 @@ impl Read for StreamingMediaSource {
             return Ok(0);
         }
         loop {
-            let mut cancellation = self.active_cancellation()?;
+            let mut cancellation = match self.active_cancellation() {
+                Ok(cancellation) => cancellation,
+                Err(error) => {
+                    self.discard_active_response();
+                    return Err(error);
+                }
+            };
             if let Some(window) = &mut self.range_window {
                 let offset = usize::try_from(self.position.saturating_sub(window.start))
                     .unwrap_or(usize::MAX);
@@ -825,7 +834,7 @@ impl Read for StreamingMediaSource {
                     continue;
                 }
 
-                let (next, state_changed) = if let Some(cancellation) = &mut cancellation {
+                let result = if let Some(cancellation) = &mut cancellation {
                     futures::executor::block_on(async {
                         tokio::select! {
                             biased;
@@ -838,9 +847,16 @@ impl Read for StreamingMediaSource {
                             },
                             chunk = window.chunks.recv() => Ok((chunk, false)),
                         }
-                    })?
+                    })
                 } else {
-                    (window.chunks.blocking_recv(), false)
+                    Ok((window.chunks.blocking_recv(), false))
+                };
+                let (next, state_changed) = match result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.discard_active_response();
+                        return Err(error);
+                    }
                 };
                 if state_changed {
                     continue;
@@ -896,7 +912,7 @@ impl Read for StreamingMediaSource {
                     .and_then(|byte_len| usize::try_from(byte_len - range_start).ok())
                     .unwrap_or(RANGE_WINDOW_BYTES)
                     .min(self.range_window_bytes.saturating_add(lookbehind));
-                let (range, state_changed) = if let Some(cancellation) = &mut cancellation {
+                let result = if let Some(cancellation) = &mut cancellation {
                     crate::RUNTIME.block_on(async {
                         tokio::select! {
                             biased;
@@ -911,12 +927,19 @@ impl Read for StreamingMediaSource {
                                 Ok((Some(range), false))
                             },
                         }
-                    })?
+                    })
                 } else {
-                    (
+                    Ok((
                         Some(crate::RUNTIME.block_on(range_reader.read_range(range_start, length))),
                         false,
-                    )
+                    ))
+                };
+                let (range, state_changed) = match result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.discard_active_response();
+                        return Err(error);
+                    }
                 };
                 if state_changed {
                     continue;
@@ -946,7 +969,7 @@ impl Read for StreamingMediaSource {
                 continue;
             }
 
-            let (next, state_changed) = if let Some(cancellation) = &mut cancellation {
+            let result = if let Some(cancellation) = &mut cancellation {
                 let chunks = self.chunks.as_mut().unwrap();
                 futures::executor::block_on(async {
                     tokio::select! {
@@ -960,9 +983,16 @@ impl Read for StreamingMediaSource {
                         },
                         chunk = chunks.recv() => Ok((chunk, false)),
                     }
-                })?
+                })
             } else {
-                (self.chunks.as_mut().unwrap().blocking_recv(), false)
+                Ok((self.chunks.as_mut().unwrap().blocking_recv(), false))
+            };
+            let (next, state_changed) = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    self.discard_active_response();
+                    return Err(error);
+                }
             };
             if state_changed {
                 continue;
@@ -1127,6 +1157,7 @@ mod tests {
     struct PendingRangeReader {
         started: mpsc::SyncSender<()>,
         closed: mpsc::SyncSender<()>,
+        calls: AtomicUsize,
     }
 
     struct DropObservedRangeReader {
@@ -1162,10 +1193,23 @@ mod tests {
     impl MediaByteRangeReader for PendingRangeReader {
         async fn read_range(
             &self,
-            _start: u64,
-            _length: usize,
+            start: u64,
+            length: usize,
         ) -> Result<super::super::MediaByteRange, BackendError> {
             let (chunks_tx, chunks) = tokio::sync::mpsc::channel(1);
+            if self.calls.fetch_add(1, Ordering::Relaxed) != 0 {
+                let body = b"0123456789";
+                let start = usize::try_from(start).map_err(|_| BackendError::InvalidRequest)?;
+                let end = start.saturating_add(length).min(body.len());
+                chunks_tx
+                    .try_send(Ok(body[start..end].into()))
+                    .map_err(|_| BackendError::Unavailable)?;
+                drop(chunks_tx);
+                return Ok(super::super::MediaByteRange {
+                    chunks,
+                    total_len: body.len() as u64,
+                });
+            }
             let closed = self.closed.clone();
             crate::RUNTIME.spawn(async move {
                 chunks_tx.closed().await;
@@ -1733,6 +1777,7 @@ mod tests {
             Arc::new(PendingRangeReader {
                 started: started_tx,
                 closed: closed_tx,
+                calls: AtomicUsize::new(0),
             }),
             None,
         );
@@ -1752,6 +1797,48 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
         closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn active_remote_input_cancellation_wakes_a_blocked_range_read() {
+        let directory = crate::test_support::TestDir::new("active-remote-read-cancel");
+        let registry = SourceRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().to_path_buf(),
+        );
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (closed_tx, closed_rx) = mpsc::sync_channel(1);
+        let mut input = ranged_input(
+            &registry,
+            b"0123456789",
+            b"0123",
+            Arc::new(PendingRangeReader {
+                started: started_tx,
+                closed: closed_tx,
+                calls: AtomicUsize::new(0),
+            }),
+            None,
+        );
+        let control = input.source.seek_control().unwrap();
+        input.source.seek(SeekFrom::Start(8)).unwrap();
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let mut byte = [0];
+            let result = input.source.read(&mut byte);
+            result_tx.send((result, input)).unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(control.cancel_read());
+        let (result, mut input) = result_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
+        closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        control.prepare_read();
+        let mut bytes = [0; 2];
+        input.source.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"89");
     }
 
     #[test]

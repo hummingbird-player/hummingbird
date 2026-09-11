@@ -29,7 +29,7 @@ pub trait MediaSource: Read + Seek + Send + Sync {
     fn is_seekable(&self) -> bool;
     fn byte_len(&self) -> Option<u64>;
 
-    /// Returns the cancellation control used while seeking this source, when supported.
+    /// Returns the cancellation control used by remote reads and seeks, when supported.
     fn seek_control(&self) -> Option<MediaSeekControl> {
         None
     }
@@ -104,24 +104,74 @@ pub struct MediaSeekToken {
     state: tokio::sync::watch::Sender<MediaSeekState>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct MediaSeekControl {
-    receiver: Arc<Mutex<Option<tokio::sync::watch::Receiver<MediaSeekState>>>>,
+    state: Arc<Mutex<MediaSeekControlState>>,
+}
+
+struct MediaSeekControlState {
+    receiver: tokio::sync::watch::Receiver<MediaSeekState>,
+    read_token: Option<MediaSeekToken>,
 }
 
 impl MediaSeekControl {
     pub(crate) fn new(receiver: Option<tokio::sync::watch::Receiver<MediaSeekState>>) -> Self {
+        let (receiver, read_token) = match receiver {
+            Some(receiver) => (receiver, None),
+            None => {
+                let token = MediaSeekToken::new();
+                (token.subscribe(), Some(token))
+            }
+        };
         Self {
-            receiver: Arc::new(Mutex::new(receiver)),
+            state: Arc::new(Mutex::new(MediaSeekControlState {
+                receiver,
+                read_token,
+            })),
         }
     }
 
     pub(crate) fn begin(&self, token: &MediaSeekToken) {
-        *self.receiver.lock().unwrap() = Some(token.subscribe());
+        let mut state = self.state.lock().unwrap();
+        state.receiver = token.subscribe();
+        state.read_token = None;
     }
 
-    pub(crate) fn receiver(&self) -> Option<tokio::sync::watch::Receiver<MediaSeekState>> {
-        self.receiver.lock().unwrap().clone()
+    /// Installs a fresh cancellation signal after the previous decoder operation has finished.
+    ///
+    /// This happens before the controller can submit another decode, so cancellation cannot be
+    /// missed when it arrives before the worker enters its next blocking read.
+    pub(crate) fn prepare_read(&self) {
+        let mut state = self.state.lock().unwrap();
+        if state
+            .read_token
+            .as_ref()
+            .is_some_and(|token| !token.is_cancelled())
+        {
+            return;
+        }
+        let token = MediaSeekToken::new();
+        state.receiver = token.subscribe();
+        state.read_token = Some(token);
+    }
+
+    pub(crate) fn cancel_read(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .read_token
+            .as_ref()
+            .is_some_and(MediaSeekToken::cancel)
+    }
+
+    pub(crate) fn receiver(&self) -> tokio::sync::watch::Receiver<MediaSeekState> {
+        self.state.lock().unwrap().receiver.clone()
+    }
+}
+
+impl Default for MediaSeekControl {
+    fn default() -> Self {
+        Self::new(None)
     }
 }
 
@@ -141,6 +191,10 @@ impl MediaSeekToken {
 
     pub fn is_cancelled(&self) -> bool {
         *self.state.borrow() == MediaSeekState::Cancelled
+    }
+
+    pub(crate) fn same_operation(&self, other: &Self) -> bool {
+        self.state.same_channel(&other.state)
     }
 
     pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<MediaSeekState> {
@@ -165,6 +219,30 @@ impl MediaSeekToken {
 impl Default for MediaSeekToken {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn read_cancellation_is_observed_before_read_and_rearmed_after_completion() {
+        let control = MediaSeekControl::new(None);
+
+        assert!(control.cancel_read());
+        assert!(matches!(
+            *control.receiver().borrow(),
+            MediaSeekState::Cancelled
+        ));
+        assert!(!control.cancel_read());
+
+        control.prepare_read();
+        assert!(matches!(
+            *control.receiver().borrow(),
+            MediaSeekState::Active
+        ));
+        assert!(control.cancel_read());
     }
 }
 
@@ -270,6 +348,11 @@ pub trait MediaStream {
     /// Seek with an operation token that cancellable media sources can observe.
     fn seek_with_token(&mut self, time: f64, _token: &MediaSeekToken) -> Result<(), SeekError> {
         self.seek(time)
+    }
+
+    /// Returns the cancellation control for the currently installed input, when supported.
+    fn seek_control(&self) -> Option<MediaSeekControl> {
+        None
     }
 
     /// Whether the underlying input supports efficient random access.

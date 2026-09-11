@@ -665,6 +665,10 @@ impl MediaStream for SymphoniaStream {
         self.seek(time)
     }
 
+    fn seek_control(&self) -> Option<MediaSeekControl> {
+        self.seek_control.clone()
+    }
+
     fn is_seekable(&self) -> bool {
         self.source_seekable
     }

@@ -5,7 +5,7 @@ use crate::{
         errors::*,
         metadata::Metadata,
         pipeline::{AudioBlock, DecodeResult},
-        traits::MediaStream,
+        traits::{MediaSeekControl, MediaSeekState, MediaSeekToken, MediaStream},
     },
     playback::{
         events::{SeekRequest, SeekResult},
@@ -146,6 +146,7 @@ struct FakeStream {
     position: u64,
     seek_delay: Duration,
     fail_start: bool,
+    seek_control: Option<MediaSeekControl>,
     // deliberately not Send: only the factory crosses threads
     _local: Rc<()>,
 }
@@ -183,6 +184,15 @@ impl MediaStream for FakeStream {
         std::thread::sleep(self.seek_delay);
         self.position = (time * 1000.0) as u64;
         Ok(())
+    }
+    fn seek_with_token(&mut self, time: f64, token: &MediaSeekToken) -> Result<(), SeekError> {
+        if let Some(control) = &self.seek_control {
+            control.begin(token);
+        }
+        self.seek(time)
+    }
+    fn seek_control(&self) -> Option<MediaSeekControl> {
+        self.seek_control.clone()
     }
     fn frame_duration(&self) -> Result<u64, FrameDurationError> {
         self.check_thread();
@@ -228,7 +238,18 @@ impl MediaStream for FakeStream {
         self.check_thread();
         self.reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if let Some(gate) = self.read_gate.take() {
+        if let Some(control) = &self.seek_control {
+            let mut cancellation = control.receiver();
+            self.entered.send(()).unwrap();
+            futures::executor::block_on(async {
+                while *cancellation.borrow() != MediaSeekState::Cancelled {
+                    cancellation.changed().await.unwrap();
+                }
+            });
+            return Err(PlaybackReadError::DecodeFatal(
+                "remote read cancelled".into(),
+            ));
+        } else if let Some(gate) = self.read_gate.take() {
             self.entered.send(()).unwrap();
             // stop/skip cannot interrupt this fake native call; it returns only when released
             let _ = gate.recv();
@@ -241,13 +262,16 @@ impl MediaStream for FakeStream {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockedOperation {
     OpenThenStop,
     OpenThenFail,
     DecodeThenStop,
     OpenThenSeek,
     DecodeWhilePaused,
+    DecodeThenCancelSeek,
+    DecodeThenCancelStop,
+    DecodeThenCancelOpen,
     DecodeThenRecoverSeek,
 }
 
@@ -261,6 +285,13 @@ impl BlockedOperation {
 
     fn delays_seek(self) -> bool {
         matches!(self, Self::DecodeThenRecoverSeek)
+    }
+
+    fn cancellable_read(self) -> bool {
+        matches!(
+            self,
+            Self::DecodeThenCancelSeek | Self::DecodeThenCancelStop | Self::DecodeThenCancelOpen
+        )
     }
 
     fn fails_open(self) -> bool {
@@ -315,6 +346,9 @@ fn blocked_operation(operation: BlockedOperation) {
                     Duration::ZERO
                 },
                 fail_start: operation.fails_open(),
+                seek_control: operation
+                    .cancellable_read()
+                    .then(|| MediaSeekControl::new(None)),
                 _local: Rc::new(()),
             }))
         }));
@@ -351,7 +385,7 @@ fn blocked_operation(operation: BlockedOperation) {
     assert!(saw_volume);
 
     match operation {
-        BlockedOperation::DecodeThenRecoverSeek => {
+        BlockedOperation::DecodeThenCancelSeek | BlockedOperation::DecodeThenRecoverSeek => {
             let superseded = SeekRequest::new(1.2);
             let latest = SeekRequest::new(1.4);
             commands.send(PlaybackCommand::Seek(superseded)).unwrap();
@@ -359,7 +393,10 @@ fn blocked_operation(operation: BlockedOperation) {
             let mut released_retired_worker = false;
             loop {
                 player.main_loop();
-                if !released_retired_worker && opened.lock().unwrap().len() == 2 {
+                if operation == BlockedOperation::DecodeThenRecoverSeek
+                    && !released_retired_worker
+                    && opened.lock().unwrap().len() == 2
+                {
                     release.0.try_send(()).unwrap();
                     released_retired_worker = true;
                 }
@@ -374,15 +411,24 @@ fn blocked_operation(operation: BlockedOperation) {
             }
             assert_eq!(player.state(), PlaybackState::Paused);
             let opens = opened.lock().unwrap();
-            assert_eq!(opens.len(), 2);
-            assert_ne!(opens[0].1, opens[1].1);
+            if operation == BlockedOperation::DecodeThenRecoverSeek {
+                assert_eq!(opens.len(), 2);
+                assert_ne!(opens[0].1, opens[1].1);
+            } else {
+                assert_eq!(opens.len(), 1);
+            }
             drop(opens);
             let stability_deadline = Instant::now() + Duration::from_millis(300);
             while Instant::now() < stability_deadline {
                 player.main_loop();
                 std::thread::park_timeout(Duration::from_millis(1));
             }
-            assert_eq!(opened.lock().unwrap().len(), 2);
+            let expected_opens = if operation == BlockedOperation::DecodeThenRecoverSeek {
+                2
+            } else {
+                1
+            };
+            assert_eq!(opened.lock().unwrap().len(), expected_opens);
             assert_eq!(
                 take_seek_results(&mut events),
                 vec![
@@ -401,12 +447,39 @@ fn blocked_operation(operation: BlockedOperation) {
             assert_eq!(player.state(), PlaybackState::Paused);
             assert!(capture.lock().unwrap().iter().all(Vec::is_empty));
         }
+        BlockedOperation::DecodeThenCancelOpen => {
+            commands
+                .send(PlaybackCommand::Open("replacement.wav".into()))
+                .unwrap();
+            loop {
+                player.main_loop();
+                if opened.lock().unwrap().len() == 2 {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "replacement did not cancel the remote read"
+                );
+            }
+            let opens = opened.lock().unwrap();
+            assert_eq!(opens[0].1, opens[1].1);
+        }
         BlockedOperation::OpenThenSeek => {
             let superseded = SeekRequest::new(0.2);
             let latest = SeekRequest::new(0.4);
             commands.send(PlaybackCommand::Seek(superseded)).unwrap();
             commands.send(PlaybackCommand::Seek(latest)).unwrap();
             player.main_loop();
+            let stability_deadline = Instant::now() + Duration::from_millis(300);
+            while Instant::now() < stability_deadline {
+                player.main_loop();
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+            assert_eq!(
+                opened.lock().unwrap().len(),
+                1,
+                "replacing a deferred seek must not retire the worker opening its track"
+            );
             release.0.try_send(()).unwrap();
             loop {
                 player.main_loop();
@@ -447,7 +520,9 @@ fn blocked_operation(operation: BlockedOperation) {
                 vec![SeekResult::Failed(request.serial)]
             );
         }
-        BlockedOperation::OpenThenStop | BlockedOperation::DecodeThenStop => {}
+        BlockedOperation::OpenThenStop
+        | BlockedOperation::DecodeThenStop
+        | BlockedOperation::DecodeThenCancelStop => {}
     }
 
     commands.send(PlaybackCommand::Stop).unwrap();
@@ -558,6 +633,21 @@ fn paused_open_completion_keeps_pause_and_latest_seek() {
 #[test]
 fn paused_decode_completion_does_not_request_more_audio() {
     blocked_operation(BlockedOperation::DecodeWhilePaused);
+}
+
+#[test]
+fn a_cancellable_remote_read_does_not_trigger_worker_recovery() {
+    blocked_operation(BlockedOperation::DecodeThenCancelSeek);
+}
+
+#[test]
+fn stopping_cancels_a_remote_read_and_keeps_the_worker_reusable() {
+    blocked_operation(BlockedOperation::DecodeThenCancelStop);
+}
+
+#[test]
+fn replacing_a_track_cancels_its_remote_read_without_recovery() {
+    blocked_operation(BlockedOperation::DecodeThenCancelOpen);
 }
 
 #[test]
