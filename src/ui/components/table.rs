@@ -553,7 +553,7 @@ where
                     Some(false) => CHEVRON_DOWN,
                     None => SELECTOR,
                 })
-                .when(!sort_ascending_if_this_col.is_some(), |this| {
+                .when(sort_ascending_if_this_col.is_none(), |this| {
                     this.text_color(theme.text_disabled)
                 })
                 .size(px(14.0))

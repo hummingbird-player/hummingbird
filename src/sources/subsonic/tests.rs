@@ -8,7 +8,8 @@ use super::{
 use crate::{
     library::source::SourceId,
     sources::{
-        MediaByteRange, MediaQuality, RemoteArtworkRef, TranscodeFormat, credentials::Secret,
+        MediaByteRange, MediaDeliveryKind, MediaQuality, RemoteArtworkRef, TranscodeFormat,
+        credentials::Secret,
     },
 };
 use serde_json::{Value, json};
@@ -1629,7 +1630,7 @@ async fn one_transient_range_failure_is_retried() {
 }
 
 #[tokio::test]
-async fn legacy_transcoding_sends_the_configured_format_bitrate_and_offset() {
+async fn legacy_transcoding_sends_policy_but_reports_only_observed_delivery() {
     let mut server = Server::new(vec![
         ping(true),
         named_extensions(&[("transcodeOffset", &[1])]),
@@ -1645,7 +1646,7 @@ async fn legacy_transcoding_sends_the_configured_format_bitrate_and_offset() {
     let backend = server
         .backend(password())
         .with_quality(MediaQuality::Transcode {
-            format: TranscodeFormat::Mp3,
+            format: TranscodeFormat::Opus,
             bitrate_kbps: 192,
         });
     backend.connect().await.unwrap();
@@ -1655,8 +1656,8 @@ async fn legacy_transcoding_sends_the_configured_format_bitrate_and_offset() {
         media.delivery,
         crate::sources::MediaDelivery {
             format: Some("mp3".into()),
-            bitrate_kbps: Some(192),
-            transcoded: true,
+            bitrate_kbps: None,
+            kind: MediaDeliveryKind::Unknown,
         }
     );
     while media.chunks.recv().await.is_some() {}
@@ -1670,7 +1671,7 @@ async fn legacy_transcoding_sends_the_configured_format_bitrate_and_offset() {
     assert_eq!(request.path(), "/proxy/music/rest/stream.view");
     let query = query(&request);
     assert_eq!(query["id"], "song/id");
-    assert_eq!(query["format"], "mp3");
+    assert_eq!(query["format"], "opus");
     assert_eq!(query["maxBitRate"], "192");
     assert_eq!(query["timeOffset"], "12.5");
 }
@@ -1686,7 +1687,7 @@ async fn open_subsonic_transcoding_discovers_capabilities_lazily_then_streams_th
             "transcodeDecision": {
                 "canDirectPlay": false,
                 "canTranscode": true,
-                "transcodeParams": "profile=opus-96",
+                "transcodeParams": "profile%3Dopus-96%2Fmobile",
                 "transcodeStream": {
                     "protocol": "http",
                     "container": "opus",
@@ -1715,7 +1716,7 @@ async fn open_subsonic_transcoding_discovers_capabilities_lazily_then_streams_th
         crate::sources::MediaDelivery {
             format: Some("opus".into()),
             bitrate_kbps: Some(96),
-            transcoded: true,
+            kind: MediaDeliveryKind::Transcoded,
         }
     );
     while media.chunks.recv().await.is_some() {}
@@ -1734,9 +1735,28 @@ async fn open_subsonic_transcoding_discovers_capabilities_lazily_then_streams_th
     assert_eq!(decision_query["mediaId"], "song");
     assert_eq!(decision_query["mediaType"], "song");
     let capabilities: Value = serde_json::from_slice(&decision.body).unwrap();
-    assert_eq!(capabilities["name"], "Hummingbird");
-    assert_eq!(capabilities["maxAudioBitrate"], 96_000);
-    assert_eq!(capabilities["transcodingProfiles"][0]["audioCodec"], "opus");
+    assert_eq!(
+        capabilities,
+        json!({
+            "name": "Hummingbird",
+            "platform": std::env::consts::OS,
+            "maxAudioBitrate": 96_000,
+            "maxTranscodingAudioBitrate": 96_000,
+            "directPlayProfiles": [{
+                "containers": ["ogg"],
+                "audioCodecs": ["opus"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            }],
+            "transcodingProfiles": [{
+                "container": "ogg",
+                "audioCodec": "opus",
+                "protocol": "http",
+                "maxAudioChannels": 8
+            }],
+            "codecProfiles": []
+        })
+    );
 
     let stream = server.detailed_request().await;
     assert_eq!(stream.method, "GET");
@@ -1747,7 +1767,250 @@ async fn open_subsonic_transcoding_discovers_capabilities_lazily_then_streams_th
     let stream_query = query(&stream.url);
     assert_eq!(stream_query["mediaId"], "song");
     assert_eq!(stream_query["mediaType"], "song");
-    assert_eq!(stream_query["transcodeParams"], "profile=opus-96");
+    assert_eq!(stream_query["transcodeParams"], "profile=opus-96/mobile");
+    assert!(
+        stream
+            .url
+            .query()
+            .unwrap()
+            .contains("transcodeParams=profile%3Dopus-96%2Fmobile")
+    );
+    assert!(!stream.url.query().unwrap().contains("%253D"));
+    assert_eq!(
+        stream
+            .url
+            .query_pairs()
+            .filter(|(name, _)| name == "transcodeParams")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn unsupported_transcoding_endpoint_falls_back_once_and_is_scoped_to_the_backend() {
+    let legacy = || Reply {
+        status: 200,
+        headers: vec![("Content-Type", "audio/mpeg".into())],
+        body: b"legacy".to_vec(),
+        stall: false,
+        stall_body: false,
+    };
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::status(501),
+        legacy(),
+        legacy(),
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::status(501),
+        legacy(),
+    ])
+    .await;
+    let quality = MediaQuality::Transcode {
+        format: TranscodeFormat::Opus,
+        bitrate_kbps: 96,
+    };
+
+    let backend = server.backend(password()).with_quality(quality);
+    backend.connect().await.unwrap();
+    for location in ["first", "second"] {
+        let mut media = backend.media(location).await.unwrap();
+        while media.chunks.recv().await.is_some() {}
+    }
+    drop(backend);
+
+    let replacement = server.backend(password()).with_quality(quality);
+    replacement.connect().await.unwrap();
+    let mut media = replacement.media("third").await.unwrap();
+    while media.chunks.recv().await.is_some() {}
+
+    let mut paths = Vec::new();
+    for _ in 0..9 {
+        paths.push(server.detailed_request().await.url.path().to_owned());
+    }
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.ends_with("/getTranscodeDecision.view"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.ends_with("/stream.view"))
+            .count(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn a_negative_track_decision_does_not_disable_later_negotiation() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::json(json!({"subsonic-response": {
+            "status": "ok",
+            "version": "1.16.1",
+            "transcodeDecision": {
+                "canDirectPlay": false,
+                "canTranscode": false
+            }
+        }})),
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/mpeg".into())],
+            body: b"legacy".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+        Reply::json(json!({"subsonic-response": {
+            "status": "ok",
+            "version": "1.16.1",
+            "transcodeDecision": {
+                "canDirectPlay": false,
+                "canTranscode": true,
+                "transcodeParams": "second",
+                "transcodeStream": {
+                    "protocol": "http",
+                    "container": "ogg",
+                    "codec": "opus",
+                    "audioBitrate": 96000
+                }
+            }
+        }})),
+        Reply {
+            status: 200,
+            headers: vec![("Content-Type", "audio/ogg; codecs=opus".into())],
+            body: b"opus".to_vec(),
+            stall: false,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Automatic);
+    backend.connect().await.unwrap();
+
+    let mut first = backend.media("first").await.unwrap();
+    assert_eq!(first.delivery.kind, MediaDeliveryKind::Unknown);
+    while first.chunks.recv().await.is_some() {}
+    let mut second = backend.media("second").await.unwrap();
+    assert_eq!(second.delivery.kind, MediaDeliveryKind::Transcoded);
+    while second.chunks.recv().await.is_some() {}
+
+    let mut decision_requests = 0;
+    for _ in 0..6 {
+        decision_requests += usize::from(
+            server
+                .detailed_request()
+                .await
+                .url
+                .path()
+                .ends_with("/getTranscodeDecision.view"),
+        );
+    }
+    assert_eq!(decision_requests, 2);
+}
+
+#[tokio::test]
+async fn transcoding_authentication_failure_does_not_fall_back() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::status(401),
+    ])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Automatic);
+    backend.connect().await.unwrap();
+
+    assert!(matches!(
+        backend.media("song").await,
+        Err(BackendError::Authentication)
+    ));
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/ping.view"
+    );
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/getOpenSubsonicExtensions.view"
+    );
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/getTranscodeDecision.view"
+    );
+    server.assert_no_detailed_request().await;
+}
+
+#[tokio::test]
+async fn transient_transcoding_failure_does_not_fall_back() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply::status(503),
+    ])
+    .await;
+    let backend = server
+        .backend(password())
+        .with_quality(MediaQuality::Automatic);
+    backend.connect().await.unwrap();
+
+    assert!(matches!(
+        backend.media("song").await,
+        Err(BackendError::Unavailable)
+    ));
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/ping.view"
+    );
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/getOpenSubsonicExtensions.view"
+    );
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/getTranscodeDecision.view"
+    );
+    server.assert_no_detailed_request().await;
+}
+
+#[tokio::test]
+async fn cancelling_a_transcoding_decision_does_not_fall_back() {
+    let mut server = Server::new(vec![
+        ping(true),
+        named_extensions(&[("transcoding", &[1])]),
+        Reply {
+            status: 200,
+            headers: Vec::new(),
+            body: Vec::new(),
+            stall: true,
+            stall_body: false,
+        },
+    ])
+    .await;
+    let backend = std::sync::Arc::new(
+        server
+            .backend(password())
+            .with_quality(MediaQuality::Automatic),
+    );
+    backend.connect().await.unwrap();
+    server.detailed_request().await;
+    server.detailed_request().await;
+
+    let task_backend = backend.clone();
+    let task = tokio::spawn(async move { task_backend.media("song").await });
+    assert_eq!(
+        server.detailed_request().await.url.path(),
+        "/proxy/music/rest/getTranscodeDecision.view"
+    );
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    server.assert_no_detailed_request().await;
 }
 
 #[tokio::test]

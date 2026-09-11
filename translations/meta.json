@@ -1001,6 +1001,30 @@
     "plural": false,
     "description": null
   },
+  "MUSIC_LIBRARY_DELIVERY_OBSERVED_FORMAT": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:166",
+    "plural": false,
+    "description": null
+  },
+  "MUSIC_LIBRARY_DELIVERY_ORIGINAL": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:176",
+    "plural": false,
+    "description": null
+  },
+  "MUSIC_LIBRARY_DELIVERY_TRANSCODED": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:185",
+    "plural": false,
+    "description": null
+  },
+  "MUSIC_LIBRARY_DELIVERY_UNKNOWN": {
+    "context": "source_indicator.rs",
+    "definedIn": "src/ui/components/source_indicator.rs:172",
+    "plural": false,
+    "description": null
+  },
   "MUSIC_LIBRARY_EDIT": {
     "context": "display.rs",
     "definedIn": "src/ui/settings/music_libraries/display.rs:365",

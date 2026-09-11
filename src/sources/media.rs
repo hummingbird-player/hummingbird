@@ -21,7 +21,10 @@ use crate::{
     },
 };
 
-use super::{BackendError, LibraryBackend, MediaByteRangeReader, MediaDelivery, MediaDescriptor};
+use super::{
+    BackendError, LibraryBackend, MediaByteRangeReader, MediaDelivery, MediaDeliveryKind,
+    MediaDescriptor,
+};
 
 const CACHE_DIRECTORY: &str = "streams";
 const DOWNLOAD_DIRECTORY: &str = "downloads";
@@ -251,7 +254,7 @@ impl SourceRegistry {
             .backend_with_epoch(source)
             .ok_or(BackendError::Unavailable)?;
         let mut descriptor = backend.original_media(location).await?;
-        if descriptor.delivery.transcoded {
+        if descriptor.delivery.kind == MediaDeliveryKind::Transcoded {
             return Err(BackendError::MalformedResponse);
         }
 
@@ -376,7 +379,7 @@ impl SourceRegistry {
             .map(|entry| MediaDelivery {
                 format: entry.extension.clone(),
                 bitrate_kbps: None,
-                transcoded: false,
+                kind: MediaDeliveryKind::Unknown,
             })
             .or_else(|| state.deliveries.get(track).cloned())
     }
@@ -1352,7 +1355,7 @@ mod tests {
                 MediaDelivery {
                     format: Some("flac".into()),
                     bitrate_kbps: None,
-                    transcoded: false,
+                    kind: MediaDeliveryKind::Unknown,
                 },
                 rx,
             )
@@ -1440,7 +1443,7 @@ mod tests {
                 MediaDelivery {
                     format: Some("flac".into()),
                     bitrate_kbps: None,
-                    transcoded: false,
+                    kind: MediaDeliveryKind::Unknown,
                 },
                 rx,
             )
@@ -1954,7 +1957,7 @@ mod tests {
             Some(MediaDelivery {
                 format: Some("flac".into()),
                 bitrate_kbps: None,
-                transcoded: false,
+                kind: MediaDeliveryKind::Unknown,
             })
         );
 
@@ -1980,7 +1983,7 @@ mod tests {
             Some(MediaDelivery {
                 format: Some("flac".into()),
                 bitrate_kbps: None,
-                transcoded: false,
+                kind: MediaDeliveryKind::Unknown,
             })
         );
         let mut input = restarted.resolve(&track).unwrap();

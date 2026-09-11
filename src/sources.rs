@@ -62,7 +62,15 @@ pub(crate) trait MediaByteRangeReader: Send + Sync {
 pub struct MediaDelivery {
     pub format: Option<String>,
     pub bitrate_kbps: Option<u32>,
-    pub transcoded: bool,
+    pub kind: MediaDeliveryKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MediaDeliveryKind {
+    #[default]
+    Unknown,
+    Original,
+    Transcoded,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

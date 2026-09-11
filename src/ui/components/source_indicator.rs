@@ -155,20 +155,35 @@ fn quality_description(library: &crate::settings::services::MusicLibrarySettings
 }
 
 fn delivery_description(delivery: &crate::sources::MediaDelivery) -> SharedString {
+    use crate::sources::MediaDeliveryKind;
+
     let format = delivery
         .format
         .as_deref()
-        .unwrap_or(if delivery.transcoded {
-            "transcode"
-        } else {
-            "original"
-        });
-    match delivery.bitrate_kbps {
-        Some(bitrate) => format!("{} · {bitrate} kb/s", format.to_ascii_uppercase()).into(),
-        None if delivery.transcoded => {
-            format!("Streaming as {}", format.to_ascii_uppercase()).into()
+        .map(|format| format.to_ascii_uppercase());
+    match (delivery.kind, format, delivery.bitrate_kbps) {
+        (MediaDeliveryKind::Unknown, Some(format), _) => tr!(
+            "MUSIC_LIBRARY_DELIVERY_OBSERVED_FORMAT",
+            "Observed: {{format}}",
+            format = format
+        )
+        .into(),
+        (MediaDeliveryKind::Unknown, None, _) => {
+            tr!("MUSIC_LIBRARY_DELIVERY_UNKNOWN", "Delivery unknown").into()
         }
-        None => format!("Original: {}", format.to_ascii_uppercase()).into(),
+        (MediaDeliveryKind::Original, Some(format), _) => format!("Original: {format}").into(),
+        (MediaDeliveryKind::Original, None, _) => {
+            tr!("MUSIC_LIBRARY_DELIVERY_ORIGINAL", "Original quality").into()
+        }
+        (MediaDeliveryKind::Transcoded, Some(format), Some(bitrate)) => {
+            format!("{format} · {bitrate} kb/s").into()
+        }
+        (MediaDeliveryKind::Transcoded, Some(format), None) => {
+            format!("Streaming as {format}").into()
+        }
+        (MediaDeliveryKind::Transcoded, None, _) => {
+            tr!("MUSIC_LIBRARY_DELIVERY_TRANSCODED", "Transcoded").into()
+        }
     }
 }
 
@@ -277,4 +292,40 @@ pub fn source_indicator_slot(
         .when_some(origin, |this, origin| {
             this.child(source_indicator(id, origin, color))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::{MediaDelivery, MediaDeliveryKind};
+
+    fn initialize_translations() {
+        static INITIALIZED: std::sync::Once = std::sync::Once::new();
+        INITIALIZED.call_once(|| {
+            cntp_i18n::I18N_MANAGER.load_source(cntp_i18n::tr_load!());
+        });
+    }
+
+    #[test]
+    fn unknown_delivery_uses_the_observed_format_description() {
+        initialize_translations();
+        let description = delivery_description(&MediaDelivery {
+            format: Some("mp3".into()),
+            bitrate_kbps: None,
+            kind: MediaDeliveryKind::Unknown,
+        });
+
+        assert_eq!(description.as_ref(), "Observed: MP3");
+    }
+
+    #[test]
+    fn proven_transcoding_reports_the_observed_bitrate() {
+        let description = delivery_description(&MediaDelivery {
+            format: Some("opus".into()),
+            bitrate_kbps: Some(96),
+            kind: MediaDeliveryKind::Transcoded,
+        });
+
+        assert_eq!(description.as_ref(), "OPUS · 96 kb/s");
+    }
 }

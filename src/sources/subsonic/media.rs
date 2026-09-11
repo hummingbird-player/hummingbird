@@ -1,6 +1,9 @@
 //! Original-quality media requests and bounded response streaming.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -13,8 +16,8 @@ use zed_reqwest::{
 };
 
 use crate::sources::{
-    BackendError, MediaByteRange, MediaByteRangeReader, MediaDelivery, MediaDescriptor,
-    MediaQuality, RemoteArtworkRef,
+    BackendError, MediaByteRange, MediaByteRangeReader, MediaDelivery, MediaDeliveryKind,
+    MediaDescriptor, MediaQuality, RemoteArtworkRef, TranscodeFormat,
 };
 
 use super::client::{
@@ -25,14 +28,46 @@ use super::client::{
 pub(super) const MAX_MEDIA_REDIRECTS: usize = 5;
 const MAX_ARTWORK_BYTES: usize = 20 * 1024 * 1024;
 
+enum TranscodingExtensionError {
+    Fatal(BackendError),
+    Fallback(BackendError),
+    Incompatible(BackendError),
+}
+
+impl TranscodingExtensionError {
+    fn decision_response(error: BackendError) -> Self {
+        match error {
+            BackendError::Unsupported | BackendError::MalformedResponse => {
+                Self::Incompatible(error)
+            }
+            error => Self::Fatal(error),
+        }
+    }
+
+    fn stream_response(error: BackendError) -> Self {
+        match error {
+            BackendError::Unsupported => Self::Incompatible(error),
+            error => Self::Fatal(error),
+        }
+    }
+}
+
+impl From<BackendError> for TranscodingExtensionError {
+    fn from(error: BackendError) -> Self {
+        Self::Fatal(error)
+    }
+}
+
 pub(super) struct MediaReader {
     client: Client,
+    transcoding_incompatible: AtomicBool,
 }
 
 impl MediaReader {
     pub(super) fn new() -> Result<Self, BackendError> {
         Ok(Self {
             client: build_client(media_redirect_policy())?,
+            transcoding_incompatible: AtomicBool::new(false),
         })
     }
 
@@ -53,7 +88,10 @@ impl MediaReader {
         if quality != MediaQuality::Original {
             client.ensure_connected().await?;
         }
-        if quality != MediaQuality::Original && client.supports_extension("transcoding", 1).await {
+        if quality != MediaQuality::Original
+            && !self.transcoding_incompatible.load(Ordering::Acquire)
+            && client.supports_extension("transcoding", 1).await
+        {
             match self
                 .read_with_transcoding_extension(
                     client,
@@ -65,12 +103,20 @@ impl MediaReader {
                 .await
             {
                 Ok(descriptor) => return Ok(descriptor),
-                Err(error) => {
+                Err(TranscodingExtensionError::Incompatible(error)) => {
+                    self.transcoding_incompatible.store(true, Ordering::Release);
                     tracing::warn!(
                         ?error,
                         "OpenSubsonic transcoding failed; falling back to the legacy stream endpoint"
                     );
                 }
+                Err(TranscodingExtensionError::Fallback(error)) => {
+                    tracing::warn!(
+                        ?error,
+                        "OpenSubsonic transcoding could not satisfy this request; falling back to the legacy stream endpoint"
+                    );
+                }
+                Err(TranscodingExtensionError::Fatal(error)) => return Err(error),
             }
         }
         let mut parameters = vec![("id", location.to_owned())];
@@ -91,10 +137,7 @@ impl MediaReader {
                 if let Some(offset) = offset_seconds.filter(|offset| *offset > 0.0) {
                     parameters.push(("timeOffset", offset.to_string()));
                 }
-                MediaDelivery {
-                    transcoded: false,
-                    ..MediaDelivery::default()
-                }
+                MediaDelivery::default()
             }
             MediaQuality::Transcode {
                 format,
@@ -112,12 +155,7 @@ impl MediaReader {
                 if let Some(offset) = offset_seconds.filter(|offset| *offset > 0.0) {
                     parameters.push(("timeOffset", offset.to_string()));
                 }
-                MediaDelivery {
-                    format: Some(format.parameter().into()),
-                    bitrate_kbps: (format.parameter() != "flac")
-                        .then_some(bitrate_kbps.clamp(32, 320)),
-                    transcoded: true,
-                }
+                MediaDelivery::default()
             }
         };
         let url = client.request_url("stream.view", true, &parameters);
@@ -150,7 +188,7 @@ impl MediaReader {
         quality: MediaQuality,
         offset_seconds: Option<f64>,
         allow_byte_ranges: bool,
-    ) -> Result<MediaDescriptor, BackendError> {
+    ) -> Result<MediaDescriptor, TranscodingExtensionError> {
         let capabilities = ClientInfo::for_quality(quality);
         let decision = client
             .post_json::<TranscodeDecisionPayload, _>(
@@ -161,10 +199,13 @@ impl MediaReader {
                 ],
                 &capabilities,
             )
-            .await?
+            .await
+            .map_err(TranscodingExtensionError::decision_response)?
             .payload
             .transcode_decision
-            .ok_or(BackendError::MalformedResponse)?;
+            .ok_or(TranscodingExtensionError::Incompatible(
+                BackendError::MalformedResponse,
+            ))?;
 
         let direct_play = decision.can_direct_play;
         let (url, delivery) = if direct_play {
@@ -175,36 +216,49 @@ impl MediaReader {
                     true,
                     &[("id", location.to_owned()), ("format", "raw".into())],
                 ),
-                stream.delivery(false),
+                stream.delivery(MediaDeliveryKind::Original),
             )
         } else if decision.can_transcode {
             let parameters = decision
                 .transcode_params
                 .filter(|parameters| !parameters.is_empty())
-                .ok_or(BackendError::MalformedResponse)?;
-            let stream = decision
-                .transcode_stream
-                .ok_or(BackendError::MalformedResponse)?;
+                .ok_or(TranscodingExtensionError::Incompatible(
+                    BackendError::MalformedResponse,
+                ))?;
+            let stream =
+                decision
+                    .transcode_stream
+                    .ok_or(TranscodingExtensionError::Incompatible(
+                        BackendError::MalformedResponse,
+                    ))?;
             if stream.protocol.as_deref() != Some("http") {
-                return Err(BackendError::Unsupported);
+                return Err(TranscodingExtensionError::Incompatible(
+                    BackendError::Unsupported,
+                ));
             }
             let mut request = vec![
                 ("mediaId", location.to_owned()),
                 ("mediaType", "song".into()),
-                ("transcodeParams", parameters),
             ];
             if let Some(offset) = offset_seconds.filter(|offset| *offset > 0.0) {
                 request.push(("offset", offset.to_string()));
             }
-            (
+            let url = append_opaque_query_parameter(
                 client.request_url("getTranscodeStream.view", true, &request),
-                stream.delivery(true),
+                "transcodeParams",
+                &parameters,
             )
+            .map_err(TranscodingExtensionError::Incompatible)?;
+            (url, stream.delivery(MediaDeliveryKind::Transcoded))
         } else {
-            return Err(BackendError::Unsupported);
+            return Err(TranscodingExtensionError::Fallback(
+                BackendError::Unsupported,
+            ));
         };
         if offset_seconds.is_some_and(|offset| offset > 0.0) && decision.can_direct_play {
-            return Err(BackendError::Unsupported);
+            return Err(TranscodingExtensionError::Fallback(
+                BackendError::Unsupported,
+            ));
         }
         let response = tokio::time::timeout(
             client.timeout,
@@ -226,6 +280,7 @@ impl MediaReader {
             }),
         )
         .await
+        .map_err(TranscodingExtensionError::stream_response)
     }
 
     pub(super) async fn artwork(
@@ -876,6 +931,83 @@ pub(super) fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
     (start <= end && end < total).then_some((start, end, total))
 }
 
+fn append_opaque_query_parameter(
+    mut url: Url,
+    name: &str,
+    value: &str,
+) -> Result<Url, BackendError> {
+    if !is_encoded_query_value(value) {
+        return Err(BackendError::MalformedResponse);
+    }
+    let mut query = url.query().unwrap_or_default().to_owned();
+    if !query.is_empty() {
+        query.push('&');
+    }
+    query.push_str(name);
+    query.push('=');
+    query.push_str(value);
+    url.set_query(Some(&query));
+    Ok(url)
+}
+
+fn is_encoded_query_value(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let mut saw_byte = false;
+    while let Some(byte) = bytes.next() {
+        saw_byte = true;
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            continue;
+        }
+        if byte != b'%'
+            || !bytes.next().is_some_and(|byte| byte.is_ascii_hexdigit())
+            || !bytes.next().is_some_and(|byte| byte.is_ascii_hexdigit())
+        {
+            return false;
+        }
+    }
+    saw_byte
+}
+
+#[derive(Clone, Copy)]
+struct SupportedAudioProfile {
+    container: &'static str,
+    codec: &'static str,
+    format: Option<TranscodeFormat>,
+}
+
+const SUPPORTED_AUDIO_PROFILES: [SupportedAudioProfile; 6] = [
+    SupportedAudioProfile {
+        container: "mp4",
+        codec: "aac",
+        format: Some(TranscodeFormat::Aac),
+    },
+    SupportedAudioProfile {
+        container: "ogg",
+        codec: "opus",
+        format: Some(TranscodeFormat::Opus),
+    },
+    SupportedAudioProfile {
+        container: "ogg",
+        codec: "vorbis",
+        format: None,
+    },
+    SupportedAudioProfile {
+        container: "wav",
+        codec: "pcm",
+        format: None,
+    },
+    SupportedAudioProfile {
+        container: "mp3",
+        codec: "mp3",
+        format: Some(TranscodeFormat::Mp3),
+    },
+    SupportedAudioProfile {
+        container: "flac",
+        codec: "flac",
+        format: Some(TranscodeFormat::Flac),
+    },
+];
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClientInfo {
@@ -890,15 +1022,15 @@ struct ClientInfo {
 
 impl ClientInfo {
     fn for_quality(quality: MediaQuality) -> Self {
-        let formats: Vec<&'static str> = match quality {
-            MediaQuality::Original | MediaQuality::Automatic => {
-                vec!["aac", "flac", "m4a", "mp3", "ogg", "opus", "wav"]
-            }
-            MediaQuality::Transcode { format, .. } => vec![format.parameter()],
-        };
+        let profiles = SUPPORTED_AUDIO_PROFILES
+            .iter()
+            .filter(|profile| match quality {
+                MediaQuality::Transcode { format, .. } => profile.format == Some(format),
+                MediaQuality::Original | MediaQuality::Automatic => true,
+            });
         let bitrate = match quality {
             MediaQuality::Transcode {
-                format: crate::sources::TranscodeFormat::Flac,
+                format: TranscodeFormat::Flac,
                 ..
             } => None,
             MediaQuality::Transcode { bitrate_kbps, .. } => {
@@ -911,26 +1043,104 @@ impl ClientInfo {
             platform: std::env::consts::OS,
             max_audio_bitrate: bitrate,
             max_transcoding_audio_bitrate: bitrate,
-            direct_play_profiles: formats
-                .iter()
-                .map(|format| DirectPlayProfile {
-                    containers: vec![*format],
-                    audio_codecs: vec![*format],
+            direct_play_profiles: profiles
+                .clone()
+                .map(|profile| DirectPlayProfile {
+                    containers: vec![profile.container],
+                    audio_codecs: vec![profile.codec],
                     protocols: vec!["http"],
                     max_audio_channels: 8,
                 })
                 .collect(),
-            transcoding_profiles: formats
-                .iter()
-                .map(|format| TranscodingProfile {
-                    container: format,
-                    audio_codec: format,
+            transcoding_profiles: profiles
+                .map(|profile| TranscodingProfile {
+                    container: profile.container,
+                    audio_codec: profile.codec,
                     protocol: "http",
                     max_audio_channels: 8,
                 })
                 .collect(),
             codec_profiles: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn automatic_client_info_uses_supported_container_codec_pairs() {
+    let info = serde_json::to_value(ClientInfo::for_quality(MediaQuality::Automatic)).unwrap();
+    assert_eq!(
+        info["directPlayProfiles"],
+        serde_json::json!([
+            {
+                "containers": ["mp4"],
+                "audioCodecs": ["aac"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            },
+            {
+                "containers": ["ogg"],
+                "audioCodecs": ["opus"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            },
+            {
+                "containers": ["ogg"],
+                "audioCodecs": ["vorbis"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            },
+            {
+                "containers": ["wav"],
+                "audioCodecs": ["pcm"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            },
+            {
+                "containers": ["mp3"],
+                "audioCodecs": ["mp3"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            },
+            {
+                "containers": ["flac"],
+                "audioCodecs": ["flac"],
+                "protocols": ["http"],
+                "maxAudioChannels": 8
+            }
+        ])
+    );
+    assert_eq!(
+        info["transcodingProfiles"],
+        serde_json::json!([
+            {"container": "mp4", "audioCodec": "aac", "protocol": "http", "maxAudioChannels": 8},
+            {"container": "ogg", "audioCodec": "opus", "protocol": "http", "maxAudioChannels": 8},
+            {"container": "ogg", "audioCodec": "vorbis", "protocol": "http", "maxAudioChannels": 8},
+            {"container": "wav", "audioCodec": "pcm", "protocol": "http", "maxAudioChannels": 8},
+            {"container": "mp3", "audioCodec": "mp3", "protocol": "http", "maxAudioChannels": 8},
+            {"container": "flac", "audioCodec": "flac", "protocol": "http", "maxAudioChannels": 8}
+        ])
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn opaque_query_values_are_reused_without_decoding_or_injection() {
+    let url = Url::parse("https://music.example/rest/stream?v=1").unwrap();
+    let url = append_opaque_query_parameter(url.clone(), "transcodeParams", "a%26b%3Dc").unwrap();
+    assert_eq!(url.query().unwrap(), "v=1&transcodeParams=a%26b%3Dc");
+    assert_eq!(
+        url.query_pairs()
+            .filter(|(name, _)| name == "transcodeParams")
+            .count(),
+        1
+    );
+
+    for value in ["", "a&b", "a#b", "a%2", "a%XZ"] {
+        assert!(matches!(
+            append_opaque_query_parameter(url.clone(), "transcodeParams", value),
+            Err(BackendError::MalformedResponse)
+        ));
     }
 }
 
@@ -983,11 +1193,11 @@ struct StreamInfo {
 }
 
 impl StreamInfo {
-    fn delivery(self, transcoded: bool) -> MediaDelivery {
+    fn delivery(self, kind: MediaDeliveryKind) -> MediaDelivery {
         MediaDelivery {
             format: self.codec.or(self.container),
             bitrate_kbps: self.audio_bitrate.map(|bitrate| bitrate / 1000),
-            transcoded,
+            kind,
         }
     }
 }
