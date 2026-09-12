@@ -167,34 +167,21 @@ impl TableData<AlbumColumn> for Album {
     ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
         let include_genres = visible_columns.contains(&AlbumColumn::Genres);
         Box::pin(async move {
-            let (album, genres) = if include_genres {
-                let row = albums()
-                    .by_id(id as i64)
-                    .with_genres()
-                    .fetch_row(&pool)
-                    .await?;
-                (row.album, format_genres(&row.genres))
+            let query = albums().by_id(id as i64).with_track_locations();
+            let query = if include_genres {
+                query.with_genres()
             } else {
-                let Some(album) = albums().by_id(id as i64).fetch_optional(&pool).await? else {
-                    return Ok(None);
-                };
-                (album, None)
+                query
+            };
+            let Some(row) = query.fetch_optional_row(&pool).await? else {
+                return Ok(None);
             };
 
-            let track_locations = tracks()
-                .from_album(id as i64)
-                .for_playback()
-                .fetch_rows(&pool)
-                .await?
-                .into_iter()
-                .map(|track| track.location)
-                .collect();
-
             Ok(Some((
-                Arc::new(album),
+                Arc::new(row.album),
                 AlbumTableState {
-                    genres,
-                    track_locations,
+                    genres: format_genres(&row.genres),
+                    track_locations: row.track_locations,
                 },
             )))
         })
@@ -534,19 +521,20 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         _visible_columns: Vec<ArtistColumn>,
     ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
         Box::pin(async move {
-            let artist = artists().by_id(id).with_counts().fetch_row(&pool).await?;
-            let track_locations = tracks()
-                .from_artist(id)
-                .for_playback()
-                .fetch_rows(&pool)
+            let Some(row) = artists()
+                .by_id(id)
+                .with_track_locations()
+                .fetch_optional_row(&pool)
                 .await?
-                .into_iter()
-                .map(|track| track.location)
-                .collect();
+            else {
+                return Ok(None);
+            };
 
             Ok(Some((
-                Arc::new(artist),
-                ArtistTableState { track_locations },
+                Arc::new(row.artist),
+                ArtistTableState {
+                    track_locations: row.track_locations,
+                },
             )))
         })
     }

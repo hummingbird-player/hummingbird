@@ -486,11 +486,10 @@ fn push_artist_filter(query: &mut QueryBuilder<Sqlite>, filter: ArtistFilter) {
         ArtistFilter::Standalone(artist_id) => {
             query
                 .push(
-                    "EXISTS (
-                        SELECT 1
+                    "track.id IN (
+                        SELECT track_artist.track_id
                         FROM track_artist
-                        WHERE track_artist.track_id = track.id
-                          AND track_artist.artist_id = ",
+                        WHERE track_artist.artist_id = ",
                 )
                 .push_bind(artist_id)
                 .push(
@@ -510,23 +509,22 @@ fn push_artist_filter(query: &mut QueryBuilder<Sqlite>, filter: ArtistFilter) {
 fn push_artist_credit(query: &mut QueryBuilder<Sqlite>, artist_id: i64) {
     query
         .push(
-            "(EXISTS (
-                SELECT 1
+            "track.id IN (
+                SELECT album_track.id
                 FROM album_artist
-                WHERE album_artist.album_id = track.album_id
-                  AND album_artist.artist_id = ",
+                JOIN track AS album_track ON album_track.album_id = album_artist.album_id
+                WHERE album_artist.artist_id = ",
         )
         .push_bind(artist_id)
         .push(
             "
-            ) OR EXISTS (
-                SELECT 1
+            UNION
+                SELECT track_artist.track_id
                 FROM track_artist
-                WHERE track_artist.track_id = track.id
-                  AND track_artist.artist_id = ",
+                WHERE track_artist.artist_id = ",
         )
         .push_bind(artist_id)
-        .push("))");
+        .push(")");
 }
 
 fn push_ordering_key(

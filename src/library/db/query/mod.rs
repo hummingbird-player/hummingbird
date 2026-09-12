@@ -3,10 +3,10 @@ mod artist;
 mod genre;
 mod track;
 
-pub use album::{AlbumColumn, AlbumQuery, AlbumQueryWithGenres, AlbumRow, albums};
+pub use album::{AlbumColumn, AlbumQuery, AlbumQueryWithRelations, AlbumRow, albums};
 pub use artist::{
-    ArtistColumn, ArtistQuery, ArtistQueryForSearch, ArtistQueryWithCounts, ArtistSearchRow,
-    artists,
+    ArtistColumn, ArtistQuery, ArtistQueryForSearch, ArtistQueryWithTrackLocations, ArtistRow,
+    ArtistSearchRow, artists,
 };
 pub use genre::{GenreQuery, genres};
 pub use track::{

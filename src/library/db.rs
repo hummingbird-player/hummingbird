@@ -22,10 +22,10 @@ pub use direction::SortDirection;
 pub use pool::create_pool;
 #[allow(unused_imports)]
 pub use query::{
-    AlbumColumn, AlbumQuery, AlbumQueryWithGenres, AlbumRow, ArtistColumn, ArtistQuery,
-    ArtistQueryForSearch, ArtistQueryWithCounts, ArtistSearchRow, GenreQuery, TrackColumn,
-    TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch, TrackSearchRow,
-    albums, artists, genres, tracks,
+    AlbumColumn, AlbumQuery, AlbumQueryWithRelations, AlbumRow, ArtistColumn, ArtistQuery,
+    ArtistQueryForSearch, ArtistQueryWithTrackLocations, ArtistRow, ArtistSearchRow, GenreQuery,
+    TrackColumn, TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch,
+    TrackSearchRow, albums, artists, genres, tracks,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

@@ -1206,17 +1206,21 @@ async fn update_metadata_writes_artists_for_album_track() {
 
     let guest_counts = crate::library::db::artists()
         .by_id(guest_id)
-        .with_counts()
-        .fetch_row(&pool)
+        .with_track_locations()
+        .fetch_optional_row(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap()
+        .artist;
     assert_eq!((guest_counts.album_count, guest_counts.track_count), (0, 1));
     let main_counts = crate::library::db::artists()
         .by_id(main_id)
-        .with_counts()
-        .fetch_row(&pool)
+        .with_track_locations()
+        .fetch_optional_row(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap()
+        .artist;
     assert_eq!((main_counts.album_count, main_counts.track_count), (1, 1));
 
     let guest_tracks = crate::library::db::get_all_tracks_by_artist(&pool, guest_id)

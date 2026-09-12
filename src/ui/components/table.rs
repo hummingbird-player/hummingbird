@@ -4,7 +4,7 @@ pub mod table_data;
 
 mod table_item;
 
-use std::{rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use crate::{
     library::db::SortDirection,
@@ -41,6 +41,16 @@ use table_data::{
 use table_item::TableItem;
 
 type RowMap<T, C> = FxHashMap<usize, Entity<TableItem<T, C>>>;
+
+const LIST_PREFETCH_ITEMS: usize = 5;
+
+fn list_prefetch_range(visible: Range<usize>, item_count: usize) -> Range<usize> {
+    visible.start.saturating_sub(LIST_PREFETCH_ITEMS)
+        ..visible
+            .end
+            .saturating_add(LIST_PREFETCH_ITEMS)
+            .min(item_count)
+}
 
 #[allow(type_alias_bounds)]
 type ItemListResource<T, C>
@@ -632,38 +642,55 @@ where
                             let mut list =
                                 uniform_list("table-list", items_len, move |range, _, cx| {
                                     let start = range.start;
+                                    let end = range.end;
                                     let is_templ_render = range.start == 0 && range.end == 1;
+                                    let materialized_range = if is_templ_render {
+                                        range
+                                    } else {
+                                        list_prefetch_range(range, items_len)
+                                    };
+                                    let get_view = |idx: usize, cx: &mut App| {
+                                        create_or_retrieve_view(
+                                            &views_model,
+                                            idx,
+                                            |cx| {
+                                                TableItem::new(
+                                                    cx,
+                                                    items[idx].clone(),
+                                                    idx,
+                                                    &columns,
+                                                    list_handler.clone(),
+                                                    list_context_menu_context.clone(),
+                                                )
+                                            },
+                                            cx,
+                                        )
+                                    };
 
-                                    items[range]
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(idx, item)| {
-                                            let idx = idx + start;
+                                    for idx in materialized_range.start..start {
+                                        prune_views(&views_model, &render_counter, idx, cx);
+                                        let _ = get_view(idx, cx);
+                                    }
 
+                                    let elements = (start..end)
+                                        .map(|idx| {
                                             if !is_templ_render {
                                                 prune_views(&views_model, &render_counter, idx, cx);
                                             }
 
                                             div()
                                                 .w_full()
-                                                .child(create_or_retrieve_view(
-                                                    &views_model,
-                                                    idx,
-                                                    |cx| {
-                                                        TableItem::new(
-                                                            cx,
-                                                            item.clone(),
-                                                            idx,
-                                                            &columns,
-                                                            list_handler.clone(),
-                                                            list_context_menu_context.clone(),
-                                                        )
-                                                    },
-                                                    cx,
-                                                ))
+                                                .child(get_view(idx, cx))
                                                 .into_any_element()
                                         })
-                                        .collect()
+                                        .collect();
+
+                                    for idx in end..materialized_range.end {
+                                        prune_views(&views_model, &render_counter, idx, cx);
+                                        let _ = get_view(idx, cx);
+                                    }
+
+                                    elements
                                 })
                                 .track_scroll(&list_vertical_scroll_handle)
                                 .w_full()
@@ -774,5 +801,17 @@ where
                         .right(px(14.0)),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_prefetch_range;
+
+    #[test]
+    fn list_prefetch_range_extends_and_clamps_both_sides() {
+        assert_eq!(list_prefetch_range(10..20, 100), 5..25);
+        assert_eq!(list_prefetch_range(0..10, 100), 0..15);
+        assert_eq!(list_prefetch_range(95..100, 100), 90..100);
     }
 }

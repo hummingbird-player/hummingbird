@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use sqlx::{QueryBuilder, Sqlite, SqlitePool, types::Json};
 
 use crate::library::types::{Album, DBString, Genre};
@@ -33,6 +35,13 @@ const GENRES_COLUMN: &str = "\
         ) AS ordered_genres
     ), json('[]')) AS genres";
 
+const TRACK_LOCATIONS_COLUMN: &str = "\
+    COALESCE((
+        SELECT json_group_array(track.location)
+        FROM track
+        WHERE track.album_id = album.id
+    ), json('[]')) AS track_locations";
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AlbumColumn {
     Title,
@@ -53,6 +62,7 @@ struct AlbumOrdering {
 pub struct AlbumRow {
     pub album: Album,
     pub genres: Vec<Genre>,
+    pub track_locations: Vec<PathBuf>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -61,6 +71,8 @@ struct AlbumRowRecord {
     album: Album,
     #[sqlx(json)]
     genres: Json<Vec<(i64, String, String)>>,
+    #[sqlx(json)]
+    track_locations: Json<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -73,15 +85,20 @@ pub struct AlbumQuery {
 }
 
 #[derive(Clone, Debug)]
-pub struct AlbumQueryWithGenres {
+pub struct AlbumQueryWithRelations {
     query: AlbumQuery,
+    include_genres: bool,
+    include_track_locations: bool,
 }
 
 #[derive(Clone, Copy)]
 enum AlbumProjection {
     Entity,
     Id,
-    WithGenres,
+    Relations {
+        include_genres: bool,
+        include_track_locations: bool,
+    },
 }
 
 pub fn albums() -> AlbumQuery {
@@ -145,8 +162,21 @@ impl AlbumQuery {
         self
     }
 
-    pub fn with_genres(self) -> AlbumQueryWithGenres {
-        AlbumQueryWithGenres { query: self }
+    #[allow(dead_code)]
+    pub fn with_genres(self) -> AlbumQueryWithRelations {
+        AlbumQueryWithRelations {
+            query: self,
+            include_genres: true,
+            include_track_locations: false,
+        }
+    }
+
+    pub fn with_track_locations(self) -> AlbumQueryWithRelations {
+        AlbumQueryWithRelations {
+            query: self,
+            include_genres: false,
+            include_track_locations: true,
+        }
     }
 
     pub async fn fetch(self, pool: &SqlitePool) -> sqlx::Result<Album> {
@@ -184,8 +214,22 @@ impl AlbumQuery {
             AlbumProjection::Id => {
                 query.push("album.id");
             }
-            AlbumProjection::WithGenres => {
-                query.push(ALBUM_COLUMNS).push(", ").push(GENRES_COLUMN);
+            AlbumProjection::Relations {
+                include_genres,
+                include_track_locations,
+            } => {
+                query.push(ALBUM_COLUMNS).push(", ");
+                if include_genres {
+                    query.push(GENRES_COLUMN);
+                } else {
+                    query.push("json('[]') AS genres");
+                }
+                query.push(", ");
+                if include_track_locations {
+                    query.push(TRACK_LOCATIONS_COLUMN);
+                } else {
+                    query.push("json('[]') AS track_locations");
+                }
             }
         }
         query.push(" FROM album");
@@ -265,27 +309,67 @@ impl AlbumQuery {
     }
 }
 
-impl AlbumQueryWithGenres {
+impl AlbumQueryWithRelations {
+    pub fn with_genres(mut self) -> Self {
+        self.include_genres = true;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_track_locations(mut self) -> Self {
+        self.include_track_locations = true;
+        self
+    }
+
+    #[allow(dead_code)]
     pub async fn fetch_row(self, pool: &SqlitePool) -> sqlx::Result<AlbumRow> {
-        let mut query = self.query.build(AlbumProjection::WithGenres);
+        let mut query = self.query.build(AlbumProjection::Relations {
+            include_genres: self.include_genres,
+            include_track_locations: self.include_track_locations,
+        });
         let row = query
             .build_query_as::<AlbumRowRecord>()
             .fetch_one(pool)
             .await?;
         Ok(AlbumRow {
             album: row.album,
-            genres: row
-                .genres
-                .0
-                .into_iter()
-                .map(|(id, name, normalized_name)| Genre {
-                    id,
-                    name: DBString::from(name),
-                    normalized_name: DBString::from(normalized_name),
-                })
-                .collect(),
+            genres: decode_genres(row.genres),
+            track_locations: decode_track_locations(row.track_locations),
         })
     }
+
+    pub async fn fetch_optional_row(self, pool: &SqlitePool) -> sqlx::Result<Option<AlbumRow>> {
+        let mut query = self.query.build(AlbumProjection::Relations {
+            include_genres: self.include_genres,
+            include_track_locations: self.include_track_locations,
+        });
+        let row = query
+            .build_query_as::<AlbumRowRecord>()
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(|row| AlbumRow {
+            album: row.album,
+            genres: decode_genres(row.genres),
+            track_locations: decode_track_locations(row.track_locations),
+        }))
+    }
+}
+
+fn decode_genres(genres: Json<Vec<(i64, String, String)>>) -> Vec<Genre> {
+    genres
+        .0
+        .into_iter()
+        .map(|(id, name, normalized_name)| Genre {
+            id,
+            name: DBString::from(name),
+            normalized_name: DBString::from(normalized_name),
+        })
+        .collect()
+}
+
+fn decode_track_locations(track_locations: Json<Vec<String>>) -> Vec<PathBuf> {
+    track_locations.0.into_iter().map(PathBuf::from).collect()
 }
 
 fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, has_filter: &mut bool) {

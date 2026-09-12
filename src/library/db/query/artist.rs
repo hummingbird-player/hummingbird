@@ -1,4 +1,6 @@
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use std::path::PathBuf;
+
+use sqlx::{QueryBuilder, Sqlite, SqlitePool, types::Json};
 
 use crate::library::types::{Artist, ArtistWithCounts, DBString};
 
@@ -31,6 +33,22 @@ const TRACK_COUNT: &str = "\
          WHERE track_artist.artist_id = artist.id
      ) AS artist_tracks)";
 
+const TRACK_LOCATIONS: &str = "\
+    COALESCE((
+        SELECT json_group_array(artist_tracks.location)
+        FROM (
+            SELECT track.id, track.location
+            FROM album_artist
+            JOIN track ON track.album_id = album_artist.album_id
+            WHERE album_artist.artist_id = artist.id
+            UNION
+            SELECT track.id, track.location
+            FROM track_artist
+            JOIN track ON track.id = track_artist.track_id
+            WHERE track_artist.artist_id = artist.id
+        ) AS artist_tracks
+    ), json('[]'))";
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ArtistColumn {
     Name,
@@ -54,13 +72,28 @@ pub struct ArtistQuery {
 }
 
 #[derive(Clone, Debug)]
-pub struct ArtistQueryWithCounts {
+pub struct ArtistQueryWithTrackLocations {
     query: ArtistQuery,
 }
 
 #[derive(Clone, Debug)]
 pub struct ArtistQueryForSearch {
     query: ArtistQuery,
+}
+
+#[derive(Clone)]
+pub struct ArtistRow {
+    pub artist: ArtistWithCounts,
+    pub track_locations: Vec<PathBuf>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ArtistRowRecord {
+    id: i64,
+    name: Option<DBString>,
+    album_count: i64,
+    #[sqlx(json)]
+    track_locations: Json<Vec<String>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -73,7 +106,7 @@ pub struct ArtistSearchRow {
 enum ArtistProjection {
     Entity,
     Id,
-    WithCounts,
+    WithTrackLocations,
     Search,
 }
 
@@ -139,8 +172,8 @@ impl ArtistQuery {
         self
     }
 
-    pub fn with_counts(self) -> ArtistQueryWithCounts {
-        ArtistQueryWithCounts { query: self }
+    pub fn with_track_locations(self) -> ArtistQueryWithTrackLocations {
+        ArtistQueryWithTrackLocations { query: self }
     }
 
     pub fn for_search(self) -> ArtistQueryForSearch {
@@ -179,13 +212,13 @@ impl ArtistQuery {
             ArtistProjection::Id => {
                 query.push("artist.id");
             }
-            ArtistProjection::WithCounts => {
+            ArtistProjection::WithTrackLocations => {
                 query
                     .push("artist.id, artist.name, ")
                     .push(ALBUM_COUNT)
                     .push(" AS album_count, ")
-                    .push(TRACK_COUNT)
-                    .push(" AS track_count");
+                    .push(TRACK_LOCATIONS)
+                    .push(" AS track_locations");
             }
             ArtistProjection::Search => {
                 query.push("artist.id, artist.name");
@@ -244,13 +277,32 @@ impl ArtistQuery {
     }
 }
 
-impl ArtistQueryWithCounts {
-    pub async fn fetch_row(self, pool: &SqlitePool) -> sqlx::Result<ArtistWithCounts> {
-        let mut query = self.query.build(ArtistProjection::WithCounts);
-        query
-            .build_query_as::<ArtistWithCounts>()
-            .fetch_one(pool)
-            .await
+impl ArtistQueryWithTrackLocations {
+    pub async fn fetch_optional_row(self, pool: &SqlitePool) -> sqlx::Result<Option<ArtistRow>> {
+        let mut query = self.query.build(ArtistProjection::WithTrackLocations);
+        let row = query
+            .build_query_as::<ArtistRowRecord>()
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(|row| {
+            let track_count = i64::try_from(row.track_locations.len())
+                .expect("track count exceeds SQLite row capacity");
+            ArtistRow {
+                artist: ArtistWithCounts {
+                    id: row.id,
+                    name: row.name,
+                    album_count: row.album_count,
+                    track_count,
+                },
+                track_locations: row
+                    .track_locations
+                    .0
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect(),
+            }
+        }))
     }
 }
 

@@ -454,6 +454,36 @@ async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
         ["Dream Pop", "Rock"]
     );
 
+    let album_display = albums()
+        .by_id(10)
+        .with_track_locations()
+        .with_genres()
+        .fetch_optional_row(pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(album_display.album.id, 10);
+    assert_eq!(
+        album_display
+            .genres
+            .iter()
+            .map(|genre| genre.name.0.as_ref())
+            .collect::<Vec<_>>(),
+        ["Dream Pop", "Rock"]
+    );
+    assert_eq!(
+        album_display.track_locations,
+        [std::path::PathBuf::from("/music/100.flac")]
+    );
+    let album_display_without_genres = albums()
+        .by_id(10)
+        .with_track_locations()
+        .fetch_optional_row(pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(album_display_without_genres.genres.is_empty());
+
     let track_row = tracks()
         .by_id(100)
         .for_display()
@@ -775,13 +805,36 @@ async fn artist_and_track_query_filters_return_canonical_entities() {
             .unwrap(),
         [1]
     );
-    let counts = artists()
+    let display = artists()
         .by_id(1)
-        .with_counts()
-        .fetch_row(pool)
+        .with_track_locations()
+        .fetch_optional_row(pool)
         .await
+        .unwrap()
         .unwrap();
-    assert_eq!((counts.album_count, counts.track_count), (1, 3));
+    assert_eq!(
+        (display.artist.album_count, display.artist.track_count),
+        (1, 3)
+    );
+    let mut locations = display.track_locations;
+    locations.sort_unstable();
+    assert_eq!(
+        locations,
+        [
+            std::path::PathBuf::from("/music/1.flac"),
+            std::path::PathBuf::from("/music/2.flac"),
+            std::path::PathBuf::from("/music/3.flac"),
+        ]
+    );
+    assert!(
+        artists()
+            .by_id(99)
+            .with_track_locations()
+            .fetch_optional_row(pool)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let track = tracks()
         .at_path(std::path::Path::new("/music/2.flac"))
