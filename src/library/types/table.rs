@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use cntp_i18n::{Date, I18N_MANAGER, ListFunction, StringModifier, tr};
@@ -12,17 +12,16 @@ use super::{
 };
 pub use crate::library::db::{AlbumColumn, ArtistColumn, TrackColumn};
 use crate::{
-    library::db::{LibraryAccess, SortDirection, albums, artists, tracks},
-    media::numbering::format_track_table_position,
+    library::db::{SortDirection, albums, artists, tracks},
+    media::numbering::{NumberDisplayMode, format_track_table_position},
     ui::{
-        app::Pool,
-        availability::{
-            album_has_available_tracks, artist_has_available_tracks, is_track_available,
-        },
+        availability::{is_track_available, snapshot},
         components::{
             drag_drop::{AlbumDragData, TrackDragData},
             managed_image::ManagedImageKey,
-            table::table_data::{Column, GridContext, TableData, TableDragData, TableSort},
+            table::table_data::{
+                Column, GridContext, TableData, TableDragData, TableFuture, TableSort,
+            },
         },
         library::context_menus::{
             AlbumContextMenuContext, TrackContextMenuContext, album_menu_for_table,
@@ -31,6 +30,32 @@ use crate::{
         util::format_duration,
     },
 };
+
+#[derive(Clone, Default)]
+pub struct AlbumTableState {
+    genres: Option<SharedString>,
+    track_locations: Vec<PathBuf>,
+}
+
+#[derive(Clone, Default)]
+pub struct TrackTableState {
+    genres: Option<SharedString>,
+    album_title: Option<DBString>,
+    album_artist_display_override: Option<DBString>,
+    album_number_display_mode: NumberDisplayMode,
+}
+
+#[derive(Clone, Default)]
+pub struct ArtistTableState {
+    track_locations: Vec<PathBuf>,
+}
+
+fn has_available_location(cx: &mut App, locations: &[PathBuf]) -> bool {
+    let availability = snapshot(cx);
+    locations
+        .iter()
+        .any(|location| availability.is_track_path_available(location))
+}
 
 fn parse_album_release_date(release_date: &DBString) -> Option<DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(release_date.0.as_ref(), "%Y-%m-%d").ok()?;
@@ -110,52 +135,69 @@ impl Column for AlbumColumn {
 impl TableData<AlbumColumn> for Album {
     type Identifier = u32;
     type ContextMenuContext = AlbumContextMenuContext;
-    type RowState = Option<SharedString>;
+    type RowState = AlbumTableState;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ALBUMS", "Albums").into()
     }
 
-    fn get_rows(
-        cx: &mut gpui::App,
+    fn load_rows(
+        pool: sqlx::SqlitePool,
         sort: Option<TableSort<AlbumColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
+    ) -> TableFuture<Vec<Self::Identifier>> {
         let sort = sort.unwrap_or(TableSort {
             column: AlbumColumn::Artist,
             direction: SortDirection::Ascending,
         });
-        let pool: &Pool = cx.global();
-        Ok(crate::RUNTIME
-            .block_on(
-                albums()
-                    .sort(sort.column, sort.direction)
-                    .fetch_ids(&pool.0),
-            )?
-            .into_iter()
-            .map(|id| id as u32)
-            .collect())
+        Box::pin(async move {
+            Ok(albums()
+                .sort(sort.column, sort.direction)
+                .fetch_ids(&pool)
+                .await?
+                .into_iter()
+                .map(|id| id as u32)
+                .collect())
+        })
     }
 
-    fn get_row(
-        cx: &mut gpui::App,
+    fn load_row(
+        pool: sqlx::SqlitePool,
         id: Self::Identifier,
-        visible_columns: &[AlbumColumn],
-    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
-        if visible_columns.contains(&AlbumColumn::Genres) {
-            let pool: &Pool = cx.global();
-            return Ok(crate::RUNTIME
-                .block_on(albums().by_id(id as i64).with_genres().fetch_row(&pool.0))
-                .ok()
-                .map(|row| {
-                    let genres = format_genres(&row.genres);
-                    (Arc::new(row.album), genres)
-                }));
-        }
+        visible_columns: Vec<AlbumColumn>,
+    ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
+        let include_genres = visible_columns.contains(&AlbumColumn::Genres);
+        Box::pin(async move {
+            let (album, genres) = if include_genres {
+                let row = albums()
+                    .by_id(id as i64)
+                    .with_genres()
+                    .fetch_row(&pool)
+                    .await?;
+                (row.album, format_genres(&row.genres))
+            } else {
+                let Some(album) = albums().by_id(id as i64).fetch_optional(&pool).await? else {
+                    return Ok(None);
+                };
+                (album, None)
+            };
 
-        Ok(cx
-            .get_album_by_id(id as i64)
-            .ok()
-            .map(|album| (album, None)))
+            let track_locations = tracks()
+                .from_album(id as i64)
+                .for_playback()
+                .fetch_rows(&pool)
+                .await?
+                .into_iter()
+                .map(|track| track.location)
+                .collect();
+
+            Ok(Some((
+                Arc::new(album),
+                AlbumTableState {
+                    genres,
+                    track_locations,
+                },
+            )))
+        })
     }
 
     fn get_column(
@@ -167,7 +209,7 @@ impl TableData<AlbumColumn> for Album {
         match column {
             AlbumColumn::Title => Some(self.title.0.clone()),
             AlbumColumn::Artist => self.artist_display_override.as_ref().map(|v| v.0.clone()),
-            AlbumColumn::Genres => row_state.clone(),
+            AlbumColumn::Genres => row_state.genres.clone(),
             AlbumColumn::ReleaseDate => {
                 format_album_release_date(self.release_date.as_ref(), self.date_precision)
             }
@@ -182,10 +224,6 @@ impl TableData<AlbumColumn> for Album {
 
     fn has_images() -> bool {
         true
-    }
-
-    fn get_element_id(&self) -> impl Into<gpui::ElementId> {
-        ("album", self.id as u32)
     }
 
     fn get_table_id(&self) -> Self::Identifier {
@@ -274,8 +312,8 @@ impl TableData<AlbumColumn> for Album {
         Some((title, secondary))
     }
 
-    fn is_available(&self, cx: &mut App) -> bool {
-        album_has_available_tracks(cx, self.id)
+    fn is_available(&self, cx: &mut App, row_state: &Self::RowState) -> bool {
+        has_available_location(cx, &row_state.track_locations)
     }
 }
 
@@ -299,93 +337,84 @@ impl Column for TrackColumn {
 impl TableData<TrackColumn> for Track {
     type Identifier = i64;
     type ContextMenuContext = TrackContextMenuContext;
-    type RowState = Option<SharedString>;
+    type RowState = TrackTableState;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_TRACKS", "Tracks").into()
     }
 
-    fn get_rows(
-        cx: &mut gpui::App,
+    fn load_rows(
+        pool: sqlx::SqlitePool,
         sort: Option<TableSort<TrackColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
+    ) -> TableFuture<Vec<Self::Identifier>> {
         let sort = sort.unwrap_or(TableSort {
             column: TrackColumn::Artist,
             direction: SortDirection::Ascending,
         });
-        let pool: &Pool = cx.global();
-        Ok(crate::RUNTIME.block_on(
-            tracks()
+        Box::pin(async move {
+            Ok(tracks()
                 .sort(sort.column, sort.direction)
-                .fetch_ids(&pool.0),
-        )?)
+                .fetch_ids(&pool)
+                .await?)
+        })
     }
 
-    fn get_row(
-        cx: &mut gpui::App,
+    fn load_row(
+        pool: sqlx::SqlitePool,
         id: Self::Identifier,
-        visible_columns: &[TrackColumn],
-    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
-        if visible_columns.contains(&TrackColumn::Genres) {
-            let pool: &Pool = cx.global();
-            return Ok(crate::RUNTIME
-                .block_on(tracks().by_id(id).with_genres().fetch_row(&pool.0))
-                .ok()
-                .map(|row| {
-                    let genres = format_genres(&row.genres);
-                    (Arc::new(row.track), genres)
-                }));
-        }
+        visible_columns: Vec<TrackColumn>,
+    ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
+        let include_genres = visible_columns.contains(&TrackColumn::Genres);
+        Box::pin(async move {
+            let query = tracks().by_id(id).for_display();
+            let query = if include_genres {
+                query.with_genres()
+            } else {
+                query
+            };
+            let Some(row) = query.fetch_optional_row(&pool).await? else {
+                return Ok(None);
+            };
 
-        let pool: &Pool = cx.global();
-        Ok(crate::RUNTIME
-            .block_on(tracks().by_id(id).fetch(&pool.0))
-            .ok()
-            .map(|track| (Arc::new(track), None)))
+            Ok(Some((
+                Arc::new(row.track),
+                TrackTableState {
+                    genres: format_genres(&row.genres),
+                    album_title: row.album_title,
+                    album_artist_display_override: row.album_artist_display_override,
+                    album_number_display_mode: row.album_number_display_mode.unwrap_or_default(),
+                },
+            )))
+        })
     }
 
     fn get_column(
         &self,
-        cx: &mut App,
+        _cx: &mut App,
         column: TrackColumn,
         row_state: &Self::RowState,
     ) -> Option<SharedString> {
         match column {
-            TrackColumn::TrackNumber => {
-                let number_display_mode = self
-                    .album_id
-                    .and_then(|id| cx.get_album_by_id(id).ok())
-                    .map(|album| album.number_display_mode)
-                    .unwrap_or_default();
-
-                format_track_table_position(
-                    number_display_mode,
-                    self.disc_number,
-                    self.track_number,
-                    self.track_section,
-                )
-                .map(SharedString::from)
-            }
+            TrackColumn::TrackNumber => format_track_table_position(
+                row_state.album_number_display_mode,
+                self.disc_number,
+                self.track_number,
+                self.track_section,
+            )
+            .map(SharedString::from),
             TrackColumn::Title => Some(self.title.0.clone()),
-            TrackColumn::Album => {
-                if let Some(album_id) = self.album_id {
-                    cx.get_album_by_id(album_id).ok().map(|v| v.title.0.clone())
-                } else {
-                    None
-                }
-            }
+            TrackColumn::Album => row_state.album_title.as_ref().map(|title| title.0.clone()),
             TrackColumn::Artist => {
                 if let Some(artist) = &self.artist_names {
                     Some(artist.0.clone())
-                } else if let Some(album_id) = self.album_id {
-                    cx.get_album_by_id(album_id).ok().and_then(|album| {
-                        album.artist_display_override.as_ref().map(|v| v.0.clone())
-                    })
                 } else {
-                    None
+                    row_state
+                        .album_artist_display_override
+                        .as_ref()
+                        .map(|artist| artist.0.clone())
                 }
             }
-            TrackColumn::Genres => row_state.clone(),
+            TrackColumn::Genres => row_state.genres.clone(),
             TrackColumn::Length => Some(format_duration(self.duration, true).into()),
         }
     }
@@ -396,10 +425,6 @@ impl TableData<TrackColumn> for Track {
 
     fn has_images() -> bool {
         true
-    }
-
-    fn get_element_id(&self) -> impl Into<gpui::ElementId> {
-        ("track", self.id as u32)
     }
 
     fn get_table_id(&self) -> Self::Identifier {
@@ -433,7 +458,7 @@ impl TableData<TrackColumn> for Track {
         )))
     }
 
-    fn is_available(&self, cx: &mut App) -> bool {
+    fn is_available(&self, cx: &mut App, _row_state: &Self::RowState) -> bool {
         is_track_available(cx, self)
     }
 
@@ -480,39 +505,50 @@ impl Column for ArtistColumn {
 impl TableData<ArtistColumn> for ArtistWithCounts {
     type Identifier = i64;
     type ContextMenuContext = ();
-    type RowState = ();
+    type RowState = ArtistTableState;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ARTISTS", "Artists").into()
     }
 
-    fn get_rows(
-        cx: &mut gpui::App,
+    fn load_rows(
+        pool: sqlx::SqlitePool,
         sort: Option<TableSort<ArtistColumn>>,
-    ) -> anyhow::Result<Vec<Self::Identifier>> {
+    ) -> TableFuture<Vec<Self::Identifier>> {
         let sort = sort.unwrap_or(TableSort {
             column: ArtistColumn::Name,
             direction: SortDirection::Ascending,
         });
-        let pool: &Pool = cx.global();
-        Ok(crate::RUNTIME.block_on(
-            artists()
+        Box::pin(async move {
+            Ok(artists()
                 .visible()
                 .sort(sort.column, sort.direction)
-                .fetch_ids(&pool.0),
-        )?)
+                .fetch_ids(&pool)
+                .await?)
+        })
     }
 
-    fn get_row(
-        cx: &mut gpui::App,
+    fn load_row(
+        pool: sqlx::SqlitePool,
         id: Self::Identifier,
-        _visible_columns: &[ArtistColumn],
-    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
-        let pool: &Pool = cx.global();
-        Ok(crate::RUNTIME
-            .block_on(artists().by_id(id).with_counts().fetch_row(&pool.0))
-            .ok()
-            .map(|artist| (Arc::new(artist), ())))
+        _visible_columns: Vec<ArtistColumn>,
+    ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
+        Box::pin(async move {
+            let artist = artists().by_id(id).with_counts().fetch_row(&pool).await?;
+            let track_locations = tracks()
+                .from_artist(id)
+                .for_playback()
+                .fetch_rows(&pool)
+                .await?
+                .into_iter()
+                .map(|track| track.location)
+                .collect();
+
+            Ok(Some((
+                Arc::new(artist),
+                ArtistTableState { track_locations },
+            )))
+        })
     }
 
     fn get_column(
@@ -536,16 +572,12 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         false
     }
 
-    fn get_element_id(&self) -> impl Into<gpui::ElementId> {
-        ("artist", self.id as u32)
-    }
-
     fn get_table_id(&self) -> Self::Identifier {
         self.id
     }
 
-    fn is_available(&self, cx: &mut App) -> bool {
-        artist_has_available_tracks(cx, self.id)
+    fn is_available(&self, cx: &mut App, row_state: &Self::RowState) -> bool {
+        has_available_location(cx, &row_state.track_locations)
     }
 
     fn available_columns() -> IndexMap<ArtistColumn, f32, FxBuildHasher> {

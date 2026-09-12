@@ -7,14 +7,23 @@ use super::{
     table_data::{Column, GridContext, TableData, TableDragData},
 };
 use crate::ui::{
+    app::Pool,
     components::{
+        async_resource::AsyncResource,
         context::context,
         drag_drop::{AlbumDragData, DragPreview, TrackDragData},
-        managed_image::{ManagedImageKey, managed_image},
+        managed_image::managed_image,
     },
     models::Models,
     theme::Theme,
 };
+
+#[allow(type_alias_bounds)]
+type RowResource<T, C>
+where
+    C: Column,
+    T: TableData<C>,
+= Entity<AsyncResource<T::Identifier, Option<(Arc<T>, T::RowState)>>>;
 
 #[derive(Clone)]
 pub struct GridItem<T, C>
@@ -24,13 +33,9 @@ where
 {
     context_menu_context: T::ContextMenuContext,
     grid_context: GridContext,
-    row: Arc<T>,
+    row: RowResource<T, C>,
     id: ElementId,
-    image_key: Option<ManagedImageKey>,
-    primary_text: SharedString,
-    secondary_text: Option<SharedString>,
     on_select: Option<OnSelectHandler<T, C>>,
-    is_available: bool,
     image_target: Option<Pixels>,
 }
 
@@ -42,39 +47,30 @@ where
     pub fn new(
         cx: &mut App,
         id: T::Identifier,
+        index: usize,
         on_select: Option<OnSelectHandler<T, C>>,
         context_menu_context: T::ContextMenuContext,
         context: GridContext,
-    ) -> Option<Entity<Self>> {
-        let (row, _) = T::get_row(cx, id.clone(), &[]).ok().flatten()?;
-
-        let element_id = row.get_element_id().into();
-        let image_key = row.get_full_image_key();
-        let is_available = row.is_available(cx);
-        let grid_content = row.get_grid_content_for(cx, context);
-        let (primary_text, secondary_text) = grid_content.unwrap_or(("".into(), None));
+    ) -> Entity<Self> {
+        let pool = cx.global::<Pool>().0.clone();
+        let row = AsyncResource::new(cx, id.clone(), T::load_row(pool, id, Vec::new()));
         let availability = cx.global::<Models>().availability.clone();
 
-        Some(cx.new(|cx| {
-            cx.observe(&availability, |this: &mut GridItem<T, C>, _, cx| {
-                this.is_available = this.row.is_available(cx);
-                cx.notify();
-            })
-            .detach();
+        cx.new(|cx| {
+            cx.observe(&row, |_: &mut GridItem<T, C>, _, cx| cx.notify())
+                .detach();
+            cx.observe(&availability, |_: &mut GridItem<T, C>, _, cx| cx.notify())
+                .detach();
 
             Self {
                 context_menu_context,
                 grid_context: context,
                 row,
-                id: element_id,
-                image_key,
-                primary_text,
-                secondary_text,
+                id: ("grid-item", index).into(),
                 on_select,
-                is_available,
                 image_target: None,
             }
-        }))
+        })
     }
 
     pub fn set_image_target(&mut self, target: Pixels, cx: &mut Context<Self>) {
@@ -91,8 +87,17 @@ where
     C: Column + 'static,
 {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let row_data = self.row.clone();
-        let is_available = self.is_available;
+        let loaded = self.row.read(cx).ready().cloned().flatten();
+        let row_data = loaded.as_ref().map(|(row, _)| row.clone());
+        let is_available = loaded
+            .as_ref()
+            .is_some_and(|(row, row_state)| row.is_available(cx, row_state));
+        let (primary_text, secondary_text) = row_data
+            .as_ref()
+            .and_then(|row| row.get_grid_content_for(cx, self.grid_context))
+            .unwrap_or(("".into(), None));
+        let image_key = row_data.as_ref().and_then(|row| row.get_full_image_key());
+        let is_loaded = loaded.is_some();
         // Menus are built only when one opens; see TableItem::render for why this matters.
         let menu_context = self.context_menu_context.clone();
         let theme = cx.global::<Theme>();
@@ -100,7 +105,7 @@ where
         let grid_context = self.grid_context;
 
         let drag_data = if is_available {
-            self.row.get_drag_data()
+            row_data.as_ref().and_then(|row| row.get_drag_data())
         } else {
             None
         };
@@ -114,28 +119,30 @@ where
             .rounded_lg()
             .id(self.id.clone())
             .when_some(self.on_select.clone(), {
-                let row_data = self.row.clone();
-                move |div, on_select| {
-                    if is_available {
-                        div.on_click(move |_, _, cx| {
+                let row_data = row_data.clone();
+                move |div, on_select| match row_data {
+                    Some(row_data) if is_available => div
+                        .on_click(move |_, _, cx| {
                             let id = row_data.get_table_id();
                             on_select(cx, &id)
                         })
                         .cursor_pointer()
                         .hover(|this| this.bg(theme.nav_button_hover))
-                        .active(|this| this.bg(theme.nav_button_active))
-                    } else {
-                        div.cursor_default().opacity(0.5)
-                    }
+                        .active(|this| this.bg(theme.nav_button_active)),
+                    Some(_) => div.cursor_default().opacity(0.5),
+                    None => div,
                 }
             })
-            .when(self.on_select.is_none() && !is_available, |this| {
-                this.opacity(0.5)
-            })
+            .when(
+                self.on_select.is_none() && is_loaded && !is_available,
+                |this| this.opacity(0.5),
+            )
             .on_aux_click({
                 let row_data = row_data.clone();
                 move |ev, window, cx| {
-                    if ev.is_middle_click() {
+                    if let Some(row_data) = row_data.as_ref()
+                        && ev.is_middle_click()
+                    {
                         row_data.handle_middle_mouse(window, cx, GridContext::Table);
                     }
                 }
@@ -165,10 +172,10 @@ where
             .w_full()
             .flex_1()
             .rounded(px(6.0))
-            .bg(theme.album_art_background)
+            .when(is_loaded, |div| div.bg(theme.album_art_background))
             .overflow_hidden();
 
-        if let Some(key) = self.image_key.clone() {
+        if let Some(key) = image_key {
             let mut image = managed_image((self.id.clone(), "grid_image"), key)
                 .w_full()
                 .h_full()
@@ -192,9 +199,9 @@ where
                     .text_ellipsis()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .child(self.primary_text.clone()),
+                    .child(primary_text),
             )
-            .when_some(self.secondary_text.clone(), |this, secondary| {
+            .when_some(secondary_text, |this, secondary| {
                 this.child(
                     gpui::div()
                         .w_full()
@@ -206,20 +213,23 @@ where
                 )
             });
 
-        context(self.id.clone())
-            .w_full()
-            .h_full()
-            .with(content)
-            .menu_on_open(move |window, cx| {
-                match row_data.get_context_menu(window, cx, &menu_context, grid_context) {
-                    Some((menu, overlay)) => div()
-                        .bg(menu_bg)
-                        .child(menu)
-                        .when_some(overlay, |this, overlay| this.child(overlay))
-                        .into_any_element(),
-                    None => div().into_any_element(),
-                }
-            })
-            .into_any_element()
+        match row_data {
+            Some(row_data) => context(self.id.clone())
+                .w_full()
+                .h_full()
+                .with(content)
+                .menu_on_open(move |window, cx| {
+                    match row_data.get_context_menu(window, cx, &menu_context, grid_context) {
+                        Some((menu, overlay)) => div()
+                            .bg(menu_bg)
+                            .child(menu)
+                            .when_some(overlay, |this, overlay| this.child(overlay))
+                            .into_any_element(),
+                        None => div().into_any_element(),
+                    }
+                })
+                .into_any_element(),
+            None => content.into_any_element(),
+        }
     }
 }

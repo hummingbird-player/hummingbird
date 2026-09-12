@@ -24,8 +24,8 @@ pub use pool::create_pool;
 pub use query::{
     AlbumColumn, AlbumQuery, AlbumQueryWithGenres, AlbumRow, ArtistColumn, ArtistQuery,
     ArtistQueryForSearch, ArtistQueryWithCounts, ArtistSearchRow, GenreQuery, TrackColumn,
-    TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch, TrackQueryWithGenres,
-    TrackRow, TrackSearchRow, albums, artists, genres, tracks,
+    TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch, TrackSearchRow,
+    albums, artists, genres, tracks,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

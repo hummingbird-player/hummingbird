@@ -1,4 +1,5 @@
 pub mod action_dialog;
+pub mod async_resource;
 pub mod button;
 pub mod callout;
 pub mod checkbox;

@@ -770,13 +770,13 @@ impl Render for ArtistDetailView {
                                                         GridItem::<Album, AlbumColumn>::new(
                                                             cx,
                                                             item_id,
+                                                            idx,
                                                             handler.clone(),
                                                             AlbumContextMenuContext {
                                                                 show_go_to_artist: false,
                                                             },
                                                             GridContext::Standalone,
                                                         )
-                                                        .unwrap()
                                                     },
                                                     cx,
                                                 );

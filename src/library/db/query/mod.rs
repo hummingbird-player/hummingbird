@@ -11,5 +11,5 @@ pub use artist::{
 pub use genre::{GenreQuery, genres};
 pub use track::{
     TrackColumn, TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch,
-    TrackQueryWithGenres, TrackRow, TrackSearchRow, tracks,
+    TrackSearchRow, tracks,
 };

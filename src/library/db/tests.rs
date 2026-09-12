@@ -456,11 +456,14 @@ async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
 
     let track_row = tracks()
         .by_id(100)
+        .for_display()
         .with_genres()
-        .fetch_row(pool)
+        .fetch_optional_row(pool)
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(track_row.track.id, 100);
+    assert_eq!(track_row.album_title.as_ref().unwrap().0.as_ref(), "First");
     assert_eq!(
         track_row
             .genres
@@ -468,6 +471,23 @@ async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
             .map(|genre| genre.name.0.as_ref())
             .collect::<Vec<_>>(),
         ["Rock", "Jazz"]
+    );
+    let track_row_without_genres = tracks()
+        .by_id(100)
+        .for_display()
+        .fetch_optional_row(pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(track_row_without_genres.genres.is_empty());
+    assert!(
+        tracks()
+            .by_id(999)
+            .for_display()
+            .fetch_optional_row(pool)
+            .await
+            .unwrap()
+            .is_none()
     );
 
     assert!(

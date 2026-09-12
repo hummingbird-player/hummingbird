@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool, types::Json};
 
-use crate::library::types::{DBString, Genre, Track};
+use crate::{
+    library::types::{DBString, Genre, Track},
+    media::numbering::NumberDisplayMode,
+};
 
 use super::super::direction::SortDirection;
 
@@ -84,13 +87,17 @@ pub struct TrackQuery {
 }
 
 #[derive(Clone, Debug)]
-pub struct TrackQueryWithGenres {
+pub struct TrackQueryForDisplay {
     query: TrackQuery,
+    include_genres: bool,
 }
 
 #[derive(Clone)]
-pub struct TrackRow {
+pub struct TrackDisplayRow {
     pub track: Track,
+    pub album_title: Option<DBString>,
+    pub album_artist_display_override: Option<DBString>,
+    pub album_number_display_mode: Option<NumberDisplayMode>,
     pub genres: Vec<Genre>,
 }
 
@@ -121,9 +128,12 @@ pub struct TrackPlaybackRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct TrackRowRecord {
+struct TrackDisplayRowRecord {
     #[sqlx(flatten)]
     track: Track,
+    album_title: Option<DBString>,
+    album_artist_display_override: Option<DBString>,
+    album_number_display_mode: Option<NumberDisplayMode>,
     #[sqlx(json)]
     genres: Json<Vec<(i64, String, String)>>,
 }
@@ -132,7 +142,7 @@ struct TrackRowRecord {
 enum TrackProjection {
     Entity,
     Id,
-    WithGenres,
+    Display { include_genres: bool },
     Search,
     Playback,
 }
@@ -240,8 +250,11 @@ impl TrackQuery {
         self
     }
 
-    pub fn with_genres(self) -> TrackQueryWithGenres {
-        TrackQueryWithGenres { query: self }
+    pub fn for_display(self) -> TrackQueryForDisplay {
+        TrackQueryForDisplay {
+            query: self,
+            include_genres: false,
+        }
     }
 
     pub fn for_search(self) -> TrackQueryForSearch {
@@ -274,13 +287,14 @@ impl TrackQuery {
     }
 
     fn build(self, projection: TrackProjection) -> QueryBuilder<Sqlite> {
-        let needs_album = self.ordering.iter().any(|ordering| {
-            matches!(
-                ordering.key,
-                TrackOrderingKey::Column(TrackColumn::Album | TrackColumn::Artist)
-                    | TrackOrderingKey::ReleaseDate
-            )
-        });
+        let needs_album = matches!(projection, TrackProjection::Display { .. })
+            || self.ordering.iter().any(|ordering| {
+                matches!(
+                    ordering.key,
+                    TrackOrderingKey::Column(TrackColumn::Album | TrackColumn::Artist)
+                        | TrackOrderingKey::ReleaseDate
+                )
+            });
         let needs_genres = self
             .ordering
             .iter()
@@ -294,8 +308,19 @@ impl TrackQuery {
             TrackProjection::Id => {
                 query.push("track.id");
             }
-            TrackProjection::WithGenres => {
-                query.push(TRACK_COLUMNS).push(", ").push(GENRES_COLUMN);
+            TrackProjection::Display { include_genres } => {
+                query.push(TRACK_COLUMNS).push(
+                    ",
+                    album.title AS album_title,
+                    album.artist_display_override AS album_artist_display_override,
+                    album.number_display_mode AS album_number_display_mode,
+                    ",
+                );
+                if include_genres {
+                    query.push(GENRES_COLUMN);
+                } else {
+                    query.push("json('[]') AS genres");
+                }
             }
             TrackProjection::Search => {
                 query.push("track.id, track.title, track.artist_names, track.album_id");
@@ -382,15 +407,29 @@ impl TrackQuery {
     }
 }
 
-impl TrackQueryWithGenres {
-    pub async fn fetch_row(self, pool: &SqlitePool) -> sqlx::Result<TrackRow> {
-        let mut query = self.query.build(TrackProjection::WithGenres);
+impl TrackQueryForDisplay {
+    pub fn with_genres(mut self) -> Self {
+        self.include_genres = true;
+        self
+    }
+
+    pub async fn fetch_optional_row(
+        self,
+        pool: &SqlitePool,
+    ) -> sqlx::Result<Option<TrackDisplayRow>> {
+        let mut query = self.query.build(TrackProjection::Display {
+            include_genres: self.include_genres,
+        });
         let row = query
-            .build_query_as::<TrackRowRecord>()
-            .fetch_one(pool)
+            .build_query_as::<TrackDisplayRowRecord>()
+            .fetch_optional(pool)
             .await?;
-        Ok(TrackRow {
+
+        Ok(row.map(|row| TrackDisplayRow {
             track: row.track,
+            album_title: row.album_title,
+            album_artist_display_override: row.album_artist_display_override,
+            album_number_display_mode: row.album_number_display_mode,
             genres: row
                 .genres
                 .0
@@ -401,7 +440,7 @@ impl TrackQueryWithGenres {
                     normalized_name: DBString::from(normalized_name),
                 })
                 .collect(),
-        })
+        }))
     }
 }
 

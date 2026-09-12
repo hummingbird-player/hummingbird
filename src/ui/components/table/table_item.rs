@@ -9,12 +9,23 @@ use super::{
     table_data::{Column, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData},
 };
 use crate::ui::{
-    components::context::context,
-    components::drag_drop::{AlbumDragData, DragPreview, TrackDragData},
-    components::managed_image::{ManagedImageKey, managed_image},
+    app::Pool,
+    components::{
+        async_resource::AsyncResource,
+        context::context,
+        drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+        managed_image::managed_image,
+    },
     models::Models,
     theme::Theme,
 };
+
+#[allow(type_alias_bounds)]
+type RowResource<T, C>
+where
+    C: Column,
+    T: TableData<C>,
+= Entity<AsyncResource<(T::Identifier, Vec<C>), Option<(Arc<T>, T::RowState)>>>;
 
 #[derive(Clone)]
 pub struct TableItem<T, C>
@@ -24,14 +35,10 @@ where
 {
     context_menu_context: T::ContextMenuContext,
     index: usize,
-    data: Option<Vec<Option<SharedString>>>,
+    identifier: T::Identifier,
+    row: RowResource<T, C>,
     columns: Arc<IndexMap<C, f32, FxBuildHasher>>,
     on_select: Option<OnSelectHandler<T, C>>,
-    row: Option<Arc<T>>,
-    row_state: T::RowState,
-    id: Option<ElementId>,
-    image_key: Option<ManagedImageKey>,
-    is_available: bool,
 }
 
 impl<T, C> TableItem<T, C>
@@ -49,55 +56,52 @@ where
     ) -> Entity<Self> {
         let columns_read = columns.read(cx).clone();
         let visible_columns: Vec<C> = columns_read.keys().copied().collect();
-        let (row, row_state) = match T::get_row(cx, id, &visible_columns).ok().flatten() {
-            Some((row, row_state)) => (Some(row), row_state),
-            None => (None, T::RowState::default()),
-        };
-        let id = row.as_ref().map(|row| row.get_element_id().into());
-
-        let data = row.clone().map(|row| {
-            let keys = columns_read.keys();
-
-            keys.into_iter()
-                .map(|v| row.get_column(cx, *v, &row_state))
-                .collect()
-        });
-
-        let image_key = row.as_ref().and_then(|row| row.get_full_image_key());
-        let is_available = row.as_ref().is_some_and(|row| row.is_available(cx));
+        let pool = cx.global::<Pool>().0.clone();
+        let row = AsyncResource::new(
+            cx,
+            (id.clone(), visible_columns.clone()),
+            T::load_row(pool, id.clone(), visible_columns),
+        );
         let availability = cx.global::<Models>().availability.clone();
         cx.new(|cx| {
+            cx.observe(&row, |_: &mut TableItem<T, C>, _, cx| cx.notify())
+                .detach();
             cx.observe(columns, |this: &mut TableItem<T, C>, m, cx| {
                 this.columns = m.read(cx).clone();
-
-                this.data = this.row.clone().map(|row| {
-                    let keys = this.columns.keys();
-
-                    keys.into_iter()
-                        .map(|v| row.get_column(cx, *v, &this.row_state))
-                        .collect()
+                let visible_columns: Vec<C> = this.columns.keys().copied().collect();
+                let projection_unchanged = {
+                    let loaded_columns = &this.row.read(cx).key().1;
+                    loaded_columns.len() == visible_columns.len()
+                        && visible_columns
+                            .iter()
+                            .all(|column| loaded_columns.contains(column))
+                };
+                if projection_unchanged {
+                    cx.notify();
+                    return;
+                }
+                let pool = cx.global::<Pool>().0.clone();
+                let id = this.identifier.clone();
+                this.row.update(cx, |row, cx| {
+                    row.load(
+                        cx,
+                        (id.clone(), visible_columns.clone()),
+                        T::load_row(pool, id, visible_columns),
+                    );
                 });
-
                 cx.notify();
             })
             .detach();
-            cx.observe(&availability, |this: &mut TableItem<T, C>, _, cx| {
-                this.is_available = this.row.as_ref().is_some_and(|row| row.is_available(cx));
-                cx.notify();
-            })
-            .detach();
+            cx.observe(&availability, |_: &mut TableItem<T, C>, _, cx| cx.notify())
+                .detach();
 
             Self {
                 context_menu_context,
                 index,
-                data,
-                image_key,
+                identifier: id,
+                row,
                 columns: columns_read,
                 on_select,
-                id,
-                row,
-                row_state,
-                is_available,
             }
         })
     }
@@ -109,45 +113,57 @@ where
     C: Column + 'static,
 {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let row_data = self.row.clone();
-        let is_available = self.is_available;
+        let loaded = self.row.read(cx).ready().cloned().flatten();
+        let row_data = loaded.as_ref().map(|(row, _)| row.clone());
+        let data = loaded.as_ref().map(|(row, row_state)| {
+            self.columns
+                .keys()
+                .map(|column| row.get_column(cx, *column, row_state))
+                .collect::<Vec<_>>()
+        });
+        let image_key = row_data.as_ref().and_then(|row| row.get_full_image_key());
+        let is_available = loaded
+            .as_ref()
+            .is_some_and(|(row, row_state)| row.is_available(cx, row_state));
+        let is_loaded = loaded.is_some();
         let menu_context = self.context_menu_context.clone();
         let menu_rows = row_data.clone();
         let theme = cx.global::<Theme>();
         let menu_bg = theme.elevated_background;
         let drag_data = if is_available {
-            self.row.as_ref().and_then(|row| row.get_drag_data())
+            row_data.as_ref().and_then(|row| row.get_drag_data())
         } else {
             None
         };
 
         let mut row = div()
             .w_full()
+            .h(px(36.0))
             .flex()
-            .id(self.id.clone().unwrap_or(self.index.into()))
+            .id(self.index)
             .bg(theme.list_item)
             .when(self.index % 2 == 1, |this| {
                 this.bg(theme.list_item_alternate)
             })
             .when_some(self.on_select.clone(), {
                 let row_data = row_data.clone();
-                move |div, on_select| {
-                    if is_available {
-                        div.on_click(move |_, _, cx| {
-                            let id = row_data.as_ref().unwrap().get_table_id();
+                move |div, on_select| match row_data {
+                    Some(row_data) if is_available => div
+                        .on_click(move |_, _, cx| {
+                            let id = row_data.get_table_id();
                             on_select(cx, &id)
                         })
                         .cursor_pointer()
                         .hover(|this| this.bg(theme.list_item_hover))
-                        .active(|this| this.bg(theme.list_item_active))
-                    } else {
-                        div.cursor_default().opacity(0.5)
-                    }
+                        .active(|this| this.bg(theme.list_item_active)),
+                    Some(_) => div.cursor_default().opacity(0.5),
+                    None => div,
                 }
             })
-            .when(self.on_select.is_none() && !is_available, |this| {
-                this.opacity(0.5)
-            })
+            .when(
+                self.on_select.is_none() && is_loaded && !is_available,
+                |this| this.opacity(0.5),
+            )
             .on_aux_click({
                 let row_data = row_data.clone();
                 move |ev, window, cx| {
@@ -196,8 +212,8 @@ where
                             .w(px(22.0))
                             .h(px(22.0))
                             .rounded(px(3.0))
-                            .bg(theme.album_art_background)
-                            .when_some(self.image_key.clone(), |div, key| {
+                            .when(is_loaded, |div| div.bg(theme.album_art_background))
+                            .when_some(image_key, |div, key| {
                                 div.child(
                                     managed_image(("table-item-art", self.index), key)
                                         .target_logical_px(22.0)
@@ -211,7 +227,7 @@ where
             );
         }
 
-        if let Some(data) = self.data.as_ref() {
+        if let Some(data) = data.as_ref() {
             let column_count = self.columns.len();
 
             for (i, column_data) in data.iter().enumerate() {
@@ -239,11 +255,11 @@ where
             }
         }
 
-        context(self.id.clone().unwrap_or(self.index.into()))
-            .with(row)
-            .menu_on_open(move |window, cx| match menu_rows.as_ref() {
-                Some(row) => {
-                    match row.get_context_menu(window, cx, &menu_context, GridContext::Table) {
+        match menu_rows {
+            Some(menu_row) => context(self.index)
+                .with(row)
+                .menu_on_open(move |window, cx| {
+                    match menu_row.get_context_menu(window, cx, &menu_context, GridContext::Table) {
                         Some((menu, overlay)) => div()
                             .bg(menu_bg)
                             .child(menu)
@@ -251,9 +267,9 @@ where
                             .into_any_element(),
                         None => div().into_any_element(),
                     }
-                }
-                None => div().into_any_element(),
-            })
-            .into_any_element()
+                })
+                .into_any_element(),
+            None => row.into_any_element(),
+        }
     }
 }

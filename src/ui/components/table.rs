@@ -14,7 +14,9 @@ use crate::{
         storage::{TableSettings, TableViewModeSetting},
     },
     ui::{
+        app::Pool,
         components::{
+            async_resource::AsyncResource,
             context::context,
             drag_drop::DragPreview,
             icons::{CHEVRON_DOWN, CHEVRON_UP, icon},
@@ -39,6 +41,13 @@ use table_data::{
 use table_item::TableItem;
 
 type RowMap<T, C> = FxHashMap<usize, Entity<TableItem<T, C>>>;
+
+#[allow(type_alias_bounds)]
+type ItemListResource<T, C>
+where
+    C: Column,
+    T: TableData<C>,
+= Entity<AsyncResource<Option<TableSort<C>>, Arc<Vec<T::Identifier>>>>;
 
 #[allow(type_alias_bounds)]
 pub type OnSelectHandler<T, C>
@@ -70,7 +79,7 @@ where
     view_mode: Entity<TableViewMode>,
     grid_scroll_handle: UniformListScrollHandle,
 
-    items: Option<Arc<Vec<T::Identifier>>>,
+    items: ItemListResource<T, C>,
     sort_method: Entity<Option<TableSort<C>>>,
     on_select: Option<OnSelectHandler<T, C>>,
     list_vertical_scroll_handle: UniformListScrollHandle,
@@ -120,6 +129,10 @@ where
             let sort_method = cx.new(|_| None);
             let list_vertical_scroll_handle = UniformListScrollHandle::new();
             let list_horizontal_scroll_handle = ScrollHandle::new();
+            let pool = cx.global::<Pool>().0.clone();
+            let items = AsyncResource::new(cx, None, async move {
+                Ok(Arc::new(T::load_rows(pool, None).await?))
+            });
 
             if let Some(offset) = initial_scroll_offset {
                 list_vertical_scroll_handle
@@ -141,26 +154,15 @@ where
                     });
             }
 
-            let items = T::get_rows(cx, None).ok().map(Arc::new);
+            cx.observe(&items, |_: &mut Table<T, C>, _, cx| cx.notify())
+                .detach();
 
-            cx.observe(&sort_method, |this: &mut Table<T, C>, sort, cx| {
-                let sort_method = *sort.read(cx);
-                let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
-                this.grid_views = cx.new(|_| FxHashMap::default());
-                this.items = items;
-
-                cx.notify();
+            cx.observe(&sort_method, |this: &mut Table<T, C>, _, cx| {
+                this.reload_rows(cx);
             })
             .detach();
 
             cx.observe(&columns, |this: &mut Table<T, C>, _, cx| {
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
-                this.grid_views = cx.new(|_| FxHashMap::default());
-
                 let settings = this.get_settings(cx);
                 let table_settings_model = cx.global::<Models>().table_settings.clone();
                 table_settings_model.update(cx, |map, _| {
@@ -184,15 +186,7 @@ where
 
             cx.subscribe(&cx.entity(), |this, _, event, cx| match event {
                 TableEvent::NewRows => {
-                    let sort_method = *this.sort_method.read(cx);
-                    let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                    this.views = cx.new(|_| FxHashMap::default());
-                    this.render_counter = cx.new(|_| 0);
-                    this.grid_views = cx.new(|_| FxHashMap::default());
-                    this.items = items;
-
-                    cx.notify();
+                    this.reload_rows(cx);
                 }
             })
             .detach();
@@ -213,6 +207,21 @@ where
                 list_horizontal_scroll_handle,
             }
         })
+    }
+
+    fn reload_rows(&mut self, cx: &mut Context<Self>) {
+        let sort = *self.sort_method.read(cx);
+        let pool = cx.global::<Pool>().0.clone();
+
+        self.views.update(cx, |views, _| views.clear());
+        self.render_counter.update(cx, |counter, _| *counter = 0);
+        self.grid_views.update(cx, |views, _| views.clear());
+        self.items.update(cx, |items, cx| {
+            items.load(cx, sort, async move {
+                Ok(Arc::new(T::load_rows(pool, sort).await?))
+            });
+        });
+        cx.notify();
     }
 
     pub fn get_scroll_offset(&self, cx: &App) -> f32 {
@@ -439,7 +448,7 @@ where
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let sort_method = self.sort_method.read(cx);
-        let items = self.items.clone();
+        let items = self.items.read(cx).ready().cloned();
         let views_model = self.views.clone();
         let render_counter = self.render_counter.clone();
 
@@ -695,11 +704,11 @@ where
                                         grid_item::GridItem::new(
                                             cx,
                                             item_id,
+                                            idx,
                                             grid_handler.clone(),
                                             grid_context_menu_context.clone(),
                                             GridContext::Table,
                                         )
-                                        .unwrap()
                                     },
                                     cx,
                                 );

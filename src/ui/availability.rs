@@ -48,17 +48,6 @@ pub fn album_has_available_tracks(cx: &mut App, album_id: i64) -> bool {
         .unwrap_or_default()
 }
 
-pub fn artist_has_available_tracks(cx: &mut App, artist_id: i64) -> bool {
-    let availability = snapshot(cx);
-    cx.get_all_tracks_by_artist(artist_id)
-        .map(|tracks| {
-            tracks
-                .iter()
-                .any(|track| availability.is_track_path_available(&track.location))
-        })
-        .unwrap_or_default()
-}
-
 pub fn start_monitor(
     cx: &mut App,
     availability_model: gpui::Entity<AvailabilityState>,
