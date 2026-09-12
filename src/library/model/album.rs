@@ -17,8 +17,6 @@ pub struct Album {
     pub created_at: DateTime<Utc>,
     #[sqlx(skip)]
     pub tags: Option<Vec<String>>,
-    #[sqlx(skip)]
-    pub genres: Vec<DBString>,
     #[sqlx(default)]
     pub label: Option<DBString>,
     #[sqlx(default)]

@@ -78,6 +78,7 @@ where
 {
     type Identifier: Clone + Debug;
     type ContextMenuContext: Clone;
+    type RowState: Clone + Default;
 
     /// Retrieves the name of the table.
     fn get_table_name() -> SharedString;
@@ -90,10 +91,19 @@ where
     /// Retrieves a specific row of the table. The row is returned as an Arc to the table data,
     /// which can be used to retrieve the row data as SharedStrings. The id parameter is used to
     /// identify the row to retrieve.
-    fn get_row(cx: &mut App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>>;
+    fn get_row(
+        cx: &mut App,
+        id: Self::Identifier,
+        visible_columns: &[C],
+    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>>;
 
     /// Retrieves a column from the row.
-    fn get_column(&self, cx: &mut App, column: C) -> Option<SharedString>;
+    fn get_column(
+        &self,
+        cx: &mut App,
+        column: C,
+        row_state: &Self::RowState,
+    ) -> Option<SharedString>;
 
     /// Returns true if the rows may contain images. This is used during the layout phase to
     /// determine if placeholder covers and the header section should be displayed.

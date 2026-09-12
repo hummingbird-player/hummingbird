@@ -46,7 +46,7 @@ where
         context_menu_context: T::ContextMenuContext,
         context: GridContext,
     ) -> Option<Entity<Self>> {
-        let row = T::get_row(cx, id.clone()).ok().flatten()?;
+        let (row, _) = T::get_row(cx, id.clone(), &[]).ok().flatten()?;
 
         let element_id = row.get_element_id().into();
         let image_key = row.get_full_image_key();

@@ -8,11 +8,14 @@ use rustc_hash::FxBuildHasher;
 
 use super::{
     Album, ArtistWithCounts, DATE_PRECISION_FULL_DATE, DATE_PRECISION_YEAR,
-    DATE_PRECISION_YEAR_MONTH, DBString, Track,
+    DATE_PRECISION_YEAR_MONTH, DBString, Genre, Track,
 };
 pub use crate::library::db::AlbumColumn;
 use crate::{
-    library::db::{ArtistSortMethod, LibraryAccess, SortDirection, TrackSortMethod, albums},
+    library::db::{
+        ArtistSortMethod, LibraryAccess, SortDirection, TrackSortMethod, albums,
+        get_track_with_genres_by_id,
+    },
     media::numbering::format_track_table_position,
     ui::{
         app::Pool,
@@ -70,12 +73,15 @@ fn format_album_release_date(
     format_album_release_date_with(release_date, format, length)
 }
 
-fn format_genres(genres: &[DBString]) -> Option<SharedString> {
+fn format_genres(genres: &[Genre]) -> Option<SharedString> {
     if genres.is_empty() {
         return None;
     }
 
-    let genres: Vec<String> = genres.iter().map(|genre| genre.0.to_string()).collect();
+    let genres: Vec<String> = genres
+        .iter()
+        .map(|genre| genre.name.0.to_string())
+        .collect();
     let manager = I18N_MANAGER.read().unwrap();
     Some(
         manager
@@ -107,6 +113,7 @@ impl Column for AlbumColumn {
 impl TableData<AlbumColumn> for Album {
     type Identifier = u32;
     type ContextMenuContext = AlbumContextMenuContext;
+    type RowState = Option<SharedString>;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ALBUMS", "Albums").into()
@@ -132,15 +139,38 @@ impl TableData<AlbumColumn> for Album {
             .collect())
     }
 
-    fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_album_by_id(id as i64).ok())
+    fn get_row(
+        cx: &mut gpui::App,
+        id: Self::Identifier,
+        visible_columns: &[AlbumColumn],
+    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
+        if visible_columns.contains(&AlbumColumn::Genres) {
+            let pool: &Pool = cx.global();
+            return Ok(crate::RUNTIME
+                .block_on(albums().by_id(id as i64).with_genres().fetch_row(&pool.0))
+                .ok()
+                .map(|row| {
+                    let genres = format_genres(&row.genres);
+                    (Arc::new(row.album), genres)
+                }));
+        }
+
+        Ok(cx
+            .get_album_by_id(id as i64)
+            .ok()
+            .map(|album| (album, None)))
     }
 
-    fn get_column(&self, _cx: &mut App, column: AlbumColumn) -> Option<SharedString> {
+    fn get_column(
+        &self,
+        _cx: &mut App,
+        column: AlbumColumn,
+        row_state: &Self::RowState,
+    ) -> Option<SharedString> {
         match column {
             AlbumColumn::Title => Some(self.title.0.clone()),
             AlbumColumn::Artist => self.artist_display_override.as_ref().map(|v| v.0.clone()),
-            AlbumColumn::Genres => format_genres(&self.genres),
+            AlbumColumn::Genres => row_state.clone(),
             AlbumColumn::ReleaseDate => {
                 format_album_release_date(self.release_date.as_ref(), self.date_precision)
             }
@@ -336,6 +366,7 @@ pub fn track_table_sort(sort: Option<TableSort<TrackColumn>>) -> TrackSortMethod
 impl TableData<TrackColumn> for Track {
     type Identifier = i64;
     type ContextMenuContext = TrackContextMenuContext;
+    type RowState = Option<SharedString>;
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_TRACKS", "Tracks").into()
@@ -352,11 +383,31 @@ impl TableData<TrackColumn> for Track {
             .collect())
     }
 
-    fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_track_by_id(id).ok())
+    fn get_row(
+        cx: &mut gpui::App,
+        id: Self::Identifier,
+        visible_columns: &[TrackColumn],
+    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
+        if visible_columns.contains(&TrackColumn::Genres) {
+            let pool: &Pool = cx.global();
+            return Ok(crate::RUNTIME
+                .block_on(get_track_with_genres_by_id(&pool.0, id))
+                .ok()
+                .map(|row| {
+                    let genres = format_genres(&row.genres);
+                    (Arc::new(row.track), genres)
+                }));
+        }
+
+        Ok(cx.get_track_by_id(id).ok().map(|track| (track, None)))
     }
 
-    fn get_column(&self, cx: &mut App, column: TrackColumn) -> Option<SharedString> {
+    fn get_column(
+        &self,
+        cx: &mut App,
+        column: TrackColumn,
+        row_state: &Self::RowState,
+    ) -> Option<SharedString> {
         match column {
             TrackColumn::TrackNumber => {
                 let number_display_mode = self
@@ -392,7 +443,7 @@ impl TableData<TrackColumn> for Track {
                     None
                 }
             }
-            TrackColumn::Genres => format_genres(&self.genres),
+            TrackColumn::Genres => row_state.clone(),
             TrackColumn::Length => Some(format_duration(self.duration, true).into()),
         }
     }
@@ -524,6 +575,7 @@ fn artist_table_sort(sort: Option<TableSort<ArtistColumn>>) -> ArtistSortMethod 
 impl TableData<ArtistColumn> for ArtistWithCounts {
     type Identifier = i64;
     type ContextMenuContext = ();
+    type RowState = ();
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ARTISTS", "Artists").into()
@@ -536,11 +588,23 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         Ok(cx.list_artists(artist_table_sort(sort))?)
     }
 
-    fn get_row(cx: &mut gpui::App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>> {
-        Ok(cx.get_artist_with_counts(id).ok())
+    fn get_row(
+        cx: &mut gpui::App,
+        id: Self::Identifier,
+        _visible_columns: &[ArtistColumn],
+    ) -> anyhow::Result<Option<(Arc<Self>, Self::RowState)>> {
+        Ok(cx
+            .get_artist_with_counts(id)
+            .ok()
+            .map(|artist| (artist, ())))
     }
 
-    fn get_column(&self, _cx: &mut App, column: ArtistColumn) -> Option<SharedString> {
+    fn get_column(
+        &self,
+        _cx: &mut App,
+        column: ArtistColumn,
+        _row_state: &Self::RowState,
+    ) -> Option<SharedString> {
         match column {
             ArtistColumn::Name => self.name.as_ref().map(|v| v.0.clone()),
             ArtistColumn::Albums => Some(self.album_count.to_string().into()),

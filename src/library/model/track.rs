@@ -20,8 +20,6 @@ pub struct Track {
     pub duration: i64,
     pub created_at: DateTime<Utc>,
     #[sqlx(skip)]
-    pub genres: Vec<DBString>,
-    #[sqlx(skip)]
     pub tags: Option<Vec<DBString>>,
     #[sqlx(try_from = "String")]
     pub location: PathBuf,

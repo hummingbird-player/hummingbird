@@ -28,6 +28,7 @@ where
     columns: Arc<IndexMap<C, f32, FxBuildHasher>>,
     on_select: Option<OnSelectHandler<T, C>>,
     row: Option<Arc<T>>,
+    row_state: T::RowState,
     id: Option<ElementId>,
     image_key: Option<ManagedImageKey>,
     is_available: bool,
@@ -46,16 +47,20 @@ where
         on_select: Option<OnSelectHandler<T, C>>,
         context_menu_context: T::ContextMenuContext,
     ) -> Entity<Self> {
-        let row = T::get_row(cx, id).ok().flatten();
-
-        let id = row.as_ref().map(|row| row.get_element_id().into());
-
         let columns_read = columns.read(cx).clone();
+        let visible_columns: Vec<C> = columns_read.keys().copied().collect();
+        let (row, row_state) = match T::get_row(cx, id, &visible_columns).ok().flatten() {
+            Some((row, row_state)) => (Some(row), row_state),
+            None => (None, T::RowState::default()),
+        };
+        let id = row.as_ref().map(|row| row.get_element_id().into());
 
         let data = row.clone().map(|row| {
             let keys = columns_read.keys();
 
-            keys.into_iter().map(|v| row.get_column(cx, *v)).collect()
+            keys.into_iter()
+                .map(|v| row.get_column(cx, *v, &row_state))
+                .collect()
         });
 
         let image_key = row.as_ref().and_then(|row| row.get_full_image_key());
@@ -68,7 +73,9 @@ where
                 this.data = this.row.clone().map(|row| {
                     let keys = this.columns.keys();
 
-                    keys.into_iter().map(|v| row.get_column(cx, *v)).collect()
+                    keys.into_iter()
+                        .map(|v| row.get_column(cx, *v, &this.row_state))
+                        .collect()
                 });
 
                 cx.notify();
@@ -89,6 +96,7 @@ where
                 on_select,
                 id,
                 row,
+                row_state,
                 is_available,
             }
         })

@@ -5,7 +5,7 @@ use gpui::{IntoElement, SharedString};
 use sqlx::{Database, Decode, Sqlite, Type, encode::IsNull, error::BoxDynError};
 
 pub use crate::library::model::{
-    Album, Artist, ArtistWithCounts, Playlist, PlaylistItem, PlaylistType, Track, TrackStats,
+    Album, Artist, ArtistWithCounts, Genre, Playlist, PlaylistItem, PlaylistType, Track, TrackStats,
 };
 
 #[derive(Clone, Default, Debug)]

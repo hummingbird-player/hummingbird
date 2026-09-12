@@ -1,25 +1,37 @@
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqlitePool, types::Json};
 
-use crate::library::{db::load_album_genres, types::Album};
+use crate::library::types::{Album, DBString, Genre};
 
 use super::super::direction::SortDirection;
 
-const ALBUM_SELECT: &str = "\
-    SELECT
-        album.id,
-        album.title,
-        album.title_sortable,
-        NULLIF(album.artist_display_override, '') AS artist_display_override,
-        album.release_date,
-        album.date_precision,
-        album.created_at,
-        album.label,
-        album.catalog_number,
-        album.isrc,
-        album.number_display_mode
-    FROM album";
+const ALBUM_COLUMNS: &str = "\
+    album.id,
+    album.title,
+    album.title_sortable,
+    NULLIF(album.artist_display_override, '') AS artist_display_override,
+    album.release_date,
+    album.date_precision,
+    album.created_at,
+    album.label,
+    album.catalog_number,
+    album.isrc,
+    album.number_display_mode";
 
-const ALBUM_ID_SELECT: &str = "SELECT album.id FROM album";
+const GENRES_COLUMN: &str = "\
+    COALESCE((
+        SELECT json_group_array(json_array(
+            ordered_genres.id,
+            ordered_genres.name,
+            ordered_genres.normalized_name
+        ))
+        FROM (
+            SELECT genre.id, genre.name, genre.normalized_name
+            FROM album_genre
+            JOIN genre ON genre.id = album_genre.genre_id
+            WHERE album_genre.album_id = album.id
+            ORDER BY album_genre.position
+        ) AS ordered_genres
+    ), json('[]')) AS genres";
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AlbumColumn {
@@ -37,6 +49,20 @@ struct AlbumOrdering {
     direction: SortDirection,
 }
 
+#[derive(Clone)]
+pub struct AlbumRow {
+    pub album: Album,
+    pub genres: Vec<Genre>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AlbumRowRecord {
+    #[sqlx(flatten)]
+    album: Album,
+    #[sqlx(json)]
+    genres: Json<Vec<(i64, String, String)>>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AlbumQuery {
     id: Option<i64>,
@@ -44,6 +70,18 @@ pub struct AlbumQuery {
     search: Option<String>,
     ordering: Vec<AlbumOrdering>,
     limit: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlbumQueryWithGenres {
+    query: AlbumQuery,
+}
+
+#[derive(Clone, Copy)]
+enum AlbumProjection {
+    Entity,
+    Id,
+    WithGenres,
 }
 
 pub fn albums() -> AlbumQuery {
@@ -107,42 +145,50 @@ impl AlbumQuery {
         self
     }
 
+    pub fn with_genres(self) -> AlbumQueryWithGenres {
+        AlbumQueryWithGenres { query: self }
+    }
+
     pub async fn fetch(self, pool: &SqlitePool) -> sqlx::Result<Album> {
-        let mut query = self.build(ALBUM_SELECT);
-        let mut album = query.build_query_as::<Album>().fetch_one(pool).await?;
-        load_album_genres(pool, std::slice::from_mut(&mut album)).await?;
-        Ok(album)
+        let mut query = self.build(AlbumProjection::Entity);
+        query.build_query_as::<Album>().fetch_one(pool).await
     }
 
     #[allow(dead_code)]
     pub async fn fetch_optional(self, pool: &SqlitePool) -> sqlx::Result<Option<Album>> {
-        let mut query = self.build(ALBUM_SELECT);
-        let mut album = query.build_query_as::<Album>().fetch_optional(pool).await?;
-        if let Some(album) = album.as_mut() {
-            load_album_genres(pool, std::slice::from_mut(album)).await?;
-        }
-        Ok(album)
+        let mut query = self.build(AlbumProjection::Entity);
+        query.build_query_as::<Album>().fetch_optional(pool).await
     }
 
     pub async fn fetch_list(self, pool: &SqlitePool) -> sqlx::Result<Vec<Album>> {
-        let mut query = self.build(ALBUM_SELECT);
-        let mut albums = query.build_query_as::<Album>().fetch_all(pool).await?;
-        load_album_genres(pool, &mut albums).await?;
-        Ok(albums)
+        let mut query = self.build(AlbumProjection::Entity);
+        query.build_query_as::<Album>().fetch_all(pool).await
     }
 
     pub async fn fetch_ids(self, pool: &SqlitePool) -> sqlx::Result<Vec<i64>> {
-        let mut query = self.build(ALBUM_ID_SELECT);
+        let mut query = self.build(AlbumProjection::Id);
         let ids = query.build_query_as::<(i64,)>().fetch_all(pool).await?;
         Ok(ids.into_iter().map(|(id,)| id).collect())
     }
 
-    fn build(self, select: &'static str) -> QueryBuilder<Sqlite> {
+    fn build(self, projection: AlbumProjection) -> QueryBuilder<Sqlite> {
         let needs_genres = self
             .ordering
             .iter()
             .any(|ordering| ordering.column == AlbumColumn::Genres);
-        let mut query = QueryBuilder::new(select);
+        let mut query = QueryBuilder::new("SELECT ");
+        match projection {
+            AlbumProjection::Entity => {
+                query.push(ALBUM_COLUMNS);
+            }
+            AlbumProjection::Id => {
+                query.push("album.id");
+            }
+            AlbumProjection::WithGenres => {
+                query.push(ALBUM_COLUMNS).push(", ").push(GENRES_COLUMN);
+            }
+        }
+        query.push(" FROM album");
 
         if needs_genres {
             query.push(
@@ -216,6 +262,29 @@ impl AlbumQuery {
         }
 
         query
+    }
+}
+
+impl AlbumQueryWithGenres {
+    pub async fn fetch_row(self, pool: &SqlitePool) -> sqlx::Result<AlbumRow> {
+        let mut query = self.query.build(AlbumProjection::WithGenres);
+        let row = query
+            .build_query_as::<AlbumRowRecord>()
+            .fetch_one(pool)
+            .await?;
+        Ok(AlbumRow {
+            album: row.album,
+            genres: row
+                .genres
+                .0
+                .into_iter()
+                .map(|(id, name, normalized_name)| Genre {
+                    id,
+                    name: DBString::from(name),
+                    normalized_name: DBString::from(normalized_name),
+                })
+                .collect(),
+        })
     }
 }
 

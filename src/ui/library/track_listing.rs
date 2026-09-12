@@ -114,7 +114,6 @@ mod tests {
             disc_number: disc,
             duration: 0,
             created_at: chrono::DateTime::<chrono::Utc>::default(),
-            genres: Vec::new(),
             tags: None,
             location: "".into(),
             artist_names: None,

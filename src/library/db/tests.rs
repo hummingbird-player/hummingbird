@@ -2,8 +2,8 @@ use sqlx::SqlitePool;
 
 use super::{
     AlbumColumn, ArtistSortMethod, LikedTrackSortMethod, SortDirection, TrackSortMethod, albums,
-    get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums_by_artist,
-    list_artists, list_tracks,
+    genres, get_liked_tracks_by_artist, get_standalone_tracks_by_artist,
+    get_track_with_genres_by_id, list_albums_by_artist, list_artists, list_tracks,
 };
 use crate::test_support::TestDatabase;
 
@@ -374,6 +374,107 @@ async fn album_query_supports_secondary_ordering_and_limits() {
         .collect();
 
     assert_eq!(ids, [3, 1]);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
+    let db = TestDatabase::new("genre-query-grouped").await;
+    let pool = db.pool();
+
+    insert_album(pool, 10, "First", "Artist", None, None, None).await;
+    insert_album(pool, 20, "Second", "Artist", None, None, None).await;
+    insert_track(pool, 100, "Track", Some(10), None, 1, Some(1)).await;
+    for (id, name) in [(1, "Rock"), (2, "Dream Pop"), (3, "Jazz")] {
+        insert_genre(pool, id, name).await;
+    }
+    link_album_genre(pool, 10, 2, 0).await;
+    link_album_genre(pool, 10, 1, 1).await;
+    link_album_genre(pool, 20, 3, 0).await;
+    link_track_genre(pool, 100, 1, 0).await;
+    link_track_genre(pool, 100, 3, 1).await;
+
+    let album_genres = genres()
+        .from_albums(&[20, 10])
+        .fetch_grouped(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        album_genres[&10]
+            .iter()
+            .map(|genre| genre.name.0.as_ref())
+            .collect::<Vec<_>>(),
+        ["Dream Pop", "Rock"]
+    );
+    assert_eq!(album_genres[&20][0].name, "Jazz");
+
+    let tracks = genres()
+        .from_tracks(&[100])
+        .fetch_grouped(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tracks[&100]
+            .iter()
+            .map(|genre| genre.name.0.as_ref())
+            .collect::<Vec<_>>(),
+        ["Rock", "Jazz"]
+    );
+    assert_eq!(
+        genres()
+            .from_album(10)
+            .fetch_list(pool)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        genres()
+            .from_track(100)
+            .fetch_list(pool)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let album_row = albums()
+        .by_id(10)
+        .with_genres()
+        .fetch_row(pool)
+        .await
+        .unwrap();
+    assert_eq!(album_row.album.id, 10);
+    assert_eq!(
+        album_row
+            .genres
+            .iter()
+            .map(|genre| genre.name.0.as_ref())
+            .collect::<Vec<_>>(),
+        ["Dream Pop", "Rock"]
+    );
+
+    let track_row = get_track_with_genres_by_id(pool, 100).await.unwrap();
+    assert_eq!(track_row.track.id, 100);
+    assert_eq!(
+        track_row
+            .genres
+            .iter()
+            .map(|genre| genre.name.0.as_ref())
+            .collect::<Vec<_>>(),
+        ["Rock", "Jazz"]
+    );
+
+    assert!(
+        genres()
+            .from_albums(&[])
+            .fetch_grouped(pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     db.close().await;
 }
 
