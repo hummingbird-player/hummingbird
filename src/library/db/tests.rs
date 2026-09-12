@@ -1,9 +1,9 @@
 use sqlx::SqlitePool;
 
 use super::{
-    AlbumColumn, ArtistSortMethod, LikedTrackSortMethod, SortDirection, TrackSortMethod, albums,
-    genres, get_liked_tracks_by_artist, get_standalone_tracks_by_artist,
-    get_track_with_genres_by_id, list_albums_by_artist, list_artists, list_tracks,
+    AlbumColumn, ArtistColumn, LikedTrackSortMethod, SortDirection, TrackColumn, albums, artists,
+    genres, get_liked_tracks_by_artist, get_standalone_tracks_by_artist, list_albums_by_artist,
+    tracks,
 };
 use crate::test_support::TestDatabase;
 
@@ -98,13 +98,12 @@ async fn album_ids(pool: &SqlitePool, column: AlbumColumn, direction: SortDirect
     query.fetch_ids(pool).await.unwrap()
 }
 
-async fn track_ids(pool: &SqlitePool, method: TrackSortMethod) -> Vec<i64> {
-    list_tracks(pool, method)
+async fn track_ids(pool: &SqlitePool, column: TrackColumn, direction: SortDirection) -> Vec<i64> {
+    tracks()
+        .sort(column, direction)
+        .fetch_ids(pool)
         .await
         .unwrap()
-        .into_iter()
-        .map(|(id, _, _, _)| id)
-        .collect()
 }
 
 #[tokio::test]
@@ -408,13 +407,13 @@ async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
     );
     assert_eq!(album_genres[&20][0].name, "Jazz");
 
-    let tracks = genres()
+    let track_genres = genres()
         .from_tracks(&[100])
         .fetch_grouped(pool)
         .await
         .unwrap();
     assert_eq!(
-        tracks[&100]
+        track_genres[&100]
             .iter()
             .map(|genre| genre.name.0.as_ref())
             .collect::<Vec<_>>(),
@@ -455,7 +454,12 @@ async fn genre_query_bulk_loads_ordered_album_and_track_relationships() {
         ["Dream Pop", "Rock"]
     );
 
-    let track_row = get_track_with_genres_by_id(pool, 100).await.unwrap();
+    let track_row = tracks()
+        .by_id(100)
+        .with_genres()
+        .fetch_row(pool)
+        .await
+        .unwrap();
     assert_eq!(track_row.track.id, 100);
     assert_eq!(
         track_row
@@ -541,23 +545,75 @@ async fn track_sort_methods_preserve_current_ordering_rules() {
     link_track_genre(pool, 4, 4, 1).await;
 
     let cases = [
-        (TrackSortMethod::TitleAsc, vec![2, 4, 1, 3]),
+        (
+            TrackColumn::Title,
+            SortDirection::Ascending,
+            vec![2, 4, 1, 3],
+        ),
         // The legacy descending query only reverses its location tie-breaker.
-        (TrackSortMethod::TitleDesc, vec![2, 4, 1, 3]),
-        (TrackSortMethod::ArtistAsc, vec![2, 3, 1, 4]),
-        (TrackSortMethod::ArtistDesc, vec![1, 4, 3, 2]),
-        (TrackSortMethod::AlbumAsc, vec![3, 1, 4, 2]),
-        (TrackSortMethod::AlbumDesc, vec![2, 1, 4, 3]),
-        (TrackSortMethod::DurationAsc, vec![2, 4, 3, 1]),
-        (TrackSortMethod::DurationDesc, vec![1, 3, 4, 2]),
-        (TrackSortMethod::TrackNumberAsc, vec![3, 2, 1, 4]),
-        (TrackSortMethod::TrackNumberDesc, vec![4, 1, 2, 3]),
-        (TrackSortMethod::GenresAsc, vec![3, 4, 2, 1]),
-        (TrackSortMethod::GenresDesc, vec![1, 2, 4, 3]),
+        (
+            TrackColumn::Title,
+            SortDirection::Descending,
+            vec![2, 4, 1, 3],
+        ),
+        (
+            TrackColumn::Artist,
+            SortDirection::Ascending,
+            vec![2, 3, 1, 4],
+        ),
+        (
+            TrackColumn::Artist,
+            SortDirection::Descending,
+            vec![1, 4, 3, 2],
+        ),
+        (
+            TrackColumn::Album,
+            SortDirection::Ascending,
+            vec![3, 1, 4, 2],
+        ),
+        (
+            TrackColumn::Album,
+            SortDirection::Descending,
+            vec![2, 1, 4, 3],
+        ),
+        (
+            TrackColumn::Length,
+            SortDirection::Ascending,
+            vec![2, 4, 3, 1],
+        ),
+        (
+            TrackColumn::Length,
+            SortDirection::Descending,
+            vec![1, 3, 4, 2],
+        ),
+        (
+            TrackColumn::TrackNumber,
+            SortDirection::Ascending,
+            vec![3, 2, 1, 4],
+        ),
+        (
+            TrackColumn::TrackNumber,
+            SortDirection::Descending,
+            vec![4, 1, 2, 3],
+        ),
+        (
+            TrackColumn::Genres,
+            SortDirection::Ascending,
+            vec![3, 4, 2, 1],
+        ),
+        (
+            TrackColumn::Genres,
+            SortDirection::Descending,
+            vec![1, 2, 4, 3],
+        ),
     ];
 
-    for (method, expected) in cases {
-        assert_eq!(track_ids(pool, method).await, expected, "{method:?}");
+    for (column, direction, expected) in cases {
+        assert_eq!(
+            track_ids(pool, column, direction).await,
+            expected,
+            "{column:?} {direction:?}"
+        );
     }
 
     db.close().await;
@@ -604,21 +660,149 @@ async fn artist_sort_methods_preserve_visibility_counts_and_ties() {
     }
 
     let cases = [
-        (ArtistSortMethod::NameAsc, vec![1, 2, 3]),
-        (ArtistSortMethod::NameDesc, vec![3, 2, 1]),
-        (ArtistSortMethod::AlbumsAsc, vec![3, 1, 2]),
-        (ArtistSortMethod::AlbumsDesc, vec![2, 1, 3]),
-        (ArtistSortMethod::TracksAsc, vec![1, 3, 2]),
-        (ArtistSortMethod::TracksDesc, vec![2, 3, 1]),
+        (ArtistColumn::Name, SortDirection::Ascending, vec![1, 2, 3]),
+        (ArtistColumn::Name, SortDirection::Descending, vec![3, 2, 1]),
+        (
+            ArtistColumn::Albums,
+            SortDirection::Ascending,
+            vec![3, 1, 2],
+        ),
+        (
+            ArtistColumn::Albums,
+            SortDirection::Descending,
+            vec![2, 1, 3],
+        ),
+        (
+            ArtistColumn::Tracks,
+            SortDirection::Ascending,
+            vec![1, 3, 2],
+        ),
+        (
+            ArtistColumn::Tracks,
+            SortDirection::Descending,
+            vec![2, 3, 1],
+        ),
     ];
 
-    for (method, expected) in cases {
+    for (column, direction, expected) in cases {
         assert_eq!(
-            list_artists(pool, method).await.unwrap(),
+            artists()
+                .visible()
+                .sort(column, direction)
+                .fetch_ids(pool)
+                .await
+                .unwrap(),
             expected,
-            "{method:?}"
+            "{column:?} {direction:?}"
         );
     }
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn artist_and_track_query_filters_return_canonical_entities() {
+    let db = TestDatabase::new("artist-track-query-filters").await;
+    let pool = db.pool();
+
+    for (id, name) in [(1, "Alpha Artist"), (2, "Beta Artist")] {
+        sqlx::query("INSERT INTO artist (id, name, name_sortable) VALUES ($1, $2, $2)")
+            .bind(id)
+            .bind(name)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    insert_album(pool, 10, "Album", "Alpha Artist", None, None, None).await;
+    sqlx::query("INSERT INTO album_artist (album_id, artist_id) VALUES (10, 1)")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    insert_track(pool, 1, "Album Track", Some(10), None, 100, Some(1)).await;
+    insert_track(
+        pool,
+        2,
+        "Standalone Track",
+        None,
+        Some("Alpha Artist"),
+        100,
+        None,
+    )
+    .await;
+    insert_track(pool, 3, "Other Track", Some(10), None, 100, Some(2)).await;
+    for track_id in [1, 2] {
+        sqlx::query("INSERT INTO track_artist (track_id, artist_id) VALUES ($1, 1)")
+            .bind(track_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO playlist_item (playlist_id, track_id, position) VALUES (1, 2, 0)")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let artist = artists().by_id(1).fetch(pool).await.unwrap();
+    assert_eq!(artist.name.unwrap(), "Alpha Artist");
+    assert_eq!(artists().search("Beta").fetch_ids(pool).await.unwrap(), [2]);
+    assert_eq!(
+        artists()
+            .visible()
+            .sort_asc(ArtistColumn::Name)
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        [1]
+    );
+    let counts = artists()
+        .by_id(1)
+        .with_counts()
+        .fetch_row(pool)
+        .await
+        .unwrap();
+    assert_eq!((counts.album_count, counts.track_count), (1, 3));
+
+    let track = tracks()
+        .at_path(std::path::Path::new("/music/2.flac"))
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(track.id, 2);
+    assert_eq!(
+        tracks()
+            .from_album(10)
+            .search("Other")
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        [3]
+    );
+    let mut credited_track_ids = tracks().from_artist(1).fetch_ids(pool).await.unwrap();
+    credited_track_ids.sort_unstable();
+    assert_eq!(credited_track_ids, [1, 2, 3]);
+    assert_eq!(
+        tracks()
+            .standalone_for_artist(1)
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        [2]
+    );
+    assert_eq!(
+        tracks().liked_by_artist(1).fetch_ids(pool).await.unwrap(),
+        [2]
+    );
+    assert_eq!(
+        tracks()
+            .sort_asc(TrackColumn::Length)
+            .then_sort_desc(TrackColumn::Title)
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        [2, 3, 1]
+    );
 
     db.close().await;
 }
@@ -713,6 +897,80 @@ async fn liked_track_sort_methods_preserve_current_ordering_rules() {
         let tracks = get_liked_tracks_by_artist(pool, 1, method).await.unwrap();
         assert_eq!(returned_track_ids(&tracks), expected, "{method:?}");
     }
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn liked_guest_credits_use_the_track_release_date() {
+    let db = TestDatabase::new("liked-guest-release-order").await;
+    let pool = db.pool();
+
+    for (id, name) in [(1, "Guest"), (2, "Album Artist")] {
+        sqlx::query("INSERT INTO artist (id, name, name_sortable) VALUES ($1, $2, $2)")
+            .bind(id)
+            .bind(name)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    insert_album(
+        pool,
+        10,
+        "Album",
+        "Album Artist",
+        Some("2025-01-01"),
+        None,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO album_artist (album_id, artist_id) VALUES (10, 2)")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    insert_track(
+        pool,
+        1,
+        "Guest Track",
+        Some(10),
+        Some("Guest"),
+        100,
+        Some(1),
+    )
+    .await;
+    insert_track(pool, 2, "Standalone", None, Some("Guest"), 100, None).await;
+    for (track_id, release_date, position) in [(1, "2010-01-01", 0), (2, "2020-01-01", 1)] {
+        sqlx::query("UPDATE track SET release_date = $1 WHERE id = $2")
+            .bind(release_date)
+            .bind(track_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO track_artist (track_id, artist_id) VALUES ($1, 1)")
+            .bind(track_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO playlist_item (playlist_id, track_id, position) VALUES (1, $1, $2)",
+        )
+        .bind(track_id)
+        .bind(position)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        tracks()
+            .liked_by_artist(1)
+            .sort_release(SortDirection::Ascending)
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        [1, 2]
+    );
 
     db.close().await;
 }

@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use tracing::debug;
 
@@ -10,17 +6,18 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
     library::{
-        db::LibraryAccess,
+        db::{SortDirection, tracks},
         scan::ScanEvent,
-        types::{
-            Track,
-            table::{TrackColumn, track_table_sort},
-        },
+        types::{Track, table::TrackColumn},
     },
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     ui::{
+        app::Pool,
         availability::snapshot,
-        components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
+        components::table::{
+            Table, TableEvent,
+            table_data::{TABLE_MAX_WIDTH, TableSort},
+        },
         library::{
             context_menus::{TrackContextMenuContext, play_from_track},
             table_view_header::TableViewHeader,
@@ -150,16 +147,24 @@ impl Render for TrackView {
 }
 
 fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Vec<QueueItemData> {
-    let sort_method = track_table_sort(table.read(cx).get_sort(cx));
+    let sort = table.read(cx).get_sort(cx).unwrap_or(TableSort {
+        column: TrackColumn::Artist,
+        direction: SortDirection::Ascending,
+    });
+    let pool: &Pool = cx.global();
 
-    match cx.list_tracks(sort_method) {
-        Ok(rows) => {
+    match crate::RUNTIME.block_on(
+        tracks()
+            .sort(sort.column, sort.direction)
+            .for_playback()
+            .fetch_rows(&pool.0),
+    ) {
+        Ok(tracks) => {
             let availability = snapshot(cx);
-            rows.into_iter()
-                .filter(|(_, _, _, path)| availability.is_track_path_available(Path::new(path)))
-                .map(|(id, _, album_id, path)| {
-                    QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
-                })
+            tracks
+                .into_iter()
+                .filter(|track| availability.is_track_path_available(&track.location))
+                .map(|track| QueueItemData::new(cx, track.location, Some(track.id), track.album_id))
                 .collect()
         }
         Err(e) => {

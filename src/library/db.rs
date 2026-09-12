@@ -3,10 +3,10 @@ use std::{path::Path, sync::Arc};
 use gpui::App;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, types::Json};
+use sqlx::SqlitePool;
 
 use crate::{
-    library::types::{ArtistWithCounts, DBString, Genre, Playlist, PlaylistItem, TrackStats},
+    library::types::{Playlist, PlaylistItem, TrackStats},
     ui::app::Pool,
 };
 
@@ -22,34 +22,11 @@ pub use direction::SortDirection;
 pub use pool::create_pool;
 #[allow(unused_imports)]
 pub use query::{
-    AlbumColumn, AlbumQuery, AlbumQueryWithGenres, AlbumRow, GenreQuery, albums, genres,
+    AlbumColumn, AlbumQuery, AlbumQueryWithGenres, AlbumRow, ArtistColumn, ArtistQuery,
+    ArtistQueryForSearch, ArtistQueryWithCounts, ArtistSearchRow, GenreQuery, TrackColumn,
+    TrackPlaybackRow, TrackQuery, TrackQueryForPlayback, TrackQueryForSearch, TrackQueryWithGenres,
+    TrackRow, TrackSearchRow, albums, artists, genres, tracks,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TrackSortMethod {
-    TitleAsc,
-    TitleDesc,
-    ArtistAsc,
-    ArtistDesc,
-    AlbumAsc,
-    AlbumDesc,
-    DurationAsc,
-    DurationDesc,
-    TrackNumberAsc,
-    TrackNumberDesc,
-    GenresAsc,
-    GenresDesc,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ArtistSortMethod {
-    NameAsc,
-    NameDesc,
-    AlbumsAsc,
-    AlbumsDesc,
-    TracksAsc,
-    TracksDesc,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum LikedTrackSortMethod {
@@ -76,68 +53,32 @@ pub enum PlaylistTrackSortMethod {
     RecentlyAddedAsc,
 }
 
-pub async fn list_tracks(
-    pool: &SqlitePool,
-    sort_method: TrackSortMethod,
-) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
-    let query = match sort_method {
-        TrackSortMethod::TitleAsc => {
-            include_str!("../../queries/library/find_tracks_title_asc.sql")
+fn apply_liked_track_sort(query: TrackQuery, sort_method: LikedTrackSortMethod) -> TrackQuery {
+    match sort_method {
+        LikedTrackSortMethod::TitleAsc => query.sort_asc(TrackColumn::Title),
+        LikedTrackSortMethod::TitleDesc => {
+            query.sort(TrackColumn::Title, SortDirection::Descending)
         }
-        TrackSortMethod::TitleDesc => {
-            include_str!("../../queries/library/find_tracks_title_desc.sql")
+        LikedTrackSortMethod::ReleaseOrder => query.sort_release(SortDirection::Ascending),
+        LikedTrackSortMethod::ReleaseOrderDesc => query.sort_release(SortDirection::Descending),
+        LikedTrackSortMethod::RecentlyAdded => query.sort_recently_added(SortDirection::Descending),
+        LikedTrackSortMethod::RecentlyAddedAsc => {
+            query.sort_recently_added(SortDirection::Ascending)
         }
-        TrackSortMethod::ArtistAsc => {
-            include_str!("../../queries/library/find_tracks_artist_asc.sql")
-        }
-        TrackSortMethod::ArtistDesc => {
-            include_str!("../../queries/library/find_tracks_artist_desc.sql")
-        }
-        TrackSortMethod::AlbumAsc => {
-            include_str!("../../queries/library/find_tracks_album_asc.sql")
-        }
-        TrackSortMethod::AlbumDesc => {
-            include_str!("../../queries/library/find_tracks_album_desc.sql")
-        }
-        TrackSortMethod::DurationAsc => {
-            include_str!("../../queries/library/find_tracks_length_asc.sql")
-        }
-        TrackSortMethod::DurationDesc => {
-            include_str!("../../queries/library/find_tracks_length_desc.sql")
-        }
-        TrackSortMethod::TrackNumberAsc => {
-            include_str!("../../queries/library/find_tracks_number_asc.sql")
-        }
-        TrackSortMethod::TrackNumberDesc => {
-            include_str!("../../queries/library/find_tracks_number_desc.sql")
-        }
-        TrackSortMethod::GenresAsc => {
-            include_str!("../../queries/library/find_tracks_genres_asc.sql")
-        }
-        TrackSortMethod::GenresDesc => {
-            include_str!("../../queries/library/find_tracks_genres_desc.sql")
-        }
-    };
-
-    let tracks = sqlx::query_as::<_, (i64, String, Option<i64>, String)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(tracks)
+    }
 }
 
 pub async fn list_tracks_in_album(
     pool: &SqlitePool,
     album_id: i64,
 ) -> sqlx::Result<Arc<Vec<Track>>> {
-    let query = include_str!("../../queries/library/find_tracks_in_album.sql");
-
-    let tracks = sqlx::query_as::<_, Track>(query)
-        .bind(album_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(Arc::new(tracks))
+    Ok(Arc::new(
+        tracks()
+            .from_album(album_id)
+            .sort_asc(TrackColumn::TrackNumber)
+            .fetch_list(pool)
+            .await?,
+    ))
 }
 
 pub async fn get_album_by_id(pool: &SqlitePool, album_id: i64) -> sqlx::Result<Arc<Album>> {
@@ -145,46 +86,7 @@ pub async fn get_album_by_id(pool: &SqlitePool, album_id: i64) -> sqlx::Result<A
 }
 
 pub async fn get_artist_by_id(pool: &SqlitePool, artist_id: i64) -> sqlx::Result<Arc<Artist>> {
-    let query = include_str!("../../queries/library/find_artist_by_id.sql");
-
-    let artist: Arc<Artist> = Arc::new(
-        sqlx::query_as(query)
-            .bind(artist_id)
-            .fetch_one(pool)
-            .await?,
-    );
-
-    Ok(artist)
-}
-
-pub async fn list_artists(
-    pool: &SqlitePool,
-    sort_method: ArtistSortMethod,
-) -> sqlx::Result<Vec<i64>> {
-    let query = match sort_method {
-        ArtistSortMethod::NameAsc => {
-            include_str!("../../queries/library/find_artists_name_asc.sql")
-        }
-        ArtistSortMethod::NameDesc => {
-            include_str!("../../queries/library/find_artists_name_desc.sql")
-        }
-        ArtistSortMethod::AlbumsAsc => {
-            include_str!("../../queries/library/find_artists_albums_asc.sql")
-        }
-        ArtistSortMethod::AlbumsDesc => {
-            include_str!("../../queries/library/find_artists_albums_desc.sql")
-        }
-        ArtistSortMethod::TracksAsc => {
-            include_str!("../../queries/library/find_artists_tracks_asc.sql")
-        }
-        ArtistSortMethod::TracksDesc => {
-            include_str!("../../queries/library/find_artists_tracks_desc.sql")
-        }
-    };
-
-    let artists: Vec<(i64,)> = sqlx::query_as(query).fetch_all(pool).await?;
-
-    Ok(artists.into_iter().map(|r| r.0).collect())
+    Ok(Arc::new(artists().by_id(artist_id).fetch(pool).await?))
 }
 
 pub async fn list_albums_by_artist(
@@ -201,66 +103,30 @@ pub async fn list_albums_by_artist(
         .collect())
 }
 
-pub async fn get_artist_with_counts(
-    pool: &SqlitePool,
-    artist_id: i64,
-) -> sqlx::Result<Arc<ArtistWithCounts>> {
-    let query = include_str!("../../queries/library/find_artist_with_counts_by_id.sql");
-
-    let artist: ArtistWithCounts = sqlx::query_as(query)
-        .bind(artist_id)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(Arc::new(artist))
-}
-
 pub async fn get_liked_tracks_by_artist(
     pool: &SqlitePool,
     artist_id: i64,
     sort_method: LikedTrackSortMethod,
 ) -> sqlx::Result<Arc<Vec<Track>>> {
-    let query = match sort_method {
-        LikedTrackSortMethod::TitleAsc => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_title_asc.sql")
-        }
-        LikedTrackSortMethod::TitleDesc => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_title_desc.sql")
-        }
-        LikedTrackSortMethod::ReleaseOrder => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_release_asc.sql")
-        }
-        LikedTrackSortMethod::ReleaseOrderDesc => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_release_desc.sql")
-        }
-        LikedTrackSortMethod::RecentlyAdded => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_recent_desc.sql")
-        }
-        LikedTrackSortMethod::RecentlyAddedAsc => {
-            include_str!("../../queries/library/find_liked_tracks_by_artist_recent_asc.sql")
-        }
-    };
-
-    let tracks = sqlx::query_as::<_, Track>(query)
-        .bind(artist_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(Arc::new(tracks))
+    let query = tracks().liked_by_artist(artist_id);
+    Ok(Arc::new(
+        apply_liked_track_sort(query, sort_method)
+            .fetch_list(pool)
+            .await?,
+    ))
 }
 
 pub async fn get_all_tracks_by_artist(
     pool: &SqlitePool,
     artist_id: i64,
 ) -> sqlx::Result<Arc<Vec<Track>>> {
-    let query = include_str!("../../queries/library/find_all_tracks_by_artist.sql");
-
-    let tracks = sqlx::query_as::<_, Track>(query)
-        .bind(artist_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(Arc::new(tracks))
+    Ok(Arc::new(
+        tracks()
+            .from_artist(artist_id)
+            .sort_release(SortDirection::Ascending)
+            .fetch_list(pool)
+            .await?,
+    ))
 }
 
 /// Lists tracks directly credited to an artist that are not already represented by one of the
@@ -270,107 +136,24 @@ pub async fn get_standalone_tracks_by_artist(
     artist_id: i64,
     sort_method: LikedTrackSortMethod,
 ) -> sqlx::Result<Arc<Vec<Track>>> {
-    let query = match sort_method {
-        LikedTrackSortMethod::TitleAsc => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_title_asc.sql")
-        }
-        LikedTrackSortMethod::TitleDesc => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_title_desc.sql")
-        }
-        LikedTrackSortMethod::ReleaseOrder => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_release_asc.sql")
-        }
-        LikedTrackSortMethod::ReleaseOrderDesc => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_release_desc.sql")
-        }
-        LikedTrackSortMethod::RecentlyAdded => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_recent_desc.sql")
-        }
-        LikedTrackSortMethod::RecentlyAddedAsc => {
-            include_str!("../../queries/library/find_standalone_tracks_by_artist_recent_asc.sql")
-        }
-    };
-
-    let tracks = sqlx::query_as::<_, Track>(query)
-        .bind(artist_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(Arc::new(tracks))
+    let query = tracks().standalone_for_artist(artist_id);
+    Ok(Arc::new(
+        apply_liked_track_sort(query, sort_method)
+            .fetch_list(pool)
+            .await?,
+    ))
 }
 
 pub async fn get_track_by_id(pool: &SqlitePool, track_id: i64) -> sqlx::Result<Arc<Track>> {
-    let query = include_str!("../../queries/library/find_track_by_id.sql");
-
-    let track: Track = sqlx::query_as(query).bind(track_id).fetch_one(pool).await?;
-
-    Ok(Arc::new(track))
-}
-
-pub struct TrackRow {
-    pub track: Track,
-    pub genres: Vec<Genre>,
-}
-
-#[derive(sqlx::FromRow)]
-struct TrackRowRecord {
-    #[sqlx(flatten)]
-    track: Track,
-    #[sqlx(json)]
-    genres: Json<Vec<(i64, String, String)>>,
-}
-
-pub async fn get_track_with_genres_by_id(
-    pool: &SqlitePool,
-    track_id: i64,
-) -> sqlx::Result<TrackRow> {
-    let row = sqlx::query_as::<_, TrackRowRecord>(
-        "SELECT track.*,
-                COALESCE((
-                    SELECT json_group_array(json_array(
-                        ordered_genres.id,
-                        ordered_genres.name,
-                        ordered_genres.normalized_name
-                    ))
-                    FROM (
-                        SELECT genre.id, genre.name, genre.normalized_name
-                        FROM track_genre
-                        JOIN genre ON genre.id = track_genre.genre_id
-                        WHERE track_genre.track_id = track.id
-                        ORDER BY track_genre.position
-                    ) AS ordered_genres
-                ), json('[]')) AS genres
-         FROM track
-         WHERE track.id = $1",
-    )
-    .bind(track_id)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(TrackRow {
-        track: row.track,
-        genres: row
-            .genres
-            .0
-            .into_iter()
-            .map(|(id, name, normalized_name)| Genre {
-                id,
-                name: DBString::from(name),
-                normalized_name: DBString::from(normalized_name),
-            })
-            .collect(),
-    })
+    Ok(Arc::new(tracks().by_id(track_id).fetch(pool).await?))
 }
 
 pub async fn get_track_by_path(pool: &SqlitePool, path: &Path) -> sqlx::Result<Option<Arc<Track>>> {
-    let query = include_str!("../../queries/library/find_track_by_path.sql");
-
-    let track = sqlx::query_as(query)
-        .bind(path.to_string_lossy().as_ref())
+    Ok(tracks()
+        .at_path(path)
         .fetch_optional(pool)
-        .await?;
-
-    Ok(track.map(Arc::new))
+        .await?
+        .map(Arc::new))
 }
 
 /// Lists all albums for searching. Returns (id, title, artist display override, artist names).
@@ -409,24 +192,42 @@ pub async fn list_albums_search(
 pub async fn list_tracks_search(
     pool: &SqlitePool,
 ) -> sqlx::Result<Vec<(i64, String, String, Option<i64>)>> {
-    let query = include_str!("../../queries/library/find_tracks_search.sql");
-
-    let tracks = sqlx::query_as::<_, (i64, String, String, Option<i64>)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(tracks)
+    Ok(tracks()
+        .for_search()
+        .fetch_rows(pool)
+        .await?
+        .into_iter()
+        .map(|track| {
+            (
+                track.id,
+                track.title.0.to_string(),
+                track
+                    .artist_names
+                    .map(|artists| artists.0.to_string())
+                    .unwrap_or_default(),
+                track.album_id,
+            )
+        })
+        .collect())
 }
 
 /// Lists all artists for searching. Returns (id, name).
 pub async fn list_artists_search(pool: &SqlitePool) -> sqlx::Result<Vec<(i64, String)>> {
-    let query = include_str!("../../queries/library/find_artists_search.sql");
-
-    let artists = sqlx::query_as::<_, (i64, String)>(query)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(artists)
+    Ok(artists()
+        .for_search()
+        .fetch_rows(pool)
+        .await?
+        .into_iter()
+        .map(|artist| {
+            (
+                artist.id,
+                artist
+                    .name
+                    .map(|name| name.0.to_string())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect())
 }
 
 /// Lists track paths grouped by album ID for availability checks. Returns (album_id, path).
@@ -804,12 +605,6 @@ pub async fn lyrics_for_track(pool: &SqlitePool, track_id: i64) -> sqlx::Result<
 }
 
 pub trait LibraryAccess {
-    // TODO: handle this better
-    #[allow(clippy::type_complexity)]
-    fn list_tracks(
-        &self,
-        sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>>;
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>>;
     fn get_album_by_id(&self, album_id: i64) -> sqlx::Result<Arc<Album>>;
     fn get_artist_by_id(&self, artist_id: i64) -> sqlx::Result<Arc<Artist>>;
@@ -836,9 +631,7 @@ pub trait LibraryAccess {
         playlist_id: i64,
         track_ids: &[i64],
     ) -> sqlx::Result<bool>;
-    fn list_artists(&self, sort_method: ArtistSortMethod) -> sqlx::Result<Vec<i64>>;
     fn list_albums_by_artist(&self, artist_id: i64) -> sqlx::Result<Vec<(u32, String)>>;
-    fn get_artist_with_counts(&self, artist_id: i64) -> sqlx::Result<Arc<ArtistWithCounts>>;
     fn get_liked_tracks_by_artist(
         &self,
         artist_id: i64,
@@ -858,14 +651,6 @@ pub trait LibraryAccess {
 }
 
 impl LibraryAccess for App {
-    fn list_tracks(
-        &self,
-        sort_method: TrackSortMethod,
-    ) -> sqlx::Result<Vec<(i64, String, Option<i64>, String)>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_tracks(&pool.0, sort_method))
-    }
-
     fn list_tracks_in_album(&self, album_id: i64) -> sqlx::Result<Arc<Vec<Track>>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_tracks_in_album(&pool.0, album_id))
@@ -972,19 +757,9 @@ impl LibraryAccess for App {
         ))
     }
 
-    fn list_artists(&self, sort_method: ArtistSortMethod) -> sqlx::Result<Vec<i64>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(list_artists(&pool.0, sort_method))
-    }
-
     fn list_albums_by_artist(&self, artist_id: i64) -> sqlx::Result<Vec<(u32, String)>> {
         let pool: &Pool = self.global();
         crate::RUNTIME.block_on(list_albums_by_artist(&pool.0, artist_id))
-    }
-
-    fn get_artist_with_counts(&self, artist_id: i64) -> sqlx::Result<Arc<ArtistWithCounts>> {
-        let pool: &Pool = self.global();
-        crate::RUNTIME.block_on(get_artist_with_counts(&pool.0, artist_id))
     }
 
     fn get_liked_tracks_by_artist(

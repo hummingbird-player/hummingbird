@@ -1204,11 +1204,17 @@ async fn update_metadata_writes_artists_for_album_track() {
     .unwrap();
     assert!(main_direct_tracks.is_empty());
 
-    let guest_counts = crate::library::db::get_artist_with_counts(&pool, guest_id)
+    let guest_counts = crate::library::db::artists()
+        .by_id(guest_id)
+        .with_counts()
+        .fetch_row(&pool)
         .await
         .unwrap();
     assert_eq!((guest_counts.album_count, guest_counts.track_count), (0, 1));
-    let main_counts = crate::library::db::get_artist_with_counts(&pool, main_id)
+    let main_counts = crate::library::db::artists()
+        .by_id(main_id)
+        .with_counts()
+        .fetch_row(&pool)
         .await
         .unwrap();
     assert_eq!((main_counts.album_count, main_counts.track_count), (1, 1));
@@ -1222,21 +1228,23 @@ async fn update_metadata_writes_artists_for_album_track() {
         .unwrap();
     assert_eq!(main_tracks.len(), 1);
 
-    let artists_by_track_count =
-        crate::library::db::list_artists(&pool, crate::library::db::ArtistSortMethod::TracksAsc)
-            .await
-            .unwrap();
+    let artists_by_track_count = crate::library::db::artists()
+        .visible()
+        .sort_asc(crate::library::db::ArtistColumn::Tracks)
+        .fetch_ids(&pool)
+        .await
+        .unwrap();
     assert_eq!(artists_by_track_count, [main_id]);
 
-    let visible_artist_ids: Vec<(i64,)> = sqlx::query_as(include_str!(
-        "../../../../queries/library/find_artists_name_asc.sql"
-    ))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let visible_artist_ids = crate::library::db::artists()
+        .visible()
+        .sort_asc(crate::library::db::ArtistColumn::Name)
+        .fetch_ids(&pool)
+        .await
+        .unwrap();
     assert_eq!(visible_artist_ids.len(), 1);
     let (visible_name,): (String,) = sqlx::query_as("SELECT name FROM artist WHERE id = $1")
-        .bind(visible_artist_ids[0].0)
+        .bind(visible_artist_ids[0])
         .fetch_one(&pool)
         .await
         .unwrap();
