@@ -4,7 +4,8 @@ use cntp_i18n::{I18nString, trn};
 use gpui::{
     AnyElement, App, AppContext, Context, Div, ElementId, Entity, EventEmitter, FontWeight,
     InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, WeakEntity, Window, div, list, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Task, WeakEntity, Window, div, list,
+    prelude::FluentBuilder, px,
 };
 use nucleo::{
     Config, Nucleo, Utf32String,
@@ -107,6 +108,7 @@ where
     expanded_categories: Vec<I18nString>,
     on_accept: Arc<OnAccept>,
     phantom: PhantomData<MatcherFunc>,
+    _matcher_task: Task<()>,
 }
 
 impl<T, MatcherFunc, OnAccept> Finder<T, MatcherFunc, OnAccept>
@@ -124,8 +126,8 @@ where
         cx.new(|cx| {
             let config = Config::DEFAULT;
 
-            // make notification channel
-            let (sender, mut receiver) = channel(10);
+            // one pending notification is enough to pick up the latest results
+            let (sender, mut receiver) = channel(1);
             let notify = Arc::new(move || {
                 // if it's full it doesn't really matter, it'll already update
                 _ = sender.try_send(());
@@ -146,39 +148,39 @@ where
                 });
             }
 
-            let weak_self = cx.weak_entity();
-            cx.spawn(async move |_, cx| {
+            let matcher_task = cx.spawn(async move |this, cx| {
+                let mut running = false;
                 loop {
-                    // get all the update notifications
-                    // incase we got multiple
-                    let mut needs_update = false;
+                    let mut needs_update = running;
                     while receiver.try_recv().is_ok() {
                         needs_update = true;
                     }
+                    if receiver.is_closed() {
+                        return;
+                    }
 
                     if needs_update {
-                        if let Some(entity) = weak_self.upgrade() {
-                            entity.update(cx, |this: &mut Self, cx| {
-                                this.tick(10);
-
-                                let matches: Vec<Arc<T>> = this.get_matches();
-                                if matches != this.last_match {
-                                    this.last_match = matches;
-                                    this.regenerate_list_state(cx);
-                                    cx.notify();
-                                }
-                            });
-                        } else {
+                        let Ok(still_running) = this.update(cx, |this: &mut Self, cx| {
+                            let status = this.tick();
+                            let matches = this.get_matches();
+                            if matches != this.last_match {
+                                this.last_match = matches;
+                                this.regenerate_list_state(cx);
+                                cx.notify();
+                            }
+                            status.running
+                        }) else {
                             return;
-                        }
+                        };
+                        // nucleo can notify before unlocking, so we may need another tick
+                        running = still_running;
                     }
 
                     cx.background_executor()
                         .timer(Duration::from_millis(10))
                         .await;
                 }
-            })
-            .detach();
+            });
 
             // update when the query updates
             cx.subscribe(&cx.entity(), |this, _, ev: &String, cx| {
@@ -276,6 +278,7 @@ where
                 list_state: Self::make_list_state(None),
                 on_accept,
                 phantom: PhantomData,
+                _matcher_task: matcher_task,
             }
         })
     }
@@ -410,8 +413,8 @@ where
         // recompute dynamic extra items based on query
         self.recompute_extra_items();
 
-        // get some matches ready immediately
-        self.tick(20);
+        // pick up ready matches, the task will collect the rest
+        self.tick();
 
         let matches = self.get_matches();
 
@@ -431,8 +434,9 @@ where
         cx.notify();
     }
 
-    fn tick(&mut self, iterations: u32) {
-        self.matcher.tick(iterations as u64);
+    fn tick(&mut self) -> nucleo::Status {
+        // don't wait for the matcher on the UI thread
+        self.matcher.tick(0)
     }
 
     fn get_matches(&self) -> Vec<Arc<T>> {
