@@ -141,16 +141,7 @@ impl Render for MainWindow {
                         .max_w_full()
                         .max_h_full()
                         .overflow_hidden()
-                        .child(
-                            AnyView::from(self.library.clone()).cached(
-                                StyleRefinement::default()
-                                    .w_full()
-                                    .h_full()
-                                    .flex_shrink(1.0)
-                                    .max_w_full()
-                                    .max_h_full(),
-                            ),
-                        )
+                        .child(self.library.clone())
                         .when(show_sidebar, |this| this.child(right_sidebar)),
                 )
                 .child(self.header.clone())

@@ -6,11 +6,12 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, Background, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    InteractiveElement, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Refineable, RenderOnce, ScrollHandle, ScrollWheelEvent, Style,
-    StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb, white,
+    AbsoluteLength, App, AppContext, Background, BorderStyle, Bounds, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
+    InspectorElementId, InteractiveElement, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Refineable, RenderOnce, ScrollHandle, ScrollWheelEvent,
+    Style, StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb,
+    white,
 };
 
 use crate::settings::SettingsGlobal;
@@ -253,6 +254,7 @@ impl Element for Scrollbar {
         };
 
         let axis = self.axis;
+        let current_view = window.current_view();
 
         // current offset is negative
         let raw_offset = match axis {
@@ -545,7 +547,7 @@ impl Element for Scrollbar {
                 }
 
                 // show if hovered and last interaction time is recent
-                window.on_mouse_event(move |_ev: &MouseMoveEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_ev: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
@@ -556,11 +558,11 @@ impl Element for Scrollbar {
                     if is_now_hovered {
                         state.last_interaction_time = Some(Instant::now());
                         state.is_hovered = true;
-                        window.refresh();
+                        cx.notify(current_view);
                     } else if state.is_hovered {
                         state.is_hovered = false;
                         state.last_interaction_time = Some(Instant::now());
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 });
 
@@ -607,7 +609,7 @@ impl Element for Scrollbar {
                         if let Some(handler) = on_interaction_scroll.as_ref() {
                             handler(window, cx);
                         }
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 });
 
@@ -693,13 +695,13 @@ impl Element for Scrollbar {
                             state.drag_start_position = pointer_axis_position;
                             state.drag_start_scroll_position = positive_scroll_position;
 
-                            window.refresh();
+                            cx.notify(current_view);
                         }
                     }
                 });
 
                 // handle dragging
-                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, _cx| {
+                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
@@ -711,7 +713,7 @@ impl Element for Scrollbar {
 
                     state.last_interaction_time = Some(Instant::now());
                     if let Some(handler) = on_interaction_move.as_ref() {
-                        handler(window, _cx);
+                        handler(window, cx);
                     }
 
                     let pointer_axis_position = match axis {
@@ -739,12 +741,12 @@ impl Element for Scrollbar {
                             },
                         };
                         scroll_handle_move.set_offset(new_offset);
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 });
 
                 // stop
-                window.on_mouse_event(move |_ev: &MouseUpEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_ev: &MouseUpEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
@@ -753,9 +755,9 @@ impl Element for Scrollbar {
                         state.dragging = false;
                         state.last_interaction_time = Some(Instant::now());
                         if let Some(handler) = on_interaction_up.as_ref() {
-                            handler(window, _cx);
+                            handler(window, cx);
                         }
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 });
 

@@ -1,7 +1,10 @@
+mod cell_strip;
 mod column_resize_handle;
 pub mod grid_item;
 pub mod table_data;
 
+mod table_body;
+mod table_column_header;
 mod table_item;
 
 use std::{ops::Range, rc::Rc, sync::Arc};
@@ -34,6 +37,8 @@ use column_resize_handle::column_resize_handle;
 use gpui::{prelude::FluentBuilder, *};
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
+use table_body::TableBody;
+use table_column_header::TableColumnHeader;
 use table_data::{
     Column, ColumnReorderDrag, GridContext, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableSort,
 };
@@ -71,7 +76,6 @@ pub enum TableViewMode {
     Grid,
 }
 
-#[derive(Clone)]
 pub struct Table<T, C>
 where
     T: TableData<C> + 'static,
@@ -93,6 +97,8 @@ where
     on_select: Option<OnSelectHandler<T, C>>,
     list_vertical_scroll_handle: UniformListScrollHandle,
     list_horizontal_scroll_handle: ScrollHandle,
+    header: Entity<TableColumnHeader<T, C>>,
+    body: Entity<TableBody<T, C>>,
 }
 
 pub enum TableEvent {
@@ -207,6 +213,10 @@ where
             })
             .detach();
 
+            let table = cx.entity().downgrade();
+            let header = TableColumnHeader::new(cx, table.clone(), &columns, &sort_method);
+            let body = TableBody::new(cx, table, &columns, &items, &view_mode);
+
             Self {
                 context_menu_context,
                 columns,
@@ -221,6 +231,8 @@ where
                 on_select,
                 list_vertical_scroll_handle,
                 list_horizontal_scroll_handle,
+                header,
+                body,
             }
         })
     }
@@ -252,6 +264,10 @@ where
 
     pub fn get_view_mode(&self, cx: &App) -> TableViewMode {
         *self.view_mode.read(cx)
+    }
+
+    pub fn view_mode_model(&self) -> Entity<TableViewMode> {
+        self.view_mode.clone()
     }
 
     pub fn set_view_mode(&mut self, view_mode: TableViewMode, cx: &mut App) {
@@ -453,45 +469,17 @@ where
     }
 }
 
-impl<T, C> Render for Table<T, C>
+impl<T, C> Table<T, C>
 where
     T: TableData<C> + 'static,
     C: Column + 'static,
 {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_header(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.global::<Theme>();
         let sort_method = self.sort_method.read(cx);
-        let items = self.items.read(cx).ready().cloned();
-        let views_model = self.views.clone();
-        let render_counter = self.render_counter.clone();
-
-        let grid_views_model = self.grid_views.clone();
-        let grid_views_to_prune = self.grid_views.clone();
-        let view_mode = *self.view_mode.read(cx);
-        let grid_scroll_handle = self.grid_scroll_handle.clone();
-        let grid_min_item_width = {
-            let settings = cx.global::<SettingsGlobal>().model.read(cx);
-            clamp_grid_min_item_width(settings.interface.grid_min_item_width)
-        };
-
-        let columns = self.columns.clone();
-        let list_context_menu_context = self.context_menu_context.clone();
-        let grid_context_menu_context = self.context_menu_context.clone();
-        let list_handler = self.on_select.clone();
-        let grid_handler = self.on_select.clone();
-        let list_vertical_scroll_handle = self.list_vertical_scroll_handle.clone();
-        let list_horizontal_scroll_handle = self.list_horizontal_scroll_handle.clone();
-
         let columns_read = self.columns.read(cx);
         let column_count = columns_read.len();
         let available_columns = T::available_columns();
-
-        let table_min_width = columns_read.values().sum::<f32>()
-            + if T::has_images() {
-                TABLE_IMAGE_COLUMN_WIDTH
-            } else {
-                0.0
-            };
 
         let mut header = div()
             .w_full()
@@ -628,18 +616,38 @@ where
             );
         }
 
-        let header_with_context = context("table-header-context")
+        context("table-header-context")
+            .w_full()
             .with(header)
-            .child(div().bg(theme.elevated_background).child(column_menu));
+            .child(div().bg(theme.elevated_background).child(column_menu))
+            .into_any_element()
+    }
+
+    fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let items = self.items.read(cx).ready().cloned();
+        let views_model = self.views.clone();
+        let render_counter = self.render_counter.clone();
+        let grid_views_model = self.grid_views.clone();
+        let grid_views_to_prune = self.grid_views.clone();
+        let view_mode = *self.view_mode.read(cx);
+        let grid_scroll_handle = self.grid_scroll_handle.clone();
+        let grid_min_item_width = {
+            let settings = cx.global::<SettingsGlobal>().model.read(cx);
+            clamp_grid_min_item_width(settings.interface.grid_min_item_width)
+        };
+        let columns = self.columns.clone();
+        let list_context_menu_context = self.context_menu_context.clone();
+        let grid_context_menu_context = self.context_menu_context.clone();
+        let list_handler = self.on_select.clone();
+        let grid_handler = self.on_select.clone();
+        let list_vertical_scroll_handle = self.list_vertical_scroll_handle.clone();
 
         let list_canvas = div()
             .relative()
-            .min_w(px(table_min_width))
             .w_full()
             .h_full()
             .flex()
             .flex_col()
-            .child(header_with_context)
             .when_some(items.clone(), |this, items| {
                 let items_len = items.len();
                 this.child(
@@ -689,10 +697,7 @@ where
                                                 prune_views(&views_model, &render_counter, idx, cx);
                                             }
 
-                                            div()
-                                                .w_full()
-                                                .child(get_view(idx, cx))
-                                                .into_any_element()
+                                            get_view(idx, cx).into_any_element()
                                         })
                                         .collect();
 
@@ -771,6 +776,36 @@ where
                 })
         };
 
+        match view_mode {
+            TableViewMode::List => list_canvas.into_any_element(),
+            TableViewMode::Grid => grid_canvas.into_any_element(),
+        }
+    }
+}
+
+impl<T, C> Render for Table<T, C>
+where
+    T: TableData<C> + 'static,
+    C: Column + 'static,
+{
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let view_mode = *self.view_mode.read(cx);
+        let list_vertical_scroll_handle = self.list_vertical_scroll_handle.clone();
+        let list_horizontal_scroll_handle = self.list_horizontal_scroll_handle.clone();
+        let table_min_width = self.columns.read(cx).values().sum::<f32>()
+            + if T::has_images() {
+                TABLE_IMAGE_COLUMN_WIDTH
+            } else {
+                0.0
+            };
+        let body = AnyView::from(self.body.clone()).cached(
+            StyleRefinement::default()
+                .w_full()
+                .h_full()
+                .flex_grow(1.0)
+                .min_h(px(0.0)),
+        );
+
         div()
             .id(T::get_table_name())
             .overflow_hidden()
@@ -794,16 +829,41 @@ where
                     // scrollable axis (X). Keep Y scrolling on the inner uniform list.
                     horizontal_viewport.style().restrict_scroll_to_axis = Some(true);
 
-                    horizontal_viewport.child(list_canvas).into_any_element()
+                    horizontal_viewport
+                        .child(
+                            div()
+                                .relative()
+                                .min_w(px(table_min_width))
+                                .size_full()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    AnyView::from(self.header.clone()).cached(
+                                        StyleRefinement::default()
+                                            .w_full()
+                                            // header cells plus the bottom border
+                                            .h(px(TABLE_HEADER_HEIGHT + 1.0))
+                                            .flex_shrink_0(),
+                                    ),
+                                )
+                                .child(body),
+                        )
+                        .into_any_element()
                 }
-                TableViewMode::Grid => grid_canvas.into_any_element(),
+                TableViewMode::Grid => body.into_any_element(),
             })
             .when(view_mode == TableViewMode::List, |this| {
                 this.child(
                     floating_scrollbar("list-vertical-scrollbar", list_vertical_scroll_handle)
                         .top(px(TABLE_HEADER_HEIGHT))
                         .right(px(4.0))
-                        .bottom(px(14.0)),
+                        .bottom(px(14.0))
+                        .on_interaction({
+                            let body = self.body.downgrade();
+                            move |_, cx| {
+                                let _ = body.update(cx, |_, cx| cx.notify());
+                            }
+                        }),
                 )
                 .child(
                     floating_scrollbar("list-horizontal-scrollbar", list_horizontal_scroll_handle)

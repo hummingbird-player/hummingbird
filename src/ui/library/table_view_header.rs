@@ -28,7 +28,11 @@ where
     C: crate::ui::components::table::table_data::Column + 'static,
 {
     pub fn new(cx: &mut App, table: Entity<Table<T, C>>) -> Entity<Self> {
-        cx.new(|_| Self { table })
+        cx.new(|cx| {
+            let view_mode = table.read(cx).view_mode_model();
+            cx.observe(&view_mode, |_, _, cx| cx.notify()).detach();
+            Self { table }
+        })
     }
 }
 

@@ -6,8 +6,10 @@ use rustc_hash::FxBuildHasher;
 
 use super::{
     OnSelectHandler,
+    cell_strip::CellStrip,
     table_data::{
-        Column, GridContext, RowResource, TABLE_IMAGE_COLUMN_WIDTH, TableData, TableDragData,
+        Column, GridContext, RowResource, TABLE_IMAGE_COLUMN_WIDTH, TABLE_ROW_HEIGHT, TableData,
+        TableDragData,
     },
 };
 use crate::ui::{
@@ -141,7 +143,7 @@ where
 
         let mut row = div()
             .w_full()
-            .h(px(36.0))
+            .h(px(TABLE_ROW_HEIGHT))
             .flex()
             .id(self.index)
             .bg(theme.list_item)
@@ -200,7 +202,7 @@ where
             row = row.child(
                 div()
                     .w(px(TABLE_IMAGE_COLUMN_WIDTH))
-                    .h(px(36.0))
+                    .h(px(TABLE_ROW_HEIGHT))
                     .text_sm()
                     .pl(px(9.0))
                     .flex_shrink_0()
@@ -229,39 +231,19 @@ where
             );
         }
 
-        if let Some(data) = data.as_ref() {
-            let column_count = self.columns.len();
-
-            for (i, column_data) in data.iter().enumerate() {
-                let col = self
-                    .columns
-                    .get_index(i)
-                    .expect("data references column outside of viewed table");
-                let is_last = i == column_count - 1;
-                let base_width = *col.1;
-                row = row.child(
-                    div()
-                        .when(!is_last, |this| this.w(px(base_width)))
-                        .when(is_last, |this| this.flex_grow(1.0).min_w(px(base_width)))
-                        .h(px(36.0))
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .when(T::has_images() && i == 0, |div| div.pl(px(8.0)))
-                        .when(!col.0.is_primary(), |div| {
-                            div.text_color(theme.text_secondary)
-                        })
-                        .text_sm()
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .border_color(theme.border_color)
-                        .when_some(column_data.clone(), |div, string| div.child(string)),
-                );
-            }
+        if let Some(data) = data {
+            row = row.child(CellStrip::new(
+                self.columns.clone(),
+                data,
+                T::has_images(),
+                theme.text_secondary,
+            ));
         }
 
         match menu_rows {
             Some((menu_row, row_state)) => context(self.index)
+                .w_full()
+                .h(px(TABLE_ROW_HEIGHT))
                 .with(row)
                 .try_menu_on_open(move |window, cx| {
                     menu_row

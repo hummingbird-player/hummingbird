@@ -651,15 +651,22 @@ impl Render for Library {
         let theme = cx.global::<Theme>().clone();
 
         fn render_library_view(view: &LibraryView) -> AnyElement {
-            match view {
-                LibraryView::Album(v) => v.clone().into_any_element(),
-                LibraryView::Tracks(v) => v.clone().into_any_element(),
-                LibraryView::Release(v) => v.clone().into_any_element(),
-                LibraryView::Playlist(v) => v.clone().into_any_element(),
-                LibraryView::Artists(v) => v.clone().into_any_element(),
-                LibraryView::ArtistDetail(v) => v.clone().into_any_element(),
-                LibraryView::Files(v) => v.clone().into_any_element(),
-            }
+            let page = match view {
+                LibraryView::Album(v) => return v.clone().into_any_element(),
+                LibraryView::Tracks(v) => return v.clone().into_any_element(),
+                LibraryView::Artists(v) => return v.clone().into_any_element(),
+                LibraryView::Release(v) => AnyView::from(v.clone()),
+                LibraryView::Playlist(v) => AnyView::from(v.clone()),
+                LibraryView::ArtistDetail(v) => AnyView::from(v.clone()),
+                LibraryView::Files(v) => AnyView::from(v.clone()),
+            };
+            page.cached(
+                StyleRefinement::default()
+                    .w_full()
+                    .h_full()
+                    .flex_shrink(1.0),
+            )
+            .into_any_element()
         }
 
         let single_column = |view: &LibraryView| {
@@ -862,11 +869,9 @@ impl Render for Library {
             .max_h_full()
             .overflow_hidden()
             .child(
-                div()
-                    .mr_auto()
-                    .flex()
-                    .flex_shrink_0()
-                    .child(self.sidebar.clone()),
+                self.sidebar
+                    .clone()
+                    .cached(Sidebar::layout_style(cx).mr_auto()),
             )
             .child(content)
             .child(self.update_playlist.clone())

@@ -30,6 +30,7 @@ pub struct ColumnReorderDrag {
 pub const TABLE_MAX_WIDTH: f32 = 1000.0;
 pub const TABLE_IMAGE_COLUMN_WIDTH: f32 = 43.0;
 pub const TABLE_HEADER_HEIGHT: f32 = 30.0;
+pub const TABLE_ROW_HEIGHT: f32 = 36.0;
 
 // column resize constants
 pub const COLUMN_MIN_WIDTH: f32 = 50.0;

@@ -277,7 +277,7 @@
   },
   "ALBUMS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:154",
+    "definedIn": "src/ui/library/sidebar.rs:172",
     "plural": false,
     "description": null
   },
@@ -289,7 +289,7 @@
   },
   "ARTISTS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:174",
+    "definedIn": "src/ui/library/sidebar.rs:192",
     "plural": false,
     "description": null
   },
@@ -337,7 +337,7 @@
   },
   "COLLAPSE_SIDEBAR": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:109",
+    "definedIn": "src/ui/library/sidebar.rs:131",
     "plural": false,
     "description": null
   },
@@ -595,7 +595,7 @@
   },
   "EXPAND_SIDEBAR": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:107",
+    "definedIn": "src/ui/library/sidebar.rs:129",
     "plural": false,
     "description": null
   },
@@ -619,7 +619,7 @@
   },
   "FILES": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:210",
+    "definedIn": "src/ui/library/sidebar.rs:228",
     "plural": false,
     "description": null
   },
@@ -655,7 +655,7 @@
   },
   "GRID_VIEW": {
     "context": "table_view_header.rs",
-    "definedIn": "src/ui/library/table_view_header.rs:80",
+    "definedIn": "src/ui/library/table_view_header.rs:84",
     "plural": false,
     "description": null
   },
@@ -865,7 +865,7 @@
   },
   "LIST_VIEW": {
     "context": "table_view_header.rs",
-    "definedIn": "src/ui/library/table_view_header.rs:67",
+    "definedIn": "src/ui/library/table_view_header.rs:71",
     "plural": false,
     "description": null
   },
@@ -1639,7 +1639,7 @@
   },
   "STATS_TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:257",
+    "definedIn": "src/ui/library/sidebar.rs:275",
     "plural": true,
     "description": null
   },
@@ -1723,7 +1723,7 @@
   },
   "TRACKS": {
     "context": "sidebar.rs",
-    "definedIn": "src/ui/library/sidebar.rs:194",
+    "definedIn": "src/ui/library/sidebar.rs:212",
     "plural": false,
     "description": null
   },

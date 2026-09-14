@@ -3,7 +3,7 @@ use std::sync::Arc;
 use cntp_i18n::{tr, trn};
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Pixels, Render,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::settings::SettingsGlobal;
@@ -53,6 +53,9 @@ impl Sidebar {
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
 
+            let settings = cx.global::<SettingsGlobal>().model.clone();
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+
             let scan_state = cx.global::<Models>().scan_state.clone();
 
             cx.observe(&scan_state, |this: &mut Self, _, cx| {
@@ -66,14 +69,33 @@ impl Sidebar {
             .detach();
 
             let pool = cx.global::<Pool>().0.clone();
+            let track_stats = AsyncResource::new(cx, (), async move {
+                Ok(Arc::new(track_stats().fetch_row(&pool).await?))
+            });
+            cx.observe(&track_stats, |_, _, cx| cx.notify()).detach();
+
             Self {
                 playlists: PlaylistList::new(cx, nav_model.clone()),
-                track_stats: AsyncResource::new(cx, (), async move {
-                    Ok(Arc::new(track_stats().fetch_row(&pool).await?))
-                }),
+                track_stats,
                 nav_model,
             }
         })
+    }
+
+    fn content_width(cx: &App) -> Pixels {
+        let models = cx.global::<Models>();
+        if *models.sidebar_collapsed.read(cx) {
+            COLLAPSED_SIDEBAR_WIDTH
+        } else {
+            *models.sidebar_width.read(cx)
+        }
+    }
+
+    pub(super) fn layout_style(cx: &App) -> StyleRefinement {
+        StyleRefinement::default()
+            .w(Self::content_width(cx) + PANEL_GAP)
+            .h_full()
+            .flex_shrink_0()
     }
 }
 
@@ -132,11 +154,7 @@ impl Render for Sidebar {
         );
 
         let sidebar_content = sidebar()
-            .width(if collapsed {
-                COLLAPSED_SIDEBAR_WIDTH
-            } else {
-                *sidebar_width.read(cx)
-            })
+            .width(Self::content_width(cx))
             .id("main-sidebar")
             .h_full()
             .max_h_full()
