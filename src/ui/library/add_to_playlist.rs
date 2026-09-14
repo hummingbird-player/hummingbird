@@ -10,12 +10,13 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{self, LibraryAccess},
+        db::{self, TrackColumn, playlists, tracks},
         types::Playlist,
     },
     ui::{
         app::Pool,
         components::{
+            async_resource::AsyncResource,
             icons::PLAYLIST_ADD,
             modal::modal,
             palette::{ExtraItem, ExtraItemProvider, FinderItemLeft, Palette, PaletteItem},
@@ -28,6 +29,7 @@ use crate::{
 enum TrackList {
     Single(i64),
     Multi(Vec<i64>),
+    Album(i64),
 }
 
 impl TrackList {
@@ -43,17 +45,19 @@ impl TrackList {
         match self {
             TrackList::Single(id) => *id,
             TrackList::Multi(ids) => ids[0],
+            TrackList::Album(_) => panic!("album track list must be resolved before use"),
         }
     }
 
     fn is_multi(&self) -> bool {
-        matches!(self, TrackList::Multi(ids) if ids.len() > 1)
+        !matches!(self, TrackList::Single(_))
     }
 
     fn ids(&self) -> &[i64] {
         match self {
             TrackList::Single(id) => std::slice::from_ref(id),
             TrackList::Multi(ids) => ids,
+            TrackList::Album(_) => &[],
         }
     }
 }
@@ -64,19 +68,18 @@ fn read_track_list(shared: &SharedTrackList) -> TrackList {
     shared.read().expect("poisoned track_list lock").clone()
 }
 
-impl PaletteItem for (TrackList, Playlist) {
+type PlaylistChoice = (TrackList, Playlist, Option<i64>);
+
+impl PaletteItem for PlaylistChoice {
     fn left_content(&self, cx: &mut App) -> Option<FinderItemLeft> {
         self.1.left_content(cx)
     }
 
-    fn middle_content(&self, cx: &mut App) -> SharedString {
+    fn middle_content(&self, _cx: &mut App) -> SharedString {
         if self.0.is_multi() {
             tr!("ADD_TO_SELECTED_PLAYLIST", name = self.1.name.0.as_str()).into()
         } else {
-            let track_id = self.0.first();
-            let has_track = cx.playlist_has_track(self.1.id, track_id).ok().flatten();
-
-            if has_track.is_none() {
+            if self.2.is_none() {
                 tr!(
                     "ADD_TO_SELECTED_PLAYLIST",
                     "Add to {{name}}",
@@ -99,34 +102,48 @@ impl PaletteItem for (TrackList, Playlist) {
     }
 }
 
-type MatcherFunc = Box<dyn Fn(&Arc<(TrackList, Playlist)>, &mut App) -> Utf32String + 'static>;
-type OnAccept = Box<dyn Fn(&Arc<(TrackList, Playlist)>, &mut App) + 'static>;
+type MatcherFunc = Box<dyn Fn(&Arc<PlaylistChoice>, &mut App) -> Utf32String + 'static>;
+type OnAccept = Box<dyn Fn(&Arc<PlaylistChoice>, &mut App) + 'static>;
 
 pub struct AddToPlaylist {
     show: Entity<bool>,
-    palette: Entity<Palette<(TrackList, Playlist), MatcherFunc, OnAccept>>,
+    palette: Entity<Palette<PlaylistChoice, MatcherFunc, OnAccept>>,
     track_list: SharedTrackList,
+    playlists: Entity<AsyncResource<TrackList, Arc<Vec<PlaylistChoice>>>>,
 }
 
 impl AddToPlaylist {
     pub fn new(cx: &mut App, show: Entity<bool>, track_ids: Vec<i64>) -> Entity<Self> {
+        Self::new_with_track_list(cx, show, TrackList::from_ids(track_ids))
+    }
+
+    pub fn new_album(cx: &mut App, show: Entity<bool>, album_id: i64) -> Entity<Self> {
+        Self::new_with_track_list(cx, show, TrackList::Album(album_id))
+    }
+
+    fn new_with_track_list(
+        cx: &mut App,
+        show: Entity<bool>,
+        initial_track_list: TrackList,
+    ) -> Entity<Self> {
         cx.new(|cx| {
-            let track_list: SharedTrackList = Arc::new(RwLock::new(TrackList::from_ids(track_ids)));
+            let track_list: SharedTrackList = Arc::new(RwLock::new(initial_track_list));
+            let initial_track_list = read_track_list(&track_list);
+            let playlists_resource: Entity<AsyncResource<TrackList, Arc<Vec<PlaylistChoice>>>> =
+                AsyncResource::pending(cx, initial_track_list);
 
             let track_list_for_observe = track_list.clone();
-            cx.observe(&show, move |this: &mut Self, _, cx| {
+            cx.observe(&show, move |this: &mut Self, show, cx| {
+                if !*show.read(cx) {
+                    return;
+                }
                 let current = read_track_list(&track_list_for_observe);
-                this.palette.update(cx, |palette, cx| {
-                    let new_playlists = (*cx.get_all_playlists().unwrap())
-                        .clone()
-                        .into_iter()
-                        .map(|playlist| (current.clone(), playlist))
-                        .map(Arc::new)
-                        .collect::<Vec<_>>();
-
-                    cx.emit(new_playlists);
-
-                    palette.reset(cx);
+                let pool = cx.global::<Pool>().0.clone();
+                this.playlists.update(cx, |resource, cx| {
+                    let load_track_list = current.clone();
+                    resource.load(cx, current, async move {
+                        load_playlist_choices(&pool, load_track_list).await
+                    });
                 });
 
                 cx.notify();
@@ -143,7 +160,7 @@ impl AddToPlaylist {
 
                 if track_ids.len() == 1 {
                     let track_id = track_ids[0];
-                    let has_track = cx.playlist_has_track(playlist_id, track_id).ok().flatten();
+                    let has_track = playlist.2;
 
                     let pool = cx.global::<Pool>().0.clone();
                     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
@@ -211,15 +228,18 @@ impl AddToPlaylist {
                 show_clone.write(cx, false);
             });
 
-            let initial_track_list = read_track_list(&track_list);
-            let items = (*cx.get_all_playlists().unwrap())
-                .clone()
-                .into_iter()
-                .map(|playlist| (initial_track_list.clone(), playlist))
-                .map(Arc::new)
-                .collect();
-
-            let palette = Palette::new(cx, items, matcher, on_accept, &show);
+            let palette = Palette::new(cx, Vec::new(), matcher, on_accept, &show);
+            let palette_for_resource = palette.clone();
+            cx.observe(&playlists_resource, move |_, resource, cx| {
+                let Some(items) = resource.read(cx).ready().cloned() else {
+                    return;
+                };
+                palette_for_resource.update(cx, |palette, cx| {
+                    cx.emit(items.iter().cloned().map(Arc::new).collect::<Vec<_>>());
+                    palette.reset(cx);
+                });
+            })
+            .detach();
 
             let track_list_for_create = track_list.clone();
             let show_for_create = show.clone();
@@ -233,7 +253,7 @@ impl AddToPlaylist {
                 let display = tr!("CREATE_PLAYLIST", name = name_string);
 
                 let show_clone2 = show_for_create.clone();
-                let create_track_ids = read_track_list(&track_list_for_create).ids().to_vec();
+                let create_track_list = read_track_list(&track_list_for_create);
 
                 vec![ExtraItem {
                     left: Some(FinderItemLeft::Icon(PLAYLIST_ADD.into())),
@@ -243,12 +263,14 @@ impl AddToPlaylist {
                         let pool = cx.global::<Pool>().0.clone();
                         let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
                         let name_string = name_string.clone();
-                        let create_track_ids = create_track_ids.clone();
+                        let create_track_list = create_track_list.clone();
 
                         cx.spawn(async move |cx| {
                             let task = crate::RUNTIME.spawn(async move {
+                                let create_track_ids =
+                                    resolve_track_list(&pool, create_track_list).await?;
                                 let playlist_id = db::create_playlist(&pool, &name_string).await?;
-                                for track_id in &create_track_ids {
+                                for track_id in create_track_ids.ids() {
                                     db::add_playlist_item(&pool, playlist_id, *track_id).await?;
                                 }
                                 Ok::<i64, sqlx::Error>(playlist_id)
@@ -287,6 +309,7 @@ impl AddToPlaylist {
                 show,
                 palette,
                 track_list,
+                playlists: playlists_resource,
             }
         })
     }
@@ -294,6 +317,46 @@ impl AddToPlaylist {
     pub fn set_track_ids(&self, track_ids: Vec<i64>) {
         *self.track_list.write().expect("poisoned track_list lock") =
             TrackList::from_ids(track_ids);
+    }
+}
+
+async fn load_playlist_choices(
+    pool: &sqlx::SqlitePool,
+    track_list: TrackList,
+) -> anyhow::Result<Arc<Vec<PlaylistChoice>>> {
+    let track_list = resolve_track_list(pool, track_list).await?;
+    let choices = if track_list.is_multi() {
+        playlists()
+            .fetch_list(pool)
+            .await?
+            .into_iter()
+            .map(|playlist| (track_list.clone(), playlist, None))
+            .collect()
+    } else {
+        playlists()
+            .with_playlist_item(track_list.first())
+            .fetch_rows(pool)
+            .await?
+            .into_iter()
+            .map(|row| (track_list.clone(), row.playlist, row.playlist_item_id))
+            .collect()
+    };
+    Ok(Arc::new(choices))
+}
+
+async fn resolve_track_list(
+    pool: &sqlx::SqlitePool,
+    track_list: TrackList,
+) -> sqlx::Result<TrackList> {
+    match track_list {
+        TrackList::Album(album_id) => Ok(TrackList::from_ids(
+            tracks()
+                .from_album(album_id)
+                .sort_asc(TrackColumn::TrackNumber)
+                .fetch_ids(pool)
+                .await?,
+        )),
+        track_list => Ok(track_list),
     }
 }
 

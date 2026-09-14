@@ -4,17 +4,19 @@ pub mod table_data;
 
 mod table_item;
 
-use std::{rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use crate::{
+    library::db::SortDirection,
     settings::{
         SettingsGlobal,
         interface::clamp_grid_min_item_width,
         storage::{TableSettings, TableViewModeSetting},
     },
     ui::{
-        caching::hummingbird_cache,
+        app::Pool,
         components::{
+            async_resource::AsyncResource,
             context::context,
             drag_drop::DragPreview,
             icons::{CHEVRON_DOWN, CHEVRON_UP, SELECTOR, icon},
@@ -38,6 +40,23 @@ use table_data::{
 use table_item::TableItem;
 
 type RowMap<T, C> = FxHashMap<usize, Entity<TableItem<T, C>>>;
+
+const LIST_PREFETCH_ITEMS: usize = 5;
+
+fn list_prefetch_range(visible: Range<usize>, item_count: usize) -> Range<usize> {
+    visible.start.saturating_sub(LIST_PREFETCH_ITEMS)
+        ..visible
+            .end
+            .saturating_add(LIST_PREFETCH_ITEMS)
+            .min(item_count)
+}
+
+#[allow(type_alias_bounds)]
+type ItemListResource<T, C>
+where
+    C: Column,
+    T: TableData<C>,
+= Entity<AsyncResource<Option<TableSort<C>>, Arc<Vec<T::Identifier>>>>;
 
 #[allow(type_alias_bounds)]
 pub type OnSelectHandler<T, C>
@@ -69,7 +88,7 @@ where
     view_mode: Entity<TableViewMode>,
     grid_scroll_handle: UniformListScrollHandle,
 
-    items: Option<Arc<Vec<T::Identifier>>>,
+    items: ItemListResource<T, C>,
     sort_method: Entity<Option<TableSort<C>>>,
     on_select: Option<OnSelectHandler<T, C>>,
     list_vertical_scroll_handle: UniformListScrollHandle,
@@ -119,6 +138,10 @@ where
             let sort_method = cx.new(|_| T::default_sort());
             let list_vertical_scroll_handle = UniformListScrollHandle::new();
             let list_horizontal_scroll_handle = ScrollHandle::new();
+            let pool = cx.global::<Pool>().0.clone();
+            let items = AsyncResource::new(cx, None, async move {
+                Ok(Arc::new(T::load_rows(pool, None).await?))
+            });
 
             if let Some(offset) = initial_scroll_offset {
                 list_vertical_scroll_handle
@@ -140,26 +163,22 @@ where
                     });
             }
 
-            let items = T::get_rows(cx, None).ok().map(Arc::new);
-
-            cx.observe(&sort_method, |this: &mut Table<T, C>, sort, cx| {
-                let sort_method = *sort.read(cx);
-                let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
-                this.grid_views = cx.new(|_| FxHashMap::default());
-                this.items = items;
-
+            cx.observe(&items, |this: &mut Table<T, C>, items, cx| {
+                if items.read(cx).ready().is_some() {
+                    this.views.update(cx, |views, _| views.clear());
+                    this.render_counter.update(cx, |counter, _| *counter = 0);
+                    this.grid_views.update(cx, |views, _| views.clear());
+                }
                 cx.notify();
             })
             .detach();
 
-            cx.observe(&columns, |this: &mut Table<T, C>, _, cx| {
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
-                this.grid_views = cx.new(|_| FxHashMap::default());
+            cx.observe(&sort_method, |this: &mut Table<T, C>, _, cx| {
+                this.reload_rows(cx);
+            })
+            .detach();
 
+            cx.observe(&columns, |this: &mut Table<T, C>, _, cx| {
                 let settings = this.get_settings(cx);
                 let table_settings_model = cx.global::<Models>().table_settings.clone();
                 table_settings_model.update(cx, |map, _| {
@@ -183,15 +202,7 @@ where
 
             cx.subscribe(&cx.entity(), |this, _, event, cx| match event {
                 TableEvent::NewRows => {
-                    let sort_method = *this.sort_method.read(cx);
-                    let items = T::get_rows(cx, sort_method).ok().map(Arc::new);
-
-                    this.views = cx.new(|_| FxHashMap::default());
-                    this.render_counter = cx.new(|_| 0);
-                    this.grid_views = cx.new(|_| FxHashMap::default());
-                    this.items = items;
-
-                    cx.notify();
+                    this.reload_rows(cx);
                 }
             })
             .detach();
@@ -212,6 +223,18 @@ where
                 list_horizontal_scroll_handle,
             }
         })
+    }
+
+    fn reload_rows(&mut self, cx: &mut Context<Self>) {
+        let sort = *self.sort_method.read(cx);
+        let pool = cx.global::<Pool>().0.clone();
+
+        self.items.update(cx, |items, cx| {
+            items.load(cx, sort, async move {
+                Ok(Arc::new(T::load_rows(pool, sort).await?))
+            });
+        });
+        cx.notify();
     }
 
     pub fn get_scroll_offset(&self, cx: &App) -> f32 {
@@ -438,7 +461,7 @@ where
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
         let sort_method = self.sort_method.read(cx);
-        let items = self.items.clone();
+        let items = self.items.read(cx).ready().cloned();
         let views_model = self.views.clone();
         let render_counter = self.render_counter.clone();
 
@@ -505,7 +528,7 @@ where
             // if the column is the current sort column, use its sort order for the arrow
             let sort_ascending_if_this_col = if let Some(method) = sort_method.as_ref() {
                 if method.column == *column.0 {
-                    Some(method.ascending)
+                    Some(method.direction == SortDirection::Ascending)
                 } else {
                     None
                 }
@@ -553,17 +576,17 @@ where
                         this.sort_method.update(cx, move |this, cx| {
                             if let Some(method) = this.as_mut() {
                                 if method.column == column_id {
-                                    method.ascending = !method.ascending;
+                                    method.direction = method.direction.reversed();
                                 } else {
                                     *this = Some(TableSort {
                                         column: column_id,
-                                        ascending: true,
+                                        direction: SortDirection::Ascending,
                                     });
                                 }
                             } else {
                                 *this = Some(TableSort {
                                     column: column_id,
-                                    ascending: true,
+                                    direction: SortDirection::Ascending,
                                 });
                             }
 
@@ -610,7 +633,6 @@ where
             .child(div().bg(theme.elevated_background).child(column_menu));
 
         let list_canvas = div()
-            .image_cache(hummingbird_cache((T::get_table_name(), 0_usize), 200))
             .relative()
             .min_w(px(table_min_width))
             .w_full()
@@ -631,38 +653,55 @@ where
                             let mut list =
                                 uniform_list("table-list", items_len, move |range, _, cx| {
                                     let start = range.start;
+                                    let end = range.end;
                                     let is_templ_render = range.start == 0 && range.end == 1;
+                                    let materialized_range = if is_templ_render {
+                                        range
+                                    } else {
+                                        list_prefetch_range(range, items_len)
+                                    };
+                                    let get_view = |idx: usize, cx: &mut App| {
+                                        create_or_retrieve_view(
+                                            &views_model,
+                                            idx,
+                                            |cx| {
+                                                TableItem::new(
+                                                    cx,
+                                                    items[idx].clone(),
+                                                    idx,
+                                                    &columns,
+                                                    list_handler.clone(),
+                                                    list_context_menu_context.clone(),
+                                                )
+                                            },
+                                            cx,
+                                        )
+                                    };
 
-                                    items[range]
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(idx, item)| {
-                                            let idx = idx + start;
+                                    for idx in materialized_range.start..start {
+                                        prune_views(&views_model, &render_counter, idx, cx);
+                                        let _ = get_view(idx, cx);
+                                    }
 
+                                    let elements = (start..end)
+                                        .map(|idx| {
                                             if !is_templ_render {
                                                 prune_views(&views_model, &render_counter, idx, cx);
                                             }
 
                                             div()
                                                 .w_full()
-                                                .child(create_or_retrieve_view(
-                                                    &views_model,
-                                                    idx,
-                                                    |cx| {
-                                                        TableItem::new(
-                                                            cx,
-                                                            item.clone(),
-                                                            idx,
-                                                            &columns,
-                                                            list_handler.clone(),
-                                                            list_context_menu_context.clone(),
-                                                        )
-                                                    },
-                                                    cx,
-                                                ))
+                                                .child(get_view(idx, cx))
                                                 .into_any_element()
                                         })
-                                        .collect()
+                                        .collect();
+
+                                    for idx in end..materialized_range.end {
+                                        prune_views(&views_model, &render_counter, idx, cx);
+                                        let _ = get_view(idx, cx);
+                                    }
+
+                                    elements
                                 })
                                 .track_scroll(&list_vertical_scroll_handle)
                                 .w_full()
@@ -703,11 +742,11 @@ where
                                         grid_item::GridItem::new(
                                             cx,
                                             item_id,
+                                            idx,
                                             grid_handler.clone(),
                                             grid_context_menu_context.clone(),
                                             GridContext::Table,
                                         )
-                                        .unwrap()
                                     },
                                     cx,
                                 );
@@ -716,14 +755,7 @@ where
                                     item.set_image_target(item_width, cx);
                                 });
 
-                                div()
-                                    .image_cache(hummingbird_cache(
-                                        (T::get_table_name(), idx + 1),
-                                        1,
-                                    ))
-                                    .size_full()
-                                    .child(view)
-                                    .into_any_element()
+                                div().size_full().child(view).into_any_element()
                             },
                         )
                         .min_item_width(px(grid_min_item_width))
@@ -780,5 +812,17 @@ where
                         .right(px(14.0)),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_prefetch_range;
+
+    #[test]
+    fn list_prefetch_range_extends_and_clamps_both_sides() {
+        assert_eq!(list_prefetch_range(10..20, 100), 5..25);
+        assert_eq!(list_prefetch_range(0..10, 100), 0..15);
+        assert_eq!(list_prefetch_range(95..100, 100), 90..100);
     }
 }

@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use tracing::debug;
 
@@ -10,19 +6,20 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
     library::{
-        db::LibraryAccess,
+        db::{SortDirection, tracks},
         scan::ScanEvent,
-        types::{
-            Track,
-            table::{TrackColumn, track_table_sort},
-        },
+        types::{Track, table::TrackColumn},
     },
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     ui::{
+        app::Pool,
         availability::snapshot,
-        components::table::{Table, TableEvent, table_data::TABLE_MAX_WIDTH},
+        components::table::{
+            Table, TableEvent,
+            table_data::{TABLE_MAX_WIDTH, TableSort},
+        },
         library::{
-            context_menus::{TrackContextMenuContext, play_from_track},
+            context_menus::{TrackContextMenuContext, play_from_track_path},
             table_view_header::TableViewHeader,
         },
         models::Models,
@@ -50,19 +47,17 @@ impl TrackView {
 
             let handler = Rc::new(move |cx: &mut App, id: &i64| {
                 if let Some(table) = table_ref_clone.borrow().as_ref() {
-                    let queue_items = playable_queue(cx, table);
-                    if queue_items.is_empty() {
-                        return;
-                    }
+                    let id = *id;
+                    load_playable_queue(cx, table, move |cx, queue_items| {
+                        let index = queue_items
+                            .iter()
+                            .position(|item| item.get_db_id() == Some(id))
+                            .unwrap_or(0);
 
-                    let index = queue_items
-                        .iter()
-                        .position(|item| item.get_db_id() == Some(*id))
-                        .unwrap_or(0);
-
-                    let playback = cx.global::<PlaybackInterface>();
-                    playback.replace_queue_with_index(queue_items, index);
-                    playback.play();
+                        let playback = cx.global::<PlaybackInterface>();
+                        playback.replace_queue_with_index(queue_items, index);
+                        playback.play();
+                    });
                 }
             });
 
@@ -76,9 +71,10 @@ impl TrackView {
                         let Some(table) = table_ref_read.as_ref() else {
                             return;
                         };
-                        let queue_items = playable_queue(cx, table);
-
-                        play_from_track(cx, track, queue_items);
+                        let path = track.location.clone();
+                        load_playable_queue(cx, table, move |cx, queue_items| {
+                            play_from_track_path(cx, &path, queue_items);
+                        });
                     }
                 })),
             };
@@ -149,22 +145,49 @@ impl Render for TrackView {
     }
 }
 
-fn playable_queue(cx: &mut App, table: &Entity<Table<Track, TrackColumn>>) -> Vec<QueueItemData> {
-    let sort_method = track_table_sort(table.read(cx).get_sort(cx));
+fn load_playable_queue(
+    cx: &mut App,
+    table: &Entity<Table<Track, TrackColumn>>,
+    on_ready: impl FnOnce(&mut App, Vec<QueueItemData>) + 'static,
+) {
+    let sort = table.read(cx).get_sort(cx).unwrap_or(TableSort {
+        column: TrackColumn::Artist,
+        direction: SortDirection::Ascending,
+    });
+    let pool = cx.global::<Pool>().0.clone();
+    let task = crate::RUNTIME.spawn(async move {
+        tracks()
+            .sort(sort.column, sort.direction)
+            .for_playback()
+            .fetch_rows(&pool)
+            .await
+    });
 
-    match cx.list_tracks(sort_method) {
-        Ok(rows) => {
-            let availability = snapshot(cx);
-            rows.into_iter()
-                .filter(|(_, _, _, path)| availability.is_track_path_available(Path::new(path)))
-                .map(|(id, _, album_id, path)| {
-                    QueueItemData::new(cx, PathBuf::from(path), Some(id), album_id)
-                })
-                .collect()
+    cx.spawn(async move |cx| {
+        match task.await {
+            Ok(Ok(tracks)) => {
+                let queue_items: Vec<QueueItemData> = cx.update(|cx| {
+                    let availability = snapshot(cx);
+                    tracks
+                        .into_iter()
+                        .filter(|track| availability.is_track_path_available(&track.location))
+                        .map(|track| {
+                            QueueItemData::new(cx, track.location, Some(track.id), track.album_id)
+                        })
+                        .collect()
+                });
+                if !queue_items.is_empty() {
+                    cx.update(|cx| on_ready(cx, queue_items));
+                }
+            }
+            Ok(Err(error)) => {
+                debug!("Failed to load tracks for playback: {error:?}");
+            }
+            Err(error) => {
+                debug!("Track playback query task failed: {error:?}");
+            }
         }
-        Err(e) => {
-            debug!("Failed to load tracks for playback: {:?}", e);
-            Vec::new()
-        }
-    }
+        anyhow::Ok(())
+    })
+    .detach();
 }

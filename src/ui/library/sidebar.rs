@@ -16,9 +16,11 @@ const COLLAPSED_SIDEBAR_WIDTH: Pixels = px(52.0);
 use crate::ui::components::icons::{FOLDER, MUSIC, SIDEBAR, SIDEBAR_INACTIVE};
 use crate::ui::components::tooltip::build_tooltip;
 use crate::{
-    library::{db::LibraryAccess, types::TrackStats},
+    library::{db::track_stats, types::TrackStats},
     ui::{
+        app::Pool,
         components::{
+            async_resource::AsyncResource,
             icons::{DISC, SEARCH, USERS},
             nav_button::nav_button,
             resizable::{ResizeEdge, resizable},
@@ -35,7 +37,7 @@ mod playlists;
 
 pub struct Sidebar {
     playlists: Entity<PlaylistList>,
-    track_stats: Arc<TrackStats>,
+    track_stats: Entity<AsyncResource<(), Arc<TrackStats>>>,
     nav_model: Entity<NavigationHistory>,
 }
 
@@ -54,14 +56,21 @@ impl Sidebar {
             let scan_state = cx.global::<Models>().scan_state.clone();
 
             cx.observe(&scan_state, |this: &mut Self, _, cx| {
-                this.track_stats = cx.get_track_stats().unwrap();
-                cx.notify();
+                let pool = cx.global::<Pool>().0.clone();
+                this.track_stats.update(cx, |resource, cx| {
+                    resource.load(cx, (), async move {
+                        Ok(Arc::new(track_stats().fetch_row(&pool).await?))
+                    });
+                });
             })
             .detach();
 
+            let pool = cx.global::<Pool>().0.clone();
             Self {
                 playlists: PlaylistList::new(cx, nav_model.clone()),
-                track_stats: cx.get_track_stats().unwrap(),
+                track_stats: AsyncResource::new(cx, (), async move {
+                    Ok(Arc::new(track_stats().fetch_row(&pool).await?))
+                }),
                 nav_model,
             }
         })
@@ -233,23 +242,25 @@ impl Render for Sidebar {
                             }),
                     )
                     .when(!collapsed, |this| {
-                        this.child(
-                            div()
-                                .ml_auto()
-                                .flex()
-                                .flex_col()
-                                .text_right()
-                                .text_xs()
-                                .mb(px(6.0))
-                                .mr(px(6.0))
-                                .text_color(theme.text_secondary)
-                                .child(trn!(
-                                    "STATS_TRACKS",
-                                    "{{count}} track",
-                                    "{{count}} tracks",
-                                    count = self.track_stats.track_count
-                                )),
-                        )
+                        this.when_some(self.track_stats.read(cx).ready(), |this, track_stats| {
+                            this.child(
+                                div()
+                                    .ml_auto()
+                                    .flex()
+                                    .flex_col()
+                                    .text_right()
+                                    .text_xs()
+                                    .mb(px(6.0))
+                                    .mr(px(6.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(trn!(
+                                        "STATS_TRACKS",
+                                        "{{count}} track",
+                                        "{{count}} tracks",
+                                        count = track_stats.track_count
+                                    )),
+                            )
+                        })
                     }),
             );
 

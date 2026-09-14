@@ -1,7 +1,9 @@
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
 use std::fs::{File, OpenOptions};
 use std::{
+    cell::Cell,
     path::PathBuf,
+    rc::Rc,
     sync::{Arc, RwLock},
 };
 
@@ -30,7 +32,7 @@ use crate::services::mmb::listenbrainz::{
 use crate::{
     library::{
         availability::AvailabilityState,
-        db::{self, LibraryAccess, LikedTrackSortMethod, PlaylistTrackSortMethod},
+        db::{self, LikedTrackSortMethod, PlaylistTrackSortMethod, playlists},
         scan::ScanEvent,
     },
     media::metadata::Metadata,
@@ -235,31 +237,13 @@ fn sync_discord_mmbs(cx: &mut App, mmbs_list: &Entity<MMBSList>) {
     });
 }
 
-fn resolve_startup_view(cx: &App, startup_view: StartupLibraryView) -> ViewSwitchMessage {
+fn resolve_startup_view(startup_view: StartupLibraryView) -> ViewSwitchMessage {
     match startup_view {
         StartupLibraryView::Albums => ViewSwitchMessage::Albums,
         StartupLibraryView::Artists => ViewSwitchMessage::Artists,
         StartupLibraryView::Tracks => ViewSwitchMessage::Tracks,
         StartupLibraryView::Files => ViewSwitchMessage::Files,
-        StartupLibraryView::LikedSongs => match cx.get_all_playlists() {
-            Ok(playlists) => playlists
-                .iter()
-                .find(|playlist| playlist.is_liked_songs())
-                .map(|playlist| ViewSwitchMessage::Playlist(playlist.id))
-                .unwrap_or_else(|| {
-                    warn!(
-                        "Liked Songs startup view selected but playlist was not found, defaulting to Albums"
-                    );
-                    ViewSwitchMessage::Albums
-                }),
-            Err(error) => {
-                warn!(
-                    ?error,
-                    "Liked Songs startup view selected but playlists could not be loaded, defaulting to Albums"
-                );
-                ViewSwitchMessage::Albums
-            }
-        },
+        StartupLibraryView::LikedSongs => ViewSwitchMessage::Playlist(LIKED_SONGS_PLAYLIST_ID),
     }
 }
 
@@ -483,7 +467,6 @@ pub fn build_models(
     .detach();
 
     let startup_view = resolve_startup_view(
-        cx,
         cx.global::<SettingsGlobal>()
             .model
             .read(cx)
@@ -864,18 +847,55 @@ pub(crate) fn subscribe_liked_updates<E>(
     E: HasLikedState + 'static,
 {
     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+    let get_track_id = Rc::new(get_track_id);
+    let latest_request = Rc::new(Cell::new(0_u64));
     cx.subscribe(&playlist_tracker, move |this, _, ev, cx| {
         if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {
             return;
         }
-        let new_liked = get_track_id(this).and_then(|id| {
-            cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
-                .unwrap_or_default()
-        });
-        if new_liked != this.is_liked() {
-            this.set_liked(new_liked);
+        let request = latest_request.get().wrapping_add(1);
+        latest_request.set(request);
+        let Some(track_id) = get_track_id(this) else {
+            this.set_liked(None);
             cx.notify();
-        }
+            return;
+        };
+
+        let pool = cx.global::<Pool>().0.clone();
+        let task = crate::RUNTIME.spawn(async move {
+            playlists()
+                .by_id(LIKED_SONGS_PLAYLIST_ID)
+                .playlist_item(track_id)
+                .fetch_playlist_item_id(&pool)
+                .await
+        });
+        let get_track_id = get_track_id.clone();
+        let latest_request = latest_request.clone();
+        cx.spawn(async move |this, cx| {
+            let new_liked = match task.await {
+                Ok(Ok(item_id)) => item_id,
+                Ok(Err(error)) => {
+                    debug!(?error, track_id, "failed to refresh liked state");
+                    return;
+                }
+                Err(error) => {
+                    debug!(?error, track_id, "liked-state query task failed");
+                    return;
+                }
+            };
+
+            this.update(cx, |this, cx| {
+                if latest_request.get() == request
+                    && get_track_id(this) == Some(track_id)
+                    && new_liked != this.is_liked()
+                {
+                    this.set_liked(new_liked);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     })
     .detach();
 }

@@ -4,8 +4,7 @@ use cntp_i18n::{I18nString, trn};
 use gpui::{
     AnyElement, App, AppContext, Context, Div, ElementId, Entity, EventEmitter, FontWeight,
     InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, WeakEntity, Window, div, img, list, prelude::FluentBuilder,
-    px,
+    StatefulInteractiveElement, Styled, WeakEntity, Window, div, list, prelude::FluentBuilder, px,
 };
 use nucleo::{
     Config, Nucleo, Utf32String,
@@ -16,7 +15,11 @@ use tokio::sync::mpsc::channel;
 use tracing::{debug, trace};
 
 use crate::ui::{
-    components::{context::context, input::EnrichedInputAction},
+    components::{
+        context::context,
+        input::EnrichedInputAction,
+        managed_image::{ManagedImageKey, managed_image},
+    },
     theme::Theme,
 };
 
@@ -33,6 +36,10 @@ pub trait PaletteItem {
         None
     }
     fn on_middle_click(&self, _cx: &mut App) {}
+    fn has_context_menu(&self) -> bool {
+        false
+    }
+    fn on_context_menu_open(&self, _window: &mut Window, _cx: &mut App) {}
     fn context_menu(&self, _window: &mut Window, _cx: &mut App) -> Option<impl IntoElement> {
         None::<Div>
     }
@@ -502,8 +509,6 @@ where
     OnAccept: Fn(&Arc<T>, &mut App) + 'static,
 {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::ui::caching::hummingbird_cache;
-
         let display_list = self.display_list.clone();
         let extra_items = self.extra_items.clone();
         let views_model = self.views_model.clone();
@@ -511,57 +516,51 @@ where
         let current_selection = self.current_selection.clone();
         let weak_finder = cx.weak_entity();
 
-        div()
-            .w_full()
-            .h_full()
-            .image_cache(hummingbird_cache("finder-cache", 50))
-            .id("finder")
-            .flex()
-            .child(
-                list(self.list_state.clone(), move |idx, _, cx| {
-                    let extras_len = extra_items.len();
-                    if idx < extras_len {
-                        render_extra_item(
-                            &extra_items[idx],
+        div().w_full().h_full().id("finder").flex().child(
+            list(self.list_state.clone(), move |idx, _, cx| {
+                let extras_len = extra_items.len();
+                if idx < extras_len {
+                    render_extra_item(
+                        &extra_items[idx],
+                        idx,
+                        &views_model,
+                        &render_counter,
+                        &current_selection,
+                        &weak_finder,
+                        cx,
+                    )
+                } else {
+                    let display_idx = idx - extras_len;
+                    match display_list.get(display_idx) {
+                        Some(DisplayEntry::Header(header)) => render_header(header, cx),
+                        Some(DisplayEntry::Item(item)) => render_item(
+                            item,
                             idx,
                             &views_model,
                             &render_counter,
                             &current_selection,
                             &weak_finder,
                             cx,
-                        )
-                    } else {
-                        let display_idx = idx - extras_len;
-                        match display_list.get(display_idx) {
-                            Some(DisplayEntry::Header(header)) => render_header(header, cx),
-                            Some(DisplayEntry::Item(item)) => render_item(
-                                item,
-                                idx,
-                                &views_model,
-                                &render_counter,
-                                &current_selection,
-                                &weak_finder,
-                                cx,
-                            ),
-                            Some(DisplayEntry::ShowMore(_, count)) => render_show_more(
-                                idx,
-                                *count,
-                                extras_len,
-                                &current_selection,
-                                &weak_finder,
-                                cx,
-                            ),
-                            None => div().into_any_element(),
-                        }
+                        ),
+                        Some(DisplayEntry::ShowMore(_, count)) => render_show_more(
+                            idx,
+                            *count,
+                            extras_len,
+                            &current_selection,
+                            &weak_finder,
+                            cx,
+                        ),
+                        None => div().into_any_element(),
                     }
-                })
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .py(px(6.0))
-                .w_full()
-                .h_full(),
-            )
+                }
+            })
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .py(px(6.0))
+            .w_full()
+            .h_full(),
+        )
     }
 }
 
@@ -741,7 +740,7 @@ where
 pub enum FinderItemLeft {
     Text(SharedString),
     Icon(SharedString),
-    Image(SharedString),
+    Image(ManagedImageKey),
 }
 
 impl<T, MatcherFunc, OnAccept> FinderItem<T, MatcherFunc, OnAccept>
@@ -836,6 +835,7 @@ where
         let item_data = self.item_data.clone();
         let on_accept_override = self.on_accept_override.clone();
         let is_enabled = self.is_enabled;
+        let idx = self.idx;
 
         let item = div()
             .px(px(10.0))
@@ -901,7 +901,7 @@ where
                             .child(icon(icon_name).w(px(16.0)).h(px(16.0)))
                             .mr(px(8.0))
                     }
-                    FinderItemLeft::Image(image_path) => div()
+                    FinderItemLeft::Image(key) => div()
                         .rounded(px(2.0))
                         .bg(theme.album_art_background)
                         .shadow_sm()
@@ -909,7 +909,14 @@ where
                         .h(px(16.0))
                         .flex_shrink_0()
                         .mr(px(8.0))
-                        .child(img(image_path).w(px(16.0)).h(px(16.0)).rounded(px(2.0))),
+                        .child(
+                            managed_image(("finder-item-art", idx), key)
+                                .target_logical_px(16.0)
+                                .w(px(16.0))
+                                .h(px(16.0))
+                                .rounded(px(2.0))
+                                .thumb(),
+                        ),
                 })
             })
             .child(
@@ -935,21 +942,32 @@ where
                 )
             });
 
-        let context_menu = self
+        let has_context_menu = self
             .item_data
             .as_ref()
-            .and_then(|v| v.context_menu(window, cx))
-            .map(|v| v.into_any_element());
+            .is_some_and(|item| item.has_context_menu());
         let overlay = self
             .item_data
             .as_ref()
             .and_then(|v| v.context_menu_overlay(window, cx))
             .map(|v| v.into_any_element());
 
-        let base = if let Some(context_menu) = context_menu {
+        let base = if has_context_menu {
+            let item_data = self.item_data.clone();
+            let item_data_for_open = self.item_data.clone();
             context((self.id.clone(), "context_menu"))
                 .with(item)
-                .child(context_menu)
+                .on_open(move |window, cx| {
+                    if let Some(item) = &item_data_for_open {
+                        item.on_context_menu_open(window, cx);
+                    }
+                })
+                .try_menu_on_open(move |window, cx| {
+                    item_data
+                        .as_ref()
+                        .and_then(|item| item.context_menu(window, cx))
+                        .map(|menu| menu.into_any_element())
+                })
                 .into_any_element()
         } else {
             item.into_any_element()

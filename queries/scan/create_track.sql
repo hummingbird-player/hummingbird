@@ -1,10 +1,8 @@
 INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, duration,
-                   location, artist_names, folder, rg_track_gain, rg_track_peak,
-                   rg_album_gain, rg_album_peak, disc_subtitle, artists, artist_sort,
+                   location, artist_names, folder, disc_subtitle, artists, artist_sort,
                    album_artist_keys, art_hash, release_date, date_precision, track_section,
                    number_display_mode_hint)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20, $21, $22)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT (location) DO UPDATE SET
         title = EXCLUDED.title,
         title_sortable = EXCLUDED.title_sortable,
@@ -15,10 +13,6 @@ INSERT INTO track (title, title_sortable, album_id, track_number, disc_number, d
         location = EXCLUDED.location,
         artist_names = EXCLUDED.artist_names,
         folder = EXCLUDED.folder,
-        rg_track_gain = EXCLUDED.rg_track_gain,
-        rg_track_peak = EXCLUDED.rg_track_peak,
-        rg_album_gain = EXCLUDED.rg_album_gain,
-        rg_album_peak = EXCLUDED.rg_album_peak,
         disc_subtitle = EXCLUDED.disc_subtitle,
         artists = EXCLUDED.artists,
         artist_sort = EXCLUDED.artist_sort,

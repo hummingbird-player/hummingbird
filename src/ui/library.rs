@@ -20,9 +20,10 @@ struct ScrollStateStorage {
 }
 
 use crate::{
-    library::db::LibraryAccess,
+    library::db::artists,
     settings::storage::DEFAULT_SPLIT_FRACTION,
     ui::{
+        app::Pool,
         command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
             resizable::{ResizeEdge, resizable},
@@ -760,24 +761,51 @@ impl Render for Library {
                 let switcher = cx.global::<Models>().switcher_model.clone();
                 let current = switcher.read(cx).current();
 
-                let parent = match current {
-                    ViewSwitchMessage::Release(album_id, _) => {
-                        if this.section == LibrarySection::Artists {
-                            let artists = cx.artist_ids_for_album(album_id).ok();
-                            let parent_artist = match switcher.read(cx).previous() {
-                                Some(ViewSwitchMessage::Artist(id))
-                                    if artists.as_ref().is_some_and(|list| {
-                                        list.iter().any(|(aid, _)| *aid == id)
-                                    }) =>
-                                {
+                if let ViewSwitchMessage::Release(album_id, _) = current
+                    && this.section == LibrarySection::Artists
+                {
+                    let pool = cx.global::<Pool>().0.clone();
+                    let previous = switcher.read(cx).previous();
+                    cx.spawn(async move |this, cx| {
+                        let artist_ids =
+                            match artists().related_to_album(album_id).fetch_ids(&pool).await {
+                                Ok(ids) => ids,
+                                Err(error) => {
+                                    debug!(?error, album_id, "failed to resolve release parent");
+                                    return;
+                                }
+                            };
+                        this.update(cx, |this, cx| {
+                            if this.section != LibrarySection::Artists
+                                || switcher.read(cx).current() != current
+                            {
+                                return;
+                            }
+                            let parent_artist = match previous {
+                                Some(ViewSwitchMessage::Artist(id)) if artist_ids.contains(&id) => {
                                     Some(id)
                                 }
-                                _ => artists.and_then(|list| list.first().map(|a| a.0)),
+                                _ => artist_ids.first().copied(),
                             };
-                            parent_artist.map(ViewSwitchMessage::Artist)
-                        } else {
-                            Some(ViewSwitchMessage::Albums)
-                        }
+                            if let Some(dest) = parent_artist.map(ViewSwitchMessage::Artist) {
+                                let msg = if switcher.read(cx).previous() == Some(dest) {
+                                    ViewSwitchMessage::Back
+                                } else {
+                                    dest
+                                };
+                                switcher.update(cx, |_, cx| cx.emit(msg));
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                    return;
+                }
+
+                let parent = match current {
+                    ViewSwitchMessage::Release(album_id, _) => {
+                        let _ = album_id;
+                        Some(ViewSwitchMessage::Albums)
                     }
                     ViewSwitchMessage::Artist(_) => Some(ViewSwitchMessage::Artists),
                     _ => None, // Already at top level

@@ -1,13 +1,13 @@
 use cntp_i18n::tr;
 use gpui::prelude::{FluentBuilder, *};
 use gpui::{
-    App, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun, Window, div,
-    img, px,
+    App, Entity, FontWeight, IntoElement, Pixels, SharedString, TextAlign, TextRun, Window, div, px,
 };
 use std::{rc::Rc, sync::Arc};
 
 use crate::ui::components::drag_drop::{DragPreview, TrackDragData};
 use crate::ui::components::icons::{STAR, STAR_FILLED, icon};
+use crate::ui::components::managed_image::{ManagedImageKey, managed_image};
 use crate::ui::library::context_menus::play_track_next;
 use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::{
@@ -15,10 +15,11 @@ use crate::ui::models::{
 };
 use crate::ui::util::format_duration;
 
-use crate::library::{db::LibraryAccess, types::Track};
+use crate::library::{db::playlists, types::Track};
 use crate::media::numbering::{NumberDisplayMode, format_track_position, side_letter};
 use crate::ui::library::detail_view_padding;
 use crate::ui::{
+    app::Pool,
     availability::is_track_available,
     components::context::context,
     library::context_menus::{PlaylistMenuInfo, TrackContextMenuContext, play_from_track_listing},
@@ -30,15 +31,19 @@ use super::ArtistNameVisibility;
 
 pub type TrackPlaylistInfo = PlaylistMenuInfo;
 
+fn track_artwork_key(track_id: i64, album_id: Option<i64>) -> ManagedImageKey {
+    album_id.map_or(ManagedImageKey::Track(track_id), ManagedImageKey::Album)
+}
+
 pub struct TrackItem {
-    pub track: Track,
+    pub track: Rc<Track>,
     pub index: usize,
     pub is_start: bool,
     pub artist_name_visibility: ArtistNameVisibility,
     pub is_liked: Option<i64>,
     pub hover_group: SharedString,
     left_field: TrackItemLeftField,
-    album_art: Option<SharedString>,
+    album_art: ManagedImageKey,
     pl_info: Option<TrackPlaylistInfo>,
     number_display_mode: NumberDisplayMode,
     track_position: Option<SharedString>,
@@ -93,6 +98,7 @@ impl TrackItem {
         show_go_to_artist: bool,
     ) -> Entity<Self> {
         let availability = cx.global::<Models>().availability.clone();
+        let track = Rc::new(track);
         cx.new(|cx| {
             let track_id = track.id;
             let track_position = format_track_position(
@@ -103,6 +109,36 @@ impl TrackItem {
             )
             .map(SharedString::from);
 
+            let pool = cx.global::<Pool>().0.clone();
+            let task = crate::RUNTIME.spawn(async move {
+                playlists()
+                    .by_id(LIKED_SONGS_PLAYLIST_ID)
+                    .playlist_item(track_id)
+                    .fetch_playlist_item_id(&pool)
+                    .await
+            });
+            cx.spawn(async move |this, cx| {
+                let item_id = match task.await {
+                    Ok(Ok(item_id)) => item_id,
+                    Ok(Err(error)) => {
+                        tracing::debug!(?error, track_id, "failed to load track liked state");
+                        return;
+                    }
+                    Err(error) => {
+                        tracing::debug!(?error, track_id, "track liked-state task failed");
+                        return;
+                    }
+                };
+                this.update(cx, |this: &mut TrackItem, cx| {
+                    if this.track.id == track_id {
+                        this.is_liked = item_id;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+
             subscribe_liked_updates(cx, move |_| Some(track_id));
             cx.observe(&availability, |this: &mut TrackItem, _, cx| {
                 this.is_available = is_track_available(cx, &this.track);
@@ -112,13 +148,8 @@ impl TrackItem {
 
             Self {
                 hover_group: format!("track-{}", track.id).into(),
-                is_liked: cx
-                    .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
-                    .unwrap_or_default(),
-                album_art: Some(match track.album_id {
-                    Some(album_id) => format!("!db://album/{album_id}/thumb").into(),
-                    None => format!("!db://track/{}/thumb", track.id).into(),
-                }),
+                is_liked: None,
+                album_art: track_artwork_key(track.id, track.album_id),
                 is_available: is_track_available(cx, &track),
                 track,
                 index,
@@ -204,9 +235,17 @@ impl TrackItem {
             .my_auto()
             .rounded(px(3.0))
             .bg(theme.album_art_background)
-            .when_some(self.album_art.clone(), |this, art| {
-                this.child(img(art).w(px(22.0)).h(px(22.0)).rounded(px(3.0)))
-            })
+            .child(
+                managed_image(
+                    ("track-listing-art", self.track.id as usize),
+                    self.album_art.clone(),
+                )
+                .target_logical_px(22.0)
+                .w(px(22.0))
+                .h(px(22.0))
+                .rounded(px(3.0))
+                .thumb(),
+            )
     }
 
     fn render_title(&self) -> impl IntoElement + use<> {
@@ -451,7 +490,7 @@ impl Render for TrackItem {
                         div()
                             .bg(theme.elevated_background)
                             .child(TrackContextMenu::new(
-                                Rc::new(self.track.clone()),
+                                self.track.clone(),
                                 is_available,
                                 self.is_liked,
                                 track_menu_context,

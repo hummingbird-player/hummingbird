@@ -100,6 +100,9 @@ cntp_i18n_gen = "0.3"
 dotenvy = "0.15"
 vergen = { version = "10", features = ["build"] }
 
+[dev-dependencies]
+gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim", features = ["test-support"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
     "Devices_Enumeration",

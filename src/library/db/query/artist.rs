@@ -1,0 +1,350 @@
+use std::path::PathBuf;
+
+use sqlx::{QueryBuilder, Sqlite, SqlitePool, types::Json};
+
+use crate::library::types::{Artist, ArtistWithCounts, DBString};
+
+use super::super::direction::SortDirection;
+
+const ARTIST_COLUMNS: &str = "\
+    artist.id,
+    artist.name,
+    artist.name_sortable,
+    artist.created_at";
+
+const ALBUM_COUNT: &str = "\
+    (SELECT COUNT(*)
+     FROM album_artist
+     WHERE album_artist.artist_id = artist.id)";
+
+const TRACK_COUNT: &str = "\
+    (SELECT COUNT(*)
+     FROM (
+         SELECT track.id
+         FROM album_artist
+         JOIN track ON track.album_id = album_artist.album_id
+         WHERE album_artist.artist_id = artist.id
+         UNION
+         SELECT track_artist.track_id
+         FROM track_artist
+         WHERE track_artist.artist_id = artist.id
+     ) AS artist_tracks)";
+
+const TRACK_LOCATIONS: &str = "\
+    COALESCE((
+        SELECT json_group_array(artist_tracks.location)
+        FROM (
+            SELECT track.id, track.location
+            FROM album_artist
+            JOIN track ON track.album_id = album_artist.album_id
+            WHERE album_artist.artist_id = artist.id
+            UNION
+            SELECT track.id, track.location
+            FROM track_artist
+            JOIN track ON track.id = track_artist.track_id
+            WHERE track_artist.artist_id = artist.id
+        ) AS artist_tracks
+    ), json('[]'))";
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum ArtistColumn {
+    Name,
+    Albums,
+    Tracks,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ArtistOrdering {
+    column: ArtistColumn,
+    direction: SortDirection,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ArtistQuery {
+    id: Option<i64>,
+    relation: Option<ArtistRelation>,
+    visible_only: bool,
+    ordering: Option<ArtistOrdering>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ArtistRelation {
+    Album(i64),
+    Track(i64),
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtistQueryForRelation {
+    query: ArtistQuery,
+}
+
+#[derive(Clone, Debug, sqlx::FromRow, PartialEq, Eq)]
+pub struct ArtistRelationRow {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtistQueryWithTrackLocations {
+    query: ArtistQuery,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtistQueryForSearch {
+    query: ArtistQuery,
+}
+
+#[derive(Clone)]
+pub struct ArtistRow {
+    pub artist: ArtistWithCounts,
+    pub track_locations: Vec<PathBuf>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ArtistRowRecord {
+    id: i64,
+    name: DBString,
+    album_count: i64,
+    #[sqlx(json)]
+    track_locations: Json<Vec<String>>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct ArtistSearchRow {
+    pub id: i64,
+    pub name: DBString,
+}
+
+#[derive(Clone, Copy)]
+enum ArtistProjection {
+    Entity,
+    Id,
+    WithTrackLocations,
+    Search,
+    Relation,
+}
+
+pub fn artists() -> ArtistQuery {
+    ArtistQuery::default()
+}
+
+impl ArtistQuery {
+    pub fn by_id(mut self, id: i64) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Restricts results to artists represented by an album or a standalone track.
+    pub fn visible(mut self) -> Self {
+        self.visible_only = true;
+        self
+    }
+
+    pub fn related_to_album(mut self, album_id: i64) -> Self {
+        self.relation = Some(ArtistRelation::Album(album_id));
+        self
+    }
+
+    pub fn related_to_track(mut self, track_id: i64) -> Self {
+        self.relation = Some(ArtistRelation::Track(track_id));
+        self
+    }
+
+    pub fn sort(mut self, column: ArtistColumn, direction: SortDirection) -> Self {
+        self.ordering = Some(ArtistOrdering { column, direction });
+        self
+    }
+
+    pub fn with_track_locations(self) -> ArtistQueryWithTrackLocations {
+        ArtistQueryWithTrackLocations { query: self }
+    }
+
+    pub fn for_search(self) -> ArtistQueryForSearch {
+        ArtistQueryForSearch { query: self }
+    }
+
+    pub fn for_relation(self) -> ArtistQueryForRelation {
+        ArtistQueryForRelation { query: self }
+    }
+
+    pub async fn fetch_optional(self, pool: &SqlitePool) -> sqlx::Result<Option<Artist>> {
+        let mut query = self.build(ArtistProjection::Entity);
+        query.build_query_as::<Artist>().fetch_optional(pool).await
+    }
+
+    pub async fn fetch_ids(self, pool: &SqlitePool) -> sqlx::Result<Vec<i64>> {
+        let mut query = self.build(ArtistProjection::Id);
+        let ids = query.build_query_as::<(i64,)>().fetch_all(pool).await?;
+        Ok(ids.into_iter().map(|(id,)| id).collect())
+    }
+
+    fn build(self, projection: ArtistProjection) -> QueryBuilder<Sqlite> {
+        let mut query = QueryBuilder::new("SELECT ");
+        match projection {
+            ArtistProjection::Entity => {
+                query.push(ARTIST_COLUMNS);
+            }
+            ArtistProjection::Id => {
+                query.push("artist.id");
+            }
+            ArtistProjection::WithTrackLocations => {
+                query
+                    .push("artist.id, artist.name, ")
+                    .push(ALBUM_COUNT)
+                    .push(" AS album_count, ")
+                    .push(TRACK_LOCATIONS)
+                    .push(" AS track_locations");
+            }
+            ArtistProjection::Search => {
+                query.push("artist.id, artist.name");
+            }
+            ArtistProjection::Relation => {
+                query.push("artist.id, artist.name");
+            }
+        }
+        query.push(" FROM artist");
+
+        let mut has_filter = false;
+        if let Some(id) = self.id {
+            push_filter_prefix(&mut query, &mut has_filter);
+            query.push("artist.id = ").push_bind(id);
+        }
+        if let Some(relation) = self.relation {
+            push_filter_prefix(&mut query, &mut has_filter);
+            match relation {
+                ArtistRelation::Album(album_id) => {
+                    query
+                        .push(
+                            "EXISTS (
+                                SELECT 1
+                                FROM album_artist
+                                WHERE album_artist.artist_id = artist.id
+                                  AND album_artist.album_id = ",
+                        )
+                        .push_bind(album_id)
+                        .push(")");
+                }
+                ArtistRelation::Track(track_id) => {
+                    query
+                        .push(
+                            "(EXISTS (
+                                SELECT 1
+                                FROM track_artist
+                                WHERE track_artist.artist_id = artist.id
+                                  AND track_artist.track_id = ",
+                        )
+                        .push_bind(track_id)
+                        .push(
+                            ") OR EXISTS (
+                                SELECT 1
+                                FROM album_artist
+                                JOIN track ON track.album_id = album_artist.album_id
+                                WHERE album_artist.artist_id = artist.id
+                                  AND track.id = ",
+                        )
+                        .push_bind(track_id)
+                        .push("))");
+                }
+            }
+        }
+        if self.visible_only {
+            push_filter_prefix(&mut query, &mut has_filter);
+            query.push(
+                "(EXISTS (
+                    SELECT 1
+                    FROM album_artist
+                    WHERE album_artist.artist_id = artist.id
+                ) OR EXISTS (
+                    SELECT 1
+                    FROM track_artist
+                    JOIN track ON track.id = track_artist.track_id
+                    WHERE track_artist.artist_id = artist.id
+                      AND track.album_id IS NULL
+                ))",
+            );
+        }
+        if let Some(ordering) = self.ordering {
+            query.push(" ORDER BY ");
+            push_ordering(&mut query, ordering);
+            if ordering.column != ArtistColumn::Name {
+                query.push(", artist.name_sortable COLLATE NOCASE ASC");
+            }
+            query.push(", artist.id ASC");
+        } else if self.relation.is_some() {
+            query.push(" ORDER BY artist.name_sortable COLLATE NOCASE ASC");
+        }
+
+        query
+    }
+}
+
+impl ArtistQueryForRelation {
+    pub async fn fetch_rows(self, pool: &SqlitePool) -> sqlx::Result<Vec<ArtistRelationRow>> {
+        let mut query = self.query.build(ArtistProjection::Relation);
+        query
+            .build_query_as::<ArtistRelationRow>()
+            .fetch_all(pool)
+            .await
+    }
+}
+
+impl ArtistQueryWithTrackLocations {
+    pub async fn fetch_optional_row(self, pool: &SqlitePool) -> sqlx::Result<Option<ArtistRow>> {
+        let mut query = self.query.build(ArtistProjection::WithTrackLocations);
+        let row = query
+            .build_query_as::<ArtistRowRecord>()
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(|row| {
+            let track_count = i64::try_from(row.track_locations.len())
+                .expect("track count exceeds SQLite row capacity");
+            ArtistRow {
+                artist: ArtistWithCounts {
+                    id: row.id,
+                    name: row.name,
+                    album_count: row.album_count,
+                    track_count,
+                },
+                track_locations: row
+                    .track_locations
+                    .0
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect(),
+            }
+        }))
+    }
+}
+
+impl ArtistQueryForSearch {
+    pub async fn fetch_rows(self, pool: &SqlitePool) -> sqlx::Result<Vec<ArtistSearchRow>> {
+        let mut query = self.query.build(ArtistProjection::Search);
+        query
+            .build_query_as::<ArtistSearchRow>()
+            .fetch_all(pool)
+            .await
+    }
+}
+
+fn push_filter_prefix(query: &mut QueryBuilder<Sqlite>, has_filter: &mut bool) {
+    query.push(if *has_filter { " AND " } else { " WHERE " });
+    *has_filter = true;
+}
+
+fn push_ordering(query: &mut QueryBuilder<Sqlite>, ordering: ArtistOrdering) {
+    let direction = ordering.direction.sql();
+    match ordering.column {
+        ArtistColumn::Name => {
+            query
+                .push("artist.name_sortable COLLATE NOCASE")
+                .push(direction);
+        }
+        ArtistColumn::Albums => {
+            query.push(ALBUM_COUNT).push(direction);
+        }
+        ArtistColumn::Tracks => {
+            query.push(TRACK_COUNT).push(direction);
+        }
+    }
+}

@@ -5,12 +5,9 @@ use gpui::{Entity, IntoElement, RenderOnce, Window};
 
 use crate::{
     library::types::Album,
-    ui::{
-        availability::album_has_available_tracks,
-        components::{
-            icons::{PLAY, PLAYLIST_ADD, PLUS, SHUFFLE, USERS},
-            menu::{menu, menu_item, menu_separator},
-        },
+    ui::components::{
+        icons::{PLAY, PLAYLIST_ADD, PLUS, SHUFFLE, USERS},
+        menu::{menu, menu_item, menu_separator},
     },
 };
 
@@ -24,6 +21,7 @@ pub struct AlbumContextMenu {
     album: Rc<Album>,
     context: AlbumContextMenuContext,
     show_add_to: Entity<bool>,
+    is_available: bool,
 }
 
 impl AlbumContextMenu {
@@ -31,17 +29,19 @@ impl AlbumContextMenu {
         album: Rc<Album>,
         show_add_to: Entity<bool>,
         context: AlbumContextMenuContext,
+        is_available: bool,
     ) -> Self {
         Self {
             album,
             show_add_to,
             context,
+            is_available,
         }
     }
 }
 
 impl RenderOnce for AlbumContextMenu {
-    fn render(self, _: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let album = self.album.clone();
         let album_for_next = self.album.clone();
         let album_for_shuffle = self.album.clone();
@@ -50,7 +50,7 @@ impl RenderOnce for AlbumContextMenu {
         let album_for_rescan = self.album.clone();
         let show_add_to = self.show_add_to;
         let show_go_to_artist = self.context.show_go_to_artist;
-        let is_available = album_has_available_tracks(cx, album.id);
+        let is_available = self.is_available;
         let menu = menu()
             .item(
                 menu_item("album_play", Some(PLAY), tr!("PLAY"), move |_, _, cx| {

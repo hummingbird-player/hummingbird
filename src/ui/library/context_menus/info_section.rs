@@ -5,7 +5,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{Entity, IntoElement, RenderOnce, Window};
 
 use crate::{
-    library::{db::LibraryAccess, types::Track},
+    library::types::Track,
     ui::{
         availability::is_track_path_available,
         components::{
@@ -53,20 +53,14 @@ impl RenderOnce for InfoSectionContextMenu {
 
         menu()
             .when_some(track.clone(), |menu, track_for_artist| {
-                let can_go_to_artist = cx
-                    .artist_ids_for_track(track_for_artist.id)
-                    .is_ok_and(|ids| !ids.is_empty());
-                menu.item(
-                    menu_item(
-                        "info_section_go_to_artist",
-                        Some(USERS),
-                        tr!("GO_TO_ARTIST"),
-                        move |ev, _, cx| {
-                            navigate_to_track_artist(cx, &track_for_artist, ev.position());
-                        },
-                    )
-                    .disabled(!can_go_to_artist),
-                )
+                menu.item(menu_item(
+                    "info_section_go_to_artist",
+                    Some(USERS),
+                    tr!("GO_TO_ARTIST"),
+                    move |ev, _, cx| {
+                        navigate_to_track_artist(cx, &track_for_artist, ev.position());
+                    },
+                ))
             })
             .when_some(track.clone(), |menu, track_for_album| {
                 let can_go_to_album = track_for_album.album_id.is_some();

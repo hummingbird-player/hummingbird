@@ -1,8 +1,4 @@
-use std::path::{Path, PathBuf};
-
-use futures::TryFutureExt as _;
-use gpui::{App, Entity, Task};
-use tracing::{error, trace_span};
+use std::path::Path;
 
 use crate::{
     media::{lookup_table::try_open_media, metadata::Metadata, traits::MediaProviderFeatures},
@@ -10,7 +6,7 @@ use crate::{
 };
 
 #[tracing::instrument(level = "trace")]
-fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
+pub(crate) fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
     let mut stream = try_open_media(path, MediaProviderFeatures::PROVIDES_METADATA)?
         .ok_or_else(|| anyhow::anyhow!("no metadata provider for {}", path.display()))?;
     stream.start_playback()?;
@@ -30,24 +26,4 @@ fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
     };
 
     Ok(ui_data)
-}
-
-pub trait Decode {
-    fn read_metadata(&self, path: PathBuf, entity: Entity<Option<QueueItemUIData>>) -> Task<()>;
-}
-
-impl Decode for App {
-    fn read_metadata(&self, path: PathBuf, entity: Entity<Option<QueueItemUIData>>) -> Task<()> {
-        self.spawn(async move |cx| {
-            let span = trace_span!("read_metadata_outer", path = %path.display());
-            let task = crate::RUNTIME.spawn_blocking(move || read_metadata(&path));
-            match task.err_into().await.flatten() {
-                Err(err) => error!(parent: span, ?err, "Failed to read metadata: {err}"),
-                Ok(metadata) => entity.update(cx, |m, cx| {
-                    *m = Some(metadata);
-                    cx.notify();
-                }),
-            }
-        })
-    }
 }

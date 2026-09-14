@@ -7,10 +7,11 @@ use tracing::{debug, info, warn};
 use crate::{
     define_error,
     errors::emit_error,
-    library::{db::LibraryAccess, scan::ScanInterface},
+    library::{db::tracks, scan::ScanInterface},
     playback::{interface::PlaybackInterface, queue::QueueItemData, thread::PlaybackState},
     toasts::{Toast, emit_toast},
     ui::{
+        app::Pool,
         command_palette::OpenPalette,
         components::menus_builder::{
             MenuBuilder, MenuPlatform, MenusBuilder, menu_item, menu_separator,
@@ -370,19 +371,26 @@ fn issues(_: &Issues, cx: &mut App) {
 }
 
 fn shuffle_all(_: &ShuffleAll, cx: &mut App) {
-    if let Ok(tracks) = cx.get_all_tracks() {
-        let tracks = tracks
-            .into_iter()
-            .map(|v| QueueItemData::new(cx, v.0.into(), Some(v.1), Some(v.2)))
-            .collect();
-
-        let interface = cx.global::<PlaybackInterface>();
-
-        if !(*cx.global::<PlaybackInfo>().shuffling.read(cx)) {
-            interface.toggle_shuffle();
+    let pool = cx.global::<Pool>().0.clone();
+    let task = crate::RUNTIME.spawn(async move { tracks().for_playback().fetch_rows(&pool).await });
+    cx.spawn(async move |cx| match task.await {
+        Ok(Ok(rows)) => {
+            cx.update(|cx| {
+                let queue = rows
+                    .into_iter()
+                    .map(|row| QueueItemData::new(cx, row.location, Some(row.id), row.album_id))
+                    .collect();
+                let interface = cx.global::<PlaybackInterface>();
+                if !(*cx.global::<PlaybackInfo>().shuffling.read(cx)) {
+                    interface.toggle_shuffle();
+                }
+                interface.replace_queue(queue);
+            });
         }
-        interface.replace_queue(tracks);
-    }
+        Ok(Err(error)) => warn!(?error, "failed to load tracks for shuffle"),
+        Err(error) => warn!(?error, "shuffle query task failed"),
+    })
+    .detach();
 }
 
 fn undo(_: &Undo, cx: &mut App) {

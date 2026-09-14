@@ -1,13 +1,19 @@
 use std::{rc::Rc, sync::Arc};
 
 use cntp_i18n::{I18nString, tr};
-use gpui::{App, IntoElement, SharedString, Window};
+use gpui::{App, Entity, IntoElement, SharedString, Window};
 
 use crate::{
-    library::db::{AlbumMethod, LibraryAccess},
+    library::{
+        db::{albums, playlists, tracks},
+        types::{Album, Track},
+    },
     ui::{
+        app::Pool,
         components::{
+            async_resource::AsyncResource,
             icons::{DISC, USERS},
+            managed_image::ManagedImageKey,
             palette::{FinderItemLeft, PaletteItem},
         },
         library::context_menus::{
@@ -41,8 +47,8 @@ pub enum SearchPaletteItem {
 }
 
 impl SearchPaletteItem {
-    fn thumbnail_path(album_id: i64) -> String {
-        format!("!db://album/{}/thumb", album_id)
+    fn thumbnail_key(album_id: i64) -> ManagedImageKey {
+        ManagedImageKey::Album(album_id)
     }
 
     pub fn from_search_results(
@@ -79,18 +85,18 @@ impl SearchPaletteItem {
     }
 }
 
+type SearchTrackContextResource = Entity<Entity<AsyncResource<i64, (Track, Option<i64>)>>>;
+
 impl PaletteItem for SearchPaletteItem {
     fn left_content(&self, _cx: &mut App) -> Option<FinderItemLeft> {
         match self {
             SearchPaletteItem::Album { id, .. } => {
-                Some(FinderItemLeft::Image(Self::thumbnail_path(*id).into()))
+                Some(FinderItemLeft::Image(Self::thumbnail_key(*id)))
             }
             SearchPaletteItem::Artist { .. } => Some(FinderItemLeft::Icon(USERS.into())),
             SearchPaletteItem::Track { album_id, .. } => {
                 if let Some(album_id) = album_id {
-                    Some(FinderItemLeft::Image(
-                        Self::thumbnail_path(*album_id).into(),
-                    ))
+                    Some(FinderItemLeft::Image(Self::thumbnail_key(*album_id)))
                 } else {
                     Some(FinderItemLeft::Icon(DISC.into()))
                 }
@@ -133,41 +139,109 @@ impl PaletteItem for SearchPaletteItem {
     fn on_middle_click(&self, cx: &mut App) {
         match self {
             SearchPaletteItem::Album { id, .. } => {
-                let album = cx.get_album_by_id(*id, AlbumMethod::Metadata);
-
-                if let Ok(album) = album {
-                    play_album_next(cx, &album);
-                }
+                let pool = cx.global::<Pool>().0.clone();
+                let id = *id;
+                cx.spawn(async move |cx| {
+                    let request =
+                        crate::RUNTIME.spawn(async move { albums().by_id(id).fetch(&pool).await });
+                    if let Ok(Ok(album)) = request.await {
+                        cx.update(|cx| play_album_next(cx, &album));
+                    }
+                })
+                .detach();
             }
             SearchPaletteItem::Track { id, .. } => {
-                let track = cx.get_track_by_id(*id);
-
-                if let Ok(track) = track {
-                    play_track_next(cx, &track);
-                }
+                let pool = cx.global::<Pool>().0.clone();
+                let id = *id;
+                cx.spawn(async move |cx| {
+                    let request =
+                        crate::RUNTIME.spawn(async move { tracks().by_id(id).fetch(&pool).await });
+                    if let Ok(Ok(track)) = request.await {
+                        cx.update(|cx| play_track_next(cx, &track));
+                    }
+                })
+                .detach();
             }
             _ => (),
         }
     }
 
-    fn context_menu(&self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
+    fn has_context_menu(&self) -> bool {
+        matches!(
+            self,
+            SearchPaletteItem::Album { .. } | SearchPaletteItem::Track { .. }
+        )
+    }
+
+    fn on_context_menu_open(&self, window: &mut Window, cx: &mut App) {
         match self {
             SearchPaletteItem::Album { id, .. } => {
-                let (show_add_to, _) =
-                    add_album_to_playlist_state("pi_context_album_add_to", *id, window, cx);
-                let album =
-                    window.use_keyed_state(("pi_context_album", *id as usize), cx, |_, cx| {
-                        cx.get_album_by_id(*id, AlbumMethod::Metadata)
+                let album_id = *id;
+                let resource: Entity<Entity<AsyncResource<i64, Album>>> =
+                    window.use_keyed_state(("pi_context_album", album_id as usize), cx, |_, cx| {
+                        AsyncResource::pending(cx, album_id)
                     });
+                let resource = resource.read(cx).clone();
+                let pool = cx.global::<Pool>().0.clone();
+                resource.update(cx, |resource, cx| {
+                    resource.load(cx, album_id, async move {
+                        albums()
+                            .by_id(album_id)
+                            .fetch(&pool)
+                            .await
+                            .map_err(Into::into)
+                    });
+                });
+            }
+            SearchPaletteItem::Track { id, .. } => {
+                let track_id = *id;
+                let resource: SearchTrackContextResource =
+                    window.use_keyed_state(("pi_context_track", track_id as usize), cx, |_, cx| {
+                        AsyncResource::pending(cx, track_id)
+                    });
+                let resource = resource.read(cx).clone();
+                let pool = cx.global::<Pool>().0.clone();
+                resource.update(cx, |resource, cx| {
+                    resource.load(cx, track_id, async move {
+                        let track = tracks().by_id(track_id).fetch(&pool).await?;
+                        let is_liked = playlists()
+                            .by_id(LIKED_SONGS_PLAYLIST_ID)
+                            .playlist_item(track_id)
+                            .fetch_playlist_item_id(&pool)
+                            .await?;
+                        Ok((track, is_liked))
+                    });
+                });
+            }
+            SearchPaletteItem::Artist { .. } => {}
+        }
+    }
 
-                if let Ok(album) = album.read(cx) {
+    fn context_menu(&self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
+        match self {
+            SearchPaletteItem::Album { id, available, .. } => {
+                let album_id = *id;
+                let available = *available;
+                let album: Entity<Entity<AsyncResource<i64, Album>>> =
+                    window.use_keyed_state(("pi_context_album", album_id as usize), cx, |_, cx| {
+                        AsyncResource::pending(cx, album_id)
+                    });
+                let album = album.read(cx).read(cx).ready().cloned();
+                if let Some(album) = album {
+                    let (show_add_to, _) = add_album_to_playlist_state(
+                        "pi_context_album_add_to",
+                        album_id,
+                        window,
+                        cx,
+                    );
                     Some(
                         AlbumContextMenu::new(
-                            Rc::new((**album).clone()),
+                            Rc::new(album),
                             show_add_to,
                             AlbumContextMenuContext {
                                 show_go_to_artist: true,
                             },
+                            available,
                         )
                         .into_any_element(),
                     )
@@ -176,19 +250,18 @@ impl PaletteItem for SearchPaletteItem {
                 }
             }
             SearchPaletteItem::Track { id, .. } => {
-                let (show_add_to, _) = add_to_playlist_state("pi_context_add_to", *id, window, cx);
-                let track =
-                    window.use_keyed_state(("pi_context_track", *id as usize), cx, |_, cx| {
-                        cx.get_track_by_id(*id)
+                let track_id = *id;
+                let track: SearchTrackContextResource =
+                    window.use_keyed_state(("pi_context_track", track_id as usize), cx, |_, cx| {
+                        AsyncResource::pending(cx, track_id)
                     });
-
-                if let Ok(track) = track.read(cx) {
-                    let is_liked = cx
-                        .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
-                        .unwrap_or_default();
+                let track = track.read(cx).read(cx).ready().cloned();
+                if let Some((track, is_liked)) = track {
+                    let (show_add_to, _) =
+                        add_to_playlist_state("pi_context_add_to", track_id, window, cx);
                     Some(
                         TrackContextMenu::new(
-                            Rc::new((**track).clone()),
+                            Rc::new(track),
                             true,
                             is_liked,
                             TrackContextMenuContext {
@@ -222,5 +295,16 @@ impl PaletteItem for SearchPaletteItem {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchPaletteItem;
+    use crate::ui::components::managed_image::ManagedImageKey;
+
+    #[test]
+    fn search_thumbnail_uses_the_album_managed_image_key() {
+        assert!(SearchPaletteItem::thumbnail_key(42) == ManagedImageKey::Album(42));
     }
 }

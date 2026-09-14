@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{App, AppContext, Context, Entity, EventEmitter, IntoElement, Render, Window};
 use nucleo::Utf32String;
@@ -6,7 +6,10 @@ use sqlx::SqlitePool;
 use tracing::debug;
 
 use crate::{
-    library::{db, scan::ScanEvent},
+    library::{
+        db::{albums, artists, tracks},
+        scan::ScanEvent,
+    },
     ui::{
         app::Pool,
         availability::snapshot,
@@ -24,13 +27,14 @@ type OnAccept = Box<dyn Fn(&Arc<SearchPaletteItem>, &mut App) + 'static>;
 pub struct SearchModel {
     palette: Entity<Palette<SearchPaletteItem, MatcherFunc, OnAccept>>,
     show: Entity<bool>,
+    load_generation: u64,
 }
 
 async fn load_search_items(
     pool: &SqlitePool,
     availability: crate::library::availability::AvailabilitySnapshot,
 ) -> Vec<Arc<SearchPaletteItem>> {
-    let paths = match db::list_album_track_paths(pool).await {
+    let paths = match tracks().for_album_availability().fetch_rows(pool).await {
         Ok(paths) => paths,
         Err(e) => {
             debug!("Failed to load album availability for search: {:?}", e);
@@ -41,22 +45,30 @@ async fn load_search_items(
     let availability: HashMap<i64, bool> = {
         let mut available_albums = HashMap::new();
 
-        for (album_id, path) in paths {
-            let available = available_albums.entry(album_id).or_insert(false);
+        for row in paths {
+            let available = available_albums.entry(row.album_id).or_insert(false);
             if !*available {
-                *available = availability.is_track_path_available(Path::new(&path));
+                *available = availability.is_track_path_available(&row.location);
             }
         }
 
         available_albums
     };
 
-    let albums = match db::list_albums_search(pool).await {
+    let albums = match albums().for_search().fetch_rows(pool).await {
         Ok(album_data) => album_data
             .into_iter()
-            .map(|(id, title, artist_override, artists)| {
-                let available = availability.get(&id).copied().unwrap_or_default();
-                (id, title, artist_override, artists, available)
+            .map(|album| {
+                let available = availability.get(&album.id).copied().unwrap_or_default();
+                (
+                    album.id,
+                    album.title.0.to_string(),
+                    album
+                        .artist_display_override
+                        .map(|artist| artist.0.to_string()),
+                    album.artists,
+                    available,
+                )
             })
             .collect(),
         Err(e) => {
@@ -65,16 +77,32 @@ async fn load_search_items(
         }
     };
 
-    let artists = match db::list_artists_search(pool).await {
-        Ok(data) => data,
+    let artists = match artists().for_search().fetch_rows(pool).await {
+        Ok(data) => data
+            .into_iter()
+            .map(|artist| (artist.id, artist.name.0.to_string()))
+            .collect(),
         Err(e) => {
             debug!("Failed to load artists for search: {:?}", e);
             Vec::new()
         }
     };
 
-    let tracks = match db::list_tracks_search(pool).await {
-        Ok(data) => data,
+    let tracks = match tracks().for_search().fetch_rows(pool).await {
+        Ok(data) => data
+            .into_iter()
+            .map(|track| {
+                (
+                    track.id,
+                    track.title.0.to_string(),
+                    track
+                        .artist_names
+                        .map(|artists| artists.0.to_string())
+                        .unwrap_or_default(),
+                    track.album_id,
+                )
+            })
+            .collect(),
         Err(e) => {
             debug!("Failed to load tracks for search: {:?}", e);
             Vec::new()
@@ -128,12 +156,14 @@ impl SearchModel {
             let search_model = SearchModel {
                 palette,
                 show: show.clone(),
+                load_generation: 0,
             };
 
             cx.observe(show, |this, show, cx| {
                 if *show.read(cx) {
                     this.reload(cx);
                 } else {
+                    this.load_generation = this.load_generation.wrapping_add(1);
                     cx.update_entity(&this.palette, |_, cx| {
                         cx.emit(Vec::new());
                     });
@@ -170,9 +200,11 @@ impl SearchModel {
         })
     }
 
-    fn reload(&self, cx: &mut Context<Self>) {
+    fn reload(&mut self, cx: &mut Context<Self>) {
         let pool = cx.global::<Pool>().0.clone();
         let availability = snapshot(cx);
+        self.load_generation = self.load_generation.wrapping_add(1);
+        let load_generation = self.load_generation;
 
         cx.spawn(async move |this, cx| {
             let task =
@@ -187,7 +219,7 @@ impl SearchModel {
             };
 
             this.update(cx, |this, cx| {
-                if *this.show.read(cx) {
+                if *this.show.read(cx) && this.load_generation == load_generation {
                     cx.update_entity(&this.palette, |_, cx| {
                         cx.emit(items);
                     });

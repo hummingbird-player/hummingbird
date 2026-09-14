@@ -1,15 +1,15 @@
 mod replaygain;
 
 use crate::{
-    library::db::LibraryAccess,
+    library::db::{artists, playlists, tracks},
     playback::{
         events::RepeatState, interface::PlaybackInterface, queue::QueueItemUIData,
         thread::PlaybackState,
     },
     settings::SettingsGlobal,
     ui::{
-        caching::hummingbird_cache,
         components::{
+            async_resource::AsyncResource,
             context::context,
             icons::{
                 MENU, MICROPHONE, NEXT_TRACK, PAUSE, PLAY, PREV_TRACK, REPEAT, REPEAT_OFF,
@@ -22,7 +22,7 @@ use crate::{
         },
         library::context_menus::{
             info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
-            navigate_to_track_artist, resolve_library_track_by_path,
+            navigate_to_track_artist,
         },
         models::{
             CurrentTrack, HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates,
@@ -37,6 +37,7 @@ use std::{path::PathBuf, rc::Rc, time::Duration};
 
 use self::replaygain::ReplayGainButton;
 use super::{
+    app::Pool,
     components::{
         resizable::{ResizeEdge, resizable},
         slider::slider,
@@ -126,8 +127,62 @@ pub struct InfoSection {
     can_navigate_to_artist: bool,
     image_element_key: u64,
     is_liked: Option<i64>,
-    queue_item_data: Option<Entity<Option<QueueItemUIData>>>,
+    queue_item_data: Option<
+        Entity<crate::ui::components::async_resource::AsyncResource<PathBuf, QueueItemUIData>>,
+    >,
     queue_item_subscription: Option<Subscription>,
+    library_track: Entity<AsyncResource<Option<PathBuf>, Option<CurrentLibraryTrackData>>>,
+}
+
+#[derive(Clone)]
+struct CurrentLibraryTrackData {
+    track: Track,
+    has_artist: bool,
+    liked_item_id: Option<i64>,
+}
+
+async fn load_current_library_track(
+    path: Option<PathBuf>,
+    pool: sqlx::SqlitePool,
+) -> anyhow::Result<Option<CurrentLibraryTrackData>> {
+    let Some(path) = path else { return Ok(None) };
+    let Some(track) = tracks().at_path(&path).fetch_optional(&pool).await? else {
+        return Ok(None);
+    };
+    let artist_ids = artists()
+        .related_to_track(track.id)
+        .fetch_ids(&pool)
+        .await?;
+    let liked_item_id = playlists()
+        .by_id(LIKED_SONGS_PLAYLIST_ID)
+        .playlist_item(track.id)
+        .fetch_playlist_item_id(&pool)
+        .await?;
+    Ok(Some(CurrentLibraryTrackData {
+        track,
+        has_artist: !artist_ids.is_empty(),
+        liked_item_id,
+    }))
+}
+
+fn apply_current_library_track(
+    this: &mut InfoSection,
+    data: Option<CurrentLibraryTrackData>,
+    cx: &mut Context<InfoSection>,
+) {
+    let Some(data) = data else {
+        this.current_library_track = None;
+        this.can_navigate_to_album = false;
+        this.can_navigate_to_artist = false;
+        this.is_liked = None;
+        cx.notify();
+        return;
+    };
+    this.can_navigate_to_album = data.track.album_id.is_some();
+    this.can_navigate_to_artist = data.has_artist;
+    this.is_liked = data.liked_item_id;
+    this.current_library_track = Some(Rc::new(data.track));
+    cx.notify();
 }
 
 impl HasLikedState for InfoSection {
@@ -177,7 +232,7 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
     this.queue_item_data = Some(data.clone());
 
     let subscription = cx.observe(&data, |this: &mut InfoSection, data, cx| {
-        let data = data.read(cx).clone();
+        let data = data.read(cx).ready().cloned();
         if let Some(data) = data {
             if this.track_name.is_none() {
                 this.track_name = data.name;
@@ -190,7 +245,7 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
     });
     this.queue_item_subscription = Some(subscription);
 
-    let data = data.read(cx).clone();
+    let data = data.read(cx).ready().cloned();
     if let Some(data) = data {
         if this.track_name.is_none() {
             this.track_name = data.name;
@@ -243,22 +298,17 @@ impl InfoSection {
             let current_track_path = initial_current_track
                 .as_ref()
                 .map(|track| track.get_path().clone());
-            let current_library_track = initial_current_track
-                .as_ref()
-                .and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
-            let can_navigate_to_album = current_library_track
-                .as_ref()
-                .is_some_and(|track| track.album_id.is_some());
-            let can_navigate_to_artist = current_library_track.as_ref().is_some_and(|track| {
-                cx.artist_ids_for_track(track.id)
-                    .map(|v| !v.is_empty())
-                    .unwrap_or(false)
-            });
-
-            let is_liked = current_library_track.as_ref().and_then(|track| {
-                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
-                    .unwrap_or_default()
-            });
+            let pool = cx.global::<Pool>().0.clone();
+            let library_track = AsyncResource::new(
+                cx,
+                current_track_path.clone(),
+                load_current_library_track(current_track_path.clone(), pool),
+            );
+            cx.observe(&library_track, |this: &mut Self, resource, cx| {
+                let data = resource.read(cx).ready().cloned().flatten();
+                apply_current_library_track(this, data, cx);
+            })
+            .detach();
             let initial_metadata = metadata_model.read(cx).clone();
 
             subscribe_liked_updates(cx, |this: &Self| {
@@ -271,13 +321,14 @@ impl InfoSection {
                 playback_info,
                 is_hovering_art: false,
                 current_track_path,
-                current_library_track,
-                can_navigate_to_album,
-                can_navigate_to_artist,
+                current_library_track: None,
+                can_navigate_to_album: false,
+                can_navigate_to_artist: false,
                 image_element_key: 0,
-                is_liked,
+                is_liked: None,
                 queue_item_data: None,
                 queue_item_subscription: None,
+                library_track,
             };
             update_track_metadata(&mut info_section, &initial_metadata);
             resolve_queue_item_metadata(&mut info_section, cx);
@@ -341,7 +392,6 @@ impl Render for InfoSection {
                     .overflow_x_hidden()
                     .child(
                         div()
-                            .image_cache(hummingbird_cache("infosection_cache", 1))
                             .id("album-art")
                             .rounded(px(4.0))
                             .bg(theme.album_art_background)
@@ -525,25 +575,19 @@ impl Render for InfoSection {
 fn update_current_track_state(
     this: &mut InfoSection,
     current_track: Option<&CurrentTrack>,
-    cx: &App,
+    cx: &mut Context<InfoSection>,
 ) {
     this.current_track_path = current_track.map(|track| track.get_path().clone());
     this.track_name = None;
     this.artist_name = None;
-    this.current_library_track =
-        current_track.and_then(|track| resolve_library_track_by_path(cx, track.get_path()));
-    this.can_navigate_to_album = this
-        .current_library_track
-        .as_ref()
-        .is_some_and(|track| track.album_id.is_some());
-    this.can_navigate_to_artist = this.current_library_track.as_ref().is_some_and(|track| {
-        cx.artist_ids_for_track(track.id)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    });
-    this.is_liked = this.current_library_track.as_ref().and_then(|track| {
-        cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, track.id)
-            .unwrap_or_default()
+    this.current_library_track = None;
+    this.can_navigate_to_album = false;
+    this.can_navigate_to_artist = false;
+    this.is_liked = None;
+    let path = this.current_track_path.clone();
+    let pool = cx.global::<Pool>().0.clone();
+    this.library_track.update(cx, |resource, cx| {
+        resource.load(cx, path.clone(), load_current_library_track(path, pool));
     });
     this.image_element_key = this.image_element_key.wrapping_add(1);
 }

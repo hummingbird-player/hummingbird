@@ -1,12 +1,17 @@
-use std::{fmt::Debug, hash::Hash, sync::Arc};
+use std::{fmt::Debug, future::Future, hash::Hash, pin::Pin, sync::Arc};
 
-use gpui::{AnyElement, App, ElementId, SharedString, Window};
+use gpui::{AnyElement, App, Entity, SharedString, Window};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
+use sqlx::SqlitePool;
 
-use crate::ui::components::{
-    drag_drop::{AlbumDragData, TrackDragData},
-    managed_image::ManagedImageKey,
+use crate::{
+    library::db::SortDirection,
+    ui::components::{
+        async_resource::AsyncResource,
+        drag_drop::{AlbumDragData, TrackDragData},
+        managed_image::ManagedImageKey,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -30,7 +35,7 @@ pub const TABLE_HEADER_HEIGHT: f32 = 30.0;
 pub const COLUMN_MIN_WIDTH: f32 = 50.0;
 pub const COLUMN_RESIZE_HANDLE_WIDTH: f32 = 6.0;
 
-pub trait Column: Clone + Copy + Debug + Hash + PartialEq + Eq {
+pub trait Column: Clone + Copy + Debug + Hash + PartialEq + Eq + Send + Sync + 'static {
     /// Retrieves the friendly name text of the column.
     fn get_column_name(&self) -> SharedString;
 
@@ -55,13 +60,13 @@ pub trait Column: Clone + Copy + Debug + Hash + PartialEq + Eq {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TableSort<C>
 where
     C: Column,
 {
     pub column: C,
-    pub ascending: bool,
+    pub direction: SortDirection,
 }
 
 /// Context in which a grid item is being displayed.
@@ -75,35 +80,51 @@ pub enum GridContext {
 
 /// The TableData trait defines the interface for retrieving, sorting, and listing data for a table.
 /// Implementing this trait allows a table to display data in a structured manner.
-pub trait TableData<C>: Sized
+pub type TableFuture<T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'static>>;
+
+pub type RowResource<K, T, S> = Entity<AsyncResource<K, Option<(Arc<T>, Arc<S>)>>>;
+
+pub trait TableData<C>: Sized + Send + Sync + 'static
 where
     C: Column,
 {
-    type Identifier: Clone + Debug;
+    type Identifier: Clone + Debug + Send + Sync + 'static;
     type ContextMenuContext: Clone;
+    type RowState: Clone + Default + Send + Sync + 'static;
 
     /// Retrieves the name of the table.
     fn get_table_name() -> SharedString;
 
-    /// Retrieves the rows of the table. The rows are returned as a vector of identifiers, which
-    /// can be used to retrieve the full row data. The sort parameter can be used to specify the
-    /// sorting order of the rows.
-    fn get_rows(cx: &mut App, sort: Option<TableSort<C>>) -> anyhow::Result<Vec<Self::Identifier>>;
+    /// Builds the asynchronous query for the table's ordered row identifiers.
+    ///
+    /// Implementations should compose the typed query builder directly rather than delegate to
+    /// another database-access wrapper.
+    fn load_rows(
+        pool: SqlitePool,
+        sort: Option<TableSort<C>>,
+    ) -> TableFuture<Vec<Self::Identifier>>;
 
-    /// Retrieves a specific row of the table. The row is returned as an Arc to the table data,
-    /// which can be used to retrieve the row data as SharedStrings. The id parameter is used to
-    /// identify the row to retrieve.
-    fn get_row(cx: &mut App, id: Self::Identifier) -> anyhow::Result<Option<Arc<Self>>>;
+    /// Builds the asynchronous query for one materialized row.
+    ///
+    /// `visible_columns` identifies any optional projections needed by the row. A replacement
+    /// request is started when that projection changes.
+    fn load_row(
+        pool: SqlitePool,
+        id: Self::Identifier,
+        visible_columns: Vec<C>,
+    ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>>;
 
     /// Retrieves a column from the row.
-    fn get_column(&self, cx: &mut App, column: C) -> Option<SharedString>;
+    fn get_column(
+        &self,
+        cx: &mut App,
+        column: C,
+        row_state: &Self::RowState,
+    ) -> Option<SharedString>;
 
     /// Returns true if the rows may contain images. This is used during the layout phase to
     /// determine if placeholder covers and the header section should be displayed.
     fn has_images() -> bool;
-
-    /// Retrieves the associated image for the row.
-    fn get_image_path(&self) -> Option<SharedString>;
 
     /// Retrieves the full-quality key for the row, for use with `managed_image`.
     fn get_full_image_key(&self) -> Option<ManagedImageKey>;
@@ -116,15 +137,11 @@ where
         Self::available_columns()
     }
 
-    /// Retrieves a unique element id for the row. This is different from the row id, as it is
-    /// used to identify the row in GPUI.
-    fn get_element_id(&self) -> impl Into<ElementId>;
-
     /// Retrieves the table ID for the row.
     fn get_table_id(&self) -> Self::Identifier;
 
     /// Returns whether the row is currently available for interaction.
-    fn is_available(&self, _cx: &mut App) -> bool {
+    fn is_available(&self, _cx: &mut App, _row_state: &Self::RowState) -> bool {
         true
     }
 
@@ -144,6 +161,7 @@ where
         _cx: &mut App,
         _context: &Self::ContextMenuContext,
         _grid_context: GridContext,
+        _row_state: &Self::RowState,
     ) -> Option<(AnyElement, Option<AnyElement>)> {
         None
     }

@@ -10,12 +10,17 @@ use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 
 use crate::{
-    library::{db::LibraryAccess, types::Track},
+    library::{
+        db::{playlists, tracks},
+        types::Track,
+    },
     playback::queue::QueueItemData,
     settings::SettingsGlobal,
     ui::{
+        app::Pool,
         availability::is_track_path_available,
         components::{
+            async_resource::AsyncResource,
             context::context,
             icons::{
                 CHEVRON_DOWN, CHEVRON_RIGHT, FILE, FOLDER, FOLDER_OPEN, MUSIC, PLAY, PLAYLIST_ADD,
@@ -44,15 +49,18 @@ use crate::{
 pub const ROW_HEIGHT: f32 = 32.0;
 const ICON_SIZE: f32 = 14.0;
 const ART_SIZE: f32 = 20.0;
+type BatchLikedResource = Entity<AsyncResource<Vec<i64>, SmallVec<[(i64, i64); 32]>>>;
 
 pub struct FileRowItem {
     flat_row: FlatRow,
     files_view: Entity<FilesView>,
     full_track: Option<Rc<Track>>,
+    _track_resource: Option<Entity<AsyncResource<i64, Option<Track>>>>,
     is_liked: Option<i64>,
     is_file_available: bool,
     show_add_to: Entity<bool>,
     add_to: Option<Entity<AddToPlaylist>>,
+    batch_liked: Option<BatchLikedResource>,
 }
 
 fn path_hash(path: &PathBuf) -> usize {
@@ -66,11 +74,30 @@ impl FileRowItem {
         cx.new(|cx| {
             cx.observe(&files_view, |_, _, cx| cx.notify()).detach();
 
-            let full_track = flat_row.track.as_ref().and_then(|t| {
-                cx.get_track_by_id(t.id)
-                    .ok()
-                    .map(|arc| Rc::new((*arc).clone()))
+            let track_resource = flat_row.track.as_ref().map(|track| {
+                let track_id = track.id;
+                let pool = cx.global::<Pool>().0.clone();
+                AsyncResource::new(cx, track_id, async move {
+                    tracks()
+                        .by_id(track_id)
+                        .fetch_optional(&pool)
+                        .await
+                        .map_err(Into::into)
+                })
             });
+            if let Some(resource) = &track_resource {
+                cx.observe(resource, |this: &mut FileRowItem, resource, cx| {
+                    if let Some(track) = resource.read(cx).ready()
+                        && this.flat_row.track.as_ref().map(|track| track.id)
+                            == Some(*resource.read(cx).key())
+                    {
+                        this.full_track = track.clone().map(Rc::new);
+                        cx.notify();
+                    }
+                })
+                .detach();
+            }
+            let full_track = None;
 
             let is_liked = flat_row.track.as_ref().and_then(|t| t.liked);
             subscribe_liked_updates(cx, |this: &FileRowItem| {
@@ -94,10 +121,12 @@ impl FileRowItem {
                 flat_row,
                 files_view,
                 full_track,
+                _track_resource: track_resource,
                 is_liked,
                 is_file_available,
                 show_add_to: cx.new(|_| false),
                 add_to: None,
+                batch_liked: None,
             }
         })
     }
@@ -106,19 +135,10 @@ impl FileRowItem {
         &self,
         audio_items: Vec<(PathBuf, Option<TrackRef>)>,
         track_ids: Vec<i64>,
+        liked_ids: Option<SmallVec<[(i64, i64); 32]>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let liked_ids: SmallVec<[i64; 32]> = track_ids
-            .iter()
-            .copied()
-            .filter(|id| {
-                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, *id)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            })
-            .collect();
-        let any_liked = !liked_ids.is_empty();
+        let any_liked = liked_ids.as_ref().is_some_and(|ids| !ids.is_empty());
         let count = audio_items.len();
 
         let audio_items = Rc::new(audio_items);
@@ -202,32 +222,28 @@ impl FileRowItem {
                             }
                         },
                     ))
-                    .item(menu_item(
-                        "files_multi_like",
-                        Some(if any_liked { STAR_FILLED } else { STAR }),
-                        if any_liked {
-                            tr!("UNLIKE")
-                        } else {
-                            tr!("LIKE")
-                        },
-                        move |_, _, cx| {
+                    .when_some(liked_ids, |m, liked_ids| {
+                        m.item(menu_item(
+                            "files_multi_like",
+                            Some(if any_liked { STAR_FILLED } else { STAR }),
                             if any_liked {
-                                for &id in &liked_ids {
-                                    let is_liked = cx
-                                        .playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
-                                        .ok()
-                                        .flatten();
-                                    if is_liked.is_some() {
-                                        toggle_like_by_id(id, is_liked, cx);
+                                tr!("UNLIKE")
+                            } else {
+                                tr!("LIKE")
+                            },
+                            move |_, _, cx| {
+                                if any_liked {
+                                    for &(id, item_id) in &liked_ids {
+                                        toggle_like_by_id(id, Some(item_id), cx);
+                                    }
+                                } else {
+                                    for &id in like_ids.iter() {
+                                        toggle_like_by_id(id, None, cx);
                                     }
                                 }
-                            } else {
-                                for &id in like_ids.iter() {
-                                    toggle_like_by_id(id, None, cx);
-                                }
-                            }
-                        },
-                    ))
+                            },
+                        ))
+                    })
             })
             .into_any_element()
     }
@@ -313,12 +329,19 @@ impl Render for FileRowItem {
                 None
             }
         };
+        let batch_track_ids = batch_items.as_ref().map(|(_, track_ids)| track_ids.clone());
+        let batch_liked = batch_track_ids.as_ref().and_then(|track_ids| {
+            self.batch_liked
+                .as_ref()
+                .filter(|resource| resource.read(cx).key() == track_ids)
+                .and_then(|resource| resource.read(cx).ready().cloned())
+        });
 
         let (context_element, add_to_element): (AnyElement, Option<AnyElement>) =
             if let Some((audio_items, track_ids)) =
                 batch_items.filter(|(items, _)| !items.is_empty())
             {
-                let menu = self.render_batch_menu(audio_items, track_ids, cx);
+                let menu = self.render_batch_menu(audio_items, track_ids, batch_liked, cx);
                 (menu, self.add_to.clone().map(|a| a.into_any_element()))
             } else if let Some(track) = &self.full_track {
                 let (show_add_to, add_to) =
@@ -480,12 +503,22 @@ impl Render for FileRowItem {
                         view.select((*click_path).clone(), cx);
                     });
 
-                    if !is_dir
-                        && two_column
-                        && track_ref_for_click.is_some()
-                        && let Ok(Some(track)) = cx.get_track_by_path(click_path.as_path())
-                    {
-                        navigate_to_track_album_and_reveal(cx, &track);
+                    if !is_dir && two_column && track_ref_for_click.is_some() {
+                        let pool = cx.global::<Pool>().0.clone();
+                        let requested_path = (*click_path).clone();
+                        cx.spawn(async move |cx| {
+                            let query_path = requested_path.clone();
+                            let request = crate::RUNTIME.spawn(async move {
+                                tracks().at_path(&query_path).fetch_optional(&pool).await
+                            });
+                            let Ok(Ok(Some(track))) = request.await else {
+                                return;
+                            };
+                            if track.location == requested_path {
+                                cx.update(|cx| navigate_to_track_album_and_reveal(cx, &track));
+                            }
+                        })
+                        .detach();
                     }
                 }
             })
@@ -502,6 +535,35 @@ impl Render for FileRowItem {
         let ctx = context(context_id)
             .w_full()
             .with(row_content)
+            .when_some(batch_track_ids, |context, track_ids| {
+                let entity = cx.entity();
+                context.on_open(move |_, cx| {
+                    entity.update(cx, |item, cx| {
+                        let pool = cx.global::<Pool>().0.clone();
+                        let ids_for_load = track_ids.clone();
+                        let future = async move {
+                            Ok(playlists()
+                                .by_id(LIKED_SONGS_PLAYLIST_ID)
+                                .playlist_items(ids_for_load)
+                                .fetch_rows(&pool)
+                                .await?
+                                .into_iter()
+                                .map(|item| (item.track_id, item.playlist_item_id))
+                                .collect::<SmallVec<[(i64, i64); 32]>>())
+                        };
+                        if let Some(resource) = &item.batch_liked {
+                            resource.update(cx, |resource, cx| {
+                                resource.load(cx, track_ids.clone(), future);
+                            });
+                        } else {
+                            let resource = AsyncResource::new(cx, track_ids.clone(), future);
+                            cx.observe(&resource, |_, _, cx| cx.notify()).detach();
+                            item.batch_liked = Some(resource);
+                        }
+                        cx.notify();
+                    });
+                })
+            })
             .child(context_element);
 
         div().w_full().child(if let Some(add_to) = add_to_element {

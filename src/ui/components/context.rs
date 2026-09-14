@@ -7,7 +7,8 @@ use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 actions!(context, [CloseContextMenu]);
 
 type CloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
-type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+type OpenHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>;
 
 #[derive(IntoElement)]
 pub struct ContextMenu {
@@ -16,6 +17,7 @@ pub struct ContextMenu {
     pub(self) element: Option<AnyElement>,
     pub(self) menu: Option<Div>,
     pub(self) menu_fn: Option<MenuBuilder>,
+    pub(self) on_open: Option<OpenHandler>,
     pub(self) on_close: Option<CloseHandler>,
 }
 
@@ -29,12 +31,25 @@ impl ContextMenu {
         mut self,
         builder: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
+        self.menu_fn = Some(Rc::new(move |window, cx| Some(builder(window, cx))));
+        self
+    }
+
+    pub fn try_menu_on_open(
+        mut self,
+        builder: impl Fn(&mut Window, &mut App) -> Option<AnyElement> + 'static,
+    ) -> Self {
         self.menu_fn = Some(Rc::new(builder));
         self
     }
 
     pub fn on_close(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_close = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_open(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_open = Some(Rc::new(handler));
         self
     }
 }
@@ -65,6 +80,7 @@ impl RenderOnce for ContextMenu {
         let state_click = state.clone();
         let state_out = state.clone();
         let state_esc = state.clone();
+        let on_open = self.on_open.clone();
         let on_click_close = self.on_close.clone();
         let on_out_close = self.on_close.clone();
         let on_esc_close = self.on_close.clone();
@@ -73,7 +89,9 @@ impl RenderOnce for ContextMenu {
         let theme = cx.global::<Theme>().clone();
 
         let menu = match self.menu_fn {
-            Some(build) if position.is_some() => Some(div().child(build(window, cx))),
+            Some(build) if position.is_some() => {
+                build(window, cx).map(|element| div().child(element))
+            }
             Some(_) => None,
             None => self.menu,
         };
@@ -126,6 +144,9 @@ impl RenderOnce for ContextMenu {
             .id(self.id)
             .on_aux_click(move |ev, window, cx| {
                 if ev.is_right_click() {
+                    if let Some(on_open) = &on_open {
+                        on_open(window, cx);
+                    }
                     state_open.update(cx, |pos, cx| {
                         *pos = Some(ev.position());
                         cx.notify();
@@ -145,6 +166,7 @@ pub fn context(id: impl Into<ElementId>) -> ContextMenu {
         element: None,
         menu: Some(div()),
         menu_fn: None,
+        on_open: None,
         on_close: None,
     }
 }

@@ -7,6 +7,7 @@ use gpui::{App, SharedString};
 use rustc_hash::FxHashMap;
 
 use crate::{
+    library::db::tracks,
     media::{lookup_table::can_be_read, traits::MediaProviderFeatures},
     playback::queue::QueueItemData,
     ui::models::LIKED_SONGS_PLAYLIST_ID,
@@ -109,31 +110,19 @@ async fn lookup_tracks(locs: &[String], pool: &sqlx::SqlitePool) -> FxHashMap<St
 
     let mut track_map: FxHashMap<String, TrackRef> = FxHashMap::default();
     for chunk in locs.chunks(SQL_BIND_CHUNK) {
-        let mut placeholders = String::with_capacity(chunk.len().saturating_mul(2));
-        for idx in 0..chunk.len() {
-            if idx > 0 {
-                placeholders.push(',');
-            }
-            placeholders.push('?');
-        }
-        let sql = format!(
-            include_str!("../../../../queries/library/find_tracks_by_locations.sql"),
-            placeholders
-        );
-        let mut query =
-            sqlx::query_as::<_, (String, i64, Option<i64>, Option<i64>)>(sqlx::AssertSqlSafe(sql))
-                .bind(LIKED_SONGS_PLAYLIST_ID);
-        for loc in chunk {
-            query = query.bind(loc.as_str());
-        }
-        if let Ok(rows) = query.fetch_all(pool).await {
-            for (location, id, album_id, liked) in rows {
+        if let Ok(rows) = tracks()
+            .at_locations(chunk.iter().cloned())
+            .for_file_listing(LIKED_SONGS_PLAYLIST_ID)
+            .fetch_rows(pool)
+            .await
+        {
+            for row in rows {
                 track_map.insert(
-                    location,
+                    row.location.to_string_lossy().into_owned(),
                     TrackRef {
-                        id,
-                        album_id,
-                        liked,
+                        id: row.id,
+                        album_id: row.album_id,
+                        liked: row.playlist_item_id,
                     },
                 );
             }

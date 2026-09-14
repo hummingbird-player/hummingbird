@@ -10,15 +10,17 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{self, LibraryAccess},
+        db::{self, TrackColumn, playlists, tracks},
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
     playback::interface::PlaybackInterface,
+    playback::queue::QueueItemData,
     settings::SettingsGlobal,
     ui::{
         app::Pool,
         components::{
+            async_resource::AsyncResource,
             button::{ButtonIntent, button},
             context::context,
             drag_drop::{
@@ -33,7 +35,7 @@ use crate::{
             sidebar::sidebar_item,
             textbox::Textbox,
         },
-        library::{NavigationHistory, ViewSwitchMessage, playlist_view::find_playlist_tracks},
+        library::{NavigationHistory, ViewSwitchMessage},
         models::{Models, PlaybackInfo, PlaylistEvent},
         theme::Theme,
     },
@@ -43,7 +45,7 @@ const PLAYLIST_SIDEBAR_LIST_ID: &str = "sidebar-playlists";
 const PLAYLIST_SIDEBAR_ITEM_HEIGHT: f32 = 55.0; // effective height is + 1 px because of gap
 
 pub struct PlaylistList {
-    playlists: Arc<Vec<Playlist>>,
+    playlists: Entity<AsyncResource<(), Arc<Vec<Playlist>>>>,
     nav_model: Entity<NavigationHistory>,
     scroll_handle: ScrollHandle,
     popover_open: bool,
@@ -56,9 +58,11 @@ pub struct PlaylistList {
 
 impl PlaylistList {
     pub fn new(cx: &mut App, nav_model: Entity<NavigationHistory>) -> Entity<Self> {
-        let playlists = cx.get_all_playlists().expect("could not get playlists");
-
         cx.new(|cx| {
+            let pool = cx.global::<Pool>().0.clone();
+            let playlists_resource = AsyncResource::new(cx, (), async move {
+                Ok(Arc::new(playlists().fetch_list(&pool).await?))
+            });
             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
@@ -68,9 +72,12 @@ impl PlaylistList {
             cx.subscribe(
                 &playlist_tracker,
                 |this: &mut Self, _, _: &PlaylistEvent, cx| {
-                    this.playlists = cx.get_all_playlists().unwrap();
-
-                    cx.notify();
+                    let pool = cx.global::<Pool>().0.clone();
+                    this.playlists.update(cx, |resource, cx| {
+                        resource.load(cx, (), async move {
+                            Ok(Arc::new(playlists().fetch_list(&pool).await?))
+                        });
+                    });
                 },
             )
             .detach();
@@ -104,7 +111,7 @@ impl PlaylistList {
                 .detach();
 
             Self {
-                playlists: playlists.clone(),
+                playlists: playlists_resource,
                 nav_model,
                 scroll_handle: ScrollHandle::new(),
                 popover_open: false,
@@ -123,12 +130,19 @@ impl PlaylistList {
             return;
         }
 
-        if let Ok(id) = cx.create_playlist(&name) {
-            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-            playlist_tracker.update(cx, |_, cx| {
-                cx.emit(PlaylistEvent::PlaylistUpdated(id));
-            });
-        }
+        let pool = cx.global::<Pool>().0.clone();
+        let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+        cx.spawn(async move |_, cx| {
+            let task = crate::RUNTIME.spawn(async move { db::create_playlist(&pool, &name).await });
+            match task.await {
+                Ok(Ok(id)) => playlist_tracker.update(cx, |_, cx| {
+                    cx.emit(PlaylistEvent::PlaylistUpdated(id));
+                }),
+                Ok(Err(err)) => error!("Failed to create playlist: {err}"),
+                Err(err) => error!("create playlist task panicked: {err}"),
+            }
+        })
+        .detach();
 
         self.popover_open = false;
         self.new_playlist_input.update(cx, |tb, cx| tb.reset(cx));
@@ -147,14 +161,20 @@ impl PlaylistList {
         }
 
         if let Some(pl_id) = self.rename_popover_playlist {
-            if let Err(err) = cx.rename_playlist(pl_id, &name) {
-                error!("Failed to rename playlist: {}", err);
-            } else {
-                let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-                playlist_tracker.update(cx, |_, cx| {
-                    cx.emit(PlaylistEvent::PlaylistUpdated(pl_id));
-                });
-            }
+            let pool = cx.global::<Pool>().0.clone();
+            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+            cx.spawn(async move |_, cx| {
+                let task = crate::RUNTIME
+                    .spawn(async move { db::rename_playlist(&pool, pl_id, &name).await });
+                match task.await {
+                    Ok(Ok(())) => playlist_tracker.update(cx, |_, cx| {
+                        cx.emit(PlaylistEvent::PlaylistUpdated(pl_id));
+                    }),
+                    Ok(Err(err)) => error!("Failed to rename playlist: {err}"),
+                    Err(err) => error!("rename playlist task panicked: {err}"),
+                }
+            })
+            .detach();
         }
 
         self.rename_popover_playlist = None;
@@ -175,25 +195,94 @@ impl PlaylistList {
 }
 
 fn delete_playlist_and_refresh(pl_id: i64, cx: &mut App) {
-    if let Err(err) = cx.delete_playlist(pl_id) {
-        error!("Failed to delete playlist: {}", err);
-        return;
-    }
-
+    let pool = cx.global::<Pool>().0.clone();
     let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-    playlist_tracker.update(cx, |_, cx| cx.emit(PlaylistEvent::PlaylistDeleted(pl_id)));
-
     let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
-    playlist_sort_methods.update(cx, |map, _| {
-        map.remove(&pl_id);
-    });
-
     let switcher_model = cx.global::<Models>().switcher_model.clone();
-    switcher_model.update(cx, |history, cx| {
-        history.retain(|v| *v != ViewSwitchMessage::Playlist(pl_id));
-        cx.emit(ViewSwitchMessage::Refresh);
-        cx.notify();
+    cx.spawn(async move |cx| {
+        let task = crate::RUNTIME.spawn(async move { db::delete_playlist(&pool, pl_id).await });
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                error!("Failed to delete playlist: {err}");
+                return;
+            }
+            Err(err) => {
+                error!("delete playlist task panicked: {err}");
+                return;
+            }
+        }
+        playlist_tracker.update(cx, |_, cx| cx.emit(PlaylistEvent::PlaylistDeleted(pl_id)));
+        playlist_sort_methods.update(cx, |map, _| {
+            map.remove(&pl_id);
+        });
+        switcher_model.update(cx, |history, cx| {
+            history.retain(|v| *v != ViewSwitchMessage::Playlist(pl_id));
+            cx.emit(ViewSwitchMessage::Refresh);
+            cx.notify();
+        });
     })
+    .detach();
+}
+
+enum PlaylistQueueAction {
+    Replace,
+    PlayNext,
+    Shuffle,
+    Append,
+}
+
+fn apply_playlist_queue_action(pl_id: i64, action: PlaylistQueueAction, cx: &mut App) {
+    let pool = cx.global::<Pool>().0.clone();
+    cx.spawn(async move |cx| {
+        let task = crate::RUNTIME.spawn(async move {
+            playlists()
+                .by_id(pl_id)
+                .track_rows()
+                .fetch_rows(&pool)
+                .await
+        });
+        let rows = match task.await {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(err)) => {
+                error!("could not load playlist tracks: {err}");
+                return;
+            }
+            Err(err) => {
+                error!("playlist tracks task panicked: {err}");
+                return;
+            }
+        };
+        cx.update(|cx| {
+            let tracks = rows
+                .into_iter()
+                .map(|row| {
+                    QueueItemData::new(
+                        cx,
+                        row.track.location,
+                        Some(row.track.id),
+                        row.track.album_id,
+                    )
+                })
+                .collect();
+            let interface = cx.global::<PlaybackInterface>();
+            match action {
+                PlaylistQueueAction::Replace => interface.replace_queue(tracks),
+                PlaylistQueueAction::PlayNext => {
+                    let queue_position = cx.global::<Models>().queue.read(cx).position;
+                    interface.insert_list_at(tracks, queue_position + 1);
+                }
+                PlaylistQueueAction::Shuffle => {
+                    if !*cx.global::<PlaybackInfo>().shuffling.read(cx) {
+                        interface.toggle_shuffle();
+                    }
+                    interface.replace_queue(tracks);
+                }
+                PlaylistQueueAction::Append => interface.queue_list(tracks),
+            }
+        });
+    })
+    .detach();
 }
 
 impl Render for PlaylistList {
@@ -203,7 +292,8 @@ impl Render for PlaylistList {
         let theme = cx.global::<Theme>();
         let collapsed = *cx.global::<Models>().sidebar_collapsed.read(cx);
         let scroll_handle = self.scroll_handle.clone();
-        let playlist_count = self.playlists.len();
+        let loaded_playlists = self.playlists.read(cx).ready().cloned();
+        let playlist_count = loaded_playlists.as_ref().map_or(0, |items| items.len());
         let allow_reorder = !collapsed;
         let mut main = div()
             .pt(px(6.0))
@@ -239,36 +329,62 @@ impl Render for PlaylistList {
                 ))
                 .on_drop(cx.listener(
                     move |this: &mut PlaylistList, drag_data: &DragData, _, cx| {
-                        let playlists = this.playlists.clone();
+                        let Some(loaded_playlists) = this.playlists.read(cx).ready().cloned()
+                        else {
+                            return;
+                        };
                         handle_drop(
                             this.drag_drop_manager.clone(),
                             drag_data,
                             cx,
                             move |from, to, cx| {
-                                if from >= playlists.len() {
+                                if from >= loaded_playlists.len() {
                                     return;
                                 }
-                                let source = &playlists[from];
-
-                                let new_position = if to < playlists.len() {
-                                    playlists[to].position
-                                } else {
-                                    playlists.iter().map(|p| p.position).max().unwrap_or(0) + 1
-                                };
-
-                                if source.position == new_position {
-                                    return;
-                                }
-
-                                if let Err(e) = cx.reorder_playlist(source.id, new_position) {
-                                    error!("Failed to reorder playlist: {}", e);
-                                    return;
-                                }
-
+                                let source_id = loaded_playlists[from].id;
+                                let target_id =
+                                    loaded_playlists.get(to).map(|playlist| playlist.id);
+                                let pool = cx.global::<Pool>().0.clone();
                                 let tracker = cx.global::<Models>().playlist_tracker.clone();
-                                tracker.update(cx, |_, cx| {
-                                    cx.emit(PlaylistEvent::PlaylistUpdated(source.id));
-                                });
+                                cx.spawn(async move |_, cx| {
+                                    let task = crate::RUNTIME.spawn(async move {
+                                        let source =
+                                            playlists().by_id(source_id).fetch(&pool).await?;
+                                        let new_position = if let Some(target_id) = target_id {
+                                            playlists()
+                                                .by_id(target_id)
+                                                .fetch(&pool)
+                                                .await?
+                                                .position
+                                        } else {
+                                            playlists()
+                                                .fetch_list(&pool)
+                                                .await?
+                                                .iter()
+                                                .map(|playlist| playlist.position)
+                                                .max()
+                                                .unwrap_or(0)
+                                                + 1
+                                        };
+                                        if source.position != new_position {
+                                            db::reorder_playlist(&pool, source_id, new_position)
+                                                .await?;
+                                        }
+                                        Ok::<(), sqlx::Error>(())
+                                    });
+                                    match task.await {
+                                        Ok(Ok(())) => tracker.update(cx, |_, cx| {
+                                            cx.emit(PlaylistEvent::PlaylistUpdated(source_id));
+                                        }),
+                                        Ok(Err(err)) => {
+                                            error!("Failed to reorder playlist: {err}")
+                                        }
+                                        Err(err) => {
+                                            error!("reorder playlist task panicked: {err}")
+                                        }
+                                    }
+                                })
+                                .detach();
                             },
                         );
                         cx.notify();
@@ -297,7 +413,11 @@ impl Render for PlaylistList {
         let rename_input = self.rename_playlist_input.clone();
         let weak_entity = cx.entity().downgrade();
 
-        for (idx, playlist) in self.playlists.iter().enumerate() {
+        for (idx, playlist) in loaded_playlists
+            .iter()
+            .flat_map(|items| items.iter())
+            .enumerate()
+        {
             let pl_id = playlist.id;
 
             let playlist_label: String = if playlist.is_liked_songs() {
@@ -426,22 +546,20 @@ impl Render for PlaylistList {
                 ))
                 .on_drop(cx.listener(
                     move |_: &mut PlaylistList, drag_data: &AlbumDragData, _, cx| {
-                        let track_ids: Vec<i64> =
-                            if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
-                                tracks.iter().map(|t| t.id).collect()
-                            } else {
-                                Vec::new()
-                            };
-
-                        if track_ids.is_empty() {
-                            return;
-                        }
-
+                        let album_id = drag_data.album_id;
                         let pool = cx.global::<Pool>().0.clone();
                         let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
                         cx.spawn(async move |_, cx| {
                             let task = crate::RUNTIME.spawn(async move {
+                                let track_ids = tracks()
+                                    .from_album(album_id)
+                                    .sort_asc(TrackColumn::TrackNumber)
+                                    .fetch_ids(&pool)
+                                    .await?;
+                                if track_ids.is_empty() {
+                                    return Ok(());
+                                }
                                 db::add_tracks_to_playlist_if_missing(&pool, pl_id, &track_ids)
                                     .await
                             });
@@ -494,9 +612,11 @@ impl Render for PlaylistList {
                                             Some(PLAY),
                                             tr!("PLAY"),
                                             move |_, _, cx| {
-                                                let tracks = find_playlist_tracks(cx, pl_id);
-                                                let interface = cx.global::<PlaybackInterface>();
-                                                interface.replace_queue(tracks);
+                                                apply_playlist_queue_action(
+                                                    pl_id,
+                                                    PlaylistQueueAction::Replace,
+                                                    cx,
+                                                );
                                             },
                                         ))
                                         .item(menu_item(
@@ -504,12 +624,11 @@ impl Render for PlaylistList {
                                             None::<&'static str>,
                                             tr!("PLAY_NEXT"),
                                             move |_, _, cx| {
-                                                let tracks = find_playlist_tracks(cx, pl_id);
-                                                let queue_position =
-                                                    cx.global::<Models>().queue.read(cx).position;
-                                                let interface = cx.global::<PlaybackInterface>();
-                                                interface
-                                                    .insert_list_at(tracks, queue_position + 1);
+                                                apply_playlist_queue_action(
+                                                    pl_id,
+                                                    PlaylistQueueAction::PlayNext,
+                                                    cx,
+                                                );
                                             },
                                         ))
                                         .item(menu_item(
@@ -517,16 +636,11 @@ impl Render for PlaylistList {
                                             Some(SHUFFLE),
                                             tr!("SHUFFLE"),
                                             move |_, _, cx| {
-                                                let tracks = find_playlist_tracks(cx, pl_id);
-                                                let interface = cx.global::<PlaybackInterface>();
-                                                if !(*cx
-                                                    .global::<PlaybackInfo>()
-                                                    .shuffling
-                                                    .read(cx))
-                                                {
-                                                    interface.toggle_shuffle();
-                                                }
-                                                interface.replace_queue(tracks);
+                                                apply_playlist_queue_action(
+                                                    pl_id,
+                                                    PlaylistQueueAction::Shuffle,
+                                                    cx,
+                                                );
                                             },
                                         ))
                                         .item(menu_item(
@@ -534,9 +648,11 @@ impl Render for PlaylistList {
                                             Some(PLUS),
                                             tr!("ADD_TO_QUEUE"),
                                             move |_, _, cx| {
-                                                let tracks = find_playlist_tracks(cx, pl_id);
-                                                let interface = cx.global::<PlaybackInterface>();
-                                                interface.queue_list(tracks);
+                                                apply_playlist_queue_action(
+                                                    pl_id,
+                                                    PlaylistQueueAction::Append,
+                                                    cx,
+                                                );
                                             },
                                         ))
                                         .item(menu_separator())

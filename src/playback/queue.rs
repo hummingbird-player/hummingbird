@@ -1,10 +1,18 @@
-use std::fmt::Display;
-use std::sync::{Arc, RwLock};
+use std::{
+    fmt::Display,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
-use gpui::{App, AppContext, Entity, SharedString};
-use std::path::PathBuf;
+use gpui::{App, Entity, SharedString};
 
-use crate::{library::db::LibraryAccess, ui::data::Decode};
+use crate::{
+    library::db::{TrackDisplayRow, tracks},
+    ui::{app::Pool, components::async_resource::AsyncResource},
+};
+
+type QueueItemResource = Entity<AsyncResource<PathBuf, QueueItemUIData>>;
+type SharedQueueItemResource = Arc<RwLock<Option<QueueItemResource>>>;
 
 #[derive(Clone, Debug)]
 pub struct QueueItemData {
@@ -13,7 +21,7 @@ pub struct QueueItemData {
     //
     // TODO: make this less sucky
     /// The UI data associated with the queue item.
-    data: Arc<RwLock<Option<Entity<Option<QueueItemUIData>>>>>,
+    data: SharedQueueItemResource,
     /// The database ID of track the item is from, if it exists.
     db_id: Option<i64>,
     /// The database ID of album the item is from, if it exists.
@@ -96,12 +104,12 @@ impl PartialEq for QueueItemData {
 
 impl QueueItemData {
     /// Creates a new `QueueItemData` instance with the given information.
-    pub fn new(cx: &mut App, path: PathBuf, db_id: Option<i64>, db_album_id: Option<i64>) -> Self {
+    pub fn new(_cx: &mut App, path: PathBuf, db_id: Option<i64>, db_album_id: Option<i64>) -> Self {
         QueueItemData {
             path,
             db_id,
             db_album_id,
-            data: Arc::new(RwLock::new(Some(cx.new(|_| None)))),
+            data: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -115,80 +123,27 @@ impl QueueItemData {
         {
             let mut data = self.data.write().expect("poisoned queue item data");
             if data.is_none() {
-                *data = Some(cx.new(|_| None));
+                *data = Some(load_queue_item_data(cx, self.path.clone(), self.db_id));
             }
         }
     }
 
     /// Returns a copy of the UI data after ensuring that the metadata is loaded (or going to be
     /// loaded).
-    pub fn get_data(&self, cx: &mut App) -> Entity<Option<QueueItemUIData>> {
+    pub fn get_data(&self, cx: &mut App) -> Entity<AsyncResource<PathBuf, QueueItemUIData>> {
         self.ensure_entity(cx);
-        let model = self
-            .data
+        self.data
             .read()
             .expect("poisoned queue item data")
             .as_ref()
             .unwrap()
-            .clone();
-        let track_id = self.db_id;
-        let album_id = self.db_album_id;
-        let path = self.path.clone();
-        model.update(cx, move |m, cx| {
-            // if we already have the data, exit the function
-            if m.is_some() {
-                return;
-            }
-            *m = Some(QueueItemUIData {
-                album_id: None,
-                name: None,
-                artist_name: None,
-                source: DataSource::Library,
-                duration: None,
-            });
-
-            // if the database ids are known we can get the data from the database
-            if let (Some(track_id), Some(album_id)) = (track_id, album_id) {
-                let album =
-                    cx.get_album_by_id(album_id, crate::library::db::AlbumMethod::Thumbnail);
-                let track = cx.get_track_by_id(track_id);
-
-                if let (Ok(track), Ok(album)) = (track, album) {
-                    m.as_mut().unwrap().name = Some(track.title.clone().into());
-                    m.as_mut().unwrap().album_id = Some(album.id);
-                    m.as_mut().unwrap().duration = Some(track.duration);
-
-                    if let Some(artist_name) = track.artist_names.clone() {
-                        m.as_mut().unwrap().artist_name = Some(artist_name.0);
-                    } else if let Some(artist_name) = album.artist_display_override.clone() {
-                        m.as_mut().unwrap().artist_name = Some(artist_name.0);
-                    }
-                }
-
-                cx.notify();
-            }
-
-            if m.as_ref().unwrap().artist_name.is_some() {
-                return;
-            }
-
-            // vital information left blank, try retriving the metadata from disk
-            // much slower, especially on windows
-            cx.read_metadata(path, cx.entity()).detach();
-        });
-
-        model
+            .clone()
     }
 
     /// Drop the UI data from the queue item. This means the data must be retrieved again from disk
     /// if the item is used with get_data again.
-    pub fn drop_data(&self, cx: &mut App) {
-        if let Some(model) = self.data.read().expect("poisoned queue item data").as_ref() {
-            model.update(cx, |m, cx| {
-                *m = None;
-                cx.notify();
-            });
-        }
+    pub fn drop_data(&self, _cx: &mut App) {
+        *self.data.write().expect("poisoned queue item data") = None;
     }
 
     /// Returns the file path of the queue item.
@@ -223,5 +178,66 @@ impl QueueItemData {
             .expect("poisoned queue item data")
             .as_ref()
             .map(|e| e.entity_id().as_u64() as usize)
+    }
+}
+
+fn load_queue_item_data(
+    cx: &mut App,
+    path: PathBuf,
+    track_id: Option<i64>,
+) -> Entity<AsyncResource<PathBuf, QueueItemUIData>> {
+    let pool = cx.global::<Pool>().0.clone();
+    let key = path.clone();
+    AsyncResource::new(cx, key, async move {
+        let library_data = if let Some(track_id) = track_id {
+            match tracks()
+                .by_id(track_id)
+                .for_display()
+                .fetch_optional_row(&pool)
+                .await
+            {
+                Ok(row) => row.map(queue_data_from_track),
+                Err(error) => {
+                    tracing::debug!(?error, track_id, "failed to load queue item from library");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(data) = library_data
+            .as_ref()
+            .filter(|data| data.artist_name.is_some())
+        {
+            return Ok(data.clone());
+        }
+
+        let metadata_path = path.clone();
+        match crate::RUNTIME
+            .spawn_blocking(move || crate::ui::data::read_metadata(&metadata_path))
+            .await
+        {
+            Ok(Ok(metadata)) => Ok(metadata),
+            Ok(Err(error)) => library_data.ok_or(error),
+            Err(error) => library_data.ok_or_else(|| error.into()),
+        }
+    })
+}
+
+fn queue_data_from_track(row: TrackDisplayRow) -> QueueItemUIData {
+    QueueItemUIData {
+        album_id: row.track.album_id,
+        name: Some(row.track.title.0),
+        artist_name: row
+            .track
+            .artist_names
+            .map(|artist_names| artist_names.0)
+            .or_else(|| {
+                row.album_artist_display_override
+                    .map(|artist_name| artist_name.0)
+            }),
+        source: DataSource::Library,
+        duration: Some(row.track.duration),
     }
 }

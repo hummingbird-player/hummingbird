@@ -1167,9 +1167,15 @@ async fn update_metadata_writes_artists_for_album_track() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let navigation_artists = crate::library::db::artist_ids_for_track(&pool, track_id)
+    let navigation_artists = crate::library::db::artists()
+        .related_to_track(track_id)
+        .for_relation()
+        .fetch_rows(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|artist| (artist.id, artist.name))
+        .collect::<Vec<_>>();
     assert_eq!(
         navigation_artists
             .iter()
@@ -1179,13 +1185,12 @@ async fn update_metadata_writes_artists_for_album_track() {
     );
 
     let guest_id = navigation_artists[0].0;
-    let guest_direct_tracks = crate::library::db::get_standalone_tracks_by_artist(
-        &pool,
-        guest_id,
-        crate::library::db::LikedTrackSortMethod::ReleaseOrder,
-    )
-    .await
-    .unwrap();
+    let guest_direct_tracks = crate::library::db::tracks()
+        .standalone_for_artist(guest_id)
+        .sort_release(crate::library::db::SortDirection::Ascending)
+        .fetch_list(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         guest_direct_tracks
             .iter()
@@ -1195,48 +1200,71 @@ async fn update_metadata_writes_artists_for_album_track() {
     );
 
     let main_id = navigation_artists[1].0;
-    let main_direct_tracks = crate::library::db::get_standalone_tracks_by_artist(
-        &pool,
-        main_id,
-        crate::library::db::LikedTrackSortMethod::ReleaseOrder,
-    )
-    .await
-    .unwrap();
+    let main_direct_tracks = crate::library::db::tracks()
+        .standalone_for_artist(main_id)
+        .sort_release(crate::library::db::SortDirection::Ascending)
+        .fetch_list(&pool)
+        .await
+        .unwrap();
     assert!(main_direct_tracks.is_empty());
 
-    let guest_counts = crate::library::db::get_artist_with_counts(&pool, guest_id)
+    let guest_counts = crate::library::db::artists()
+        .by_id(guest_id)
+        .with_track_locations()
+        .fetch_optional_row(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap()
+        .artist;
     assert_eq!((guest_counts.album_count, guest_counts.track_count), (0, 1));
-    let main_counts = crate::library::db::get_artist_with_counts(&pool, main_id)
+    let main_counts = crate::library::db::artists()
+        .by_id(main_id)
+        .with_track_locations()
+        .fetch_optional_row(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap()
+        .artist;
     assert_eq!((main_counts.album_count, main_counts.track_count), (1, 1));
 
-    let guest_tracks = crate::library::db::get_all_tracks_by_artist(&pool, guest_id)
+    let guest_tracks = crate::library::db::tracks()
+        .from_artist(guest_id)
+        .sort_release(crate::library::db::SortDirection::Ascending)
+        .fetch_list(&pool)
         .await
         .unwrap();
     assert_eq!(guest_tracks.len(), 1);
-    let main_tracks = crate::library::db::get_all_tracks_by_artist(&pool, main_id)
+    let main_tracks = crate::library::db::tracks()
+        .from_artist(main_id)
+        .sort_release(crate::library::db::SortDirection::Ascending)
+        .fetch_list(&pool)
         .await
         .unwrap();
     assert_eq!(main_tracks.len(), 1);
 
-    let artists_by_track_count =
-        crate::library::db::list_artists(&pool, crate::library::db::ArtistSortMethod::TracksAsc)
-            .await
-            .unwrap();
+    let artists_by_track_count = crate::library::db::artists()
+        .visible()
+        .sort(
+            crate::library::db::ArtistColumn::Tracks,
+            crate::library::db::SortDirection::Ascending,
+        )
+        .fetch_ids(&pool)
+        .await
+        .unwrap();
     assert_eq!(artists_by_track_count, [main_id]);
 
-    let visible_artist_ids: Vec<(i64,)> = sqlx::query_as(include_str!(
-        "../../../../queries/library/find_artists_name_asc.sql"
-    ))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let visible_artist_ids = crate::library::db::artists()
+        .visible()
+        .sort(
+            crate::library::db::ArtistColumn::Name,
+            crate::library::db::SortDirection::Ascending,
+        )
+        .fetch_ids(&pool)
+        .await
+        .unwrap();
     assert_eq!(visible_artist_ids.len(), 1);
     let (visible_name,): (String,) = sqlx::query_as("SELECT name FROM artist WHERE id = $1")
-        .bind(visible_artist_ids[0].0)
+        .bind(visible_artist_ids[0])
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -1643,11 +1671,15 @@ async fn list_albums_sorts_by_artist_sort_not_display() {
         .await
         .unwrap();
 
-    let ordered =
-        crate::library::db::list_albums(&pool, crate::library::db::AlbumSortMethod::ArtistAsc)
-            .await
-            .unwrap();
-    let titles: Vec<String> = ordered.into_iter().map(|(_, title)| title).collect();
+    let ordered = crate::library::db::albums()
+        .sort_asc(crate::library::db::AlbumColumn::Artist)
+        .fetch_list(&pool)
+        .await
+        .unwrap();
+    let titles: Vec<String> = ordered
+        .into_iter()
+        .map(|album| album.title.0.to_string())
+        .collect();
     assert_eq!(titles, ["Zebra Album", "Alpha Album"]);
 }
 
@@ -1727,19 +1759,24 @@ async fn albums_search_includes_override_and_artist_names() {
         .await
         .unwrap();
 
-    let rows: Vec<(i64, String, Option<String>, String)> = sqlx::query_as(include_str!(
-        "../../../../queries/library/find_albums_search.sql"
-    ))
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let rows = crate::library::db::albums()
+        .for_search()
+        .fetch_rows(&pool)
+        .await
+        .unwrap();
 
     let album = rows
         .iter()
-        .find(|(_, title, _, _)| title == "Album")
+        .find(|album| album.title.0.as_ref() == "Album")
         .unwrap();
-    assert_eq!(album.2.as_deref(), Some("TR-i"));
-    assert_eq!(album.3, "Todd Rundgren");
+    assert_eq!(
+        album
+            .artist_display_override
+            .as_ref()
+            .map(|artist| artist.0.as_ref()),
+        Some("TR-i")
+    );
+    assert_eq!(album.artists, "Todd Rundgren");
 }
 
 async fn linked_artist_names(pool: &SqlitePool, album: &str) -> Vec<String> {

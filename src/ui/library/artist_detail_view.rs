@@ -7,16 +7,17 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     library::{
-        db::{LibraryAccess, LikedTrackSortMethod},
+        db::{LikedTrackSortMethod, SortDirection, albums, artists, tracks},
         scan::ScanEvent,
         types::{Album, DBString, Track, table::AlbumColumn},
     },
     media::numbering::NumberDisplayMode,
     playback::{queue::QueueItemData, thread::PlaybackState},
     ui::{
+        app::Pool,
         availability::{has_available_tracks, snapshot},
-        caching::hummingbird_cache,
         components::{
+            async_resource::AsyncResource,
             button::{ButtonSize, button},
             dropdown::dropdown,
             icons::{SORT_ASCENDING, SORT_DESCENDING, icon},
@@ -63,6 +64,18 @@ pub struct ArtistDetailView {
     nav_model: Entity<super::NavigationHistory>,
     liked_sort: LikedTrackSortMethod,
     standalone_sort: LikedTrackSortMethod,
+    resource:
+        Entity<AsyncResource<(i64, LikedTrackSortMethod, LikedTrackSortMethod), ArtistDetailData>>,
+    loaded: bool,
+}
+
+#[derive(Clone)]
+struct ArtistDetailData {
+    artist_name: Option<DBString>,
+    album_ids: Vec<(u32, String)>,
+    all_tracks: Arc<Vec<Track>>,
+    liked_tracks: Arc<Vec<Track>>,
+    standalone_tracks: Arc<Vec<Track>>,
 }
 
 impl ArtistDetailView {
@@ -72,78 +85,15 @@ impl ArtistDetailView {
         nav_model: Entity<super::NavigationHistory>,
     ) -> Entity<Self> {
         let view: Entity<Self> = cx.new(|cx| {
-            let artist = cx.get_artist_by_id(artist_id).ok();
-            let artist_name = artist.as_ref().and_then(|a| a.name.clone());
-
-            let album_ids = cx.list_albums_by_artist(artist_id).unwrap_or_default();
-
-            let all_tracks = cx
-                .get_all_tracks_by_artist(artist_id)
-                .unwrap_or_else(|_| Arc::new(Vec::new()));
-
             let liked_sort = *cx.global::<Models>().liked_tracks_sort_method.read(cx);
-
-            let liked_tracks = cx
-                .get_liked_tracks_by_artist(artist_id, liked_sort)
-                .unwrap_or_else(|_| Arc::new(Vec::new()));
-
-            let liked_track_items: Vec<Entity<TrackItem>> = liked_tracks
-                .iter()
-                .enumerate()
-                .map(|(index, track)| {
-                    TrackItem::new(
-                        cx,
-                        track.clone(),
-                        index,
-                        false,
-                        ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
-                        TrackItemLeftField::Art,
-                        None,
-                        NumberDisplayMode::Standard,
-                        None,
-                        Some(liked_tracks.clone()),
-                        false,
-                        false,
-                    )
-                })
-                .collect();
-
             let standalone_sort = LikedTrackSortMethod::ReleaseOrder;
-
-            let standalone_tracks = cx
-                .get_standalone_tracks_by_artist(artist_id, standalone_sort)
-                .unwrap_or_else(|_| Arc::new(Vec::new()));
-
-            let standalone_track_items: Vec<Entity<TrackItem>> = standalone_tracks
-                .iter()
-                .enumerate()
-                .map(|(index, track)| {
-                    TrackItem::new(
-                        cx,
-                        track.clone(),
-                        index,
-                        false,
-                        ArtistNameVisibility::OnlyIfDifferent(artist_name.clone()),
-                        TrackItemLeftField::Art,
-                        None,
-                        NumberDisplayMode::Standard,
-                        None,
-                        Some(standalone_tracks.clone()),
-                        false,
-                        false,
-                    )
-                })
-                .collect();
+            let resource = Self::new_resource(cx, artist_id, liked_sort, standalone_sort);
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
             cx.subscribe(&playlist_tracker, move |this: &mut Self, _, ev, cx| {
                 if let PlaylistEvent::PlaylistUpdated(1) = ev {
-                    let liked_tracks = cx
-                        .get_liked_tracks_by_artist(artist_id, this.liked_sort)
-                        .unwrap_or_else(|_| Arc::new(Vec::new()));
-
-                    this.set_liked_tracks(liked_tracks, cx);
+                    this.reload(cx);
                 }
             })
             .detach();
@@ -157,57 +107,208 @@ impl ArtistDetailView {
                         | ScanEvent::ScanCompleteWatching
                         | ScanEvent::TargetedRescanComplete
                 ) {
-                    this.refresh(cx);
+                    this.reload(cx);
                 }
             })
             .detach();
 
             let grid_views = cx.new(|_| FxHashMap::default());
             let grid_render_counter = cx.new(|_| 0usize);
+            cx.observe(&resource, |this: &mut Self, resource, cx| {
+                if let Some(data) = resource.read(cx).ready().cloned() {
+                    this.apply_data(data, cx);
+                }
+            })
+            .detach();
 
             ArtistDetailView {
                 artist_id,
-                artist_name,
-                album_ids,
-                liked_track_items,
-                standalone_track_items,
-                all_tracks,
-                liked_tracks: liked_tracks.clone(),
-                standalone_tracks: standalone_tracks.clone(),
+                artist_name: None,
+                album_ids: Vec::new(),
+                liked_track_items: Vec::new(),
+                standalone_track_items: Vec::new(),
+                all_tracks: Arc::new(Vec::new()),
+                liked_tracks: Arc::new(Vec::new()),
+                standalone_tracks: Arc::new(Vec::new()),
                 scroll_handle: ScrollHandle::new(),
                 grid_views,
                 grid_render_counter,
                 nav_model: nav_model.clone(),
                 liked_sort,
                 standalone_sort,
+                resource,
+                loaded: false,
             }
         });
 
         view
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        let artist = cx.get_artist_by_id(self.artist_id).ok();
-        let artist_name = artist.as_ref().and_then(|artist| artist.name.clone());
-        let album_ids = cx.list_albums_by_artist(self.artist_id).unwrap_or_default();
-        let all_tracks = cx
-            .get_all_tracks_by_artist(self.artist_id)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-        let liked_tracks = cx
-            .get_liked_tracks_by_artist(self.artist_id, self.liked_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-        let standalone_tracks = cx
-            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
+    fn new_resource(
+        cx: &mut App,
+        artist_id: i64,
+        liked_sort: LikedTrackSortMethod,
+        standalone_sort: LikedTrackSortMethod,
+    ) -> Entity<AsyncResource<(i64, LikedTrackSortMethod, LikedTrackSortMethod), ArtistDetailData>>
+    {
+        let pool = cx.global::<Pool>().0.clone();
+        AsyncResource::new(cx, (artist_id, liked_sort, standalone_sort), async move {
+            let artist = artists().by_id(artist_id).fetch_optional(&pool).await?;
+            let albums = albums()
+                .from_artist(artist_id)
+                .sort_asc(AlbumColumn::ReleaseDate)
+                .fetch_list(&pool)
+                .await?;
+            let all_tracks = tracks()
+                .from_artist(artist_id)
+                .sort_release(SortDirection::Ascending)
+                .fetch_list(&pool)
+                .await?;
+            let liked_query = tracks().liked_by_artist(artist_id);
+            let liked_tracks = match liked_sort {
+                LikedTrackSortMethod::TitleAsc => {
+                    liked_query.sort_asc(crate::library::db::TrackColumn::Title)
+                }
+                LikedTrackSortMethod::TitleDesc => {
+                    liked_query.sort_desc(crate::library::db::TrackColumn::Title)
+                }
+                LikedTrackSortMethod::ReleaseOrder => {
+                    liked_query.sort_release(SortDirection::Ascending)
+                }
+                LikedTrackSortMethod::ReleaseOrderDesc => {
+                    liked_query.sort_release(SortDirection::Descending)
+                }
+                LikedTrackSortMethod::RecentlyAdded => {
+                    liked_query.sort_recently_added(SortDirection::Descending)
+                }
+                LikedTrackSortMethod::RecentlyAddedAsc => {
+                    liked_query.sort_recently_added(SortDirection::Ascending)
+                }
+            }
+            .fetch_list(&pool)
+            .await?;
+            let standalone_query = tracks().standalone_for_artist(artist_id);
+            let standalone_tracks = match standalone_sort {
+                LikedTrackSortMethod::TitleAsc => {
+                    standalone_query.sort_asc(crate::library::db::TrackColumn::Title)
+                }
+                LikedTrackSortMethod::TitleDesc => {
+                    standalone_query.sort_desc(crate::library::db::TrackColumn::Title)
+                }
+                LikedTrackSortMethod::ReleaseOrder => {
+                    standalone_query.sort_release(SortDirection::Ascending)
+                }
+                LikedTrackSortMethod::ReleaseOrderDesc => {
+                    standalone_query.sort_release(SortDirection::Descending)
+                }
+                LikedTrackSortMethod::RecentlyAdded => {
+                    standalone_query.sort_recently_added(SortDirection::Descending)
+                }
+                LikedTrackSortMethod::RecentlyAddedAsc => {
+                    standalone_query.sort_recently_added(SortDirection::Ascending)
+                }
+            }
+            .fetch_list(&pool)
+            .await?;
+            Ok(ArtistDetailData {
+                artist_name: artist.map(|artist| artist.name),
+                album_ids: albums
+                    .into_iter()
+                    .map(|album| (album.id as u32, album.title.to_string()))
+                    .collect(),
+                all_tracks: Arc::new(all_tracks),
+                liked_tracks: Arc::new(liked_tracks),
+                standalone_tracks: Arc::new(standalone_tracks),
+            })
+        })
+    }
 
-        self.artist_name = artist_name;
-        self.album_ids = album_ids;
-        self.all_tracks = all_tracks;
-        self.rebuild_liked_tracks(liked_tracks, cx);
-        self.rebuild_standalone_tracks(standalone_tracks, cx);
-        self.grid_views.update(cx, |views, _| views.clear());
-        self.grid_render_counter
-            .update(cx, |counter, _| *counter = 0);
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        self.loaded = false;
+        let artist_id = self.artist_id;
+        let liked_sort = self.liked_sort;
+        let standalone_sort = self.standalone_sort;
+        let pool = cx.global::<Pool>().0.clone();
+        self.resource.update(cx, |resource, cx| {
+            resource.load(cx, (artist_id, liked_sort, standalone_sort), async move {
+                let artist = artists().by_id(artist_id).fetch_optional(&pool).await?;
+                let albums = albums()
+                    .from_artist(artist_id)
+                    .sort_asc(AlbumColumn::ReleaseDate)
+                    .fetch_list(&pool)
+                    .await?;
+                let all_tracks = tracks()
+                    .from_artist(artist_id)
+                    .sort_release(SortDirection::Ascending)
+                    .fetch_list(&pool)
+                    .await?;
+                let liked_query = tracks().liked_by_artist(artist_id);
+                let liked_tracks = match liked_sort {
+                    LikedTrackSortMethod::TitleAsc => {
+                        liked_query.sort_asc(crate::library::db::TrackColumn::Title)
+                    }
+                    LikedTrackSortMethod::TitleDesc => {
+                        liked_query.sort_desc(crate::library::db::TrackColumn::Title)
+                    }
+                    LikedTrackSortMethod::ReleaseOrder => {
+                        liked_query.sort_release(SortDirection::Ascending)
+                    }
+                    LikedTrackSortMethod::ReleaseOrderDesc => {
+                        liked_query.sort_release(SortDirection::Descending)
+                    }
+                    LikedTrackSortMethod::RecentlyAdded => {
+                        liked_query.sort_recently_added(SortDirection::Descending)
+                    }
+                    LikedTrackSortMethod::RecentlyAddedAsc => {
+                        liked_query.sort_recently_added(SortDirection::Ascending)
+                    }
+                }
+                .fetch_list(&pool)
+                .await?;
+                let standalone_query = tracks().standalone_for_artist(artist_id);
+                let standalone_tracks = match standalone_sort {
+                    LikedTrackSortMethod::TitleAsc => {
+                        standalone_query.sort_asc(crate::library::db::TrackColumn::Title)
+                    }
+                    LikedTrackSortMethod::TitleDesc => {
+                        standalone_query.sort_desc(crate::library::db::TrackColumn::Title)
+                    }
+                    LikedTrackSortMethod::ReleaseOrder => {
+                        standalone_query.sort_release(SortDirection::Ascending)
+                    }
+                    LikedTrackSortMethod::ReleaseOrderDesc => {
+                        standalone_query.sort_release(SortDirection::Descending)
+                    }
+                    LikedTrackSortMethod::RecentlyAdded => {
+                        standalone_query.sort_recently_added(SortDirection::Descending)
+                    }
+                    LikedTrackSortMethod::RecentlyAddedAsc => {
+                        standalone_query.sort_recently_added(SortDirection::Ascending)
+                    }
+                }
+                .fetch_list(&pool)
+                .await?;
+                Ok(ArtistDetailData {
+                    artist_name: artist.map(|artist| artist.name),
+                    album_ids: albums
+                        .into_iter()
+                        .map(|album| (album.id as u32, album.title.to_string()))
+                        .collect(),
+                    all_tracks: Arc::new(all_tracks),
+                    liked_tracks: Arc::new(liked_tracks),
+                    standalone_tracks: Arc::new(standalone_tracks),
+                })
+            })
+        });
+    }
+
+    fn apply_data(&mut self, data: ArtistDetailData, cx: &mut Context<Self>) {
+        self.artist_name = data.artist_name;
+        self.album_ids = data.album_ids;
+        self.all_tracks = data.all_tracks;
+        self.set_liked_tracks(data.liked_tracks, cx);
+        self.set_standalone_tracks(data.standalone_tracks, cx);
+        self.loaded = true;
         cx.notify();
     }
 
@@ -222,11 +323,7 @@ impl ArtistDetailView {
         self.liked_sort = next_sort;
         self.sync_sort_with_model(cx);
 
-        let liked_tracks = cx
-            .get_liked_tracks_by_artist(self.artist_id, self.liked_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-
-        self.set_liked_tracks(liked_tracks, cx);
+        self.reload(cx);
     }
 
     fn set_liked_tracks(&mut self, liked_tracks: Arc<Vec<Track>>, cx: &mut Context<Self>) {
@@ -263,10 +360,7 @@ impl ArtistDetailView {
     fn toggle_liked_sort_order(&mut self, cx: &mut Context<Self>) {
         self.liked_sort = Self::toggled_sort(self.liked_sort);
         self.sync_sort_with_model(cx);
-        let liked_tracks = cx
-            .get_liked_tracks_by_artist(self.artist_id, self.liked_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-        self.set_liked_tracks(liked_tracks, cx);
+        self.reload(cx);
     }
 
     fn update_standalone_sort(
@@ -283,11 +377,7 @@ impl ArtistDetailView {
 
         self.standalone_sort = next_sort;
 
-        let standalone_tracks = cx
-            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-
-        self.set_standalone_tracks(standalone_tracks, cx);
+        self.reload(cx);
     }
 
     fn set_standalone_tracks(
@@ -331,10 +421,7 @@ impl ArtistDetailView {
 
     fn toggle_standalone_sort_order(&mut self, cx: &mut Context<Self>) {
         self.standalone_sort = Self::toggled_sort(self.standalone_sort);
-        let standalone_tracks = cx
-            .get_standalone_tracks_by_artist(self.artist_id, self.standalone_sort)
-            .unwrap_or_else(|_| Arc::new(Vec::new()));
-        self.set_standalone_tracks(standalone_tracks, cx);
+        self.reload(cx);
     }
 
     fn base_sort(sort_method: LikedTrackSortMethod) -> LikedTrackSortMethod {
@@ -408,6 +495,9 @@ impl ArtistDetailView {
 
 impl Render for ArtistDetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.loaded {
+            return div().into_any_element();
+        }
         let theme = cx.global::<Theme>();
         let entity = cx.entity();
         let standalone_entity = entity.clone();
@@ -836,13 +926,13 @@ impl Render for ArtistDetailView {
                                                             GridItem::<Album, AlbumColumn>::new(
                                                                 cx,
                                                                 item_id,
+                                                                idx,
                                                                 handler.clone(),
                                                                 AlbumContextMenuContext {
                                                                     show_go_to_artist: false,
                                                                 },
                                                                 GridContext::Standalone,
                                                             )
-                                                            .unwrap()
                                                         },
                                                         cx,
                                                     );
@@ -851,14 +941,7 @@ impl Render for ArtistDetailView {
                                                         item.set_image_target(item_width, cx);
                                                     });
 
-                                                    div()
-                                                        .image_cache(hummingbird_cache(
-                                                            ("artist-album-grid", idx + 1),
-                                                            1,
-                                                        ))
-                                                        .size_full()
-                                                        .child(view)
-                                                        .into_any_element()
+                                                    div().size_full().child(view).into_any_element()
                                                 },
                                             )
                                             .min_item_width(px(grid_min_item_width))
@@ -873,7 +956,6 @@ impl Render for ArtistDetailView {
                                         .w_full()
                                         .border_t_1()
                                         .border_color(theme.border_color)
-                                        .image_cache(retain_all("artist_liked_tracks_cache"))
                                         .children(
                                             self.liked_track_items
                                                 .iter()
@@ -887,7 +969,6 @@ impl Render for ArtistDetailView {
                                         .w_full()
                                         .border_t_1()
                                         .border_color(theme.border_color)
-                                        .image_cache(retain_all("artist_standalone_tracks_cache"))
                                         .children(
                                             self.standalone_track_items
                                                 .iter()
@@ -900,5 +981,6 @@ impl Render for ArtistDetailView {
                         floating_scrollbar("artist_detail_scrollbar", scroll_handle).right(px(4.0)),
                     ),
             )
+            .into_any_element()
     }
 }

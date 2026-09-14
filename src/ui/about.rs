@@ -1,7 +1,7 @@
 use cntp_i18n::tr;
 use gpui::{
     FocusHandle, FontWeight, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    StatefulInteractiveElement, Styled, div, img, px,
+    StatefulInteractiveElement, Styled, div, img, px, retain_all,
 };
 
 use super::{
@@ -44,6 +44,7 @@ impl RenderOnce for AboutDialog {
 
         modal().on_exit(self.on_exit).child(
             div()
+                .image_cache(retain_all("about-logo-cache"))
                 .track_focus(&self.focus_handle)
                 .p(px(20.0))
                 .pb(px(18.0))

@@ -9,14 +9,18 @@ use nucleo::Utf32String;
 
 use crate::{
     library::{
-        db::LibraryAccess,
+        db::{self, playlists},
         playlist::import_playlist,
         types::{Playlist, PlaylistType},
     },
-    ui::components::{
-        icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},
-        modal::modal,
-        palette::{ExtraItem, ExtraItemProvider, FinderItemLeft, Palette, PaletteItem},
+    ui::{
+        app::Pool,
+        components::{
+            async_resource::AsyncResource,
+            icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},
+            modal::modal,
+            palette::{ExtraItem, ExtraItemProvider, FinderItemLeft, Palette, PaletteItem},
+        },
     },
 };
 
@@ -48,24 +52,23 @@ type OnAccept = Box<dyn Fn(&Arc<Playlist>, &mut App) + 'static>;
 pub struct UpdatePlaylist {
     show: Entity<bool>,
     palette: Entity<Palette<Playlist, MatcherFunc, OnAccept>>,
+    playlists: Entity<AsyncResource<(), Arc<Vec<Playlist>>>>,
 }
 
 impl UpdatePlaylist {
     pub fn new(cx: &mut App, show: Entity<bool>) -> Entity<Self> {
         cx.new(|cx| {
+            let pool = cx.global::<Pool>().0.clone();
+            let playlists_resource = AsyncResource::new(cx, (), async move {
+                Ok(Arc::new(playlists().fetch_list(&pool).await?))
+            });
             cx.observe(&show, move |this: &mut Self, _, cx| {
-                this.palette.update(cx, |this, cx| {
-                    let new_playlists = (*cx.get_all_playlists().unwrap())
-                        .clone()
-                        .into_iter()
-                        .map(Arc::new)
-                        .collect::<Vec<_>>();
-
-                    cx.emit(new_playlists);
-
-                    this.reset(cx);
+                let pool = cx.global::<Pool>().0.clone();
+                this.playlists.update(cx, |resource, cx| {
+                    resource.load(cx, (), async move {
+                        Ok(Arc::new(playlists().fetch_list(&pool).await?))
+                    });
                 });
-
                 cx.notify();
             })
             .detach();
@@ -79,13 +82,18 @@ impl UpdatePlaylist {
                 show_clone.write(cx, false);
             });
 
-            let items = (*cx.get_all_playlists().unwrap())
-                .clone()
-                .into_iter()
-                .map(Arc::new)
-                .collect();
-
-            let palette = Palette::new(cx, items, matcher, on_accept, &show);
+            let palette = Palette::new(cx, Vec::new(), matcher, on_accept, &show);
+            let palette_for_resource = palette.clone();
+            cx.observe(&playlists_resource, move |_, resource, cx| {
+                let Some(items) = resource.read(cx).ready().cloned() else {
+                    return;
+                };
+                palette_for_resource.update(cx, |palette, cx| {
+                    cx.emit(items.iter().cloned().map(Arc::new).collect::<Vec<_>>());
+                    palette.reset(cx);
+                });
+            })
+            .detach();
 
             let show_for_create = show.clone();
             let provider: ExtraItemProvider = Arc::new(move |query: &str| {
@@ -109,10 +117,25 @@ impl UpdatePlaylist {
                     middle: display.into(),
                     right: None,
                     on_accept: Arc::new(move |cx| {
-                        let playlist_id = cx.create_playlist(&name_string).unwrap();
-
-                        import_playlist(cx, playlist_id);
-
+                        let pool = cx.global::<Pool>().0.clone();
+                        let name_string = name_string.clone();
+                        cx.spawn(async move |cx| {
+                            let task = crate::RUNTIME.spawn(async move {
+                                db::create_playlist(&pool, &name_string).await
+                            });
+                            match task.await {
+                                Ok(Ok(playlist_id)) => {
+                                    cx.update(|cx| import_playlist(cx, playlist_id))
+                                }
+                                Ok(Err(err)) => {
+                                    tracing::error!("could not create playlist: {err:?}")
+                                }
+                                Err(err) => {
+                                    tracing::error!("create playlist task panicked: {err:?}")
+                                }
+                            }
+                        })
+                        .detach();
                         show_clone2.write(cx, false);
                     }),
                 }]
@@ -122,7 +145,11 @@ impl UpdatePlaylist {
                 palette.register_extra_provider(provider.clone(), cx);
             });
 
-            Self { show, palette }
+            Self {
+                show,
+                palette,
+                playlists: playlists_resource,
+            }
         })
     }
 }

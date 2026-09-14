@@ -1,11 +1,13 @@
 use crate::ui::util::format_duration;
 use crate::{
-    library::db::LibraryAccess,
+    library::db::{PlaylistItemRow, TrackColumn, artists, playlists, tracks},
     playback::{interface::PlaybackInterface, queue::QueueItemData},
     settings::SettingsGlobal,
     ui::{
+        app::Pool,
         availability::is_track_path_available,
         components::{
+            async_resource::AsyncResource,
             context::context,
             drag_drop::{
                 AlbumDragData, DragDropItemState, DragDropListConfig, DragDropListManager,
@@ -139,6 +141,14 @@ pub struct QueueItem {
     show_add_to: Entity<bool>,
     track_id: Option<i64>,
     is_liked: Option<i64>,
+    library_data: Option<Entity<AsyncResource<i64, QueueItemLibraryData>>>,
+    selected_liked: Option<Entity<AsyncResource<Vec<i64>, Vec<PlaylistItemRow>>>>,
+}
+
+#[derive(Clone)]
+struct QueueItemLibraryData {
+    artists: Vec<(i64, String)>,
+    liked_item_id: Option<i64>,
 }
 
 impl HasLikedState for QueueItem {
@@ -203,9 +213,35 @@ impl QueueItem {
             let add_to = track_id
                 .map(|track_id| AddToPlaylist::new(cx, show_add_to.clone(), vec![track_id]));
 
-            let is_liked = track_id.and_then(|id| {
-                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, id)
-                    .unwrap_or_default()
+            let library_data = track_id.map(|track_id| {
+                let pool = cx.global::<Pool>().0.clone();
+                let resource = AsyncResource::new(cx, track_id, async move {
+                    let artists = artists()
+                        .related_to_track(track_id)
+                        .for_relation()
+                        .fetch_rows(&pool)
+                        .await?
+                        .into_iter()
+                        .map(|artist| (artist.id, artist.name))
+                        .collect();
+                    let liked_item_id = playlists()
+                        .by_id(LIKED_SONGS_PLAYLIST_ID)
+                        .playlist_item(track_id)
+                        .fetch_playlist_item_id(&pool)
+                        .await?;
+                    Ok(QueueItemLibraryData {
+                        artists,
+                        liked_item_id,
+                    })
+                });
+                cx.observe(&resource, |this: &mut QueueItem, resource, cx| {
+                    if let Some(data) = resource.read(cx).ready() {
+                        this.is_liked = data.liked_item_id;
+                    }
+                    cx.notify();
+                })
+                .detach();
+                resource
             });
 
             subscribe_liked_updates(cx, |this: &QueueItem| this.track_id);
@@ -220,7 +256,9 @@ impl QueueItem {
                 add_to,
                 show_add_to,
                 track_id,
-                is_liked,
+                is_liked: None,
+                library_data,
+                selected_liked: None,
             }
         })
     }
@@ -235,7 +273,12 @@ impl Render for QueueItem {
         let data = self.item.as_mut();
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
         let track_id = data.as_ref().and_then(|item| item.get_db_id());
-        let ui_data = data.and_then(|item| item.get_data(cx).read(cx).clone());
+        let artist_ids = self
+            .library_data
+            .as_ref()
+            .and_then(|resource| resource.read(cx).ready())
+            .map(|data| data.artists.clone());
+        let ui_data = data.and_then(|item| item.get_data(cx).read(cx).ready().cloned());
         let theme = cx.global::<Theme>().clone();
         let show_add_to = self.show_add_to.clone();
         let is_available = self
@@ -285,6 +328,11 @@ impl Render for QueueItem {
             } else {
                 self.track_id.into_iter().collect()
             };
+            let selected_liked = self
+                .selected_liked
+                .as_ref()
+                .filter(|resource| resource.read(cx).key() == &selected_track_ids)
+                .and_then(|resource| resource.read(cx).ready().cloned());
 
             let item_state =
                 DragDropItemState::for_index(self.drag_drop_manager.read(cx), self.idx);
@@ -482,25 +530,48 @@ impl Render for QueueItem {
                                 ),
                         ),
                 )
-                .menu_on_open(move |_, cx| {
+                .on_open({
+                    let selected_track_ids = selected_track_ids.clone();
+                    let queue_item_entity = queue_item_entity.clone();
+                    move |_, cx| {
+                        if !is_multi_selected || selected_track_ids.is_empty() {
+                            return;
+                        }
+                        queue_item_entity.update(cx, |item, cx| {
+                            let pool = cx.global::<Pool>().0.clone();
+                            let ids_for_load = selected_track_ids.clone();
+                            let future = async move {
+                                playlists()
+                                    .by_id(LIKED_SONGS_PLAYLIST_ID)
+                                    .playlist_items(ids_for_load)
+                                    .fetch_rows(&pool)
+                                    .await
+                                    .map_err(Into::into)
+                            };
+                            if let Some(resource) = &item.selected_liked {
+                                resource.update(cx, |resource, cx| {
+                                    resource.load(cx, selected_track_ids.clone(), future);
+                                });
+                            } else {
+                                let resource =
+                                    AsyncResource::new(cx, selected_track_ids.clone(), future);
+                                cx.observe(&resource, |_, _, cx| cx.notify()).detach();
+                                item.selected_liked = Some(resource);
+                            }
+                            cx.notify();
+                        });
+                    }
+                })
+                .menu_on_open(move |_, _cx| {
                     if is_multi_selected {
                         let remove_indices = selected_indices.clone();
                         let remove_count = selected_indices.len();
                         let add_to_ids = selected_track_ids.clone();
                         let entity_for_add = queue_item_entity.clone();
                         let show_add_to_multi = show_add_to.clone();
-
-                        let liked_ids: Vec<i64> = selected_track_ids
-                            .iter()
-                            .copied()
-                            .filter(|id| {
-                                cx.playlist_has_track(LIKED_SONGS_PLAYLIST_ID, *id)
-                                    .ok()
-                                    .flatten()
-                                    .is_some()
-                            })
-                            .collect();
-                        let any_liked = !liked_ids.is_empty();
+                        let any_liked = selected_liked
+                            .as_ref()
+                            .is_some_and(|liked| !liked.is_empty());
 
                         menu()
                             .when(!add_to_ids.is_empty(), |menu| {
@@ -526,9 +597,8 @@ impl Render for QueueItem {
                                 ))
                                 .item(menu_separator())
                             })
-                            .when(!selected_track_ids.is_empty(), |menu| {
+                            .when_some(selected_liked.clone(), |menu, liked| {
                                 let track_ids_for_like = selected_track_ids.clone();
-                                let liked_ids = liked_ids.clone();
                                 menu.item(menu_item(
                                     "toggle_like",
                                     Some(if any_liked { STAR_FILLED } else { STAR }),
@@ -539,17 +609,12 @@ impl Render for QueueItem {
                                     },
                                     move |_, _, cx| {
                                         if any_liked {
-                                            for &track_id in &liked_ids {
-                                                let is_liked = cx
-                                                    .playlist_has_track(
-                                                        LIKED_SONGS_PLAYLIST_ID,
-                                                        track_id,
-                                                    )
-                                                    .ok()
-                                                    .flatten();
-                                                if is_liked.is_some() {
-                                                    toggle_like_by_id(track_id, is_liked, cx);
-                                                }
+                                            for item in &liked {
+                                                toggle_like_by_id(
+                                                    item.track_id,
+                                                    Some(item.playlist_item_id),
+                                                    cx,
+                                                );
                                             }
                                         } else {
                                             for &track_id in &track_ids_for_like {
@@ -577,10 +642,8 @@ impl Render for QueueItem {
                     } else {
                         let entity_for_add = queue_item_entity.clone();
                         let show_add_to = show_add_to.clone();
-                        let artist_ids = single_track_id
-                            .and_then(|id| cx.artist_ids_for_track(id).ok())
-                            .unwrap_or_default();
-                        let can_go_to_artist = !artist_ids.is_empty();
+                        let can_go_to_artist =
+                            artist_ids.as_ref().is_some_and(|ids| !ids.is_empty());
                         menu()
                             .when(has_add_to, |menu| {
                                 menu.item(
@@ -602,21 +665,23 @@ impl Render for QueueItem {
                                     )
                                     .disabled(!is_available || album_id.is_none()),
                                 )
-                                .item(
-                                    menu_item(
-                                        "go_to_artist",
-                                        Some(USERS),
-                                        tr!("GO_TO_ARTIST", "Go to artist"),
-                                        move |ev, _, cx| {
-                                            navigate_to_artists(
-                                                cx,
-                                                artist_ids.clone(),
-                                                ev.position(),
-                                            );
-                                        },
+                                .when_some(artist_ids.clone(), |menu, artist_ids| {
+                                    menu.item(
+                                        menu_item(
+                                            "go_to_artist",
+                                            Some(USERS),
+                                            tr!("GO_TO_ARTIST", "Go to artist"),
+                                            move |ev, _, cx| {
+                                                navigate_to_artists(
+                                                    cx,
+                                                    artist_ids.clone(),
+                                                    ev.position(),
+                                                );
+                                            },
+                                        )
+                                        .disabled(!is_available || !can_go_to_artist),
                                     )
-                                    .disabled(!is_available || !can_go_to_artist),
-                                )
+                                })
                                 .item(menu_separator())
                                 .item(menu_item(
                                     "add_to_playlist",
@@ -1005,35 +1070,54 @@ impl Render for Queue {
                     // album drops
                     .on_drop(cx.listener(
                         move |this: &mut Queue, drag_data: &AlbumDragData, _, cx| {
-                            use crate::library::db::LibraryAccess;
                             use crate::ui::components::drag_drop::DropPosition;
 
-                            if let Ok(tracks) = cx.list_tracks_in_album(drag_data.album_id) {
-                                let queue_items: Vec<QueueItemData> = tracks
-                                    .iter()
-                                    .map(|track| {
-                                        QueueItemData::new(
-                                            cx,
-                                            track.location.clone(),
-                                            Some(track.id),
-                                            Some(drag_data.album_id),
-                                        )
-                                    })
-                                    .collect();
-
-                                let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
-
-                                if let Some((target_index, position)) = drop_target {
-                                    let insert_pos = match position {
-                                        DropPosition::Before => target_index,
-                                        DropPosition::After => target_index + 1,
-                                    };
-                                    cx.global::<PlaybackInterface>()
-                                        .insert_list_at(queue_items, insert_pos);
-                                } else {
-                                    cx.global::<PlaybackInterface>().queue_list(queue_items);
-                                }
-                            }
+                            let album_id = drag_data.album_id;
+                            let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
+                            let pool = cx.global::<Pool>().0.clone();
+                            cx.spawn(async move |this, cx| {
+                                let tracks = match tracks()
+                                    .from_album(album_id)
+                                    .sort_asc(TrackColumn::TrackNumber)
+                                    .fetch_list(&pool)
+                                    .await
+                                {
+                                    Ok(tracks) => tracks,
+                                    Err(error) => {
+                                        tracing::debug!(
+                                            ?error,
+                                            album_id,
+                                            "failed to load dropped album"
+                                        );
+                                        return;
+                                    }
+                                };
+                                this.update(cx, |_, cx| {
+                                    let queue_items = tracks
+                                        .into_iter()
+                                        .map(|track| {
+                                            QueueItemData::new(
+                                                cx,
+                                                track.location,
+                                                Some(track.id),
+                                                Some(album_id),
+                                            )
+                                        })
+                                        .collect();
+                                    if let Some((target_index, position)) = drop_target {
+                                        let insert_pos = match position {
+                                            DropPosition::Before => target_index,
+                                            DropPosition::After => target_index + 1,
+                                        };
+                                        cx.global::<PlaybackInterface>()
+                                            .insert_list_at(queue_items, insert_pos);
+                                    } else {
+                                        cx.global::<PlaybackInterface>().queue_list(queue_items);
+                                    }
+                                })
+                                .ok();
+                            })
+                            .detach();
                             this.drag_drop_manager.update(cx, |m, _| m.state.end_drag());
                             cx.notify();
                         },

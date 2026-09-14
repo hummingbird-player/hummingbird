@@ -3,23 +3,29 @@ mod lrc;
 use lrc::{LrcLine, parse_lrc};
 
 use crate::{
-    library::db::LibraryAccess,
+    library::db::tracks,
     playback::{interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
+        app::Pool,
         components::{
+            async_resource::AsyncResource,
             icons::{MICROPHONE, icon},
             scrollbar::{ScrollableHandle, floating_scrollbar},
         },
         constants::PANEL_ROUNDING,
-        models::{CurrentTrack, Models, PlaybackInfo},
+        models::{Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         theme::Theme,
     },
 };
 use cntp_i18n::tr;
 use gpui::*;
-use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 const LYRICS_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 const LYRICS_ACTIVE_LINE_ANIMATION_DURATION: Duration = Duration::from_millis(180);
@@ -31,9 +37,35 @@ const LYRICS_ACTIVE_VERTICAL_PADDING: f32 = 9.0;
 const LYRICS_BASE_LINE_HEIGHT: f32 = 1.5;
 const LYRICS_ACTIVE_LINE_HEIGHT: f32 = 1.65;
 
-pub struct Lyrics {
+#[derive(Clone)]
+struct LyricsData {
     content: Option<String>,
-    parsed: Option<Vec<LrcLine>>,
+    parsed: Option<Arc<Vec<LrcLine>>>,
+}
+
+async fn load_lyrics_data(
+    pool: sqlx::SqlitePool,
+    path: Option<PathBuf>,
+) -> anyhow::Result<LyricsData> {
+    let content = if let Some(path) = path {
+        tracks()
+            .at_path(&path)
+            .for_lyrics()
+            .fetch_row(&pool)
+            .await?
+            .map(|lyrics| lyrics.content)
+    } else {
+        None
+    };
+    let parsed = content
+        .as_ref()
+        .and_then(|content| parse_lrc(content))
+        .map(Arc::new);
+    Ok(LyricsData { content, parsed })
+}
+
+pub struct Lyrics {
+    lyrics: Entity<AsyncResource<Option<PathBuf>, LyricsData>>,
     last_active_line: Option<usize>,
     scroll_handle: ScrollHandle,
     follow_pending: bool,
@@ -54,32 +86,46 @@ impl Lyrics {
             let position = playback_info.position.clone();
 
             let initial_track = current_track.read(cx).clone();
-            let (content, parsed) = Self::load_lyrics(initial_track.as_ref(), cx);
-            let initial_line_count = parsed.as_ref().map_or(0, Vec::len);
+            let initial_path = initial_track
+                .as_ref()
+                .map(|track| track.get_path().to_path_buf());
+            let pool = cx.global::<Pool>().0.clone();
+            let lyrics = AsyncResource::new(
+                cx,
+                initial_path.clone(),
+                load_lyrics_data(pool, initial_path),
+            );
+            let initial_line_count = lyrics
+                .read(cx)
+                .ready()
+                .and_then(|lyrics| lyrics.parsed.as_ref())
+                .map_or(0, |parsed| parsed.len());
+
+            cx.observe(&lyrics, |this: &mut Lyrics, lyrics, cx| {
+                if let Some(data) = lyrics.read(cx).ready() {
+                    this.reset_lyrics(data.parsed.as_ref().map_or(0, |parsed| parsed.len()));
+                }
+                cx.notify();
+            })
+            .detach();
 
             cx.observe(&current_track, |this: &mut Lyrics, ct, cx| {
-                let track = ct.read(cx).clone();
-                let (content, parsed) = Self::load_lyrics(track.as_ref(), cx);
-                let line_count = parsed.as_ref().map_or(0, Vec::len);
-                this.content = content;
-                this.parsed = parsed;
-                this.last_active_line = None;
-                this.follow_pending = false;
-                this.scroll_follow.cancel();
-                this.last_user_interaction_at = None;
-                this.line_emphasis_started_at = None;
-                this.line_emphasis_start_values = vec![0.0; line_count];
-                this.line_emphasis_target_values = vec![0.0; line_count];
-                this.scroll_handle.set_offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(0.0),
+                let path = ct
+                    .read(cx)
+                    .as_ref()
+                    .map(|track| track.get_path().to_path_buf());
+                let pool = cx.global::<Pool>().0.clone();
+                this.lyrics.update(cx, |lyrics, cx| {
+                    lyrics.load(cx, path.clone(), load_lyrics_data(pool, path));
                 });
+                this.reset_lyrics(0);
                 cx.notify();
             })
             .detach();
 
             cx.observe(&position, |this: &mut Lyrics, pos, cx| {
-                if let Some(parsed) = &this.parsed {
+                let lyrics = this.lyrics.read(cx).ready().cloned();
+                if let Some(parsed) = lyrics.and_then(|lyrics| lyrics.parsed) {
                     let pos_ms = *pos.read(cx);
                     let idx = parsed.partition_point(|l| l.time_ms <= pos_ms);
                     let new_line = if idx == 0 { None } else { Some(idx - 1) };
@@ -90,7 +136,7 @@ impl Lyrics {
                             .read(cx)
                             .interface
                             .reduced_motion;
-                        this.start_line_emphasis_animation(new_line, reduced_motion);
+                        this.start_line_emphasis_animation(new_line, reduced_motion, parsed.len());
                         this.last_active_line = new_line;
                         this.follow_pending = new_line.is_some();
 
@@ -116,8 +162,7 @@ impl Lyrics {
             .detach();
 
             Self {
-                content,
-                parsed,
+                lyrics,
                 last_active_line: None,
                 scroll_handle: ScrollHandle::new(),
                 follow_pending: false,
@@ -132,15 +177,18 @@ impl Lyrics {
         })
     }
 
-    fn load_lyrics(
-        track: Option<&CurrentTrack>,
-        cx: &App,
-    ) -> (Option<String>, Option<Vec<LrcLine>>) {
-        let content = track
-            .and_then(|t| cx.get_track_by_path(t.get_path()).ok().flatten())
-            .and_then(|t| cx.lyrics_for_track(t.id).ok().flatten());
-        let parsed = content.as_ref().and_then(|c| parse_lrc(c));
-        (content, parsed)
+    fn reset_lyrics(&mut self, line_count: usize) {
+        self.last_active_line = None;
+        self.follow_pending = false;
+        self.scroll_follow.cancel();
+        self.last_user_interaction_at = None;
+        self.line_emphasis_started_at = None;
+        self.line_emphasis_start_values = vec![0.0; line_count];
+        self.line_emphasis_target_values = vec![0.0; line_count];
+        self.scroll_handle.set_offset(gpui::Point {
+            x: px(0.0),
+            y: px(0.0),
+        });
     }
 }
 
@@ -159,6 +207,7 @@ impl Render for Lyrics {
             let theme = cx.global::<Theme>();
             (theme.text_secondary, theme.text, theme.background_primary)
         };
+        let lyrics = self.lyrics.read(cx).ready().cloned();
 
         if reduced_motion {
             if self.follow_pending || self.scroll_follow.is_active() || self.needs_animation_frame()
@@ -169,7 +218,12 @@ impl Render for Lyrics {
             self.schedule_follow_frame(window, cx);
         }
 
-        let inner: AnyElement = if self.content.is_none() {
+        let inner: AnyElement = if lyrics.is_none() {
+            div().h_full().w_full().into_any_element()
+        } else if lyrics
+            .as_ref()
+            .is_none_or(|lyrics| lyrics.content.is_none())
+        {
             div()
                 .h_full()
                 .w_full()
@@ -187,7 +241,7 @@ impl Render for Lyrics {
                 )
                 .into_any_element()
         // LRC
-        } else if let Some(parsed) = &self.parsed {
+        } else if let Some(parsed) = lyrics.as_ref().and_then(|lyrics| lyrics.parsed.as_ref()) {
             let active_line = self.last_active_line;
             let scroll_handle = self.scroll_handle.clone();
             let lyrics = cx.entity().downgrade();
@@ -285,7 +339,11 @@ impl Render for Lyrics {
                 )
                 .into_any_element()
         } else {
-            let text = self.content.clone().unwrap();
+            let text = lyrics
+                .as_ref()
+                .and_then(|lyrics| lyrics.content.as_ref())
+                .cloned()
+                .unwrap_or_default();
             let scroll_handle = self.scroll_handle.clone();
 
             div()
@@ -438,8 +496,12 @@ impl Lyrics {
         }
     }
 
-    fn start_line_emphasis_animation(&mut self, active_line: Option<usize>, reduced_motion: bool) {
-        let line_count = self.parsed.as_ref().map_or(0, Vec::len);
+    fn start_line_emphasis_animation(
+        &mut self,
+        active_line: Option<usize>,
+        reduced_motion: bool,
+        line_count: usize,
+    ) {
         if self.line_emphasis_target_values.len() != line_count {
             self.line_emphasis_target_values = vec![0.0; line_count];
         }
