@@ -43,7 +43,7 @@ use super::{
     },
     scroll_follow::SmoothScrollFollow,
     theme::Theme,
-    util::{create_or_retrieve_view_keyed, retain_views},
+    util::{create_or_retrieve_view_keyed, prune_views_keyed, retain_views},
 };
 
 /// The list identifier for queue drag-drop operations
@@ -754,6 +754,7 @@ impl Render for QueueItem {
 
 pub struct Queue {
     views_model: Entity<FxHashMap<usize, Entity<QueueItem>>>,
+    rendered_keys: Entity<Option<Vec<usize>>>,
     show_queue: Entity<bool>,
     scroll_handle: UniformListScrollHandle,
     drag_drop_manager: Entity<DragDropListManager>,
@@ -769,6 +770,7 @@ impl Queue {
     pub fn new(cx: &mut App, show_queue: Entity<bool>) -> Entity<Self> {
         cx.new(|cx| {
             let views_model = cx.new(|_| FxHashMap::default());
+            let rendered_keys = cx.new(|_| None);
             let items = cx.global::<Models>().queue.clone();
             let initial_queue_position = items.read(cx).position;
             let initial_has_current_track =
@@ -806,6 +808,7 @@ impl Queue {
 
             Self {
                 views_model,
+                rendered_keys,
                 show_queue,
                 scroll_handle: UniformListScrollHandle::new(),
                 drag_drop_manager,
@@ -835,6 +838,7 @@ impl Render for Queue {
             .expect("could not read queue")
             .len();
         let views_model = self.views_model.clone();
+        let rendered_keys = self.rendered_keys.clone();
         let scroll_handle = self.scroll_handle.clone();
         let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
@@ -1140,12 +1144,17 @@ impl Render for Queue {
 
                                 drop(queue);
 
+                                let keys: Vec<usize> =
+                                    items.iter().map(|item| item.slot_key(cx)).collect();
+
+                                prune_views_keyed(&views_model, &rendered_keys, &keys, cx);
+
                                 items
                                     .into_iter()
+                                    .zip(keys)
                                     .enumerate()
-                                    .map(|(idx, item)| {
+                                    .map(|(idx, (item, item_key))| {
                                         let idx = idx + start;
-                                        let item_key = item.slot_key(cx);
 
                                         let drag_drop_manager = drag_drop_manager.clone();
                                         let scroll_handle = item_scroll_handle.clone();

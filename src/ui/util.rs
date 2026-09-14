@@ -52,6 +52,38 @@ where
     did_remove
 }
 
+/// Prunes ID-keyed views after the render cycle, retaining all keys requested by the list.
+/// Keep `rendered_keys` alongside `views_model` and pass the keys from each rendered range.
+pub fn prune_views_keyed<T>(
+    views_model: &Entity<FxHashMap<usize, Entity<T>>>,
+    rendered_keys: &Entity<Option<Vec<usize>>>,
+    keys: &[usize],
+    cx: &mut App,
+) where
+    T: Render,
+{
+    let schedule_prune = rendered_keys.update(cx, |rendered_keys, _| {
+        let schedule_prune = rendered_keys.is_none();
+        rendered_keys
+            .get_or_insert_with(Vec::new)
+            .extend_from_slice(keys);
+        schedule_prune
+    });
+
+    // uniform_list requests the measurement row separately from the visible rows, so wait
+    // until both have rendered before pruning.
+    if schedule_prune {
+        let views_model = views_model.clone();
+        let rendered_keys = rendered_keys.clone();
+        cx.defer(move |cx| {
+            let keys = rendered_keys.update(cx, |keys, _| keys.take());
+            if let Some(keys) = keys {
+                retain_views(&views_model, &keys, cx);
+            }
+        });
+    }
+}
+
 pub fn create_or_retrieve_view<T>(
     views_model: &Entity<FxHashMap<usize, Entity<T>>>,
     idx: usize,
