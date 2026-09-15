@@ -98,7 +98,7 @@ where
     query: String,
     matcher: Nucleo<Arc<T>>,
     views_model: ViewsModel<T, MatcherFunc, OnAccept>,
-    render_counter: Entity<usize>,
+    rendered_keys: Entity<Option<Vec<usize>>>,
     last_match: Vec<Arc<T>>,
     display_list: Vec<DisplayEntry<T>>,
     extra_providers: Vec<ExtraItemProvider>,
@@ -134,7 +134,7 @@ where
             });
 
             let views_model = cx.new(|_| FxHashMap::default());
-            let render_counter = cx.new(|_| 0);
+            let rendered_keys = cx.new(|_| None);
 
             let matcher = Nucleo::new(config, notify.clone(), None, 1);
             let injector = matcher.injector();
@@ -272,7 +272,7 @@ where
                 display_list: Vec::new(),
                 extra_providers: Vec::new(),
                 extra_items: Vec::new(),
-                render_counter,
+                rendered_keys,
                 current_selection,
                 expanded_categories: Vec::new(),
                 list_state: Self::make_list_state(None),
@@ -458,7 +458,7 @@ where
             Self::build_display_list(&matches, &self.expanded_categories, self.query.is_empty());
 
         self.views_model = cx.new(|_| FxHashMap::default());
-        self.render_counter = cx.new(|_| 0);
+        self.rendered_keys = cx.new(|_| None);
 
         let total = self.display_list.len() + self.extra_items.len();
         self.list_state = Self::make_list_state(Some(total));
@@ -516,7 +516,7 @@ where
         let display_list = self.display_list.clone();
         let extra_items = self.extra_items.clone();
         let views_model = self.views_model.clone();
-        let render_counter = self.render_counter.clone();
+        let rendered_keys = self.rendered_keys.clone();
         let current_selection = self.current_selection.clone();
         let weak_finder = cx.weak_entity();
 
@@ -528,7 +528,7 @@ where
                         &extra_items[idx],
                         idx,
                         &views_model,
-                        &render_counter,
+                        &rendered_keys,
                         &current_selection,
                         &weak_finder,
                         cx,
@@ -541,7 +541,7 @@ where
                             item,
                             idx,
                             &views_model,
-                            &render_counter,
+                            &rendered_keys,
                             &current_selection,
                             &weak_finder,
                             cx,
@@ -585,7 +585,7 @@ fn render_extra_item<T, MatcherFunc, OnAccept>(
     extra: &ExtraItem,
     idx: usize,
     views_model: &ViewsModel<T, MatcherFunc, OnAccept>,
-    render_counter: &Entity<usize>,
+    rendered_keys: &Entity<Option<Vec<usize>>>,
     current_selection: &Entity<usize>,
     weak_finder: &WeakEntity<Finder<T, MatcherFunc, OnAccept>>,
     cx: &mut App,
@@ -595,9 +595,9 @@ where
     MatcherFunc: Fn(&Arc<T>, &mut App) -> Utf32String + 'static,
     OnAccept: Fn(&Arc<T>, &mut App) + 'static,
 {
-    use crate::ui::util::{create_or_retrieve_view, prune_views};
+    use crate::ui::util::{create_or_retrieve_view, prune_views_keyed};
 
-    prune_views(views_model, render_counter, idx, cx);
+    prune_views_keyed(views_model, rendered_keys, &[idx], cx);
 
     let current_selection = current_selection.clone();
     let weak_finder = weak_finder.clone();
@@ -627,7 +627,7 @@ fn render_item<T, MatcherFunc, OnAccept>(
     item: &Arc<T>,
     idx: usize,
     views_model: &ViewsModel<T, MatcherFunc, OnAccept>,
-    render_counter: &Entity<usize>,
+    rendered_keys: &Entity<Option<Vec<usize>>>,
     current_selection: &Entity<usize>,
     weak_finder: &WeakEntity<Finder<T, MatcherFunc, OnAccept>>,
     cx: &mut App,
@@ -637,9 +637,9 @@ where
     MatcherFunc: Fn(&Arc<T>, &mut App) -> Utf32String + 'static,
     OnAccept: Fn(&Arc<T>, &mut App) + 'static,
 {
-    use crate::ui::util::{create_or_retrieve_view, prune_views};
+    use crate::ui::util::{create_or_retrieve_view, prune_views_keyed};
 
-    prune_views(views_model, render_counter, idx, cx);
+    prune_views_keyed(views_model, rendered_keys, &[idx], cx);
     let item: Arc<T> = item.clone();
     let current_selection = current_selection.clone();
     let weak_finder = weak_finder.clone();

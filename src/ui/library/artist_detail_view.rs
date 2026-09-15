@@ -41,7 +41,7 @@ use crate::{
         },
         models::{Models, PlaybackInfo, PlaylistEvent},
         theme::Theme,
-        util::{create_or_retrieve_view, prune_views},
+        util::{create_or_retrieve_view, prune_views_keyed},
     },
 };
 
@@ -60,7 +60,7 @@ pub struct ArtistDetailView {
     standalone_tracks: Arc<Vec<Track>>,
     scroll_handle: ScrollHandle,
     grid_views: Entity<FxHashMap<usize, Entity<GridItem<Album, AlbumColumn>>>>,
-    grid_render_counter: Entity<usize>,
+    grid_rendered_keys: Entity<Option<Vec<usize>>>,
     nav_model: Entity<super::NavigationHistory>,
     liked_sort: LikedTrackSortMethod,
     standalone_sort: LikedTrackSortMethod,
@@ -113,7 +113,7 @@ impl ArtistDetailView {
             .detach();
 
             let grid_views = cx.new(|_| FxHashMap::default());
-            let grid_render_counter = cx.new(|_| 0usize);
+            let grid_rendered_keys = cx.new(|_| None);
             cx.observe(&resource, |this: &mut Self, resource, cx| {
                 if let Some(data) = resource.read(cx).ready().cloned() {
                     this.apply_data(data, cx);
@@ -132,7 +132,7 @@ impl ArtistDetailView {
                 standalone_tracks: Arc::new(Vec::new()),
                 scroll_handle: ScrollHandle::new(),
                 grid_views,
-                grid_render_counter,
+                grid_rendered_keys,
                 nav_model: nav_model.clone(),
                 liked_sort,
                 standalone_sort,
@@ -516,7 +516,7 @@ impl Render for ArtistDetailView {
         let album_count = self.album_ids.len();
         let album_ids = self.album_ids.clone();
         let grid_views_model = self.grid_views.clone();
-        let grid_render_counter = self.grid_render_counter.clone();
+        let grid_rendered_keys = self.grid_rendered_keys.clone();
         let nav_model = self.nav_model.clone();
 
         let is_playing =
@@ -910,10 +910,10 @@ impl Render for ArtistDetailView {
                                                 album_count,
                                                 None,
                                                 move |idx, item_width, _, cx| {
-                                                    prune_views(
+                                                    prune_views_keyed(
                                                         &grid_views_model,
-                                                        &grid_render_counter,
-                                                        idx,
+                                                        &grid_rendered_keys,
+                                                        &[idx],
                                                         cx,
                                                     );
 

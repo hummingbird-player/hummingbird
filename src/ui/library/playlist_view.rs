@@ -48,7 +48,7 @@ use crate::{
         },
         models::{Models, PlaylistEvent},
         theme::Theme,
-        util::{create_or_retrieve_view, prune_views},
+        util::{create_or_retrieve_view, prune_views_keyed},
     },
 };
 
@@ -189,7 +189,7 @@ pub struct PlaylistView {
     playlist_track_ids: PlaylistTracksResource,
     playlist_id: i64,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
-    render_counter: Entity<usize>,
+    rendered_keys: Entity<Option<Vec<usize>>>,
     focus_handle: FocusHandle,
     first_render: bool,
     scroll_handle: UniformListScrollHandle,
@@ -260,7 +260,7 @@ impl PlaylistView {
                         });
 
                         this.views = cx.new(|_| FxHashMap::default());
-                        this.render_counter = cx.new(|_| 0);
+                        this.rendered_keys = cx.new(|_| None);
                     }
                 },
             )
@@ -289,7 +289,7 @@ impl PlaylistView {
             .detach();
 
             let views = cx.new(|_| FxHashMap::default());
-            let render_counter = cx.new(|_| 0);
+            let rendered_keys = cx.new(|_| None);
             let scroll_handle = UniformListScrollHandle::new();
 
             Self {
@@ -297,7 +297,7 @@ impl PlaylistView {
                 playlist_track_ids,
                 playlist_id,
                 views,
-                render_counter,
+                rendered_keys,
                 focus_handle,
                 first_render: true,
                 scroll_handle,
@@ -343,7 +343,7 @@ impl PlaylistView {
             });
         });
         self.views = cx.new(|_| FxHashMap::default());
-        self.render_counter = cx.new(|_| 0);
+        self.rendered_keys = cx.new(|_| None);
 
         let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
         playlist_sort_methods.update(cx, |map, _| {
@@ -574,7 +574,7 @@ impl Render for PlaylistView {
             return div().id("playlist-view").into_any_element();
         };
         let views_model = self.views.clone();
-        let render_counter = self.render_counter.clone();
+        let rendered_keys = self.rendered_keys.clone();
         let playlist_name_for_export = playlist_name.0.clone();
         let scroll_handle = self.scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
@@ -1034,7 +1034,6 @@ impl Render for PlaylistView {
                             .child(
                                 uniform_list("playlist-list", items_clone.len(), move |range, _, cx| {
                                     let start = range.start;
-                                    let is_templ_render = range.start == 0 && range.end == 1;
 
                                     let items = &items_clone[range];
 
@@ -1044,9 +1043,7 @@ impl Render for PlaylistView {
                                         .map(|(idx, item)| {
                                             let idx = idx + start;
 
-                                            if !is_templ_render {
-                                                prune_views(&views_model, &render_counter, idx, cx);
-                                            }
+                                            prune_views_keyed(&views_model, &rendered_keys, &[idx], cx);
 
                                             let drag_drop_manager = drag_drop_manager.clone();
                                             let list_id = list_id.clone();

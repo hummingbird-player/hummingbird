@@ -30,7 +30,7 @@ use crate::{
         },
         models::Models,
         theme::Theme,
-        util::{create_or_retrieve_view, prune_views},
+        util::{create_or_retrieve_view, prune_views_keyed},
     },
 };
 use column_resize_handle::column_resize_handle;
@@ -48,12 +48,14 @@ type RowMap<T, C> = FxHashMap<usize, Entity<TableItem<T, C>>>;
 
 const LIST_PREFETCH_ITEMS: usize = 5;
 
-fn list_prefetch_range(visible: Range<usize>, item_count: usize) -> Range<usize> {
-    visible.start.saturating_sub(LIST_PREFETCH_ITEMS)
-        ..visible
-            .end
-            .saturating_add(LIST_PREFETCH_ITEMS)
-            .min(item_count)
+/// How far past the visible rows the list loads rows.
+fn prefetch_margin(viewport_rows: usize, movement: usize) -> usize {
+    movement.clamp(LIST_PREFETCH_ITEMS, viewport_rows.max(LIST_PREFETCH_ITEMS))
+}
+
+/// All rows the list keeps cached and loading for a visible range.
+fn list_prefetch_range(visible: Range<usize>, item_count: usize, margin: usize) -> Range<usize> {
+    visible.start.saturating_sub(margin)..visible.end.saturating_add(margin).min(item_count)
 }
 
 #[allow(type_alias_bounds)]
@@ -86,7 +88,9 @@ where
     // preserves hidden column widths, even if not shown
     hidden_column_widths: Entity<FxHashMap<C, f32>>,
     views: Entity<RowMap<T, C>>,
-    render_counter: Entity<usize>,
+    rendered_keys: Entity<Option<Vec<usize>>>,
+    /// Start of the visible range during the previous render pass, used to size the prefetch margin.
+    previous_list_start: Entity<Option<usize>>,
 
     grid_views: Entity<FxHashMap<usize, Entity<grid_item::GridItem<T, C>>>>,
     view_mode: Entity<TableViewMode>,
@@ -131,7 +135,8 @@ where
             let columns = cx.new(|_| Arc::new(initial_columns));
             let hidden_column_widths = cx.new(|_| initial_hidden);
             let views = cx.new(|_| FxHashMap::default());
-            let render_counter = cx.new(|_| 0);
+            let rendered_keys = cx.new(|_| None);
+            let previous_list_start = cx.new(|_| None);
 
             let grid_views = cx.new(|_| FxHashMap::default());
             let initial_view_mode = match initial_settings.map(|s| s.view_mode) {
@@ -172,7 +177,9 @@ where
             cx.observe(&items, |this: &mut Table<T, C>, items, cx| {
                 if items.read(cx).ready().is_some() {
                     this.views.update(cx, |views, _| views.clear());
-                    this.render_counter.update(cx, |counter, _| *counter = 0);
+                    this.rendered_keys.update(cx, |keys, _| *keys = None);
+                    this.previous_list_start
+                        .update(cx, |start, _| *start = None);
                     this.grid_views.update(cx, |views, _| views.clear());
                 }
                 cx.notify();
@@ -222,7 +229,8 @@ where
                 columns,
                 hidden_column_widths,
                 views,
-                render_counter,
+                rendered_keys,
+                previous_list_start,
                 grid_views,
                 view_mode,
                 grid_scroll_handle,
@@ -626,7 +634,8 @@ where
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let items = self.items.read(cx).ready().cloned();
         let views_model = self.views.clone();
-        let render_counter = self.render_counter.clone();
+        let rendered_keys = self.rendered_keys.clone();
+        let previous_list_start = self.previous_list_start.clone();
         let grid_views_model = self.grid_views.clone();
         let grid_views_to_prune = self.grid_views.clone();
         let view_mode = *self.view_mode.read(cx);
@@ -662,11 +671,25 @@ where
                                 uniform_list("table-list", items_len, move |range, _, cx| {
                                     let start = range.start;
                                     let end = range.end;
-                                    let is_templ_render = range.start == 0 && range.end == 1;
-                                    let materialized_range = if is_templ_render {
+                                    // uniform_list renders a single row to measure it, which must
+                                    // not pull prefetch rows into the cache.
+                                    let is_measurement = start == 0 && end == 1;
+                                    let materialized_range = if is_measurement {
                                         range
                                     } else {
-                                        list_prefetch_range(range, items_len)
+                                        let movement =
+                                            previous_list_start.update(cx, |previous, _| {
+                                                let movement = previous.map_or(0, |previous| {
+                                                    range.start.abs_diff(previous)
+                                                });
+                                                *previous = Some(range.start);
+                                                movement
+                                            });
+                                        list_prefetch_range(
+                                            range,
+                                            items_len,
+                                            prefetch_margin(end - start, movement),
+                                        )
                                     };
                                     let get_view = |idx: usize, cx: &mut App| {
                                         create_or_retrieve_view(
@@ -686,27 +709,18 @@ where
                                         )
                                     };
 
-                                    for idx in materialized_range.start..start {
-                                        prune_views(&views_model, &render_counter, idx, cx);
+                                    // every row in the window stays cached, everything else is
+                                    // released once the render pass finishes
+                                    let requested: Vec<usize> =
+                                        materialized_range.clone().collect();
+                                    prune_views_keyed(&views_model, &rendered_keys, &requested, cx);
+                                    for idx in materialized_range {
                                         let _ = get_view(idx, cx);
                                     }
 
-                                    let elements = (start..end)
-                                        .map(|idx| {
-                                            if !is_templ_render {
-                                                prune_views(&views_model, &render_counter, idx, cx);
-                                            }
-
-                                            get_view(idx, cx).into_any_element()
-                                        })
-                                        .collect();
-
-                                    for idx in end..materialized_range.end {
-                                        prune_views(&views_model, &render_counter, idx, cx);
-                                        let _ = get_view(idx, cx);
-                                    }
-
-                                    elements
+                                    (start..end)
+                                        .map(|idx| get_view(idx, cx).into_any_element())
+                                        .collect()
                                 })
                                 .track_scroll(&list_vertical_scroll_handle)
                                 .w_full()
@@ -872,17 +886,5 @@ where
                         .right(px(14.0)),
                 )
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::list_prefetch_range;
-
-    #[test]
-    fn list_prefetch_range_extends_and_clamps_both_sides() {
-        assert_eq!(list_prefetch_range(10..20, 100), 5..25);
-        assert_eq!(list_prefetch_range(0..10, 100), 0..15);
-        assert_eq!(list_prefetch_range(95..100, 100), 90..100);
     }
 }

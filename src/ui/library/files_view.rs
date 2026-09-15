@@ -30,7 +30,7 @@ use crate::{
         },
         constants::INNER_PANEL_GAP,
         library::library_view_header::LibraryViewHeader,
-        util::{create_or_retrieve_view, prune_views},
+        util::{create_or_retrieve_view, prune_views_keyed},
     },
 };
 
@@ -49,7 +49,7 @@ pub struct FilesView {
     anchor: Option<PathBuf>,
     scroll_handle: UniformListScrollHandle,
     row_views: Entity<FxHashMap<usize, Entity<FileRowItem>>>,
-    render_counter: Entity<usize>,
+    rendered_keys: Entity<Option<Vec<usize>>>,
     loaded_dirs: VecDeque<PathBuf>,
     dir_child_counts: FxHashMap<PathBuf, usize>,
     cached_node_count: usize,
@@ -100,7 +100,7 @@ impl FilesView {
                 anchor: None,
                 scroll_handle,
                 row_views: cx.new(|_| FxHashMap::default()),
-                render_counter: cx.new(|_| 0_usize),
+                rendered_keys: cx.new(|_| None),
                 loaded_dirs: VecDeque::new(),
                 dir_child_counts: FxHashMap::default(),
                 cached_node_count: 0,
@@ -450,7 +450,7 @@ impl FilesView {
 
     fn clear_view_cache(&mut self, cx: &mut Context<Self>) {
         self.row_views.update(cx, |m, _| m.clear());
-        self.render_counter.update(cx, |c, _| *c = 0);
+        self.rendered_keys.update(cx, |keys, _| *keys = None);
     }
 
     fn poll_bridges(&mut self, cx: &mut Context<Self>) {
@@ -495,7 +495,7 @@ impl Render for FilesView {
 
         let flat = self.flat.clone();
         let row_views = self.row_views.clone();
-        let render_counter = self.render_counter.clone();
+        let rendered_keys = self.rendered_keys.clone();
         let scroll_handle = self.scroll_handle.clone();
         let self_entity = cx.entity();
 
@@ -535,7 +535,7 @@ impl Render for FilesView {
                     move |range: std::ops::Range<usize>, _window, cx| {
                         range
                             .map(|idx| {
-                                prune_views(&row_views, &render_counter, idx, cx);
+                                prune_views_keyed(&row_views, &rendered_keys, &[idx], cx);
 
                                 let row = flat[idx].clone();
                                 let fv = self_entity.clone();

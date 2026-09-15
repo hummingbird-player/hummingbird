@@ -11,47 +11,6 @@ use gpui::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::debug;
 
-pub fn prune_views<T>(
-    views_model: &Entity<FxHashMap<usize, Entity<T>>>,
-    render_counter: &Entity<usize>,
-    current: usize,
-    cx: &mut App,
-) -> bool
-where
-    T: Render,
-{
-    let last = *render_counter.read(cx);
-    let mut to_remove: Vec<usize> = Vec::new();
-    let mut did_remove = false;
-
-    // determine whether or not we are at the start of a new render cycle
-    if current < last {
-        // we are at the start of a new render cycle
-        // prune views that are no longer in the bounds (current..last)
-        // don't prune the first view so this still works with uniform_list
-        for idx in views_model.read(cx).keys() {
-            if (*idx < current || *idx >= (last + 1)) && *idx != 0_usize {
-                to_remove.push(*idx);
-            }
-        }
-    }
-
-    for idx in to_remove {
-        did_remove = true;
-        views_model.update(cx, |m, _| {
-            debug!("Removing view at index: {}", idx);
-            m.remove(&idx);
-        });
-    }
-
-    // update the render counter
-    render_counter.update(cx, |m, _| {
-        *m = current;
-    });
-
-    did_remove
-}
-
 /// Prunes ID-keyed views after the render cycle, retaining all keys requested by the list.
 /// Keep `rendered_keys` alongside `views_model` and pass the keys from each rendered range.
 pub fn prune_views_keyed<T>(
