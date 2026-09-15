@@ -231,6 +231,10 @@ impl PlaylistView {
                     ))
                 });
 
+            cx.observe(&playlist, |_, _, cx| cx.notify()).detach();
+            cx.observe(&playlist_track_ids, |_, _, cx| cx.notify())
+                .detach();
+
             cx.subscribe(
                 &playlist_tracker,
                 move |this: &mut Self, _, ev: &PlaylistEvent, cx| {
@@ -622,6 +626,7 @@ impl Render for PlaylistView {
             })
             .flex()
             .flex_col()
+            .w_full()
             .flex_shrink(1.0)
             .overflow_x_hidden()
             .when(!full_width, |this| this.max_w(px(TABLE_MAX_WIDTH)))
