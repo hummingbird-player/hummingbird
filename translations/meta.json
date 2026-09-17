@@ -313,7 +313,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:867",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:870",
     "plural": false,
     "description": null
   },
@@ -421,7 +421,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:876",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:879",
     "plural": false,
     "description": null
   },
@@ -433,13 +433,13 @@
   },
   "DELETE_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:730",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:733",
     "plural": false,
     "description": null
   },
   "DELETE_PLAYLIST_CONFIRM": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:708",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:711",
     "plural": false,
     "description": null
   },
@@ -601,7 +601,7 @@
   },
   "EXPORT_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:691",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:694",
     "plural": false,
     "description": null
   },
@@ -853,7 +853,7 @@
   },
   "LIKED_SONGS": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:424",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:427",
     "plural": false,
     "description": null
   },
@@ -883,7 +883,7 @@
   },
   "NEW_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:815",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:818",
     "plural": false,
     "description": null
   },
@@ -1003,7 +1003,7 @@
   },
   "PLAYLIST_TRACK_COUNT": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:462",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:465",
     "plural": true,
     "description": null
   },
@@ -1105,13 +1105,13 @@
   },
   "RENAME": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:788",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:791",
     "plural": false,
     "description": null
   },
   "RENAME_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:663",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:666",
     "plural": false,
     "description": null
   },

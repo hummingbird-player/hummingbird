@@ -69,6 +69,9 @@ impl PlaylistList {
 
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
 
+            cx.observe(&playlists_resource, |_, _, cx| cx.notify())
+                .detach();
+
             cx.subscribe(
                 &playlist_tracker,
                 |this: &mut Self, _, _: &PlaylistEvent, cx| {
