@@ -8,7 +8,6 @@ readme = "README.md"
 categories = ["multimedia::audio"]
 
 [features]
-runtime_shaders = ["gpui_platform/runtime_shaders"]
 console = ["dep:console-subscriber", "tokio/tracing"]
 # Use the system allocator so Heaptrack can observe Rust allocations, and avoid loading PipeWire
 # concurrently with the GPU driver during startup.

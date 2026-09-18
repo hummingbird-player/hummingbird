@@ -173,59 +173,28 @@ impl PaletteItem for SearchPaletteItem {
         )
     }
 
-    fn on_context_menu_open(&self, window: &mut Window, cx: &mut App) {
-        match self {
-            SearchPaletteItem::Album { id, .. } => {
-                let album_id = *id;
-                let resource: Entity<Entity<AsyncResource<i64, Album>>> =
-                    window.use_keyed_state(("pi_context_album", album_id as usize), cx, |_, cx| {
-                        AsyncResource::pending(cx, album_id)
-                    });
-                let resource = resource.read(cx).clone();
-                let pool = cx.global::<Pool>().0.clone();
-                resource.update(cx, |resource, cx| {
-                    resource.load(cx, album_id, async move {
-                        albums()
-                            .by_id(album_id)
-                            .fetch(&pool)
-                            .await
-                            .map_err(Into::into)
-                    });
-                });
-            }
-            SearchPaletteItem::Track { id, .. } => {
-                let track_id = *id;
-                let resource: SearchTrackContextResource =
-                    window.use_keyed_state(("pi_context_track", track_id as usize), cx, |_, cx| {
-                        AsyncResource::pending(cx, track_id)
-                    });
-                let resource = resource.read(cx).clone();
-                let pool = cx.global::<Pool>().0.clone();
-                resource.update(cx, |resource, cx| {
-                    resource.load(cx, track_id, async move {
-                        let track = tracks().by_id(track_id).fetch(&pool).await?;
-                        let is_liked = playlists()
-                            .by_id(LIKED_SONGS_PLAYLIST_ID)
-                            .playlist_item(track_id)
-                            .fetch_playlist_item_id(&pool)
-                            .await?;
-                        Ok((track, is_liked))
-                    });
-                });
-            }
-            SearchPaletteItem::Artist { .. } => {}
-        }
-    }
-
     fn context_menu(&self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
         match self {
             SearchPaletteItem::Album { id, available, .. } => {
                 let album_id = *id;
                 let available = *available;
-                let album: Entity<Entity<AsyncResource<i64, Album>>> =
-                    window.use_keyed_state(("pi_context_album", album_id as usize), cx, |_, cx| {
-                        AsyncResource::pending(cx, album_id)
-                    });
+                let pool = cx.global::<Pool>().0.clone();
+                let album: Entity<Entity<AsyncResource<i64, Album>>> = window.use_keyed_state(
+                    ("pi_context_album", album_id as usize),
+                    cx,
+                    move |_, cx| {
+                        let resource = AsyncResource::new(cx, album_id, async move {
+                            albums()
+                                .by_id(album_id)
+                                .fetch(&pool)
+                                .await
+                                .map_err(Into::into)
+                        });
+
+                        cx.observe(&resource, |_, _, cx| cx.notify()).detach();
+                        resource
+                    },
+                );
                 let album = album.read(cx).read(cx).ready().cloned();
                 if let Some(album) = album {
                     let (show_add_to, _) = add_album_to_playlist_state(
@@ -251,10 +220,24 @@ impl PaletteItem for SearchPaletteItem {
             }
             SearchPaletteItem::Track { id, .. } => {
                 let track_id = *id;
-                let track: SearchTrackContextResource =
-                    window.use_keyed_state(("pi_context_track", track_id as usize), cx, |_, cx| {
-                        AsyncResource::pending(cx, track_id)
-                    });
+                let pool = cx.global::<Pool>().0.clone();
+                let track: SearchTrackContextResource = window.use_keyed_state(
+                    ("pi_context_track", track_id as usize),
+                    cx,
+                    move |_, cx| {
+                        let resource = AsyncResource::new(cx, track_id, async move {
+                            let track = tracks().by_id(track_id).fetch(&pool).await?;
+                            let is_liked = playlists()
+                                .by_id(LIKED_SONGS_PLAYLIST_ID)
+                                .playlist_item(track_id)
+                                .fetch_playlist_item_id(&pool)
+                                .await?;
+                            Ok((track, is_liked))
+                        });
+                        cx.observe(&resource, |_, _, cx| cx.notify()).detach();
+                        resource
+                    },
+                );
                 let track = track.read(cx).read(cx).ready().cloned();
                 if let Some((track, is_liked)) = track {
                     let (show_add_to, _) =

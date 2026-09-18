@@ -278,7 +278,7 @@ impl RenderOnce for BandEditor {
                 .snap_to_window_with_margin(px(8.0))
                 .child(panel),
         )
-        .with_priority(1)
+        .priority(1)
     }
 }
 

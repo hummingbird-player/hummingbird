@@ -40,7 +40,6 @@ pub trait PaletteItem {
     fn has_context_menu(&self) -> bool {
         false
     }
-    fn on_context_menu_open(&self, _window: &mut Window, _cx: &mut App) {}
     fn context_menu(&self, _window: &mut Window, _cx: &mut App) -> Option<impl IntoElement> {
         None::<Div>
     }
@@ -958,14 +957,8 @@ where
 
         let base = if has_context_menu {
             let item_data = self.item_data.clone();
-            let item_data_for_open = self.item_data.clone();
             context((self.id.clone(), "context_menu"))
                 .with(item)
-                .on_open(move |window, cx| {
-                    if let Some(item) = &item_data_for_open {
-                        item.on_context_menu_open(window, cx);
-                    }
-                })
                 .try_menu_on_open(move |window, cx| {
                     item_data
                         .as_ref()
