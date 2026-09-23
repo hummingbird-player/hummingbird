@@ -76,6 +76,21 @@ where
             cx.notify();
         }
     }
+
+    pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
+        let id = self.row.read(cx).key().clone();
+        let key = id.clone();
+        let pool = cx.global::<Pool>().0.clone();
+        let load_row = async move {
+            Ok(T::load_row(pool, id, Vec::new())
+                .await?
+                .map(|(row, state)| (row, Arc::new(state))))
+        };
+        self.row.update(cx, |row, cx| {
+            row.load(cx, key, load_row);
+        });
+        cx.notify();
+    }
 }
 
 impl<T, C> Render for GridItem<T, C>

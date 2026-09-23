@@ -224,7 +224,6 @@ impl ArtistDetailView {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
-        self.loaded = false;
         let artist_id = self.artist_id;
         let liked_sort = self.liked_sort;
         let standalone_sort = self.standalone_sort;

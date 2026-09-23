@@ -295,13 +295,13 @@
   },
   "ARTIST_ALBUMS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:895",
+    "definedIn": "src/ui/library/artist_detail_view.rs:894",
     "plural": false,
     "description": null
   },
   "ARTIST_LIKED_TRACKS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:583",
+    "definedIn": "src/ui/library/artist_detail_view.rs:582",
     "plural": false,
     "description": null
   },
@@ -607,7 +607,7 @@
   },
   "EXPORT_PLAYLIST_TO_M3U": {
     "context": "playlist_view.rs",
-    "definedIn": "src/ui/library/playlist_view.rs:282",
+    "definedIn": "src/ui/library/playlist_view.rs:285",
     "plural": false,
     "description": null
   },
@@ -1591,7 +1591,7 @@
   },
   "SORT_ASCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:643",
+    "definedIn": "src/ui/library/artist_detail_view.rs:642",
     "plural": false,
     "description": null
   },
@@ -1603,7 +1603,7 @@
   },
   "SORT_DESCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:648",
+    "definedIn": "src/ui/library/artist_detail_view.rs:647",
     "plural": false,
     "description": null
   },
@@ -1615,19 +1615,19 @@
   },
   "SORT_RECENTLY_ADDED": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:659",
+    "definedIn": "src/ui/library/artist_detail_view.rs:658",
     "plural": false,
     "description": null
   },
   "SORT_RELEASE_ORDER": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:667",
+    "definedIn": "src/ui/library/artist_detail_view.rs:666",
     "plural": false,
     "description": null
   },
   "SORT_TITLE": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:663",
+    "definedIn": "src/ui/library/artist_detail_view.rs:662",
     "plural": false,
     "description": null
   },

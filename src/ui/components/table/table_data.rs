@@ -89,7 +89,7 @@ pub trait TableData<C>: Sized + Send + Sync + 'static
 where
     C: Column,
 {
-    type Identifier: Clone + Debug + Send + Sync + 'static;
+    type Identifier: Clone + Debug + PartialEq + Send + Sync + 'static;
     type ContextMenuContext: Clone;
     type RowState: Clone + Default + Send + Sync + 'static;
 

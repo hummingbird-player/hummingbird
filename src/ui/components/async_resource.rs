@@ -20,8 +20,9 @@ type ResourceBridge<T> = Arc<OnceLock<ResourceResult<T>>>;
 
 /// Owns a keyed asynchronous request for a GPUI view.
 ///
-/// Replacement cancels the task and invalidates stale results. `ready` can read a
-/// completed background result before GPUI publishes its state update.
+/// Replacement cancels the task and invalidates stale results while preserving the
+/// current state until the replacement completes. `ready` can read a completed
+/// background result before GPUI publishes its state update.
 pub struct AsyncResource<K, T> {
     key: K,
     generation: u64,
@@ -65,7 +66,8 @@ where
     /// Replaces the current request, including when `key` is unchanged.
     ///
     /// Treating reload as an explicit operation lets callers refresh a resource after
-    /// external changes without manufacturing a different key.
+    /// external changes without manufacturing a different key. Existing state remains
+    /// visible until the replacement completes.
     pub fn load<F>(&mut self, cx: &mut Context<Self>, key: K, future: F)
     where
         F: Future<Output = anyhow::Result<T>> + Send + 'static,
@@ -101,13 +103,15 @@ where
     where
         F: Future<Output = anyhow::Result<T>> + Send + 'static,
     {
+        let notify_pending =
+            self.request.is_none() && matches!(&self.state, AsyncResourceState::Pending);
+
         if let Some(request) = self.request.take() {
             request.abort();
         }
 
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
-        self.state = AsyncResourceState::Pending;
 
         let bridge: ResourceBridge<T> = Arc::new(OnceLock::new());
         self.bridge = Some(bridge.clone());
@@ -159,7 +163,9 @@ where
         })
         .detach();
 
-        cx.notify();
+        if notify_pending {
+            cx.notify();
+        }
     }
 }
 
@@ -293,6 +299,42 @@ mod tests {
         let notification_count = notifications.load(Ordering::SeqCst);
         cx.run_until_parked();
         assert_eq!(notifications.load(Ordering::SeqCst), notification_count);
+    }
+
+    #[gpui::test]
+    async fn refetch_preserves_previous_state_until_new_result_is_ready(cx: &mut TestAppContext) {
+        let (initial_finished_tx, initial_finished_rx) = mpsc::channel();
+        let resource = AsyncResource::new(cx, "initial", async move {
+            initial_finished_tx.send(()).unwrap();
+            Ok(1)
+        });
+        wait_for(initial_finished_rx);
+        cx.condition(&resource, |resource, _| {
+            matches!(resource.state(), AsyncResourceState::Ready(1))
+        })
+        .await;
+
+        let (refetch_started_tx, refetch_started_rx) = mpsc::channel();
+        let (refetch_release_tx, refetch_release_rx) = tokio::sync::oneshot::channel();
+        resource.update(cx, |resource, cx| {
+            resource.load(cx, "refetched", async move {
+                refetch_started_tx.send(()).unwrap();
+                refetch_release_rx.await.unwrap();
+                Ok(2)
+            });
+        });
+        wait_for(refetch_started_rx);
+
+        cx.read_entity(&resource, |resource, _| {
+            assert!(matches!(resource.state(), AsyncResourceState::Ready(1)));
+            assert_eq!(resource.ready(), Some(&1));
+        });
+
+        refetch_release_tx.send(()).unwrap();
+        cx.condition(&resource, |resource, _| {
+            matches!(resource.state(), AsyncResourceState::Ready(2))
+        })
+        .await;
     }
 
     #[gpui::test]

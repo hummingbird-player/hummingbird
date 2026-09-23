@@ -97,6 +97,8 @@ where
     grid_scroll_handle: UniformListScrollHandle,
 
     items: ItemListResource<T, C>,
+    /// Identifier snapshot used to retain cached row views across list refetches.
+    applied_items: Option<Arc<Vec<T::Identifier>>>,
     sort_method: Entity<Option<TableSort<C>>>,
     on_select: Option<OnSelectHandler<T, C>>,
     list_vertical_scroll_handle: UniformListScrollHandle,
@@ -175,12 +177,13 @@ where
             }
 
             cx.observe(&items, |this: &mut Table<T, C>, items, cx| {
-                if items.read(cx).ready().is_some() {
-                    this.views.update(cx, |views, _| views.clear());
-                    this.rendered_keys.update(cx, |keys, _| *keys = None);
-                    this.previous_list_start
-                        .update(cx, |start, _| *start = None);
-                    this.grid_views.update(cx, |views, _| views.clear());
+                if let Some(next_items) = items.read(cx).ready().cloned() {
+                    let previous_items = this.applied_items.replace(next_items.clone());
+                    this.refresh_cached_rows(
+                        previous_items.as_deref().map(Vec::as_slice),
+                        next_items.as_slice(),
+                        cx,
+                    );
                 }
                 cx.notify();
             })
@@ -235,6 +238,7 @@ where
                 view_mode,
                 grid_scroll_handle,
                 items,
+                applied_items: None,
                 sort_method,
                 on_select,
                 list_vertical_scroll_handle,
@@ -243,6 +247,55 @@ where
                 body,
             }
         })
+    }
+
+    fn refresh_cached_rows(
+        &mut self,
+        previous_items: Option<&[T::Identifier]>,
+        next_items: &[T::Identifier],
+        cx: &mut Context<Self>,
+    ) {
+        // keeps existing rows to prevent flickering
+        let same_item = |index: usize| {
+            previous_items
+                .and_then(|items| items.get(index))
+                .zip(next_items.get(index))
+                .is_some_and(|(previous, next)| previous == next)
+        };
+
+        let cached_list_views = self
+            .views
+            .read(cx)
+            .iter()
+            .filter(|(index, _)| same_item(**index))
+            .map(|(_, view)| view.clone())
+            .collect::<Vec<_>>();
+        self.views
+            .update(cx, |views, _| views.retain(|index, _| same_item(*index)));
+
+        let cached_grid_views = self
+            .grid_views
+            .read(cx)
+            .iter()
+            .filter(|(index, _)| same_item(**index))
+            .map(|(_, view)| view.clone())
+            .collect::<Vec<_>>();
+        self.grid_views
+            .update(cx, |views, _| views.retain(|index, _| same_item(*index)));
+
+        let row_set_changed = previous_items.is_none_or(|items| items != next_items);
+        if row_set_changed {
+            self.rendered_keys.update(cx, |keys, _| *keys = None);
+            self.previous_list_start
+                .update(cx, |start, _| *start = None);
+        }
+
+        for view in cached_list_views {
+            view.update(cx, |view, cx| view.reload(cx));
+        }
+        for view in cached_grid_views {
+            view.update(cx, |view, cx| view.reload(cx));
+        }
     }
 
     fn reload_rows(&mut self, cx: &mut Context<Self>) {

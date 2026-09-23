@@ -230,8 +230,14 @@ impl PlaylistView {
                 });
 
             cx.observe(&playlist, |_, _, cx| cx.notify()).detach();
-            cx.observe(&playlist_track_ids, |_, _, cx| cx.notify())
-                .detach();
+            cx.observe(&playlist_track_ids, |this: &mut Self, resource, cx| {
+                if resource.read(cx).ready().is_some() {
+                    this.views = cx.new(|_| FxHashMap::default());
+                    this.rendered_keys = cx.new(|_| None);
+                }
+                cx.notify();
+            })
+            .detach();
 
             cx.subscribe(
                 &playlist_tracker,
@@ -260,9 +266,6 @@ impl PlaylistView {
                                 ))
                             });
                         });
-
-                        this.views = cx.new(|_| FxHashMap::default());
-                        this.rendered_keys = cx.new(|_| None);
                     }
                 },
             )
@@ -344,9 +347,6 @@ impl PlaylistView {
                 ))
             });
         });
-        self.views = cx.new(|_| FxHashMap::default());
-        self.rendered_keys = cx.new(|_| None);
-
         let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
         playlist_sort_methods.update(cx, |map, _| {
             map.insert(self.playlist_id, method);

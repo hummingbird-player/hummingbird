@@ -108,6 +108,22 @@ where
             }
         })
     }
+
+    pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
+        let id = self.identifier.clone();
+        let visible_columns = self.columns.keys().copied().collect::<Vec<_>>();
+        let pool = cx.global::<Pool>().0.clone();
+        let key = (id.clone(), visible_columns.clone());
+        let load_row = async move {
+            Ok(T::load_row(pool, id, visible_columns)
+                .await?
+                .map(|(row, state)| (row, Arc::new(state))))
+        };
+        self.row.update(cx, |row, cx| {
+            row.load(cx, key, load_row);
+        });
+        cx.notify();
+    }
 }
 
 impl<T, C> Render for TableItem<T, C>
