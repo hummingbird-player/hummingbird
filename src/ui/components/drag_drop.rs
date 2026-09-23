@@ -194,6 +194,7 @@ impl DragDropListManager {
     }
 }
 
+// remember: -CE models drops differently than upstream
 /// Visual state for a single item in a drag-drop list.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DragDropItemState {

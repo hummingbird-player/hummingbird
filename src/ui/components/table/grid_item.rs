@@ -9,9 +9,7 @@ use super::{
 use crate::ui::{
     app::Pool,
     components::{
-        async_resource::AsyncResource,
-        context::context,
-        drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+        async_resource::AsyncResource, context::context, drag_drop::DragPreview,
         managed_image::managed_image,
     },
     models::Models,
@@ -150,19 +148,15 @@ where
         container = match drag_data {
             Some(TableDragData::Track(track_data)) => {
                 let display_name = track_data.display_name.clone();
-                container
-                    .on_drag(track_data, move |_, _, _, cx| {
-                        DragPreview::new(cx, display_name.clone())
-                    })
-                    .drag_over::<TrackDragData>(|style, _, _, _| style.bg(gpui::rgba(0x88888822)))
+                container.on_drag(track_data, move |_, _, _, cx| {
+                    DragPreview::new(cx, display_name.clone())
+                })
             }
             Some(TableDragData::Album(album_data)) => {
                 let display_name = album_data.display_name.clone();
-                container
-                    .on_drag(album_data, move |_, _, _, cx| {
-                        DragPreview::new(cx, display_name.clone())
-                    })
-                    .drag_over::<AlbumDragData>(|style, _, _, _| style.bg(gpui::rgba(0x88888822)))
+                container.on_drag(album_data, move |_, _, _, cx| {
+                    DragPreview::new(cx, display_name.clone())
+                })
             }
             None => container,
         };

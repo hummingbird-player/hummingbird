@@ -488,7 +488,6 @@ impl Render for PlaylistList {
                         DragData::new(idx, PLAYLIST_SIDEBAR_LIST_ID),
                         move |_, _, _, cx| DragPreview::new(cx, drag_label.clone()),
                     )
-                    .drag_over::<DragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
                 })
                 .drag_over::<TrackDragData>(|style, _, _, _| style.bg(rgba(0x88888822)))
                 .drag_over::<AlbumDragData>(|style, _, _, _| style.bg(rgba(0x88888822)))

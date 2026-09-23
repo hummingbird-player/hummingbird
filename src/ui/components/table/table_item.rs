@@ -15,9 +15,7 @@ use super::{
 use crate::ui::{
     app::Pool,
     components::{
-        async_resource::AsyncResource,
-        context::context,
-        drag_drop::{AlbumDragData, DragPreview, TrackDragData},
+        async_resource::AsyncResource, context::context, drag_drop::DragPreview,
         managed_image::managed_image,
     },
     models::Models,
@@ -186,14 +184,12 @@ where
                 row.on_drag(track_data, move |_, _, _, cx| {
                     DragPreview::new(cx, display_name.clone())
                 })
-                .drag_over::<TrackDragData>(|style, _, _, _| style.bg(gpui::rgba(0x88888822)))
             }
             Some(TableDragData::Album(album_data)) => {
                 let display_name = album_data.display_name.clone();
                 row.on_drag(album_data, move |_, _, _, cx| {
                     DragPreview::new(cx, display_name.clone())
                 })
-                .drag_over::<AlbumDragData>(|style, _, _, _| style.bg(gpui::rgba(0x88888822)))
             }
             None => row,
         };

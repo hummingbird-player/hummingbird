@@ -443,9 +443,6 @@ impl Render for QueueItem {
                             div.on_drag(drag_data, move |_, _, _, cx| {
                                 DragPreview::new(cx, track_name.clone())
                             })
-                            .drag_over::<TrackDragData>(
-                                move |style, _, _, _| style.bg(gpui::rgba(0x88888822)),
-                            )
                         })
                         .on_aux_click(move |ev: &ClickEvent, _, cx| {
                             if ev.is_right_click() && !selection_for_aux.read(cx).contains(idx) {

@@ -4,8 +4,7 @@ use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, DragMoveEvent, Entity, FocusHandle, FontWeight, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder, px, rems, rgba,
-    uniform_list,
+    UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder, px, rems, uniform_list,
 };
 use rustc_hash::FxHashMap;
 use tracing::error;
@@ -156,7 +155,6 @@ impl Render for PlaylistTrackItem {
             .h(px(PLAYLIST_ITEM_HEIGHT))
             .relative()
             .when(item_state.is_being_dragged, |d| d.opacity(0.5))
-            .drag_over::<TrackDragData>(move |style, _, _, _| style.bg(rgba(0x88888822)))
             .child(DropIndicator::with_state(
                 item_state.is_drop_target_before,
                 item_state.is_drop_target_after,
