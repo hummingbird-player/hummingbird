@@ -323,6 +323,9 @@ mod tests {
                 Ok(2)
             });
         });
+        let bridge = cx.read_entity(&resource, |resource, _| {
+            resource.bridge.as_ref().unwrap().clone()
+        });
         wait_for(refetch_started_rx);
 
         cx.read_entity(&resource, |resource, _| {
@@ -331,6 +334,8 @@ mod tests {
         });
 
         refetch_release_tx.send(()).unwrap();
+        wait_for_bridge(&bridge);
+
         cx.condition(&resource, |resource, _| {
             matches!(resource.state(), AsyncResourceState::Ready(2))
         })
