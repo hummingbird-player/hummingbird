@@ -76,7 +76,7 @@
         formatter = pkgs.alejandra;
         apps = builtins.mapAttrs (_: pkg: {program = pkg + /bin/hummingbird;}) self'.packages;
         packages.default = craneLib.buildPackage (mkArgs (prev: {
-          CARGO_PROFILE = "release-distro";
+          CARGO_PROFILE = "release";
           nativeBuildInputs =
             prev.nativeBuildInputs
             ++ [
