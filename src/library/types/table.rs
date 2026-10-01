@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use cntp_i18n::{Date, I18N_MANAGER, ListFunction, StringModifier, tr};
@@ -14,6 +14,7 @@ pub use crate::library::db::{AlbumColumn, ArtistColumn, TrackColumn};
 use crate::{
     library::db::{SortDirection, albums, artists, tracks},
     media::numbering::{NumberDisplayMode, format_track_table_position},
+    settings::storage::TableSettings,
     ui::{
         availability::{is_track_available, snapshot},
         components::{
@@ -117,6 +118,75 @@ fn format_genres(genres: &[Genre]) -> Option<SharedString> {
     )
 }
 
+pub fn migrate_legacy_table_settings(settings: &mut HashMap<String, TableSettings>) {
+    for (key, mut entry) in std::mem::take(settings) {
+        let table_key = migrate_legacy_table_entry::<Album, AlbumColumn>(&key, &mut entry)
+            .or_else(|| migrate_legacy_table_entry::<Track, TrackColumn>(&key, &mut entry))
+            .or_else(|| {
+                migrate_legacy_table_entry::<ArtistWithCounts, ArtistColumn>(&key, &mut entry)
+            });
+
+        match table_key {
+            Some(table_key) => {
+                settings.insert(table_key.to_owned(), entry);
+            }
+            None => {
+                settings.insert(key, entry);
+            }
+        }
+    }
+}
+
+/// Migrates tables away from locale-dependent configuration keys.
+fn migrate_legacy_table_entry<T, C>(key: &str, entry: &mut TableSettings) -> Option<&'static str>
+where
+    T: TableData<C>,
+    C: Column,
+{
+    let table_key = T::get_table_key();
+    if key != table_key && T::get_table_name() != key {
+        return None;
+    }
+
+    let resolve = |name: &str| -> Option<String> {
+        C::from_ident(name)
+            .map(|column| column.ident().to_owned())
+            .or_else(|| {
+                T::available_columns()
+                    .keys()
+                    .copied()
+                    .find(|column| column.get_column_name() == name)
+                    .map(|column| column.ident().to_owned())
+            })
+    };
+
+    let column_widths = entry
+        .column_widths
+        .iter()
+        .filter_map(|(name, width)| resolve(name).map(|ident| (ident, *width)))
+        .collect::<HashMap<String, f32>>();
+    let column_order = entry
+        .column_order
+        .iter()
+        .filter_map(|name| resolve(name))
+        .collect::<Vec<String>>();
+    let sort = entry.sort.take().and_then(|mut sort| {
+        resolve(&sort.column).map(|ident| {
+            sort.column = ident;
+            sort
+        })
+    });
+
+    *entry = TableSettings {
+        column_widths,
+        column_order,
+        sort,
+        ..std::mem::take(entry)
+    };
+
+    Some(table_key)
+}
+
 impl Column for AlbumColumn {
     fn get_column_name(&self) -> SharedString {
         match self {
@@ -127,6 +197,29 @@ impl Column for AlbumColumn {
             AlbumColumn::Label => tr!("COLUMN_LABEL", "Label").into(),
             AlbumColumn::CatalogNumber => tr!("COLUMN_CATALOG_NUMBER", "Catalog Number").into(),
         }
+    }
+
+    fn ident(&self) -> &'static str {
+        match self {
+            AlbumColumn::Title => "title",
+            AlbumColumn::Artist => "artist",
+            AlbumColumn::Genres => "genres",
+            AlbumColumn::ReleaseDate => "release_date",
+            AlbumColumn::Label => "label",
+            AlbumColumn::CatalogNumber => "catalog_number",
+        }
+    }
+
+    fn from_ident(ident: &str) -> Option<Self> {
+        Some(match ident {
+            "title" => AlbumColumn::Title,
+            "artist" => AlbumColumn::Artist,
+            "genres" => AlbumColumn::Genres,
+            "release_date" => AlbumColumn::ReleaseDate,
+            "label" => AlbumColumn::Label,
+            "catalog_number" => AlbumColumn::CatalogNumber,
+            _ => return None,
+        })
     }
 
     fn is_hideable(&self) -> bool {
@@ -145,6 +238,10 @@ impl TableData<AlbumColumn> for Album {
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ALBUMS", "Albums").into()
+    }
+
+    fn get_table_key() -> &'static str {
+        "albums"
     }
 
     fn load_rows(
@@ -336,6 +433,29 @@ impl Column for TrackColumn {
         }
     }
 
+    fn ident(&self) -> &'static str {
+        match self {
+            TrackColumn::TrackNumber => "track_number",
+            TrackColumn::Title => "title",
+            TrackColumn::Album => "album",
+            TrackColumn::Artist => "artist",
+            TrackColumn::Genres => "genres",
+            TrackColumn::Length => "length",
+        }
+    }
+
+    fn from_ident(ident: &str) -> Option<Self> {
+        Some(match ident {
+            "track_number" => TrackColumn::TrackNumber,
+            "title" => TrackColumn::Title,
+            "album" => TrackColumn::Album,
+            "artist" => TrackColumn::Artist,
+            "genres" => TrackColumn::Genres,
+            "length" => TrackColumn::Length,
+            _ => return None,
+        })
+    }
+
     fn is_hideable(&self) -> bool {
         !matches!(self, TrackColumn::Title)
     }
@@ -352,6 +472,10 @@ impl TableData<TrackColumn> for Track {
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_TRACKS", "Tracks").into()
+    }
+
+    fn get_table_key() -> &'static str {
+        "tracks"
     }
 
     fn load_rows(
@@ -521,6 +645,23 @@ impl Column for ArtistColumn {
         }
     }
 
+    fn ident(&self) -> &'static str {
+        match self {
+            ArtistColumn::Name => "name",
+            ArtistColumn::Albums => "albums",
+            ArtistColumn::Tracks => "tracks",
+        }
+    }
+
+    fn from_ident(ident: &str) -> Option<Self> {
+        Some(match ident {
+            "name" => ArtistColumn::Name,
+            "albums" => ArtistColumn::Albums,
+            "tracks" => ArtistColumn::Tracks,
+            _ => return None,
+        })
+    }
+
     fn is_hideable(&self) -> bool {
         !matches!(self, ArtistColumn::Name)
     }
@@ -537,6 +678,10 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
 
     fn get_table_name() -> SharedString {
         tr!("TABLE_ARTISTS", "Artists").into()
+    }
+
+    fn get_table_key() -> &'static str {
+        "artists"
     }
 
     fn load_rows(

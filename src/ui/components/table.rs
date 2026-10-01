@@ -14,7 +14,7 @@ use crate::{
     settings::{
         SettingsGlobal,
         interface::clamp_grid_min_item_width,
-        storage::{TableSettings, TableViewModeSetting},
+        storage::{TableSettings, TableSortSetting, TableViewModeSetting},
     },
     ui::{
         app::Pool,
@@ -148,12 +148,17 @@ where
             let view_mode = cx.new(|_| initial_view_mode);
             let grid_scroll_handle = UniformListScrollHandle::new();
 
-            let sort_method = cx.new(|_| T::default_sort());
+            let sort_method = cx.new(|_| {
+                initial_settings
+                    .and_then(Self::sort_from_settings)
+                    .or_else(T::default_sort)
+            });
+            let initial_sort = *sort_method.read(cx);
             let list_vertical_scroll_handle = UniformListScrollHandle::new();
             let list_horizontal_scroll_handle = ScrollHandle::new();
             let pool = cx.global::<Pool>().0.clone();
-            let items = AsyncResource::new(cx, None, async move {
-                Ok(Arc::new(T::load_rows(pool, None).await?))
+            let items = AsyncResource::new(cx, initial_sort, async move {
+                Ok(Arc::new(T::load_rows(pool, initial_sort).await?))
             });
 
             if let Some(offset) = initial_scroll_offset {
@@ -190,27 +195,20 @@ where
             .detach();
 
             cx.observe(&sort_method, |this: &mut Table<T, C>, _, cx| {
+                this.save_settings(cx);
                 this.reload_rows(cx);
             })
             .detach();
 
             cx.observe(&columns, |this: &mut Table<T, C>, _, cx| {
-                let settings = this.get_settings(cx);
-                let table_settings_model = cx.global::<Models>().table_settings.clone();
-                table_settings_model.update(cx, |map, _| {
-                    map.insert(T::get_table_name().to_string(), settings);
-                });
+                this.save_settings(cx);
 
                 cx.notify();
             })
             .detach();
 
             cx.observe(&view_mode, |this: &mut Table<T, C>, _, cx| {
-                let settings = this.get_settings(cx);
-                let table_settings_model = cx.global::<Models>().table_settings.clone();
-                table_settings_model.update(cx, |map, _| {
-                    map.insert(T::get_table_name().to_string(), settings);
-                });
+                this.save_settings(cx);
 
                 cx.notify();
             })
@@ -246,6 +244,22 @@ where
                 header,
                 body,
             }
+        })
+    }
+
+    fn save_settings(&self, cx: &mut Context<Self>) {
+        let settings = self.get_settings(cx);
+        let table_settings_model = cx.global::<Models>().table_settings.clone();
+        table_settings_model.update(cx, |map, _| {
+            map.insert(T::get_table_key().to_string(), settings);
+        });
+    }
+
+    fn sort_from_settings(settings: &TableSettings) -> Option<TableSort<C>> {
+        let sort = settings.sort.as_ref()?;
+        Some(TableSort {
+            column: C::from_ident(&sort.column)?,
+            direction: sort.direction,
         })
     }
 
@@ -432,12 +446,13 @@ where
         } else if !settings.hidden_columns.is_empty() {
             legacy_order = default_columns
                 .keys()
+                .copied()
                 .filter(|c| {
                     !settings
                         .hidden_columns
                         .contains(&c.get_column_name().to_string())
                 })
-                .map(|c| c.get_column_name().to_string())
+                .map(|c| c.ident().to_owned())
                 .collect();
             &legacy_order
         } else {
@@ -448,10 +463,8 @@ where
         let mut hidden_widths = FxHashMap::default();
 
         for name in column_order {
-            if let Some((&col, &default_width)) = available_columns
-                .iter()
-                .find(|(c, _)| c.get_column_name() == name.as_str())
-            {
+            if let Some(col) = C::from_ident(name) {
+                let default_width = available_columns.get(&col).copied().unwrap_or(100.0);
                 let width = settings
                     .column_widths
                     .get(name.as_str())
@@ -467,7 +480,7 @@ where
             }
             let width = settings
                 .column_widths
-                .get(col.get_column_name().as_ref())
+                .get(col.ident())
                 .copied()
                 .unwrap_or(default_width);
             if col.is_hideable() {
@@ -488,21 +501,27 @@ where
         let mut column_widths = std::collections::HashMap::new();
 
         for (col, width) in columns.iter() {
-            column_widths.insert(col.get_column_name().to_string(), *width);
+            column_widths.insert(col.ident().to_string(), *width);
         }
 
         for (col, width) in hidden.iter() {
-            column_widths.insert(col.get_column_name().to_string(), *width);
+            column_widths.insert(col.ident().to_string(), *width);
         }
 
         let column_order = columns
             .iter()
-            .map(|(col, _)| col.get_column_name().to_string())
+            .map(|(col, _)| col.ident().to_owned())
             .collect();
+
+        let sort = self.sort_method.read(cx).map(|sort| TableSortSetting {
+            column: sort.column.ident().to_string(),
+            direction: sort.direction,
+        });
 
         TableSettings {
             column_widths,
             column_order,
+            sort,
             view_mode: match *self.view_mode.read(cx) {
                 TableViewMode::List => TableViewModeSetting::List,
                 TableViewMode::Grid => TableViewModeSetting::Grid,
@@ -527,6 +546,10 @@ where
 
     pub fn get_table_name() -> SharedString {
         T::get_table_name()
+    }
+
+    pub fn get_table_key() -> &'static str {
+        T::get_table_key()
     }
 }
 

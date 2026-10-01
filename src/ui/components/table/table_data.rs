@@ -40,6 +40,14 @@ pub trait Column: Clone + Copy + Debug + Hash + PartialEq + Eq + Send + Sync + '
     /// Retrieves the friendly name text of the column.
     fn get_column_name(&self) -> SharedString;
 
+    /// Fixed column identifier, used for persisted table settings.
+    fn ident(&self) -> &'static str;
+
+    /// Get a column from its identifier.
+    fn from_ident(ident: &str) -> Option<Self>
+    where
+        Self: Sized;
+
     /// Returns whether this column can be resized by the user.
     /// Defaults to true.
     fn is_resizable(&self) -> bool {
@@ -95,6 +103,9 @@ where
 
     /// Retrieves the name of the table.
     fn get_table_name() -> SharedString;
+
+    /// Retrieves the unique key of the table.
+    fn get_table_key() -> &'static str;
 
     /// Builds the asynchronous query for the table's ordered row identifiers.
     ///

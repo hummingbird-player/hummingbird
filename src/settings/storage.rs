@@ -4,7 +4,8 @@ use gpui::{App, Pixels, px};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
+    library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod, SortDirection},
+    library::types::table::migrate_legacy_table_settings,
     ui::models::{CurrentTrack, Models, PlaybackInfo, WindowInformation},
 };
 
@@ -71,6 +72,17 @@ pub enum TableViewModeSetting {
     Grid,
 }
 
+/// The persisted sort configuration of a table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableSortSetting {
+    /// Stable identifier (`Column::ident`) of the sorted column.
+    #[serde(default)]
+    pub column: String,
+    /// Sort direction. Falls back to ascending when absent.
+    #[serde(default)]
+    pub direction: SortDirection,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TableSettings {
     #[serde(default)]
@@ -83,6 +95,9 @@ pub struct TableSettings {
     pub hidden_columns: Vec<String>,
     #[serde(default = "default_table_view_mode")]
     pub view_mode: TableViewModeSetting,
+    /// Last sort the user picked for this table, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<TableSortSetting>,
 }
 
 fn default_split_fractions() -> HashMap<String, f32> {
@@ -115,6 +130,8 @@ pub struct StorageData {
     /// Per-view split fractions keyed by view name (albums, tracks, artists, playlist).
     #[serde(default = "default_split_fractions")]
     pub split_fractions: HashMap<String, f32>,
+    /// Per-table settings (columns, view mode, sort) keyed by the table's stable
+    /// key (`TableData::get_table_key`): albums, tracks, artists.
     #[serde(default = "default_table_settings")]
     pub table_settings: HashMap<String, TableSettings>,
     #[serde(default = "default_liked_tracks_sort_method")]
@@ -253,20 +270,25 @@ impl Storage {
         };
     }
 
-    /// Load `StorageData` from storage or use `StorageData::default` in case of any errors
+    /// Load `StorageData` from storage or use `StorageData::default` in case of any errors.
     pub fn load_or_default(&self) -> StorageData {
         std::fs::File::open(self.path.clone())
             .and_then(|file| {
                 serde_json::from_reader(file)
                     .map_err(|e| e.into())
-                    .map(|data: StorageData| match &data.current_track {
-                        // validate whether path still exists
-                        Some(current_track) if !current_track.get_path().exists() => StorageData {
-                            current_track: None,
-                            // Preserve other settings when invalidating current_track
-                            ..data
-                        },
-                        _ => data,
+                    .map(|mut data: StorageData| {
+                        migrate_legacy_table_settings(&mut data.table_settings);
+                        match &data.current_track {
+                            // validate whether path still exists
+                            Some(current_track) if !current_track.get_path().exists() => {
+                                StorageData {
+                                    current_track: None,
+                                    // Preserve other settings when invalidating current_track
+                                    ..data
+                                }
+                            }
+                            _ => data,
+                        }
                     })
             })
             .unwrap_or_default()
@@ -277,11 +299,17 @@ impl Storage {
 mod tests {
     use gpui::{Size, px};
 
-    use super::{Storage, StorageData, TableSettings, TableViewModeSetting};
+    use super::{Storage, StorageData, TableSettings, TableSortSetting, TableViewModeSetting};
     use crate::{
-        library::db::{LikedTrackSortMethod, PlaylistTrackSortMethod},
+        library::{
+            db::{AlbumColumn, LikedTrackSortMethod, PlaylistTrackSortMethod, SortDirection},
+            types::Album,
+        },
         test_support::TestDir,
-        ui::models::{CurrentTrack, WindowInformation},
+        ui::{
+            components::table::{Table, table_data::Column},
+            models::{CurrentTrack, WindowInformation},
+        },
     };
     use std::{collections::HashMap, fs};
 
@@ -343,6 +371,10 @@ mod tests {
                 column_order: vec!["title".to_string(), "artist".to_string()],
                 hidden_columns: vec!["album".to_string()],
                 view_mode: TableViewModeSetting::Grid,
+                sort: Some(TableSortSetting {
+                    column: "artist".to_string(),
+                    direction: SortDirection::Descending,
+                }),
             },
         );
 
@@ -405,6 +437,65 @@ mod tests {
         assert_eq!(loaded_table.column_widths, expected_table.column_widths);
         assert_eq!(loaded_table.column_order, expected_table.column_order);
         assert_eq!(loaded_table.view_mode, expected_table.view_mode);
+        assert_eq!(loaded_table.sort, expected_table.sort);
+    }
+
+    #[test]
+    fn load_or_default_migrates_legacy_locale_dependent_table_settings() {
+        let dir = create_test_dir();
+        let path = dir.join("storage.json");
+        let storage = Storage::new(path);
+
+        let legacy_key = Table::<Album, AlbumColumn>::get_table_name().to_string();
+        let display_name = |column: &AlbumColumn| column.get_column_name().to_string();
+        let stored = StorageData {
+            table_settings: HashMap::from([
+                (
+                    legacy_key.clone(),
+                    TableSettings {
+                        column_widths: HashMap::from([
+                            (display_name(&AlbumColumn::Title), 240.0),
+                            (display_name(&AlbumColumn::Artist), 180.0),
+                            // unresolvable references are dropped
+                            ("not-a-column".to_string(), 55.0),
+                        ]),
+                        column_order: vec![
+                            display_name(&AlbumColumn::Artist),
+                            display_name(&AlbumColumn::Title),
+                        ],
+                        hidden_columns: Vec::new(),
+                        view_mode: TableViewModeSetting::List,
+                        sort: Some(TableSortSetting {
+                            column: display_name(&AlbumColumn::ReleaseDate),
+                            direction: SortDirection::Descending,
+                        }),
+                    },
+                ),
+                // entries matching no known table are kept unchanged
+                ("made-up-table".to_string(), TableSettings::default()),
+            ]),
+            ..StorageData::default()
+        };
+
+        storage.save(&stored);
+        let loaded = storage.load_or_default();
+
+        let migrated = loaded
+            .table_settings
+            .get(Table::<Album, AlbumColumn>::get_table_key())
+            .expect("legacy entry migrated to the stable table key");
+        assert_eq!(migrated.column_order, ["artist", "title"]);
+        assert_eq!(migrated.column_widths.get("title"), Some(&240.0));
+        assert_eq!(migrated.column_widths.get("artist"), Some(&180.0));
+        assert_eq!(
+            migrated.sort,
+            Some(TableSortSetting {
+                column: "release_date".to_string(),
+                direction: SortDirection::Descending,
+            })
+        );
+        assert!(!loaded.table_settings.contains_key(&legacy_key));
+        assert!(loaded.table_settings.contains_key("made-up-table"));
     }
 
     #[test]
@@ -418,10 +509,11 @@ mod tests {
         table_settings.insert(
             "albums".to_string(),
             TableSettings {
-                column_widths: HashMap::from([("year".to_string(), 90.0)]),
-                column_order: vec!["year".to_string()],
+                column_widths: HashMap::from([("release_date".to_string(), 90.0)]),
+                column_order: vec!["release_date".to_string()],
                 hidden_columns: Vec::new(),
                 view_mode: TableViewModeSetting::List,
+                sort: None,
             },
         );
 
@@ -474,5 +566,7 @@ mod tests {
         assert_eq!(loaded_table.column_widths, stored_table.column_widths);
         assert_eq!(loaded_table.column_order, stored_table.column_order);
         assert_eq!(loaded_table.view_mode, stored_table.view_mode);
+        assert_eq!(loaded_table.sort, stored_table.sort);
+        assert!(loaded_table.sort.is_none());
     }
 }

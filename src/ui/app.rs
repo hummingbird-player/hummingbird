@@ -380,6 +380,21 @@ pub fn run() -> anyhow::Result<()> {
 
         find_fonts(cx).expect("unable to load fonts");
 
+        setup_settings(cx, data_dir.join("settings.json"));
+        setup_theme(cx, data_dir.clone());
+        cx.set_global(Pool(pool.clone()));
+
+        let settings = cx.global::<SettingsGlobal>().model.read(cx);
+        let language = settings.interface.language.clone();
+        let playback_settings = settings.playback.clone();
+        let scanning_settings = settings.scanning.clone();
+        #[cfg(feature = "update")]
+        let update_settings = settings.update.clone();
+
+        if !language.is_empty() {
+            I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
+        }
+
         let storage = Storage::new(data_dir.join("app_data.json"));
         let storage_data = storage.load_or_default();
 
@@ -398,16 +413,6 @@ pub fn run() -> anyhow::Result<()> {
         let (queue_tx, queue_rx) = tokio::sync::watch::channel(playback_session.clone());
         crate::RUNTIME.spawn(PlaybackSessionStorageWorker::new(session_file, queue_rx).run());
 
-        setup_settings(cx, data_dir.join("settings.json"));
-        setup_theme(cx, data_dir.clone());
-        cx.set_global(Pool(pool.clone()));
-
-        let settings = cx.global::<SettingsGlobal>().model.read(cx);
-        let language = settings.interface.language.clone();
-        let playback_settings = settings.playback.clone();
-        let scanning_settings = settings.scanning.clone();
-        #[cfg(feature = "update")]
-        let update_settings = settings.update.clone();
         let initial_repeat = if playback_settings.always_repeat
             && playback_session.repeat == crate::playback::events::RepeatState::NotRepeating
         {
@@ -447,10 +452,6 @@ pub fn run() -> anyhow::Result<()> {
             cx.refresh_windows();
         })
         .detach();
-
-        if !language.is_empty() {
-            I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
-        }
 
         let (scan_interface, scan_events) = start_scanner(pool.clone(), scanning_settings);
         let initial_health = cx.global::<Models>().settings_health.read(cx).clone();

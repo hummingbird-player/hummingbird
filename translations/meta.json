@@ -349,67 +349,67 @@
   },
   "COLUMN_ALBUM": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:332",
+    "definedIn": "src/library/types/table.rs:429",
     "plural": false,
     "description": null
   },
   "COLUMN_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:519",
+    "definedIn": "src/library/types/table.rs:643",
     "plural": false,
     "description": null
   },
   "COLUMN_ARTIST": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:124",
+    "definedIn": "src/library/types/table.rs:194",
     "plural": false,
     "description": null
   },
   "COLUMN_CATALOG_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:128",
+    "definedIn": "src/library/types/table.rs:198",
     "plural": false,
     "description": null
   },
   "COLUMN_DATE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:126",
+    "definedIn": "src/library/types/table.rs:196",
     "plural": false,
     "description": null
   },
   "COLUMN_GENRES": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:125",
+    "definedIn": "src/library/types/table.rs:195",
     "plural": false,
     "description": null
   },
   "COLUMN_LABEL": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:127",
+    "definedIn": "src/library/types/table.rs:197",
     "plural": false,
     "description": null
   },
   "COLUMN_LENGTH": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:335",
+    "definedIn": "src/library/types/table.rs:432",
     "plural": false,
     "description": null
   },
   "COLUMN_NAME": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:518",
+    "definedIn": "src/library/types/table.rs:642",
     "plural": false,
     "description": null
   },
   "COLUMN_TITLE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:123",
+    "definedIn": "src/library/types/table.rs:193",
     "plural": false,
     "description": null
   },
   "COLUMN_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:520",
+    "definedIn": "src/library/types/table.rs:644",
     "plural": false,
     "description": null
   },
@@ -1663,19 +1663,19 @@
   },
   "TABLE_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:147",
+    "definedIn": "src/library/types/table.rs:240",
     "plural": false,
     "description": null
   },
   "TABLE_ARTISTS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:539",
+    "definedIn": "src/library/types/table.rs:680",
     "plural": false,
     "description": null
   },
   "TABLE_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:354",
+    "definedIn": "src/library/types/table.rs:474",
     "plural": false,
     "description": null
   },
@@ -1741,7 +1741,7 @@
   },
   "TRACK_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:330",
+    "definedIn": "src/library/types/table.rs:427",
     "plural": false,
     "description": null
   },

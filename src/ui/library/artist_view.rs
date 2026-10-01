@@ -33,7 +33,7 @@ impl ArtistView {
             let table_settings = cx.global::<Models>().table_settings.clone();
             let initial_settings = table_settings
                 .read(cx)
-                .get(Table::<ArtistWithCounts, ArtistColumn>::get_table_name().as_str())
+                .get(Table::<ArtistWithCounts, ArtistColumn>::get_table_key())
                 .cloned();
 
             let handler_model = view_switch_model.clone();
