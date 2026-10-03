@@ -817,6 +817,7 @@ impl Render for ArtistDetailView {
                             .track_scroll(&scroll_handle)
                             .pb(px(12.0))
                             .w_full()
+                            .min_h_full()
                             .flex_shrink(1.0)
                             .overflow_x_hidden()
                             .child(

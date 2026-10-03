@@ -295,7 +295,7 @@
   },
   "ARTIST_ALBUMS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:894",
+    "definedIn": "src/ui/library/artist_detail_view.rs:895",
     "plural": false,
     "description": null
   },

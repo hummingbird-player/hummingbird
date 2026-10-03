@@ -712,8 +712,7 @@ impl Render for ReleaseView {
                     .overflow_y_scroll()
                     .track_scroll(&scroll_handle)
                     .w_full()
-                    .h_full()
-                    .min_h(px(0.0))
+                    .min_h_full()
                     .flex_shrink(1.0)
                     .overflow_x_hidden()
                     .child(self.render_header(
