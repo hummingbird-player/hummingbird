@@ -5,7 +5,6 @@ use std::{
 };
 
 use gpui::*;
-use palette::IntoColor;
 use tracing::error;
 
 use crate::ui::{components::textbox::Textbox, theme::Theme};
@@ -80,7 +79,6 @@ fn shape_caption(window: &mut Window, text: SharedString, color: Hsla) -> Shaped
         background_color: None,
         underline: None,
         strikethrough: None,
-        letter_spacing: None,
     };
     window
         .text_system()
@@ -278,12 +276,12 @@ impl Element for Knob {
         let label = self
             .label
             .clone()
-            .map(|text| shape_caption(window, text, label_color.into_color()));
+            .map(|text| shape_caption(window, text, label_color.into()));
         let readout = if textbox.is_none() {
             Some(shape_caption(
                 window,
                 (self.format)(self.value),
-                readout_color.into_color(),
+                readout_color.into(),
             ))
         } else {
             None

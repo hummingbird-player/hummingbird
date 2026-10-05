@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use gpui::*;
 use indexmap::IndexMap;
-use palette::IntoColor;
 use rustc_hash::FxBuildHasher;
 use smallvec::SmallVec;
 
@@ -63,7 +62,7 @@ impl<C: Column> CellStrip<C> {
             columns,
             data,
             has_artwork,
-            secondary_color: secondary_color.into_color(),
+            secondary_color: secondary_color.into(),
         }
     }
 }
@@ -140,7 +139,7 @@ impl<C: Column> Element for CellStrip<C> {
         bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
         let mut style = window.text_style();
         style.font_size = rems(CELL_FONT_SIZE).into();
@@ -180,22 +179,16 @@ impl<C: Column> Element for CellStrip<C> {
                         text.clone()
                     };
                     let runs = [text_style.to_run(text.len())];
-                    let truncation = TextLayoutTruncation {
-                        width: Some(geometry.content.size.width),
-                        affix: SharedString::new_static("…"),
-                        source: TruncateFrom::End,
-                    };
-                    let (text, runs) = TextLayout::apply_truncation(
-                        text.clone(),
-                        &text_style,
-                        font_size,
-                        line_height,
-                        None,
-                        &truncation,
-                        &runs,
-                        window,
-                        cx,
-                    );
+                    let (text, runs) = window
+                        .text_system()
+                        .line_wrapper(text_style.font(), font_size)
+                        .truncate_line(
+                            text,
+                            geometry.content.size.width,
+                            "…",
+                            &runs,
+                            TruncateFrom::End,
+                        );
                     match window
                         .text_system()
                         .shape_text(text, font_size, &runs, None, Some(1))

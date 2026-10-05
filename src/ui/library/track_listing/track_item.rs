@@ -71,7 +71,6 @@ pub fn measure_track_number_width(window: &mut Window, text: &SharedString) -> P
         background_color: None,
         underline: None,
         strikethrough: None,
-        letter_spacing: None,
     };
 
     let line = window

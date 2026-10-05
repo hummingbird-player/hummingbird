@@ -6,12 +6,11 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, AppContext, Background, BorderStyle, Bounds, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
-    InspectorElementId, InteractiveElement, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Refineable, RenderOnce, ScrollHandle, ScrollWheelEvent,
-    Style, StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb,
-    white,
+    AbsoluteLength, App, Background, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase,
+    Edges, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    InteractiveElement, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Refineable, RenderOnce, ScrollHandle, ScrollWheelEvent, Style,
+    StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb, white,
 };
 
 use crate::settings::SettingsGlobal;
