@@ -1077,18 +1077,28 @@ impl Render for Queue {
                             let drop_target = this.drag_drop_manager.read(cx).state.drop_target;
                             let pool = cx.global::<Pool>().0.clone();
                             cx.spawn(async move |this, cx| {
-                                let tracks = match tracks()
-                                    .from_album(album_id)
-                                    .sort_asc(TrackColumn::TrackNumber)
-                                    .fetch_list(&pool)
-                                    .await
-                                {
-                                    Ok(tracks) => tracks,
-                                    Err(error) => {
+                                let task = crate::RUNTIME.spawn(async move {
+                                    tracks()
+                                        .from_album(album_id)
+                                        .sort_asc(TrackColumn::TrackNumber)
+                                        .fetch_list(&pool)
+                                        .await
+                                });
+                                let tracks = match task.await {
+                                    Ok(Ok(tracks)) => tracks,
+                                    Ok(Err(error)) => {
                                         tracing::debug!(
                                             ?error,
                                             album_id,
                                             "failed to load dropped album"
+                                        );
+                                        return;
+                                    }
+                                    Err(error) => {
+                                        tracing::error!(
+                                            ?error,
+                                            album_id,
+                                            "load dropped album task panicked"
                                         );
                                         return;
                                     }
