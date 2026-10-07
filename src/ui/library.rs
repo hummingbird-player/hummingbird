@@ -774,14 +774,24 @@ impl Render for Library {
                     let pool = cx.global::<Pool>().0.clone();
                     let previous = switcher.read(cx).previous();
                     cx.spawn(async move |this, cx| {
-                        let artist_ids =
-                            match artists().related_to_album(album_id).fetch_ids(&pool).await {
-                                Ok(ids) => ids,
-                                Err(error) => {
-                                    debug!(?error, album_id, "failed to resolve release parent");
-                                    return;
-                                }
-                            };
+                        let task = crate::RUNTIME.spawn(async move {
+                            artists().related_to_album(album_id).fetch_ids(&pool).await
+                        });
+                        let artist_ids = match task.await {
+                            Ok(Ok(ids)) => ids,
+                            Ok(Err(error)) => {
+                                debug!(?error, album_id, "failed to resolve release parent");
+                                return;
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    ?error,
+                                    album_id,
+                                    "resolve release parent task panicked"
+                                );
+                                return;
+                            }
+                        };
                         this.update(cx, |this, cx| {
                             if this.section != LibrarySection::Artists
                                 || switcher.read(cx).current() != current
