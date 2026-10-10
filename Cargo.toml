@@ -38,8 +38,8 @@ discord-rich-presence = "1"
 file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
-gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["wayland", "x11", "font-kit"] }
+gpui = { package = "gpui-unofficial", version = "1" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
@@ -99,7 +99,7 @@ dotenvy = "0.15"
 vergen = { version = "10", features = ["build"] }
 
 [dev-dependencies]
-gpui = { package = "gpui-unofficial", git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim", features = ["test-support"] }
+gpui = { package = "gpui-unofficial", version = "1", features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
