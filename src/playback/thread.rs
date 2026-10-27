@@ -418,13 +418,20 @@ impl PlaybackThread {
     }
 
     fn process_metadata_update(&mut self) {
-        if let Some(metadata) = self.engine.check_metadata_update() {
+        if let Some(mut metadata) = self.engine.check_metadata_update() {
             self.last_track_gain = metadata.metadata.replaygain_track_gain;
             self.last_album_gain = metadata.metadata.replaygain_album_gain;
 
             self.reapply_replaygain();
 
             if let Some(track) = self.pending_tracks.back_mut() {
+                if metadata.metadata.name.is_none() {
+                    metadata.metadata.name = track
+                        .path
+                        .file_stem()
+                        .map(|name| name.to_string_lossy().into_owned());
+                }
+
                 track.metadata = Some(metadata);
             } else {
                 self.send_event(PlaybackEvent::MetadataUpdate(metadata.metadata));

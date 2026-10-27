@@ -258,6 +258,18 @@ fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSect
 }
 
 impl InfoSection {
+    fn display_track_name(&self) -> SharedString {
+        self.track_name
+            .clone()
+            .or_else(|| {
+                self.current_track_path
+                    .as_deref()
+                    .and_then(|path| path.file_stem())
+                    .map(|name| name.to_string_lossy().into_owned().into())
+            })
+            .unwrap_or_else(|| tr!("UNKNOWN_TRACK", "Unknown Track").into())
+    }
+
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let metadata_model = cx.global::<Models>().metadata.clone();
@@ -484,9 +496,7 @@ impl Render for InfoSection {
                                                 navigate_to_track_album_and_reveal(cx, &track);
                                             })
                                         })
-                                        .child(self.track_name.clone().unwrap_or_else(|| {
-                                            tr!("UNKNOWN_TRACK", "Unknown Track").into()
-                                        })),
+                                        .child(self.display_track_name()),
                                 )
                                 .child(
                                     div()

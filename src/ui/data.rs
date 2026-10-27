@@ -17,6 +17,10 @@ pub(crate) fn read_metadata(path: &Path) -> anyhow::Result<QueueItemUIData> {
         album_artist,
         ..
     } = stream.read_metadata()?;
+    let name = name.or_else(|| {
+        path.file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+    });
     let ui_data = QueueItemUIData {
         name: name.as_ref().map(Into::into),
         artist_name: artist.as_ref().or(album_artist.as_ref()).map(Into::into),

@@ -200,7 +200,7 @@ impl Discord {
             .activity_type(discord_rich_presence::activity::ActivityType::Listening)
             .details(if let Some(title) = &info.name {
                 title.clone()
-            } else if let Some(file_name) = self.last_path.as_ref().and_then(|p| p.file_prefix()) {
+            } else if let Some(file_name) = self.last_path.as_ref().and_then(|p| p.file_stem()) {
                 file_name.to_string_lossy().into_owned()
             } else {
                 "Unknown Track".to_string()
@@ -229,7 +229,6 @@ impl Discord {
 
         if let Some(mbid_album) = &info.mbid_album {
             let url = format!("https://coverartarchive.org/release/{mbid_album}/front-500");
-
             assets = assets.large_image(url);
         } else {
             assets = assets.large_image("logo");
