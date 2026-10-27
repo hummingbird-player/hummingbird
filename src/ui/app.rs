@@ -379,12 +379,13 @@ pub fn run() -> anyhow::Result<()> {
         cx.set_text_rendering_mode(TextRenderingMode::Grayscale);
 
         find_fonts(cx).expect("unable to load fonts");
-
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
         cx.set_global(Pool(pool.clone()));
 
         let settings = cx.global::<SettingsGlobal>().model.read(cx);
+        let legacy_theme_loaded = settings.interface.theme.as_deref() == Some("theme.json")
+            && data_dir.join("theme.json").is_file();
         let language = settings.interface.language.clone();
         let playback_settings = settings.playback.clone();
         let scanning_settings = settings.scanning.clone();
@@ -529,6 +530,21 @@ pub fn run() -> anyhow::Result<()> {
         toast_layer
             .set(toast_layer_entity.clone())
             .expect("toast layer initialized once");
+
+        if legacy_theme_loaded {
+            toasts::emit_toast(toasts::Toast::warning(tr!(
+                "LEGACY_THEME_REMOVAL_WARNING",
+                "Legacy theme support will be removed after version 0.4. See the theming guide for details on how to migrate."
+            ))
+            .with_action(
+                tr!("LEGACY_THEME_GUIDE_ACTION", "View guide"),
+                |cx| {
+                    cx.open_url(
+                        "https://git.mailliw.org/hummingbird/hummingbird/src/branch/master/docs/theming.md",
+                    );
+                },
+            ));
+        }
 
         // Update `StorageData` and save it to file system while quitting the app.
         cx.on_app_quit({

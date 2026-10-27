@@ -821,6 +821,18 @@
     "plural": false,
     "description": null
   },
+  "LEGACY_THEME_GUIDE_ACTION": {
+    "context": "app.rs",
+    "definedIn": "src/ui/app.rs:540",
+    "plural": false,
+    "description": null
+  },
+  "LEGACY_THEME_REMOVAL_WARNING": {
+    "context": "app.rs",
+    "definedIn": "src/ui/app.rs:536",
+    "plural": false,
+    "description": null
+  },
   "LIBRARY": {
     "context": "settings.rs",
     "definedIn": "src/ui/settings.rs:163",

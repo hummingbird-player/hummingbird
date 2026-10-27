@@ -142,6 +142,8 @@
   "LANGUAGE": "Language",
   "LANGUAGE_SUBTEXT": "Select your preferred language for the application. Changes to the language will take effect after restarting the application.",
   "LANGUAGE_SYSTEM_DEFAULT": "System Default",
+  "LEGACY_THEME_GUIDE_ACTION": "View guide",
+  "LEGACY_THEME_REMOVAL_WARNING": "Legacy theme support will be removed after version 0.4. See the theming guide for details on how to migrate.",
   "LIBRARY": "Library",
   "LIBRARY_FORCE_RESCAN": "Rescan Entire Library",
   "LIBRARY_SCAN": "Scan",
