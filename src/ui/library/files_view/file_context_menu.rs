@@ -7,7 +7,7 @@ use crate::{
     playback::queue::QueueItemData,
     ui::{
         components::{
-            icons::{PLAY, REFRESH},
+            icons::{FOLDER_SEARCH, PLAY, REFRESH},
             menu::{menu, menu_item, menu_separator},
         },
         library::context_menus::{
@@ -120,28 +120,25 @@ impl RenderOnce for FileContextMenu {
                     },
                 ))
                 .item(menu_separator())
-                .item(menu_item(
-                    "folder_refresh",
-                    Some(REFRESH),
-                    tr!("REFRESH_FOLDER", "Refresh"),
-                    {
-                        let path = path.clone();
-                        let files_view = files_view.clone();
-                        move |_, _, cx| {
-                            files_view.update(cx, |view, cx| view.refresh_dir((*path).clone(), cx));
-                        }
-                    },
-                ))
-                .item(menu_separator())
             })
             .item(menu_item(
                 "file_reveal",
-                None::<&'static str>,
+                Some(FOLDER_SEARCH),
                 reveal_label,
                 {
                     let path = path.clone();
                     move |_, _, cx| reveal_path_for_file_manager(path.as_path(), cx)
                 },
             ))
+            .when(is_dir, |m| {
+                m.item(menu_item(
+                    "folder_refresh",
+                    Some(REFRESH),
+                    tr!("REFRESH_FOLDER", "Refresh"),
+                    move |_, _, cx| {
+                        files_view.update(cx, |view, cx| view.refresh_dir((*path).clone(), cx));
+                    },
+                ))
+            })
     }
 }

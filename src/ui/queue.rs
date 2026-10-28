@@ -15,7 +15,9 @@ use crate::{
                 continue_edge_scroll, handle_external_drag_move, handle_track_drag_move,
                 handle_track_drop_multi,
             },
-            icons::{CROSS, DISC, PLAYLIST_ADD, STAR, STAR_FILLED, TRASH, USERS, icon},
+            icons::{
+                CROSS, DISC, FOLDER_SEARCH, PLAYLIST_ADD, STAR, STAR_FILLED, TRASH, USERS, icon,
+            },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
             nav_button::nav_button,
@@ -23,9 +25,12 @@ use crate::{
             tooltip::build_tooltip,
         },
         library::{
-            ViewSwitchMessage, add_to_playlist::AddToPlaylist, context_menus::navigate_to_artists,
+            ViewSwitchMessage,
+            add_to_playlist::AddToPlaylist,
+            context_menus::{navigate_to_artists, track_show_in_file_manager_label},
             library_view_header::LibraryViewHeader,
         },
+        util::reveal_path_for_file_manager,
     },
 };
 use cntp_i18n::{tr, trn};
@@ -314,6 +319,8 @@ impl Render for QueueItem {
                 Vec::new()
             };
             let single_track_id = self.track_id;
+            let path_for_reveal = self.item.as_ref().map(|item| item.get_path().to_path_buf());
+            let show_in_file_manager_label = track_show_in_file_manager_label();
             let queue_item_entity = cx.entity().clone();
             let has_add_to = self.add_to.is_some();
             let is_liked = self.is_liked.is_some();
@@ -592,7 +599,6 @@ impl Render for QueueItem {
                                         show_add_to_multi.write(cx, true);
                                     },
                                 ))
-                                .item(menu_separator())
                             })
                             .when_some(selected_liked.clone(), |menu, liked| {
                                 let track_ids_for_like = selected_track_ids.clone();
@@ -620,6 +626,20 @@ impl Render for QueueItem {
                                         }
                                     },
                                 ))
+                                .item(menu_separator())
+                            })
+                            .when_some(path_for_reveal.clone(), |menu, path| {
+                                menu.item(
+                                    menu_item(
+                                        "queue_show_in_file_manager",
+                                        Some(FOLDER_SEARCH),
+                                        show_in_file_manager_label.clone(),
+                                        move |_, _, cx| {
+                                            reveal_path_for_file_manager(path.as_path(), cx);
+                                        },
+                                    )
+                                    .disabled(!is_available),
+                                )
                                 .item(menu_separator())
                             })
                             .item(menu_item(
@@ -706,7 +726,6 @@ impl Render for QueueItem {
                                         show_add_to.write(cx, true);
                                     },
                                 ))
-                                .item(menu_separator())
                                 .when_some(single_track_id, |menu, track_id| {
                                     let entity = queue_item_entity.clone();
                                     menu.item(
@@ -721,6 +740,20 @@ impl Render for QueueItem {
                                         .disabled(!is_available),
                                     )
                                 })
+                                .item(menu_separator())
+                            })
+                            .when_some(path_for_reveal.clone(), |menu, path| {
+                                menu.item(
+                                    menu_item(
+                                        "queue_show_in_file_manager",
+                                        Some(FOLDER_SEARCH),
+                                        show_in_file_manager_label.clone(),
+                                        move |_, _, cx| {
+                                            reveal_path_for_file_manager(path.as_path(), cx);
+                                        },
+                                    )
+                                    .disabled(!is_available),
+                                )
                                 .item(menu_separator())
                             })
                             .item(menu_item(

@@ -50,6 +50,7 @@ impl RenderOnce for InfoSectionContextMenu {
             .as_ref()
             .is_some_and(|path| is_track_path_available(cx, path.as_path()));
         let track = self.track;
+        let has_library_actions = track.is_some() || self.show_add_to.is_some();
 
         menu()
             .when_some(track.clone(), |menu, track_for_artist| {
@@ -76,23 +77,11 @@ impl RenderOnce for InfoSectionContextMenu {
                     .disabled(!can_go_to_album),
                 )
             })
-            .item(
-                menu_item(
-                    "info_section_show_in_file_manager",
-                    Some(FOLDER_SEARCH),
-                    track_show_in_file_manager_label(),
-                    move |_, _, cx| {
-                        if let Some(path) = reveal_path.as_ref() {
-                            reveal_path_for_file_manager(path, cx);
-                        }
-                    },
-                )
-                .disabled(!can_reveal_track),
-            )
+            .when(track.is_some(), |menu| menu.item(menu_separator()))
             .when_some(track.clone(), |menu, track_for_like| {
                 let is_liked = self.is_liked;
                 let track_id = track_for_like.id;
-                menu.item(menu_separator()).item(menu_item(
+                menu.item(menu_item(
                     "info_section_toggle_like",
                     Some(if is_liked.is_some() {
                         STAR_FILLED
@@ -110,7 +99,7 @@ impl RenderOnce for InfoSectionContextMenu {
                 ))
             })
             .when_some(self.show_add_to, |menu, show_add_to| {
-                menu.item(menu_separator()).item(menu_item(
+                menu.item(menu_item(
                     "info_section_add_to_playlist",
                     Some(PLAYLIST_ADD),
                     tr!("ADD_TO_PLAYLIST"),
@@ -119,5 +108,19 @@ impl RenderOnce for InfoSectionContextMenu {
                     },
                 ))
             })
+            .when(has_library_actions, |menu| menu.item(menu_separator()))
+            .item(
+                menu_item(
+                    "info_section_show_in_file_manager",
+                    Some(FOLDER_SEARCH),
+                    track_show_in_file_manager_label(),
+                    move |_, _, cx| {
+                        if let Some(path) = reveal_path.as_ref() {
+                            reveal_path_for_file_manager(path, cx);
+                        }
+                    },
+                )
+                .disabled(!can_reveal_track),
+            )
     }
 }

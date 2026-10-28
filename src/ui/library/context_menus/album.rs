@@ -1,19 +1,21 @@
 use std::rc::Rc;
 
 use cntp_i18n::tr;
+use gpui::prelude::FluentBuilder;
 use gpui::{Entity, IntoElement, RenderOnce, Window};
 
 use crate::{
     library::types::Album,
     ui::components::{
-        icons::{PLAY, PLAYLIST_ADD, PLUS, SHUFFLE, USERS},
+        icons::{FOLDER_SEARCH, PLAY, PLAYLIST_ADD, PLUS, SHUFFLE, USERS},
         menu::{menu, menu_item, menu_separator},
     },
 };
 
 use super::{
     AlbumContextMenuContext, navigate_to_album_artists, play_album_next, play_album_now,
-    queue_album, rescan_album, shuffle_album,
+    queue_album, rescan_album, reveal_album_in_file_manager, shuffle_album,
+    track_show_in_file_manager_label,
 };
 
 #[derive(IntoElement)]
@@ -46,12 +48,13 @@ impl RenderOnce for AlbumContextMenu {
         let album_for_next = self.album.clone();
         let album_for_shuffle = self.album.clone();
         let album_for_queue = self.album.clone();
-        let album_for_artist = self.album.clone();
+        let album_id_for_artist = self.album.id;
         let album_for_rescan = self.album.clone();
+        let album_id_for_reveal = self.album.id;
         let show_add_to = self.show_add_to;
         let show_go_to_artist = self.context.show_go_to_artist;
         let is_available = self.is_available;
-        let menu = menu()
+        menu()
             .item(
                 menu_item("album_play", Some(PLAY), tr!("PLAY"), move |_, _, cx| {
                     play_album_now(cx, &album);
@@ -91,6 +94,17 @@ impl RenderOnce for AlbumContextMenu {
                 )
                 .disabled(!is_available),
             )
+            .when(show_go_to_artist, |menu| {
+                menu.item(menu_separator()).item(menu_item(
+                    "album_go_to_artist",
+                    Some(USERS),
+                    tr!("GO_TO_ARTIST"),
+                    move |ev, _, cx| {
+                        navigate_to_album_artists(cx, album_id_for_artist, ev.position());
+                    },
+                ))
+            })
+            .item(menu_separator())
             .item(menu_item(
                 "album_add_to_playlist",
                 Some(PLAYLIST_ADD),
@@ -100,6 +114,17 @@ impl RenderOnce for AlbumContextMenu {
                 },
             ))
             .item(menu_separator())
+            .item(
+                menu_item(
+                    "album_show_in_file_manager",
+                    Some(FOLDER_SEARCH),
+                    track_show_in_file_manager_label(),
+                    move |_, _, cx| {
+                        reveal_album_in_file_manager(cx, album_id_for_reveal);
+                    },
+                )
+                .disabled(!is_available),
+            )
             .item(menu_item(
                 "album_rescan",
                 None::<gpui::SharedString>,
@@ -107,19 +132,6 @@ impl RenderOnce for AlbumContextMenu {
                 move |_, _, cx| {
                     rescan_album(cx, &album_for_rescan);
                 },
-            ));
-
-        if show_go_to_artist {
-            menu.item(menu_separator()).item(menu_item(
-                "album_go_to_artist",
-                Some(USERS),
-                tr!("GO_TO_ARTIST"),
-                move |ev, _, cx| {
-                    navigate_to_album_artists(cx, album_for_artist.id, ev.position());
-                },
             ))
-        } else {
-            menu
-        }
     }
 }

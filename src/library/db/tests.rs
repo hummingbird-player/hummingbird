@@ -1153,6 +1153,32 @@ async fn playlist_track_rows_preserve_all_sort_methods() {
 }
 
 #[tokio::test]
+async fn album_paths_can_be_ordered_by_disc() {
+    let db = TestDatabase::new("album-paths-ordered-by-disc").await;
+    let pool = db.pool();
+
+    insert_album(pool, 1, "Album", "Artist", None, None, None).await;
+    sqlx::query(
+        "INSERT INTO album_path (album_id, path, disc_num) VALUES \
+         (1, '/music/disc-2', 2), (1, '/music/disc-1', 1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let paths = album_paths()
+        .for_album(1)
+        .order_by_disc()
+        .fetch_rows(pool)
+        .await
+        .unwrap();
+    assert_eq!(paths[0].path.to_string_lossy(), "/music/disc-1");
+    assert_eq!(paths[1].path.to_string_lossy(), "/music/disc-2");
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn typed_non_entity_read_projections_preserve_legacy_queries() {
     let db = TestDatabase::new("typed-non-entity-read-projections").await;
     let pool = db.pool();

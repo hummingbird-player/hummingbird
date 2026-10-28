@@ -23,8 +23,8 @@ use crate::{
             async_resource::AsyncResource,
             context::context,
             icons::{
-                CHEVRON_DOWN, CHEVRON_RIGHT, FILE, FOLDER, FOLDER_OPEN, MUSIC, PLAY, PLAYLIST_ADD,
-                STAR, STAR_FILLED, icon,
+                CHEVRON_DOWN, CHEVRON_RIGHT, FILE, FOLDER, FOLDER_OPEN, FOLDER_SEARCH, MUSIC, PLAY,
+                PLAYLIST_ADD, STAR, STAR_FILLED, icon,
             },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
@@ -34,7 +34,7 @@ use crate::{
             context_menus::track::TrackContextMenu,
             context_menus::{
                 TrackContextMenuContext, add_to_playlist_state, navigate_to_track_album_and_reveal,
-                play_items_next, play_items_now, queue_items,
+                play_items_next, play_items_now, queue_items, track_show_in_file_manager_label,
             },
             files_view::{FilesView, FlatRow, TrackRef, file_context_menu::FileContextMenu},
         },
@@ -43,6 +43,7 @@ use crate::{
             toggle_like_by_id,
         },
         theme::Theme,
+        util::reveal_path_for_file_manager,
     },
 };
 
@@ -136,6 +137,8 @@ impl FileRowItem {
         audio_items: Vec<(PathBuf, Option<TrackRef>)>,
         track_ids: Vec<i64>,
         liked_ids: Option<SmallVec<[(i64, i64); 32]>>,
+        path_for_reveal: PathBuf,
+        is_available: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let any_liked = liked_ids.as_ref().is_some_and(|ids| !ids.is_empty());
@@ -245,6 +248,16 @@ impl FileRowItem {
                         ))
                     })
             })
+            .item(menu_separator())
+            .item(
+                menu_item(
+                    "files_multi_show_in_file_manager",
+                    Some(FOLDER_SEARCH),
+                    track_show_in_file_manager_label(),
+                    move |_, _, cx| reveal_path_for_file_manager(path_for_reveal.as_path(), cx),
+                )
+                .disabled(!is_available),
+            )
             .into_any_element()
     }
 }
@@ -341,7 +354,14 @@ impl Render for FileRowItem {
             if let Some((audio_items, track_ids)) =
                 batch_items.filter(|(items, _)| !items.is_empty())
             {
-                let menu = self.render_batch_menu(audio_items, track_ids, batch_liked, cx);
+                let menu = self.render_batch_menu(
+                    audio_items,
+                    track_ids,
+                    batch_liked,
+                    (*path).clone(),
+                    self.is_file_available,
+                    cx,
+                );
                 (menu, self.add_to.clone().map(|a| a.into_any_element()))
             } else if let Some(track) = &self.full_track {
                 let (show_add_to, add_to) =

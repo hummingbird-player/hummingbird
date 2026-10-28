@@ -117,7 +117,10 @@ impl RenderOnce for TrackContextMenu {
                 )
                 .disabled(!is_available),
             )
-            .item(menu_separator())
+            .when(
+                self.context.show_go_to_artist || self.context.show_go_to_album,
+                |menu| menu.item(menu_separator()),
+            )
             .when(self.context.show_go_to_artist, |menu| {
                 menu.item(
                     menu_item(
@@ -144,28 +147,6 @@ impl RenderOnce for TrackContextMenu {
                     .disabled(!can_go_to_album),
                 )
             })
-            .item(
-                menu_item(
-                    "track_show_in_file_manager",
-                    Some(FOLDER_SEARCH),
-                    track_show_in_file_manager_label(),
-                    {
-                        let track_for_reveal = track_for_reveal.clone();
-                        move |_, _, cx| {
-                            reveal_path_for_file_manager(track_for_reveal.location.as_path(), cx);
-                        }
-                    },
-                )
-                .disabled(!can_reveal_track),
-            )
-            .item(menu_item(
-                "track_rescan",
-                None::<SharedString>,
-                tr!("RESCAN_TRACK", "Rescan track"),
-                move |_, _, cx| {
-                    rescan_track(cx, &track_for_rescan);
-                },
-            ))
             .item(menu_separator())
             .item(
                 menu_item(
@@ -197,11 +178,31 @@ impl RenderOnce for TrackContextMenu {
                 )
                 .disabled(!is_available),
             )
+            .item(menu_separator())
+            .item(
+                menu_item(
+                    "track_show_in_file_manager",
+                    Some(FOLDER_SEARCH),
+                    track_show_in_file_manager_label(),
+                    move |_, _, cx| {
+                        reveal_path_for_file_manager(track_for_reveal.location.as_path(), cx);
+                    },
+                )
+                .disabled(!can_reveal_track),
+            )
+            .item(menu_item(
+                "track_rescan",
+                None::<SharedString>,
+                tr!("RESCAN_TRACK", "Rescan track"),
+                move |_, _, cx| {
+                    rescan_track(cx, &track_for_rescan);
+                },
+            ))
             .when_some(playlist_info, |menu, info| {
                 let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
                 let pool = cx.global::<Pool>().0.clone();
 
-                menu.item(
+                menu.item(menu_separator()).item(
                     menu_item(
                         "track_remove_from_playlist",
                         Some(PLAYLIST_REMOVE),

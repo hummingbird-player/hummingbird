@@ -27,6 +27,7 @@ use crate::{
             context_menus::{album::AlbumContextMenu, track::TrackContextMenu},
         },
         models::{Models, PlaybackInfo, PlaylistEvent},
+        util::reveal_path_for_file_manager,
     },
 };
 
@@ -527,6 +528,33 @@ pub(crate) fn rescan_album(cx: &mut App, album: &Album) {
             }
             Err(error) => {
                 tracing::error!(?error, album_id, "album path query task failed");
+            }
+        }
+    })
+    .detach();
+}
+
+pub(crate) fn reveal_album_in_file_manager(cx: &mut App, album_id: i64) {
+    let pool = cx.global::<Pool>().0.clone();
+    cx.spawn(async move |cx| {
+        let request = crate::RUNTIME.spawn(async move {
+            album_paths()
+                .for_album(album_id)
+                .order_by_disc()
+                .fetch_rows(&pool)
+                .await
+        });
+        match request.await {
+            Ok(Ok(paths)) => {
+                if let Some(path) = paths.into_iter().next().map(|row| row.path) {
+                    cx.update(|cx| reveal_path_for_file_manager(path.as_path(), cx));
+                }
+            }
+            Ok(Err(error)) => {
+                tracing::error!(?error, album_id, "could not find album folder");
+            }
+            Err(error) => {
+                tracing::error!(?error, album_id, "album folder query task failed");
             }
         }
     })
