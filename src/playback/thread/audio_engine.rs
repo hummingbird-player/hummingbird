@@ -129,6 +129,7 @@ pub struct AudioEngine {
     timing_delay_pending: bool,
     seek_completed: bool,
     device_retry_at: Option<Instant>,
+    only_resample_when_necessary: bool,
 }
 
 impl AudioEngine {
@@ -158,6 +159,7 @@ impl AudioEngine {
             timing_delay_pending: true,
             seek_completed: false,
             device_retry_at: None,
+            only_resample_when_necessary: false,
         }
     }
 
@@ -167,7 +169,7 @@ impl AudioEngine {
     pub fn initialize(&mut self) -> Result<(), EngineError> {
         self.device.initialize_provider();
 
-        if let Err(e) = self.device.create_stream(None) {
+        if let Err(e) = self.device.create_stream(None, None) {
             error!("Failed to create initial stream: {:?}", e);
             return Err(EngineError::DeviceError(format!(
                 "Failed to create initial stream: {:?}",
@@ -289,6 +291,29 @@ impl AudioEngine {
     ) -> Result<Option<u64>, PlaybackStartError> {
         let path = self.media.current_path().unwrap();
         info!("AudioEngine: Opening track '{}'", path.display());
+
+        if let Some(sample_rate) = self.desired_device_sample_rate()
+            && self.device.has_stream()
+            && self
+                .device
+                .current_format()
+                .map(|format| format.sample_rate)
+                != Some(sample_rate)
+        {
+            info!("Requesting native source sample rate: {sample_rate} Hz");
+            self.device
+                .create_stream(None, Some(sample_rate))
+                .map_err(|error| {
+                    PlaybackStartError::MediaError(format!(
+                        "Failed to open output at the source sample rate: {error}"
+                    ))
+                })?;
+            self.sync_eq_format();
+            // Output buffered for the previous device rate cannot be carried over.
+            self.clear_pipeline();
+            self.timing.clear(None);
+        }
+
         if preserve_resampler
             && let Some(previous) = &mut self.previous_pipeline
             && (previous.source_rate != self.media.sample_rate().unwrap_or(previous.source_rate)
@@ -422,12 +447,16 @@ impl AudioEngine {
             return;
         }
 
-        let result = self.device.create_stream(None).and_then(|format| {
-            if self.state == EngineState::Playing {
-                self.device.play()?;
-            }
-            Ok(format)
-        });
+        let desired_sample_rate = self.desired_device_sample_rate();
+        let result = self
+            .device
+            .create_stream(None, desired_sample_rate)
+            .and_then(|format| {
+                if self.state == EngineState::Playing {
+                    self.device.play()?;
+                }
+                Ok(format)
+            });
         let format = match result {
             Ok(format) => format,
             Err(error) => {
@@ -589,9 +618,57 @@ impl AudioEngine {
             .set_channel_count(format.channels.to_layout().count().max(1));
     }
 
+    fn desired_device_sample_rate(&self) -> Option<u32> {
+        if !self.only_resample_when_necessary {
+            return None;
+        }
+        self.media.sample_rate().ok().filter(|rate| *rate > 0)
+    }
+
     /// Update settings that affect playback.
     pub fn update_settings(&mut self, settings: &PlaybackSettings) {
         self.eq.set_config(&settings.equalizer);
+
+        let was_enabled = self.only_resample_when_necessary;
+        self.only_resample_when_necessary = settings.only_resample_when_necessary;
+        if was_enabled == self.only_resample_when_necessary || !self.device.has_stream() {
+            return;
+        }
+
+        let Some(current_rate) = self
+            .device
+            .current_format()
+            .map(|format| format.sample_rate)
+        else {
+            return;
+        };
+
+        let needs_reopen = if self.only_resample_when_necessary {
+            self.desired_device_sample_rate()
+                .is_some_and(|rate| rate != current_rate)
+        } else {
+            self.device
+                .default_sample_rate()
+                .is_some_and(|rate| rate != current_rate)
+        };
+
+        if !needs_reopen {
+            return;
+        }
+
+        if self.state == EngineState::Idle {
+            if let Err(error) = self
+                .device
+                .create_stream(None, self.desired_device_sample_rate())
+            {
+                self.device_failed(error);
+            } else {
+                self.sync_eq_format();
+            }
+        } else {
+            self.device.close_stream();
+            self.device_retry_at = Some(Instant::now());
+        }
     }
 
     /// Apply new equalizer settings live.
@@ -1205,6 +1282,7 @@ mod tests {
         i16_test_signal, run_to_eof, write_wav_i16,
     };
     use crate::settings::equalizer::{EqBandKind, EqBandSettings, EqualizerSettings};
+    use crate::test_support::register_test_media_providers;
     use std::{cell::Cell, rc::Rc};
 
     struct SwitchingOutput {
@@ -1261,6 +1339,48 @@ mod tests {
         fn requires_matching_format(&self) -> bool {
             true
         }
+    }
+
+    #[test]
+    fn native_rate_option_switches_the_output_rate_when_toggled() {
+        let _guard = engine_lock();
+        configure_dummy_device(48_000, "S16", 2);
+        register_test_media_providers();
+        let dir = crate::test_support::TestDir::new("native-output-rate");
+        let path = dir.join("source.wav");
+        write_wav_i16(&path, 44_100, 2, &i16_test_signal(4_410, 2));
+
+        let mut engine = AudioEngine::default();
+        engine.update_settings(&PlaybackSettings {
+            only_resample_when_necessary: true,
+            ..PlaybackSettings::default()
+        });
+        engine.initialize().unwrap();
+        engine.open(&path, false).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            engine.poll();
+            if let Some(result) = engine.take_opened() {
+                result.unwrap();
+                break;
+            }
+            assert!(Instant::now() < deadline, "worker open timed out");
+            std::thread::park_timeout(Duration::from_millis(1));
+        }
+
+        assert_eq!(engine.device.current_format().unwrap().sample_rate, 44_100);
+
+        engine.update_settings(&PlaybackSettings::default());
+        engine.poll();
+        assert_eq!(engine.device.current_format().unwrap().sample_rate, 48_000);
+
+        engine.update_settings(&PlaybackSettings {
+            only_resample_when_necessary: true,
+            ..PlaybackSettings::default()
+        });
+        engine.poll();
+        assert_eq!(engine.device.current_format().unwrap().sample_rate, 44_100);
     }
 
     enum RecoveryScenario {

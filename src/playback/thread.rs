@@ -166,6 +166,8 @@ impl PlaybackThread {
 
     /// Initialize engine and run the main loop.
     pub fn run(&mut self) {
+        self.engine.update_settings(&self.playback_settings);
+
         // Initialize the audio engine (media provider, device provider, initial stream)
         if let Err(e) = self.engine.initialize() {
             error!("Failed to initialize audio engine: {:?}", e);

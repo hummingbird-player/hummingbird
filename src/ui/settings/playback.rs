@@ -1,4 +1,5 @@
 use cntp_i18n::tr;
+use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
     Window, div, px,
@@ -132,6 +133,35 @@ impl Render for PlaybackSettings {
                     }))
                     .child(checkbox("playback-consume-check", playback.consume)),
             )
+            .when(!cfg!(target_os = "windows"), |this| {
+                this.child(
+                    label(
+                        "playback-only-resample-when-necessary",
+                        tr!(
+                            "PLAYBACK_ONLY_RESAMPLE_WHEN_NECESSARY",
+                            "Only resample when necessary"
+                        ),
+                    )
+                    .subtext(tr!(
+                        "PLAYBACK_ONLY_RESAMPLE_WHEN_NECESSARY_SUBTEXT",
+                        "Sends the audio directly to your operating system without resampling. \
+                        Your operating system may resample the audio if it does not support the \
+                        output sample rate."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_playback(cx, |playback| {
+                            playback.only_resample_when_necessary =
+                                !playback.only_resample_when_necessary;
+                        });
+                    }))
+                    .child(checkbox(
+                        "playback-only-resample-when-necessary-check",
+                        playback.only_resample_when_necessary,
+                    )),
+                )
+            })
             .child({
                 let settings = self.settings.clone();
                 label(

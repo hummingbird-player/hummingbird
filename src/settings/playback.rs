@@ -57,6 +57,11 @@ pub struct PlaybackSettings {
     #[serde(default)]
     pub prevent_idle: bool,
 
+    /// Whether to open the output at each track's native sample rate before
+    /// falling back to the default output format and Hummingbird's resampler.
+    #[serde(default)]
+    pub only_resample_when_necessary: bool,
+
     /// When enabled, removes the current track from the queue when it finishes playing.
     ///
     /// Defaults to false.
@@ -74,6 +79,7 @@ impl Default for PlaybackSettings {
             replaygain: ReplayGainSettings::default(),
             equalizer: EqualizerSettings::default(),
             prevent_idle: false,
+            only_resample_when_necessary: false,
             consume: false,
         }
     }

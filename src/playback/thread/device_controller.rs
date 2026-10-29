@@ -89,6 +89,8 @@ pub struct DeviceController {
     device: Option<Box<dyn Device>>,
     stream: Option<Box<dyn OutputStream>>,
     current_format: Option<FormatInfo>,
+    /// Sample rate of the device's default format, refreshed whenever a stream is created.
+    default_sample_rate: Option<u32>,
     last_volume: f64,
     last_replaygain: f64,
     idle_pause_at: Option<std::time::Instant>,
@@ -101,6 +103,7 @@ impl DeviceController {
             device: None,
             stream: None,
             current_format: None,
+            default_sample_rate: None,
             last_volume: 1.0,
             last_replaygain: 1.0,
             idle_pause_at: None,
@@ -173,11 +176,13 @@ impl DeviceController {
 
     /// Create a new stream with the specified channel configuration.
     ///
-    /// If `channels` is None, uses the device's default format.
+    /// Requested channels and sample rate override the device's default format.
+    /// If opening the requested format fails, retries with the complete default format.
     /// Returns the format that was actually opened.
     pub fn create_stream(
         &mut self,
         channels: Option<ChannelSpec>,
+        sample_rate: Option<u32>,
     ) -> Result<FormatInfo, DeviceError> {
         self.close_stream();
 
@@ -191,13 +196,14 @@ impl DeviceController {
         let default_format = device
             .get_default_format()
             .map_err(|_| DeviceError::NoDevice)?;
+        self.default_sample_rate = Some(default_format.sample_rate);
 
-        let requested = channels.map(|ch| FormatInfo {
+        let requested = (channels.is_some() || sample_rate.is_some()).then(|| FormatInfo {
             originating_provider: default_format.originating_provider,
             sample_type: default_format.sample_type,
-            sample_rate: default_format.sample_rate,
+            sample_rate: sample_rate.unwrap_or(default_format.sample_rate),
             buffer_size: default_format.buffer_size,
-            channels: ch,
+            channels: channels.unwrap_or_else(|| default_format.channels.clone()),
         });
 
         let (stream, opened_format) = if let Some(req) = requested {
@@ -344,6 +350,11 @@ impl DeviceController {
     pub fn current_format(&self) -> Option<&FormatInfo> {
         self.current_format.as_ref()
     }
+
+    /// Sample rate that a stream would get without a requested rate override.
+    pub fn default_sample_rate(&self) -> Option<u32> {
+        self.default_sample_rate
+    }
 }
 
 impl Default for DeviceController {
@@ -355,8 +366,14 @@ impl Default for DeviceController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::devices::{
+        builtin::dummy::DummyDevice,
+        errors::{FindError, InfoError, InitializationError, ListError},
+        format::{FormatInfo, SupportedFormat},
+        traits::{Device, DeviceProvider},
+    };
     use std::{
-        cell::Cell,
+        cell::{Cell, RefCell},
         rc::Rc,
         time::{Duration, Instant},
     };
@@ -396,6 +413,83 @@ mod tests {
         ) -> Result<usize, SubmissionError> {
             Ok(0)
         }
+    }
+
+    struct FormatProvider {
+        attempts: Rc<RefCell<Vec<u32>>>,
+    }
+
+    impl DeviceProvider for FormatProvider {
+        fn initialize(&mut self) -> Result<(), InitializationError> {
+            Ok(())
+        }
+
+        fn get_devices(&mut self) -> Result<Vec<Box<dyn Device>>, ListError> {
+            Ok(vec![])
+        }
+
+        fn get_device_by_uid(&mut self, _: &str) -> Result<Box<dyn Device>, FindError> {
+            self.get_default_device()
+        }
+
+        fn get_default_device(&mut self) -> Result<Box<dyn Device>, FindError> {
+            Ok(Box::new(FormatDevice {
+                attempts: self.attempts.clone(),
+            }))
+        }
+    }
+
+    struct FormatDevice {
+        attempts: Rc<RefCell<Vec<u32>>>,
+    }
+
+    impl Device for FormatDevice {
+        fn get_default_format(&self) -> Result<FormatInfo, InfoError> {
+            let mut format = DummyDevice {}.get_default_format()?;
+            format.sample_rate = 48_000;
+            Ok(format)
+        }
+
+        fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+            self.attempts.borrow_mut().push(format.sample_rate);
+            if format.sample_rate != 48_000 {
+                return Err(OpenError::Unknown("unsupported rate".into()));
+            }
+            Ok(Box::new(Output {
+                pauses: Rc::new(Cell::new(0)),
+                resets: Rc::new(Cell::new(0)),
+            }))
+        }
+
+        fn get_supported_formats(&self) -> Result<Vec<SupportedFormat>, InfoError> {
+            DummyDevice {}.get_supported_formats()
+        }
+
+        fn get_name(&self) -> Result<String, InfoError> {
+            DummyDevice {}.get_name()
+        }
+
+        fn get_uid(&self) -> Result<String, InfoError> {
+            DummyDevice {}.get_uid()
+        }
+
+        fn requires_matching_format(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn requested_rate_falls_back_to_the_default_format() {
+        let attempts = Rc::new(RefCell::new(Vec::new()));
+        let mut controller = DeviceController::new();
+        controller.set_provider(Box::new(FormatProvider {
+            attempts: attempts.clone(),
+        }));
+
+        let opened = controller.create_stream(None, Some(44_100)).unwrap();
+
+        assert_eq!(opened.sample_rate, 48_000);
+        assert_eq!(&*attempts.borrow(), &[44_100, 48_000]);
     }
 
     #[test]

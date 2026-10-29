@@ -172,6 +172,8 @@
   "PLAYBACK_CONSUME_SUBTEXT": "Removes songs from the queue after they finish playing.",
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR": "Keep current track when clearing queue",
   "PLAYBACK_KEEP_CURRENT_ON_CLEAR_SUBTEXT": "Preserves the currently playing song instead of removing all tracks.",
+  "PLAYBACK_ONLY_RESAMPLE_WHEN_NECESSARY": "Only resample when necessary",
+  "PLAYBACK_ONLY_RESAMPLE_WHEN_NECESSARY_SUBTEXT": "Sends the audio directly to your operating system without resampling. Your operating system may resample the audio if it does not support the output sample rate.",
   "PLAYBACK_PREVENT_IDLE": "Prevent system idle when playing",
   "PLAYBACK_PREVENT_IDLE_SUBTEXT": "Stops the screensaver and system sleep during playback.",
   "PLAYBACK_PREVIOUS_JUMPS": "Previous button jumps to the beginning of the track if more than 5 seconds has elapsed",
