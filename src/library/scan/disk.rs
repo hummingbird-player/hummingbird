@@ -20,7 +20,10 @@ pub(crate) fn group_paths_by_disk(paths: &[Utf8PathBuf]) -> DiskGroups {
         return (Vec::new(), Vec::new(), FxHashMap::default());
     }
 
-    let disks = Disks::new_with_refreshed_list();
+    let disks = match Disks::new_with_refreshed_list() {
+        Ok(disks) => disks,
+        Err(_) => return (vec![paths.to_vec()], Vec::new(), FxHashMap::default()),
+    };
 
     // longest first so nested mounts match before their parents
     let mut mounts: Vec<&Path> = disks.iter().map(|d| d.mount_point()).collect();

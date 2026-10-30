@@ -9,8 +9,7 @@ categories = ["multimedia::audio"]
 
 [features]
 console = ["dep:console-subscriber", "tokio/tracing"]
-# Use the system allocator so Heaptrack can observe Rust allocations, and avoid loading PipeWire
-# concurrently with the GPU driver during startup.
+# uses the system allocator to allow allocation observation
 heap-profileable = []
 update = ["dep:semver", "dep:minisign-verify", "dep:winreg", "online"]
 online = ["dep:zed-reqwest"]
@@ -38,8 +37,8 @@ discord-rich-presence = "1"
 file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
-gpui = { package = "gpui-unofficial", version = "1" }
-gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1", features = ["wayland", "x11", "font-kit"] }
+gpui = { package = "gpui-unofficial", version = "1.25" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.25", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 icu_collator = "2.1"
 indexmap = { version = "2", features = ["serde"] }
@@ -49,7 +48,7 @@ itertools = "0.15"
 lofty = "0.25"
 md5 = "0.8"
 mimalloc = { version = "0.1", features = ["no_thp"] }
-minisign-verify = { version = "0.2", optional = true }
+minisign-verify = { version = "0.3", optional = true }
 moka = { version = "0.12", features = ["sync"] }
 notify = "8"
 nucleo = "0.5"
@@ -59,7 +58,7 @@ rand = "0.10"
 raw-window-handle = "0.6"
 realfft = "3"
 regex = "1"
-rtrb = "0.3"
+rtrb = "0.4"
 rubato = "5"
 rust-embed = "8"
 rustc-hash = "2"
@@ -72,7 +71,7 @@ sqlx = { version = "0.9", features = ["chrono", "runtime-tokio", "sqlite"] }
 symphonia = { version = "0.6", features = ["all", "opt-simd"] }
 symphonia-adapter-libopus = "0.3"
 symphonia-adapter-fdk-aac = "0.2"
-sysinfo = "0.39"
+sysinfo = "0.40"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tokio-stream = { version = "0.1", features = ["io-util"] }
@@ -147,8 +146,8 @@ objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-mpris-server = "0.10"
-zbus = "5"
+mpris-server = "0.11"
+zbus = "6"
 
 [profile.dev]
 split-debuginfo = "unpacked"
