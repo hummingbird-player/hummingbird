@@ -253,7 +253,7 @@
   },
   "ADD_N_TO_QUEUE": {
     "context": "file_row.rs",
-    "definedIn": "src/ui/library/files_view/file_row.rs:183",
+    "definedIn": "src/ui/library/files_view/file_row.rs:190",
     "plural": true,
     "description": null
   },
@@ -625,13 +625,13 @@
   },
   "FILES_COLLAPSE_ALL": {
     "context": "files_view.rs",
-    "definedIn": "src/ui/library/files_view.rs:511",
+    "definedIn": "src/ui/library/files_view.rs:512",
     "plural": false,
     "description": null
   },
   "FILES_REFRESH": {
     "context": "files_view.rs",
-    "definedIn": "src/ui/library/files_view.rs:518",
+    "definedIn": "src/ui/library/files_view.rs:519",
     "plural": false,
     "description": null
   },
@@ -1051,7 +1051,7 @@
   },
   "PLAY_N_NOW": {
     "context": "file_row.rs",
-    "definedIn": "src/ui/library/files_view/file_row.rs:154",
+    "definedIn": "src/ui/library/files_view/file_row.rs:161",
     "plural": true,
     "description": null
   },

@@ -53,6 +53,7 @@ const ART_SIZE: f32 = 20.0;
 type BatchLikedResource = Entity<AsyncResource<Vec<i64>, SmallVec<[(i64, i64); 32]>>>;
 
 pub struct FileRowItem {
+    index: usize,
     flat_row: FlatRow,
     files_view: Entity<FilesView>,
     full_track: Option<Rc<Track>>,
@@ -71,7 +72,12 @@ fn path_hash(path: &PathBuf) -> usize {
 }
 
 impl FileRowItem {
-    pub fn new(cx: &mut App, flat_row: FlatRow, files_view: Entity<FilesView>) -> Entity<Self> {
+    pub fn new(
+        cx: &mut App,
+        flat_row: FlatRow,
+        index: usize,
+        files_view: Entity<FilesView>,
+    ) -> Entity<Self> {
         cx.new(|cx| {
             cx.observe(&files_view, |_, _, cx| cx.notify()).detach();
 
@@ -119,6 +125,7 @@ impl FileRowItem {
             }
 
             Self {
+                index,
                 flat_row,
                 files_view,
                 full_track,
@@ -315,6 +322,8 @@ impl Render for FileRowItem {
             theme.list_item_selected
         } else if is_current {
             theme.list_item_current
+        } else if self.index % 2 == 1 {
+            theme.list_item_alternate
         } else {
             theme.list_item
         };

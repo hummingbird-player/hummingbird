@@ -26,6 +26,7 @@ use crate::{
         components::{
             icons::{MINIMIZE, REFRESH},
             nav_button::nav_button,
+            scrollbar::floating_scrollbar,
             tooltip::build_tooltip,
         },
         constants::INNER_PANEL_GAP,
@@ -529,34 +530,41 @@ impl Render for FilesView {
             .w_full()
             .child(header)
             .child(
-                uniform_list(
-                    "files-view",
-                    flat.len(),
-                    move |range: std::ops::Range<usize>, _window, cx| {
-                        range
-                            .map(|idx| {
-                                prune_views_keyed(&row_views, &rendered_keys, &[idx], cx);
+                div()
+                    .relative()
+                    .w_full()
+                    .h_full()
+                    .child(
+                        uniform_list(
+                            "files-view",
+                            flat.len(),
+                            move |range: std::ops::Range<usize>, _window, cx| {
+                                range
+                                    .map(|idx| {
+                                        prune_views_keyed(&row_views, &rendered_keys, &[idx], cx);
 
-                                let row = flat[idx].clone();
-                                let fv = self_entity.clone();
+                                        let row = flat[idx].clone();
+                                        let fv = self_entity.clone();
 
-                                div()
-                                    .h(px(ROW_HEIGHT))
-                                    .w_full()
-                                    .child(create_or_retrieve_view(
-                                        &row_views,
-                                        idx,
-                                        move |cx| FileRowItem::new(cx, row, fv),
-                                        cx,
-                                    ))
-                                    .into_any_element()
-                            })
-                            .collect()
-                    },
-                )
-                .h_full()
-                .w_full()
-                .track_scroll(&scroll_handle),
+                                        div()
+                                            .h(px(ROW_HEIGHT))
+                                            .w_full()
+                                            .child(create_or_retrieve_view(
+                                                &row_views,
+                                                idx,
+                                                move |cx| FileRowItem::new(cx, row, idx, fv),
+                                                cx,
+                                            ))
+                                            .into_any_element()
+                                    })
+                                    .collect()
+                            },
+                        )
+                        .h_full()
+                        .w_full()
+                        .track_scroll(&scroll_handle),
+                    )
+                    .child(floating_scrollbar("files-scrollbar", scroll_handle).right(px(4.0))),
             )
     }
 }
