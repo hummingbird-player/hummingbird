@@ -1561,6 +1561,72 @@ async fn update_metadata_retag_rebuilds_old_album_artists() {
 }
 
 #[tokio::test]
+async fn update_metadata_retag_changes_existing_artist_sort() {
+    let (dir, pool) = create_test_pool("db-artist-sort-change-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path = dir.utf8_join("track1.flac");
+
+    let mut meta = track_metadata("Album", "Artist", "Track", 1);
+    meta.artist_sort = Some("Old Sort".to_string());
+    insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+    let (sort,): (String,) = sqlx::query_as("SELECT name_sortable FROM artist")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sort, "Old Sort");
+
+    // a non-forced rescan must still apply the changed tag
+    let mut retagged = track_metadata("Album", "Artist", "Track", 1);
+    retagged.artist_sort = Some("New Sort".to_string());
+    insert_metadata(&mut conn, &retagged, &path).await.unwrap();
+
+    let (sort,): (String,) = sqlx::query_as("SELECT name_sortable FROM artist")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sort, "New Sort");
+}
+
+#[tokio::test]
+async fn update_metadata_retag_changes_existing_album_artist_sort() {
+    let (dir, pool) = create_test_pool("db-album-artist-sort-change-test").await;
+    let mut conn = pool.acquire().await.unwrap();
+    let path = dir.utf8_join("track1.flac");
+
+    let mut meta = track_metadata("Album", "Artist", "Track", 1);
+    meta.album_artist_sort = Some("Old Album Sort".to_string());
+    insert_metadata(&mut conn, &meta, &path).await.unwrap();
+
+    let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sort, "Old Album Sort");
+
+    // a non-forced rescan must still apply the changed tag
+    let mut retagged = track_metadata("Album", "Artist", "Track", 1);
+    retagged.album_artist_sort = Some("New Album Sort".to_string());
+    insert_metadata(&mut conn, &retagged, &path).await.unwrap();
+
+    let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sort, "New Album Sort");
+
+    // an untagged track must not clear the album's tag
+    let untagged = track_metadata("Album", "Artist", "Track", 1);
+    insert_metadata(&mut conn, &untagged, &path).await.unwrap();
+
+    let (sort,): (String,) = sqlx::query_as("SELECT artist_sort FROM album")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sort, "New Album Sort");
+}
+
+#[tokio::test]
 async fn update_metadata_retag_updates_album_artist_display() {
     let (dir, pool) = create_test_pool("db-retag-album-display-test").await;
     let mut conn = pool.acquire().await.unwrap();

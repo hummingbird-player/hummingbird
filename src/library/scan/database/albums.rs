@@ -85,6 +85,21 @@ pub(super) async fn insert_album(
         .await?;
 
         if !is_force {
+            // apply changed tags on rescan - an untagged file keeps the album's current tag
+            if let Some(sort_tag) = metadata
+                .album_artist_sort
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+            {
+                sqlx::query(include_str!(
+                    "../../../../queries/scan/update_album_artist_sort_tag.sql"
+                ))
+                .bind(id)
+                .bind(sort_tag)
+                .execute(&mut *conn)
+                .await?;
+            }
+
             album_cache.insert(cache_key, id);
             return Ok(Some(id));
         }

@@ -77,12 +77,13 @@ impl ArtistMatcher {
     ) -> anyhow::Result<i64> {
         self.load(&mut *conn).await?;
 
-        let sort = sort_name
-            .and_then(|s| (!s.trim().is_empty()).then_some(s))
-            .unwrap_or(name);
+        let explicit_sort = sort_name.and_then(|s| (!s.trim().is_empty()).then_some(s));
+        let sort = explicit_sort.unwrap_or(name);
         let key = token_key(sort);
         let Some(&artist_id) = self.by_key.get(&key) else {
-            return self.create(conn, name, sort, key).await;
+            return self
+                .create(conn, name, sort, key, explicit_sort.is_some())
+                .await;
         };
 
         // prefer names matching the sort key - ties keep the existing row so order doesn't matter
@@ -114,6 +115,7 @@ impl ArtistMatcher {
         name: &str,
         sort_name: &str,
         key: String,
+        explicit_sort: bool,
     ) -> anyhow::Result<i64> {
         let result: Result<(i64,), sqlx::Error> =
             sqlx::query_as(include_str!("../../../queries/scan/create_artist.sql"))
@@ -122,47 +124,54 @@ impl ArtistMatcher {
                 .fetch_one(&mut *conn)
                 .await;
 
-        let (id, name, key) = match result {
+        let (id, stored_name, stored_key) = match result {
             Ok((id,)) => (id, name.to_string(), key),
             // name is taken by an artist with a different key - use that row
             Err(sqlx::Error::RowNotFound) => {
-                let (id, name, sort): (i64, String, String) =
+                let (id, stored_name, stored_sort): (i64, String, String) =
                     sqlx::query_as(include_str!("../../../queries/scan/get_artist_id.sql"))
                         .bind(name)
                         .fetch_one(&mut *conn)
                         .await?;
-                let existing_key = token_key(&sort);
-                // if sort defaulted to the name, take the incoming sort when free so aliases merge
-                let upgrade =
-                    sort == name && key != existing_key && !self.by_key.contains_key(&key);
+                let existing_key = token_key(&stored_sort);
+                // take a free sort - explicit tags replace old ones, defaults upgrade so aliases merge
+                let can_take_sort = key != existing_key && !self.by_key.contains_key(&key);
+                let upgrade = can_take_sort && (explicit_sort || stored_sort == stored_name);
                 if upgrade {
                     sqlx::query(include_str!("../../../queries/scan/update_artist_sort.sql"))
                         .bind(sort_name)
                         .bind(id)
                         .execute(&mut *conn)
                         .await?;
-                    (id, name, key)
+                    (id, stored_name, key)
                 } else {
-                    (id, name, existing_key)
+                    (id, stored_name, existing_key)
                 }
             }
             Err(e) => return Err(e.into()),
         };
 
         if let Some(entry) = self.artists.as_mut().unwrap().get_mut(&id) {
-            let old_key = std::mem::replace(&mut entry.key, key.clone());
-            entry.name = name;
-            if old_key != key {
-                self.by_key.remove(&old_key);
-                self.by_key.insert(key, id);
+            let old_key = std::mem::replace(&mut entry.key, stored_key.clone());
+            entry.name = stored_name;
+            if old_key != stored_key {
+                // duplicate keys from old databases map to the lowest id - only drop our own entry
+                if self.by_key.get(&old_key) == Some(&id) {
+                    self.by_key.remove(&old_key);
+                }
+                self.by_key.insert(stored_key, id);
             }
             return Ok(id);
         }
-        self.by_key.insert(key.clone(), id);
-        self.artists
-            .as_mut()
-            .unwrap()
-            .insert(id, ArtistEntry { id, name, key });
+        self.by_key.insert(stored_key.clone(), id);
+        self.artists.as_mut().unwrap().insert(
+            id,
+            ArtistEntry {
+                id,
+                name: stored_name,
+                key: stored_key,
+            },
+        );
         Ok(id)
     }
 }
