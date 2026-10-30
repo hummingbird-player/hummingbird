@@ -273,41 +273,41 @@ impl PlaylistItemQuery {
 fn push_track_ordering(query: &mut QueryBuilder<Sqlite>, sort_method: PlaylistTrackSortMethod) {
     match sort_method {
         PlaylistTrackSortMethod::Custom => query.push("playlist_item.position ASC"),
-        PlaylistTrackSortMethod::TitleAsc => query.push("track.title_sortable COLLATE NOCASE ASC"),
+        PlaylistTrackSortMethod::TitleAsc => query.push("track.title_sortable COLLATE HB_SORT ASC"),
         PlaylistTrackSortMethod::TitleDesc => {
-            query.push("track.title_sortable COLLATE NOCASE DESC")
+            query.push("track.title_sortable COLLATE HB_SORT DESC")
         }
         PlaylistTrackSortMethod::ArtistAsc => query.push(
-            "album.artist_sort COLLATE NOCASE ASC,
-             album.title_sortable COLLATE NOCASE ASC,
+            "album.artist_sort COLLATE HB_SORT ASC,
+             album.title_sortable COLLATE HB_SORT ASC,
              track.disc_number ASC,
              track.track_number ASC,
              track.track_section ASC",
         ),
         PlaylistTrackSortMethod::ArtistDesc => query.push(
-            "album.artist_sort COLLATE NOCASE DESC,
-             album.title_sortable COLLATE NOCASE DESC,
+            "album.artist_sort COLLATE HB_SORT DESC,
+             album.title_sortable COLLATE HB_SORT DESC,
              track.disc_number DESC,
              track.track_number DESC,
              track.track_section ASC",
         ),
         PlaylistTrackSortMethod::AlbumAsc => query.push(
-            "album.title_sortable COLLATE NOCASE ASC,
+            "album.title_sortable COLLATE HB_SORT ASC,
              track.disc_number ASC,
              track.track_number ASC,
              track.track_section ASC",
         ),
         PlaylistTrackSortMethod::AlbumDesc => query.push(
-            "album.title_sortable COLLATE NOCASE DESC,
+            "album.title_sortable COLLATE HB_SORT DESC,
              track.disc_number DESC,
              track.track_number DESC,
              track.track_section ASC",
         ),
         PlaylistTrackSortMethod::DurationAsc => {
-            query.push("track.duration ASC, track.title_sortable COLLATE NOCASE ASC")
+            query.push("track.duration ASC, track.title_sortable COLLATE HB_SORT ASC")
         }
         PlaylistTrackSortMethod::DurationDesc => {
-            query.push("track.duration DESC, track.title_sortable COLLATE NOCASE ASC")
+            query.push("track.duration DESC, track.title_sortable COLLATE HB_SORT ASC")
         }
         PlaylistTrackSortMethod::RecentlyAdded => {
             query.push("playlist_item.created_at DESC, playlist_item.position ASC")

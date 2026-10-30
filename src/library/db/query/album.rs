@@ -301,28 +301,28 @@ fn push_ordering(query: &mut QueryBuilder<Sqlite>, ordering: AlbumOrdering) {
     match ordering.column {
         AlbumColumn::Title => {
             query
-                .push("album.title_sortable COLLATE NOCASE")
+                .push("album.title_sortable COLLATE HB_SORT")
                 .push(direction);
         }
         AlbumColumn::Artist => {
             query
-                .push("album.artist_sort COLLATE NOCASE")
+                .push("album.artist_sort COLLATE HB_SORT")
                 .push(direction);
         }
         AlbumColumn::ReleaseDate => {
             query.push("album.release_date").push(direction);
         }
         AlbumColumn::Label => {
-            query.push("album.label COLLATE NOCASE").push(direction);
+            query.push("album.label COLLATE HB_SORT").push(direction);
         }
         AlbumColumn::CatalogNumber => {
             query
-                .push("album.catalog_number COLLATE NOCASE")
+                .push("album.catalog_number COLLATE HB_SORT")
                 .push(direction);
         }
         AlbumColumn::Genres => {
             query
-                .push("COALESCE(genres.genre_sort, '') COLLATE NOCASE")
+                .push("COALESCE(genres.genre_sort, '') COLLATE HB_SORT")
                 .push(direction);
         }
     }
@@ -335,13 +335,13 @@ fn push_tie_breakers(query: &mut QueryBuilder<Sqlite>, primary: AlbumColumn) {
             query.push(", album.release_date ASC");
         }
         AlbumColumn::ReleaseDate => {
-            query.push(", album.title_sortable COLLATE NOCASE ASC");
+            query.push(", album.title_sortable COLLATE HB_SORT ASC");
         }
         AlbumColumn::Label => {
-            query.push(", album.catalog_number COLLATE NOCASE ASC, album.release_date ASC");
+            query.push(", album.catalog_number COLLATE HB_SORT ASC, album.release_date ASC");
         }
         AlbumColumn::Genres => {
-            query.push(", album.title_sortable COLLATE NOCASE ASC, album.id ASC");
+            query.push(", album.title_sortable COLLATE HB_SORT ASC, album.id ASC");
         }
     }
 }

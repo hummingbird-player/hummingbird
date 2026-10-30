@@ -267,11 +267,11 @@ impl ArtistQuery {
             query.push(" ORDER BY ");
             push_ordering(&mut query, ordering);
             if ordering.column != ArtistColumn::Name {
-                query.push(", artist.name_sortable COLLATE NOCASE ASC");
+                query.push(", artist.name_sortable COLLATE HB_SORT ASC");
             }
             query.push(", artist.id ASC");
         } else if self.relation.is_some() {
-            query.push(" ORDER BY artist.name_sortable COLLATE NOCASE ASC");
+            query.push(" ORDER BY artist.name_sortable COLLATE HB_SORT ASC");
         }
 
         query
@@ -337,7 +337,7 @@ fn push_ordering(query: &mut QueryBuilder<Sqlite>, ordering: ArtistOrdering) {
     match ordering.column {
         ArtistColumn::Name => {
             query
-                .push("artist.name_sortable COLLATE NOCASE")
+                .push("artist.name_sortable COLLATE HB_SORT")
                 .push(direction);
         }
         ArtistColumn::Albums => {

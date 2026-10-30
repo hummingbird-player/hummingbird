@@ -259,7 +259,7 @@
   },
   "ADD_TO_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:173",
+    "definedIn": "src/ui/library/context_menus/track.rs:174",
     "plural": false,
     "description": null
   },
@@ -823,13 +823,13 @@
   },
   "LEGACY_THEME_GUIDE_ACTION": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:540",
+    "definedIn": "src/ui/app.rs:541",
     "plural": false,
     "description": null
   },
   "LEGACY_THEME_REMOVAL_WARNING": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:536",
+    "definedIn": "src/ui/app.rs:537",
     "plural": false,
     "description": null
   },
@@ -1105,7 +1105,7 @@
   },
   "REMOVE_FROM_PLAYLIST": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:208",
+    "definedIn": "src/ui/library/context_menus/track.rs:209",
     "plural": false,
     "description": null
   },
@@ -1171,7 +1171,7 @@
   },
   "RESCAN_TRACK": {
     "context": "track.rs",
-    "definedIn": "src/ui/library/context_menus/track.rs:195",
+    "definedIn": "src/ui/library/context_menus/track.rs:196",
     "plural": false,
     "description": null
   },

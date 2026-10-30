@@ -685,22 +685,26 @@ fn push_ordering_key(
                 artist_filter,
                 Some(ArtistFilter::Liked(_) | ArtistFilter::Standalone(_))
             ) {
-                query.push("track.title_sortable").push(direction);
+                query
+                    .push("track.title_sortable COLLATE HB_SORT")
+                    .push(direction);
             } else if is_primary {
                 // Preserve the legacy library-table ordering: its title key is always ascending.
-                query.push("track.title_sortable ASC");
+                query.push("track.title_sortable COLLATE HB_SORT ASC");
             } else {
-                query.push("track.title_sortable").push(direction);
+                query
+                    .push("track.title_sortable COLLATE HB_SORT")
+                    .push(direction);
             }
         }
         TrackOrderingKey::Column(TrackColumn::Artist) => {
             query
-                .push("COALESCE(album.artist_sort, track.artist_sort, track.artist_names) COLLATE NOCASE")
+                .push("COALESCE(album.artist_sort, track.artist_sort, track.artist_names) COLLATE HB_SORT")
                 .push(direction);
         }
         TrackOrderingKey::Column(TrackColumn::Album) => {
             query
-                .push("album.title_sortable COLLATE NOCASE")
+                .push("album.title_sortable COLLATE HB_SORT")
                 .push(direction);
         }
         TrackOrderingKey::Column(TrackColumn::Length) => {
@@ -716,7 +720,7 @@ fn push_ordering_key(
         }
         TrackOrderingKey::Column(TrackColumn::Genres) => {
             query
-                .push("COALESCE(genres.genre_sort, '') COLLATE NOCASE")
+                .push("COALESCE(genres.genre_sort, '') COLLATE HB_SORT")
                 .push(direction);
         }
         TrackOrderingKey::ReleaseDate => {
@@ -798,14 +802,14 @@ fn push_tie_breakers(
                 query.push(", track.id ASC");
             } else {
                 query
-                    .push(", track.album_id ASC, track.location COLLATE NOCASE")
+                    .push(", track.album_id ASC, track.location COLLATE HB_SORT")
                     .push(primary.direction.sql())
                     .push(", track.id ASC");
             }
         }
         TrackOrderingKey::Column(TrackColumn::Artist) => {
             query.push(
-                ", album.title_sortable COLLATE NOCASE ASC,
+                ", album.title_sortable COLLATE HB_SORT ASC,
                  track.disc_number ASC,
                  track.track_number ASC,
                  track.track_section ASC,
@@ -821,16 +825,16 @@ fn push_tie_breakers(
             );
         }
         TrackOrderingKey::Column(TrackColumn::Length) => {
-            query.push(", track.title_sortable COLLATE NOCASE ASC, track.id ASC");
+            query.push(", track.title_sortable COLLATE HB_SORT ASC, track.id ASC");
         }
         TrackOrderingKey::Column(TrackColumn::TrackNumber) | TrackOrderingKey::ReleaseDate => {
             query.push(", track.id ASC");
         }
         TrackOrderingKey::Column(TrackColumn::Genres) => {
             query.push(
-                ", track.title_sortable COLLATE NOCASE ASC,
+                ", track.title_sortable COLLATE HB_SORT ASC,
                  track.album_id ASC,
-                 track.location COLLATE NOCASE ASC,
+                 track.location COLLATE HB_SORT ASC,
                  track.id ASC",
             );
         }

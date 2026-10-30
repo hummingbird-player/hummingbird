@@ -344,12 +344,6 @@ pub fn run() -> anyhow::Result<()> {
         )
     })?;
 
-    let pool = crate::RUNTIME
-        .block_on(create_pool(data_dir.join("library.db")))
-        .inspect_err(|error| {
-            tracing::error!(?error, "fatal: unable to create database pool");
-        })?;
-
     #[cfg(feature = "proprietary-services")]
     if !lastfm::is_available() {
         tracing::warn!(
@@ -381,7 +375,6 @@ pub fn run() -> anyhow::Result<()> {
         find_fonts(cx).expect("unable to load fonts");
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
-        cx.set_global(Pool(pool.clone()));
 
         let settings = cx.global::<SettingsGlobal>().model.read(cx);
         let legacy_theme_loaded = settings.interface.theme.as_deref() == Some("theme.json")
@@ -395,6 +388,14 @@ pub fn run() -> anyhow::Result<()> {
         if !language.is_empty() {
             I18N_MANAGER.write().unwrap().locale = Locale::new_from_locale_identifier(language);
         }
+
+        let pool = crate::RUNTIME
+            .block_on(create_pool(data_dir.join("library.db")))
+            .inspect_err(|error| {
+                tracing::error!(?error, "fatal: unable to create database pool");
+            })
+            .expect("fatal: unable to create database pool");
+        cx.set_global(Pool(pool.clone()));
 
         let storage = Storage::new(data_dir.join("app_data.json"));
         let storage_data = storage.load_or_default();

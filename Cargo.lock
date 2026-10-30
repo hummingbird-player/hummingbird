@@ -3526,6 +3526,7 @@ dependencies = [
  "globwalk",
  "gpui-platform-gpui-unofficial",
  "gpui-unofficial 1.23.2",
+ "icu_collator",
  "image",
  "imagesize",
  "indexmap",

@@ -419,6 +419,33 @@ async fn album_by_artist_returns_an_album_linked_to_multiple_artists_once() {
 }
 
 #[tokio::test]
+async fn artist_names_interleave_accented_letters_with_their_base_letter() {
+    let db = TestDatabase::new("artist-locale-sort").await;
+    let pool = db.pool();
+
+    // byte order would sort `Čata` after `Zima`, the collation compares it as a `C`
+    for (id, name) in [(1, "Cesta"), (2, "Čata"), (3, "Cvak"), (4, "Zima")] {
+        sqlx::query("INSERT INTO artist (id, name, name_sortable) VALUES ($1, $2, $2)")
+            .bind(id)
+            .bind(name)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        artists()
+            .sort(ArtistColumn::Name, SortDirection::Ascending)
+            .fetch_ids(pool)
+            .await
+            .unwrap(),
+        vec![2, 1, 3, 4]
+    );
+
+    db.close().await;
+}
+
+#[tokio::test]
 async fn track_sort_methods_preserve_current_ordering_rules() {
     let db = TestDatabase::new("track-sort-characterization").await;
     let pool = db.pool();
