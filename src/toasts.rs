@@ -65,6 +65,11 @@ impl Toast {
         });
         self
     }
+
+    pub fn persistent(mut self) -> Self {
+        self.duration = None;
+        self
+    }
 }
 
 /// Queue a toast for display. Silently dropped if the sender hasn't been

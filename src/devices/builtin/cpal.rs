@@ -13,8 +13,10 @@ use crate::{
         pipeline::{ChannelConsumers, DEFAULT_BUFFER_FRAMES},
         playback::Mute,
     },
+    toasts::{Toast, emit_toast},
     util::make_unknown_error,
 };
+use cntp_i18n::tr;
 use cpal::{
     Host, SizedSample,
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -171,9 +173,29 @@ fn create_stream_internal<T: CpalSample>(
             error_flag.store(true, Ordering::Relaxed);
         },
         None,
-    )?;
+    );
 
-    Ok((stream, prod, device_errored))
+    if let Ok(stream) = stream {
+        Ok((stream, prod, device_errored))
+    } else if let Err(err) = stream {
+        if err.kind() == cpal::ErrorKind::DeviceBusy {
+            emit_toast(
+                Toast::error(tr!(
+                    "DEVICE_BUSY",
+                    "Your default audio device couldn't be opened because it's in use by another \
+                    application in Exclusive Mode. You'll have to close the other application and \
+                    retry."
+                ))
+                .persistent(),
+            );
+
+            return Err(OpenError::PersistentError);
+        }
+
+        Err(err.into())
+    } else {
+        unreachable!()
+    }
 }
 
 impl CpalDevice {

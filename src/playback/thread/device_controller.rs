@@ -209,6 +209,7 @@ impl DeviceController {
         let (stream, opened_format) = if let Some(req) = requested {
             match device.open_device(req.clone()) {
                 Ok(stream) => (stream, req),
+                Err(OpenError::PersistentError) => return Err(OpenError::PersistentError.into()),
                 Err(e) => {
                     warn!(
                         ?default_format,

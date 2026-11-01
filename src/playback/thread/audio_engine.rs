@@ -8,6 +8,7 @@ use tracing::{debug, error, info, trace_span, warn};
 
 use crate::{
     devices::{
+        errors::OpenError,
         format::{ChannelSpec, FormatInfo},
         mix::{ChannelMixer, MixOptions},
         resample::Resampler,
@@ -27,7 +28,7 @@ use crate::{
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
 };
 
-use super::device_controller::DeviceController;
+use super::device_controller::{DeviceController, DeviceError};
 use super::media_controller::MediaController;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,8 @@ pub enum EngineCycleResult {
 #[derive(Debug)]
 pub enum EngineError {
     NoPipeline,
+    /// A user-facing error was emitted and the pipeline needs to pause.
+    ShouldPause,
     /// Failed to get media information.
     MediaError(String),
     DecodeError(String),
@@ -86,6 +89,7 @@ impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EngineError::NoPipeline => write!(f, "No audio pipeline configured"),
+            EngineError::ShouldPause => write!(f, "Playback must pause until the user retries"),
             EngineError::MediaError(s) => write!(f, "Media error: {}", s),
             EngineError::DecodeError(s) => write!(f, "Decode error: {}", s),
             EngineError::DeviceError(s) => write!(f, "Device error: {}", s),
@@ -95,6 +99,15 @@ impl std::fmt::Display for EngineError {
 }
 
 impl std::error::Error for EngineError {}
+
+impl From<&DeviceError> for EngineError {
+    fn from(error: &DeviceError) -> Self {
+        match error {
+            DeviceError::OpenError(OpenError::PersistentError) => Self::ShouldPause,
+            error => Self::DeviceError(error.to_string()),
+        }
+    }
+}
 
 pub struct AudioEngine {
     media: MediaController,
@@ -129,6 +142,8 @@ pub struct AudioEngine {
     timing_delay_pending: bool,
     seek_completed: bool,
     device_retry_at: Option<Instant>,
+    /// A persistent device error must not be retried until Play is requested.
+    device_retry_blocked: bool,
     only_resample_when_necessary: bool,
 }
 
@@ -159,6 +174,7 @@ impl AudioEngine {
             timing_delay_pending: true,
             seek_completed: false,
             device_retry_at: None,
+            device_retry_blocked: false,
             only_resample_when_necessary: false,
         }
     }
@@ -170,6 +186,9 @@ impl AudioEngine {
         self.device.initialize_provider();
 
         if let Err(e) = self.device.create_stream(None, None) {
+            if matches!(EngineError::from(&e), EngineError::ShouldPause) {
+                return Err(EngineError::ShouldPause);
+            }
             error!("Failed to create initial stream: {:?}", e);
             return Err(EngineError::DeviceError(format!(
                 "Failed to create initial stream: {:?}",
@@ -220,7 +239,11 @@ impl AudioEngine {
         self.drain = DrainState::Inactive;
         self.opened = None;
         self.opening = Some(preserve_resampler);
-        self.state = EngineState::Playing;
+        self.state = if self.device_retry_blocked {
+            EngineState::Paused
+        } else {
+            EngineState::Playing
+        };
         self.media.open(path);
         Ok(self.track_serial)
     }
@@ -301,13 +324,15 @@ impl AudioEngine {
                 != Some(sample_rate)
         {
             info!("Requesting native source sample rate: {sample_rate} Hz");
-            self.device
-                .create_stream(None, Some(sample_rate))
-                .map_err(|error| {
-                    PlaybackStartError::MediaError(format!(
+            if let Err(error) = self.device.create_stream(None, Some(sample_rate)) {
+                if matches!(EngineError::from(&error), EngineError::ShouldPause) {
+                    self.device_failed(error);
+                } else {
+                    return Err(PlaybackStartError::MediaError(format!(
                         "Failed to open output at the source sample rate: {error}"
-                    ))
-                })?;
+                    )));
+                }
+            }
             self.sync_eq_format();
             // Output buffered for the previous device rate cannot be carried over.
             self.clear_pipeline();
@@ -375,6 +400,8 @@ impl AudioEngine {
         if self.state == EngineState::Playing {
             return Ok(());
         }
+        self.device_retry_blocked = false;
+        self.device_retry_at = None;
         self.state = EngineState::Playing;
         if self.pending_reset && self.device.has_stream() {
             if let Err(error) = self.device.reset() {
@@ -431,7 +458,19 @@ impl AudioEngine {
         }
     }
 
-    fn device_failed(&mut self, error: super::device_controller::DeviceError) {
+    fn device_failed(&mut self, error: DeviceError) {
+        if matches!(EngineError::from(&error), EngineError::ShouldPause) {
+            self.device.close_stream();
+            self.device_retry_at = None;
+            self.device_retry_blocked = true;
+            if self.state == EngineState::Playing {
+                self.state = EngineState::Paused;
+                let _ = self
+                    .events_tx
+                    .send(PlaybackEvent::StateChanged(super::PlaybackState::Paused));
+            }
+            return;
+        }
         warn!("audio output unavailable: {error}; waiting for a usable device");
         self.device.close_stream();
         self.device_retry_at =
@@ -440,6 +479,7 @@ impl AudioEngine {
 
     fn retry_device(&mut self) {
         if self.state == EngineState::Idle
+            || self.device_retry_blocked
             || self.media.current_path().is_none()
             || self.device.has_stream()
             || self.device_retry_at.is_some_and(|at| at > Instant::now())
@@ -460,6 +500,10 @@ impl AudioEngine {
         let format = match result {
             Ok(format) => format,
             Err(error) => {
+                if matches!(EngineError::from(&error), EngineError::ShouldPause) {
+                    self.device_failed(error);
+                    return;
+                }
                 debug!("audio output still unavailable: {error}");
                 self.device.close_stream();
                 self.device_retry_at = Some(Instant::now() + DEVICE_RETRY_INTERVAL);
@@ -508,6 +552,7 @@ impl AudioEngine {
 
     fn clear_source(&mut self) {
         self.device_retry_at = None;
+        self.device_retry_blocked = false;
         self.media.close();
         self.opening = None;
         self.opened = None;
@@ -1289,6 +1334,8 @@ mod tests {
         available: Rc<Cell<bool>>,
         queries: Rc<Cell<usize>>,
         rate: Rc<Cell<u32>>,
+        fail_device_open: Rc<Cell<bool>>,
+        device_open_attempts: Rc<Cell<usize>>,
     }
 
     impl DeviceProvider for SwitchingOutput {
@@ -1306,6 +1353,8 @@ mod tests {
             Ok(Box::new(SwitchingDevice {
                 available: self.available.clone(),
                 rate: self.rate.clone(),
+                fail_device_open: self.fail_device_open.clone(),
+                device_open_attempts: self.device_open_attempts.clone(),
             }))
         }
     }
@@ -1313,6 +1362,8 @@ mod tests {
     struct SwitchingDevice {
         available: Rc<Cell<bool>>,
         rate: Rc<Cell<u32>>,
+        fail_device_open: Rc<Cell<bool>>,
+        device_open_attempts: Rc<Cell<usize>>,
     }
 
     impl Device for SwitchingDevice {
@@ -1325,6 +1376,13 @@ mod tests {
             Ok(format)
         }
         fn open_device(&mut self, format: FormatInfo) -> Result<Box<dyn OutputStream>, OpenError> {
+            self.device_open_attempts
+                .set(self.device_open_attempts.get() + 1);
+
+            if self.fail_device_open.get() {
+                return Err(OpenError::PersistentError);
+            }
+
             DummyDevice {}.open_device(format)
         }
         fn get_supported_formats(&self) -> Result<Vec<SupportedFormat>, InfoError> {
@@ -1339,6 +1397,136 @@ mod tests {
         fn requires_matching_format(&self) -> bool {
             true
         }
+    }
+
+    enum PersistentErrorScenario {
+        DeviceRecovery,
+        NativeRateReopen,
+    }
+
+    fn assert_persistent_error_waits_for_play(scenario: PersistentErrorScenario) {
+        let _guard = engine_lock();
+        configure_dummy_device(48_000, "S16", 2);
+
+        let test_directory = crate::test_support::TestDir::new("persistent-output-error");
+        let source_path = test_directory.join("source.wav");
+        let source_samples = i16_test_signal(20_000, 2);
+        write_wav_i16(&source_path, 44_100, 2, &source_samples);
+
+        let mut engine = engine_playing(&source_path);
+        let (events_tx, mut events_rx) = unbounded_channel();
+        engine.events_tx = events_tx;
+
+        let fail_device_open = Rc::new(Cell::new(true));
+        let device_open_attempts = Rc::new(Cell::new(0));
+
+        engine.device.set_provider(Box::new(SwitchingOutput {
+            available: Rc::new(Cell::new(true)),
+            queries: Rc::new(Cell::new(0)),
+            rate: Rc::new(Cell::new(48_000)),
+            fail_device_open: fail_device_open.clone(),
+            device_open_attempts: device_open_attempts.clone(),
+        }));
+
+        engine.only_resample_when_necessary = true;
+
+        match scenario {
+            PersistentErrorScenario::DeviceRecovery => {
+                engine.device.close_stream();
+                engine.poll();
+            }
+            PersistentErrorScenario::NativeRateReopen => {
+                engine.open(&source_path, false).unwrap();
+
+                let open_deadline = Instant::now() + Duration::from_secs(5);
+
+                loop {
+                    engine.poll();
+
+                    if let Some(open_result) = engine.take_opened() {
+                        open_result
+                            .expect("a persistent device error must not fail the media open");
+                        break;
+                    }
+
+                    assert!(Instant::now() < open_deadline, "media open timed out");
+                    std::thread::park_timeout(Duration::from_millis(1));
+                }
+            }
+        }
+
+        assert_eq!(engine.state(), EngineState::Paused);
+        assert!(!engine.device.has_stream());
+        assert!(engine.device_retry_at.is_none());
+        assert_eq!(
+            device_open_attempts.get(),
+            1,
+            "persistent errors must not fall back to the default format"
+        );
+
+        let reported_paused_state = std::iter::from_fn(|| events_rx.try_recv().ok()).any(|event| {
+            matches!(
+                event,
+                PlaybackEvent::StateChanged(super::super::PlaybackState::Paused)
+            )
+        });
+        assert!(
+            reported_paused_state,
+            "the UI must be notified that playback paused"
+        );
+
+        for _ in 0..100 {
+            engine.poll();
+            assert_eq!(engine.process_cycle(), EngineCycleResult::NothingToDo);
+        }
+
+        assert_eq!(
+            device_open_attempts.get(),
+            1,
+            "paused playback must not retry the device"
+        );
+        assert_eq!(engine.current_path(), Some(source_path.as_path()));
+
+        engine.play().unwrap();
+        engine.poll();
+
+        assert_eq!(
+            device_open_attempts.get(),
+            2,
+            "Play should allow one new attempt"
+        );
+        assert_eq!(engine.state(), EngineState::Paused);
+
+        fail_device_open.set(false);
+
+        for _ in 0..100 {
+            engine.poll();
+        }
+
+        assert_eq!(
+            device_open_attempts.get(),
+            2,
+            "recovery must still wait for Play"
+        );
+
+        engine.play().unwrap();
+        engine.poll();
+
+        assert_eq!(device_open_attempts.get(), 3);
+        assert_eq!(engine.state(), EngineState::Playing);
+        assert!(engine.device.has_stream());
+
+        run_to_eof(&mut engine, 100_000);
+    }
+
+    #[test]
+    fn persistent_device_error_stops_retries_until_play() {
+        assert_persistent_error_waits_for_play(PersistentErrorScenario::DeviceRecovery);
+    }
+
+    #[test]
+    fn persistent_native_rate_error_preserves_the_loaded_track() {
+        assert_persistent_error_waits_for_play(PersistentErrorScenario::NativeRateReopen);
     }
 
     #[test]
@@ -1409,6 +1597,8 @@ mod tests {
             available: available.clone(),
             queries: queries.clone(),
             rate: rate.clone(),
+            fail_device_open: Rc::new(Cell::new(false)),
+            device_open_attempts: Rc::new(Cell::new(0)),
         }));
         let deadline = Instant::now() + Duration::from_secs(5);
         while engine.device.has_stream() {

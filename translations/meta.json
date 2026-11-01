@@ -449,6 +449,12 @@
     "plural": false,
     "description": null
   },
+  "DEVICE_BUSY": {
+    "context": "cpal.rs",
+    "definedIn": "src/devices/builtin/cpal.rs:184",
+    "plural": false,
+    "description": null
+  },
   "DISCORD": {
     "context": "global_actions.rs",
     "definedIn": "src/ui/global_actions.rs:146",

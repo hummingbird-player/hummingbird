@@ -414,7 +414,7 @@ impl PlaybackThread {
 
         self.update_ts(true);
 
-        self.send_event(PlaybackEvent::StateChanged(PlaybackState::Playing));
+        self.send_event(PlaybackEvent::StateChanged(self.state()));
 
         Ok(())
     }

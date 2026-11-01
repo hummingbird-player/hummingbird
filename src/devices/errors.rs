@@ -52,6 +52,8 @@ pub enum OpenError {
     InvalidConfigProvider,
     #[error("The supplied sample format is not supported by the device")]
     InvalidSampleFormat,
+    #[error("A user-facing error was emitted; creation requires an explicit user retry")]
+    PersistentError,
     #[error("Unknown device error: `{0}`")]
     Unknown(String),
 }

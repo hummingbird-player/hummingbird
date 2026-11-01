@@ -80,6 +80,7 @@
   "CREATE_PLAYLIST": "Create new playlist '{{name}}'",
   "DELETE_PLAYLIST": "Delete playlist",
   "DELETE_PLAYLIST_CONFIRM": "Click again to delete",
+  "DEVICE_BUSY": "Your default audio device couldn't be opened because it's in use by another application in Exclusive Mode. You'll have to close the other application and retry.",
   "DISCORD": "Join us on Discord",
   "DROPDOWN_PLACEHOLDER": "Select...",
   "EDIT": "Edit",

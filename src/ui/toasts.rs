@@ -198,7 +198,6 @@ fn render_toast(
         .child(
             div()
                 .flex()
-                .items_center()
                 .border_r_1()
                 .p(px(10.0))
                 .border_color(border)
