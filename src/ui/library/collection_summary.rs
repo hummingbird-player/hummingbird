@@ -1,7 +1,7 @@
 use cntp_i18n::trn;
 use gpui::SharedString;
 
-use crate::ui::util::format_duration;
+use crate::ui::util::{DurationPadding, format_duration};
 
 pub fn format_collection_summary(track_count: i64, total_duration: i64) -> SharedString {
     let track_label = trn!(
@@ -13,6 +13,6 @@ pub fn format_collection_summary(track_count: i64, total_duration: i64) -> Share
 
     SharedString::from(format!(
         "{track_label} • {}",
-        format_duration(total_duration, false)
+        format_duration(total_duration, DurationPadding::Seconds)
     ))
 }

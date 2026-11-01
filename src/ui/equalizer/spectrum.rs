@@ -168,6 +168,7 @@ impl FftScratch {
             let hi = ((center + half) as usize).min(nyquist);
             let mut sum = 0.0;
             let mut weight = 0.0;
+            #[allow(clippy::needless_range_loop)]
             for k in lo..=hi {
                 let w = 1.0 - (k as f32 - center).abs() / half;
                 if w > 0.0 {

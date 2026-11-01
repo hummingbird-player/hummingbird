@@ -283,7 +283,7 @@
   },
   "APP_NAME": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:467",
+    "definedIn": "src/ui/controls.rs:468",
     "plural": false,
     "description": "Use the english name everywhere unless this is strictly disagreeable.\n                                "
   },
@@ -319,13 +319,13 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:915",
+    "definedIn": "src/ui/queue.rs:918",
     "plural": false,
     "description": null
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:926",
+    "definedIn": "src/ui/queue.rs:929",
     "plural": false,
     "description": null
   },
@@ -349,67 +349,73 @@
   },
   "COLUMN_ALBUM": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:429",
+    "definedIn": "src/library/types/table.rs:450",
     "plural": false,
     "description": null
   },
   "COLUMN_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:643",
+    "definedIn": "src/library/types/table.rs:666",
     "plural": false,
     "description": null
   },
   "COLUMN_ARTIST": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:194",
+    "definedIn": "src/library/types/table.rs:196",
     "plural": false,
     "description": null
   },
   "COLUMN_CATALOG_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:198",
+    "definedIn": "src/library/types/table.rs:200",
     "plural": false,
     "description": null
   },
   "COLUMN_DATE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:196",
+    "definedIn": "src/library/types/table.rs:198",
     "plural": false,
     "description": null
   },
   "COLUMN_GENRES": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:195",
+    "definedIn": "src/library/types/table.rs:197",
     "plural": false,
     "description": null
   },
   "COLUMN_LABEL": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:197",
+    "definedIn": "src/library/types/table.rs:199",
     "plural": false,
     "description": null
   },
   "COLUMN_LENGTH": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:432",
+    "definedIn": "src/library/types/table.rs:453",
     "plural": false,
     "description": null
   },
   "COLUMN_NAME": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:642",
+    "definedIn": "src/library/types/table.rs:665",
     "plural": false,
     "description": null
   },
   "COLUMN_TITLE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:193",
+    "definedIn": "src/library/types/table.rs:195",
     "plural": false,
     "description": null
   },
   "COLUMN_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:644",
+    "definedIn": "src/library/types/table.rs:667",
+    "plural": false,
+    "description": null
+  },
+  "COLUMN_TRACK_COUNT": {
+    "context": "table.rs",
+    "definedIn": "src/library/types/table.rs:201",
     "plural": false,
     "description": null
   },
@@ -643,13 +649,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:670",
+    "definedIn": "src/ui/queue.rs:673",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:690",
+    "definedIn": "src/ui/queue.rs:693",
     "plural": false,
     "description": null
   },
@@ -859,7 +865,7 @@
   },
   "LIKE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:547",
+    "definedIn": "src/ui/controls.rs:548",
     "plural": false,
     "description": null
   },
@@ -883,13 +889,13 @@
   },
   "LYRICS": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1225",
+    "definedIn": "src/ui/controls.rs:1230",
     "plural": false,
     "description": null
   },
   "MUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1160",
+    "definedIn": "src/ui/controls.rs:1165",
     "plural": false,
     "description": null
   },
@@ -901,7 +907,7 @@
   },
   "NEXT_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:808",
+    "definedIn": "src/ui/controls.rs:809",
     "plural": false,
     "description": null
   },
@@ -1057,13 +1063,13 @@
   },
   "PREVIOUS_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:726",
+    "definedIn": "src/ui/controls.rs:727",
     "plural": false,
     "description": null
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:908",
+    "definedIn": "src/ui/queue.rs:911",
     "plural": false,
     "description": null
   },
@@ -1111,7 +1117,7 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:762",
+    "definedIn": "src/ui/queue.rs:765",
     "plural": false,
     "description": null
   },
@@ -1123,7 +1129,7 @@
   },
   "REMOVE_N_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:649",
+    "definedIn": "src/ui/queue.rs:652",
     "plural": true,
     "description": null
   },
@@ -1141,19 +1147,19 @@
   },
   "REPEAT": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:886",
+    "definedIn": "src/ui/controls.rs:887",
     "plural": false,
     "description": null
   },
   "REPEAT_OFF": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:876",
+    "definedIn": "src/ui/controls.rs:877",
     "plural": false,
     "description": null
   },
   "REPEAT_ONE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:895",
+    "definedIn": "src/ui/controls.rs:896",
     "plural": false,
     "description": null
   },
@@ -1669,37 +1675,37 @@
   },
   "STOP_AFTER_CURRENT_TOOLTIP": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:773",
+    "definedIn": "src/ui/controls.rs:774",
     "plural": false,
     "description": null
   },
   "STOP_REPEATING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:854",
+    "definedIn": "src/ui/controls.rs:855",
     "plural": false,
     "description": null
   },
   "STOP_SHUFFLING": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:696",
+    "definedIn": "src/ui/controls.rs:697",
     "plural": false,
     "description": null
   },
   "TABLE_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:240",
+    "definedIn": "src/library/types/table.rs:248",
     "plural": false,
     "description": null
   },
   "TABLE_ARTISTS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:680",
+    "definedIn": "src/library/types/table.rs:703",
     "plural": false,
     "description": null
   },
   "TABLE_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:474",
+    "definedIn": "src/library/types/table.rs:495",
     "plural": false,
     "description": null
   },
@@ -1765,7 +1771,7 @@
   },
   "TRACK_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:427",
+    "definedIn": "src/library/types/table.rs:448",
     "plural": false,
     "description": null
   },
@@ -1783,19 +1789,19 @@
   },
   "UNKNOWN_ARTIST": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:515",
+    "definedIn": "src/ui/controls.rs:516",
     "plural": false,
     "description": null
   },
   "UNKNOWN_TRACK": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:270",
+    "definedIn": "src/ui/controls.rs:271",
     "plural": false,
     "description": null
   },
   "UNLIKE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:544",
+    "definedIn": "src/ui/controls.rs:545",
     "plural": false,
     "description": null
   },
@@ -1807,7 +1813,7 @@
   },
   "UNMUTE": {
     "context": "controls.rs",
-    "definedIn": "src/ui/controls.rs:1153",
+    "definedIn": "src/ui/controls.rs:1158",
     "plural": false,
     "description": null
   },

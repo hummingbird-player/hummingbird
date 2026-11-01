@@ -29,7 +29,7 @@ use crate::{
             play_album_next, play_track_next, track_menu_for_table,
         },
         models::LIKED_SONGS_PLAYLIST_ID,
-        util::format_duration,
+        util::{DurationPadding, format_duration},
     },
 };
 
@@ -37,6 +37,8 @@ use crate::{
 pub struct AlbumTableState {
     genres: Option<SharedString>,
     track_locations: Vec<PathBuf>,
+    track_count: Option<i64>,
+    length: Option<i64>,
 }
 
 #[derive(Clone, Default)]
@@ -196,6 +198,8 @@ impl Column for AlbumColumn {
             AlbumColumn::ReleaseDate => tr!("COLUMN_DATE", "Date").into(),
             AlbumColumn::Label => tr!("COLUMN_LABEL", "Label").into(),
             AlbumColumn::CatalogNumber => tr!("COLUMN_CATALOG_NUMBER", "Catalog Number").into(),
+            AlbumColumn::TrackCount => tr!("COLUMN_TRACK_COUNT", "Track Count").into(),
+            AlbumColumn::Length => tr!("COLUMN_LENGTH", "Length").into(),
         }
     }
 
@@ -207,6 +211,8 @@ impl Column for AlbumColumn {
             AlbumColumn::ReleaseDate => "release_date",
             AlbumColumn::Label => "label",
             AlbumColumn::CatalogNumber => "catalog_number",
+            AlbumColumn::TrackCount => "track_count",
+            AlbumColumn::Length => "length",
         }
     }
 
@@ -218,6 +224,8 @@ impl Column for AlbumColumn {
             "release_date" => AlbumColumn::ReleaseDate,
             "label" => AlbumColumn::Label,
             "catalog_number" => AlbumColumn::CatalogNumber,
+            "track_count" => AlbumColumn::TrackCount,
+            "length" => AlbumColumn::Length,
             _ => return None,
         })
     }
@@ -268,14 +276,15 @@ impl TableData<AlbumColumn> for Album {
         id: Self::Identifier,
         visible_columns: Vec<AlbumColumn>,
     ) -> TableFuture<Option<(Arc<Self>, Self::RowState)>> {
-        let include_genres = visible_columns.contains(&AlbumColumn::Genres);
         Box::pin(async move {
-            let query = albums().by_id(id as i64).with_track_locations();
-            let query = if include_genres {
-                query.with_genres()
-            } else {
-                query
-            };
+            let query = albums()
+                .by_id(id as i64)
+                .with_relations()
+                .with_track_locations(true)
+                .with_genres(visible_columns.contains(&AlbumColumn::Genres))
+                .with_track_count(visible_columns.contains(&AlbumColumn::TrackCount))
+                .with_length(visible_columns.contains(&AlbumColumn::Length));
+
             let Some(row) = query.fetch_optional_row(&pool).await? else {
                 return Ok(None);
             };
@@ -285,6 +294,8 @@ impl TableData<AlbumColumn> for Album {
                 AlbumTableState {
                     genres: format_genres(&row.genres),
                     track_locations: row.track_locations,
+                    track_count: row.track_count,
+                    length: row.length,
                 },
             )))
         })
@@ -305,6 +316,14 @@ impl TableData<AlbumColumn> for Album {
             }
             AlbumColumn::Label => self.label.as_ref().map(|v| v.0.clone()),
             AlbumColumn::CatalogNumber => self.catalog_number.as_ref().map(|v| v.0.clone()),
+            AlbumColumn::TrackCount => row_state
+                .track_count
+                .map(|v| v.to_string())
+                .map(SharedString::from),
+            AlbumColumn::Length => row_state
+                .length
+                .map(|v| format_duration(v, DurationPadding::Hours))
+                .map(SharedString::from),
         }
     }
 
@@ -330,6 +349,8 @@ impl TableData<AlbumColumn> for Album {
         columns.insert(AlbumColumn::Label, 150.0);
         // length is weird because the image column is 47.0
         columns.insert(AlbumColumn::CatalogNumber, 178.0);
+        columns.insert(AlbumColumn::TrackCount, 100.0);
+        columns.insert(AlbumColumn::Length, 100.0);
         columns
     }
 
@@ -554,7 +575,9 @@ impl TableData<TrackColumn> for Track {
                 }
             }
             TrackColumn::Genres => row_state.genres.clone(),
-            TrackColumn::Length => Some(format_duration(self.duration, true).into()),
+            TrackColumn::Length => {
+                Some(format_duration(self.duration, DurationPadding::Minutes).into())
+            }
         }
     }
 

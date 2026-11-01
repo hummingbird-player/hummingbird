@@ -1,4 +1,4 @@
-use crate::ui::util::format_duration;
+use crate::ui::util::{DurationPadding, format_duration};
 use crate::{
     library::db::{PlaylistItemRow, TrackColumn, artists, playlists, tracks},
     playback::{interface::PlaybackInterface, queue::QueueItemData},
@@ -528,7 +528,10 @@ impl Render for QueueItem {
                                                     .flex_shrink_0()
                                                     .ml(px(6.0))
                                                     .text_color(theme.text_secondary)
-                                                    .child(format_duration(duration, true)),
+                                                    .child(format_duration(
+                                                        duration,
+                                                        DurationPadding::Minutes,
+                                                    )),
                                             )
                                         }),
                                 ),

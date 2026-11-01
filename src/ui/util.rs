@@ -258,7 +258,14 @@ where
     }
 }
 
-pub fn format_duration(secs: i64, pad_minutes: bool) -> String {
+#[derive(PartialEq, Eq)]
+pub enum DurationPadding {
+    Hours,
+    Minutes,
+    Seconds,
+}
+
+pub fn format_duration(secs: i64, pad: DurationPadding) -> String {
     let secs = secs.max(0);
     let hours = secs / 3_600;
     let minutes = (secs % 3_600) / 60;
@@ -266,7 +273,9 @@ pub fn format_duration(secs: i64, pad_minutes: bool) -> String {
 
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
-    } else if pad_minutes {
+    } else if pad == DurationPadding::Hours {
+        format!("{hours:01}:{minutes:02}:{seconds:02}")
+    } else if pad == DurationPadding::Minutes {
         format!("{minutes:02}:{seconds:02}")
     } else {
         format!("{minutes}:{seconds:02}")

@@ -300,8 +300,9 @@ async fn album_and_track_rows_load_ordered_genres() {
 
     let album_display = albums()
         .by_id(10)
-        .with_track_locations()
-        .with_genres()
+        .with_relations()
+        .with_track_locations(true)
+        .with_genres(true)
         .fetch_optional_row(pool)
         .await
         .unwrap()
@@ -321,7 +322,8 @@ async fn album_and_track_rows_load_ordered_genres() {
     );
     let album_display_without_genres = albums()
         .by_id(10)
-        .with_track_locations()
+        .with_relations()
+        .with_track_locations(true)
         .fetch_optional_row(pool)
         .await
         .unwrap()

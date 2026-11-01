@@ -74,6 +74,7 @@
   "COLUMN_NAME": "Name",
   "COLUMN_TITLE": "Title",
   "COLUMN_TRACKS": "# of Tracks",
+  "COLUMN_TRACK_COUNT": "Track Count",
   "COMMAND_PALETTE": "Command Palette",
   "CREATE": "Create",
   "CREATE_PLAYLIST": "Create new playlist '{{name}}'",

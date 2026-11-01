@@ -28,6 +28,7 @@ use crate::{
             CurrentTrack, HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates,
             toggle_like,
         },
+        util::DurationPadding,
     },
 };
 use cntp_i18n::tr;
@@ -971,7 +972,10 @@ impl Render for Scrubber {
                         div()
                             .mr(px(6.0))
                             .line_height(rems(1.0))
-                            .child(format_duration(position_secs as i64, true)),
+                            .child(format_duration(
+                                position_secs as i64,
+                                DurationPadding::Minutes,
+                            )),
                     )
                     .when(window_width > px(900.0), |this| {
                         this.child(
@@ -981,17 +985,18 @@ impl Render for Scrubber {
                                 .border_l(px(2.0))
                                 .pl(px(6.0))
                                 .text_color(rgb(0xcbd5e1))
-                                .child(format_duration(duration_secs as i64, true)),
+                                .child(format_duration(
+                                    duration_secs as i64,
+                                    DurationPadding::Minutes,
+                                )),
                         )
                     })
                     .child(self.playback_section.clone())
                     .child(div().h(px(30.0)))
-                    .child(
-                        div()
-                            .ml(auto())
-                            .line_height(rems(1.0))
-                            .child(format!("-{}", format_duration(remaining_secs as i64, true))),
-                    ),
+                    .child(div().ml(auto()).line_height(rems(1.0)).child(format!(
+                        "-{}",
+                        format_duration(remaining_secs as i64, DurationPadding::Minutes)
+                    ))),
             )
             .child(
                 slider()

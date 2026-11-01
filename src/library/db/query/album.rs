@@ -42,6 +42,20 @@ const TRACK_LOCATIONS_COLUMN: &str = "\
         WHERE track.album_id = album.id
     ), json('[]')) AS track_locations";
 
+const COUNT_COLUMN: &str = "\
+    (SELECT
+        count(*)
+        FROM track
+        WHERE track.album_id = album.id
+    ) AS track_count";
+
+const LENGTH_COLUMN: &str = "\
+    (SELECT
+        sum(track.duration)
+        FROM track
+        WHERE track.album_id = album.id
+    ) AS length";
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AlbumColumn {
     Title,
@@ -50,6 +64,8 @@ pub enum AlbumColumn {
     Label,
     CatalogNumber,
     Genres,
+    TrackCount,
+    Length,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +79,8 @@ pub struct AlbumRow {
     pub album: Album,
     pub genres: Vec<Genre>,
     pub track_locations: Vec<PathBuf>,
+    pub track_count: Option<i64>,
+    pub length: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -73,6 +91,8 @@ struct AlbumRowRecord {
     genres: Json<Vec<(i64, String, String)>>,
     #[sqlx(json)]
     track_locations: Json<Vec<String>>,
+    track_count: Option<i64>,
+    length: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -86,6 +106,9 @@ pub struct AlbumQuery {
 pub struct AlbumQueryWithRelations {
     query: AlbumQuery,
     include_genres: bool,
+    include_track_locations: bool,
+    include_track_count: bool,
+    include_length: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -106,7 +129,12 @@ enum AlbumProjection {
     Entity,
     Id,
     Search,
-    Relations { include_genres: bool },
+    Relations {
+        include_genres: bool,
+        include_track_locations: bool,
+        include_track_count: bool,
+        include_length: bool,
+    },
 }
 
 pub fn albums() -> AlbumQuery {
@@ -134,10 +162,13 @@ impl AlbumQuery {
         self
     }
 
-    pub fn with_track_locations(self) -> AlbumQueryWithRelations {
+    pub fn with_relations(self) -> AlbumQueryWithRelations {
         AlbumQueryWithRelations {
             query: self,
             include_genres: false,
+            include_track_locations: false,
+            include_track_count: false,
+            include_length: false,
         }
     }
 
@@ -186,14 +217,36 @@ impl AlbumQuery {
                     ), '') AS artists",
                 );
             }
-            AlbumProjection::Relations { include_genres } => {
-                query.push(ALBUM_COLUMNS).push(", ");
+            AlbumProjection::Relations {
+                include_genres,
+                include_track_locations,
+                include_track_count,
+                include_length,
+            } => {
+                query.push(ALBUM_COLUMNS);
                 if include_genres {
-                    query.push(GENRES_COLUMN);
+                    query.push(", ").push(GENRES_COLUMN);
                 } else {
-                    query.push("json('[]') AS genres");
+                    query.push(", json('[]') AS genres");
                 }
-                query.push(", ").push(TRACK_LOCATIONS_COLUMN);
+
+                if include_track_locations {
+                    query.push(", ").push(TRACK_LOCATIONS_COLUMN);
+                } else {
+                    query.push(", json('[]') AS track_locations");
+                }
+
+                if include_track_count {
+                    query.push(", ").push(COUNT_COLUMN);
+                } else {
+                    query.push(", NULL AS track_count");
+                }
+
+                if include_length {
+                    query.push(", ").push(LENGTH_COLUMN);
+                } else {
+                    query.push(", NULL AS length");
+                }
             }
         }
         query.push(" FROM album");
@@ -253,14 +306,32 @@ impl AlbumQueryForSearch {
 }
 
 impl AlbumQueryWithRelations {
-    pub fn with_genres(mut self) -> Self {
-        self.include_genres = true;
+    pub fn with_genres(mut self, include_genres: bool) -> Self {
+        self.include_genres = include_genres;
+        self
+    }
+
+    pub fn with_track_locations(mut self, include_track_locations: bool) -> Self {
+        self.include_track_locations = include_track_locations;
+        self
+    }
+
+    pub fn with_track_count(mut self, include_track_count: bool) -> Self {
+        self.include_track_count = include_track_count;
+        self
+    }
+
+    pub fn with_length(mut self, include_length: bool) -> Self {
+        self.include_length = include_length;
         self
     }
 
     pub async fn fetch_optional_row(self, pool: &SqlitePool) -> sqlx::Result<Option<AlbumRow>> {
         let mut query = self.query.build(AlbumProjection::Relations {
             include_genres: self.include_genres,
+            include_track_locations: self.include_track_locations,
+            include_track_count: self.include_track_count,
+            include_length: self.include_length,
         });
         let row = query
             .build_query_as::<AlbumRowRecord>()
@@ -271,6 +342,8 @@ impl AlbumQueryWithRelations {
             album: row.album,
             genres: decode_genres(row.genres),
             track_locations: decode_track_locations(row.track_locations),
+            track_count: row.track_count,
+            length: row.length,
         }))
     }
 }
@@ -325,13 +398,22 @@ fn push_ordering(query: &mut QueryBuilder<Sqlite>, ordering: AlbumOrdering) {
                 .push("COALESCE(genres.genre_sort, '') COLLATE HB_SORT")
                 .push(direction);
         }
+        AlbumColumn::TrackCount => {
+            query.push("album.track_count").push(direction);
+        }
+        AlbumColumn::Length => {
+            query.push("album.length").push(direction);
+        }
     }
 }
 
 fn push_tie_breakers(query: &mut QueryBuilder<Sqlite>, primary: AlbumColumn) {
     match primary {
         AlbumColumn::Title => {}
-        AlbumColumn::Artist | AlbumColumn::CatalogNumber => {
+        AlbumColumn::Artist
+        | AlbumColumn::CatalogNumber
+        | AlbumColumn::TrackCount
+        | AlbumColumn::Length => {
             query.push(", album.release_date ASC");
         }
         AlbumColumn::ReleaseDate => {

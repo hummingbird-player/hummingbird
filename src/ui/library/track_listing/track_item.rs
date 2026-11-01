@@ -13,7 +13,7 @@ use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::{
     HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, subscribe_liked_updates, toggle_like,
 };
-use crate::ui::util::format_duration;
+use crate::ui::util::{DurationPadding, format_duration};
 
 use crate::library::{db::playlists, types::Track};
 use crate::media::numbering::{NumberDisplayMode, format_track_position, side_letter};
@@ -333,7 +333,10 @@ impl TrackItem {
             .pl(px(10.0))
             .border_color(theme.border_color)
             .text_align(TextAlign::Right)
-            .child(format_duration(self.track.duration, false))
+            .child(format_duration(
+                self.track.duration,
+                DurationPadding::Seconds,
+            ))
     }
 }
 
