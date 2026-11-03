@@ -1,11 +1,14 @@
-use std::{ffi::OsStr, path::PathBuf};
+use std::{ffi::OsStr, future::Future, path::PathBuf, pin::Pin};
 
 use anyhow::Context as _;
 use cntp_i18n::tr;
 use futures::{StreamExt as _, TryFutureExt as _, TryStreamExt as _};
 use gpui::{App, PathPromptOptions};
 use sqlx::{Sqlite, SqlitePool};
-use tokio::{fs::File, io::BufWriter};
+use tokio::{
+    fs::File,
+    io::{AsyncWriteExt, BufWriter},
+};
 use tracing::{Instrument as _, debug_span, error, info, warn};
 
 use crate::ui::{
@@ -28,51 +31,56 @@ struct PlaylistEntry {
     album_title: String,
 }
 
-async fn write_m3u(mut w: BufWriter<File>, pool: &SqlitePool, pl_id: i64) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt as _;
-
+async fn write_m3u<'a>(
+    mut w: BufWriter<File>,
+    mut entries: Pin<Box<dyn futures::Stream<Item = sqlx::Result<PlaylistEntry>> + Send + 'a>>,
+) -> anyhow::Result<()> {
     w.write_all(b"#EXTM3U").await?;
 
+    let mut buf = vec![];
+    while let Some(PlaylistEntry {
+        location,
+        duration,
+        track_artist_names,
+        artist_name,
+        track_title,
+        album_title,
+    }) = entries.try_next().await?
     {
-        let query = include_str!("../../queries/playlist/list_tracks_for_export.sql");
-        let mut entries = sqlx::query_as(query).bind(pl_id).fetch(pool);
-        let mut buf = vec![];
-        while let Some(PlaylistEntry {
-            location,
-            duration,
-            track_artist_names,
-            artist_name,
-            track_title,
-            album_title,
-        }) = entries.try_next().await?
-        {
-            use std::io::Write as _;
-            write!(
-                &mut buf,
-                "{LINE_ENDING}\
-                #EXTINF:{duration},{track_artist_names} - {track_title}{LINE_ENDING}\
-                #EXTALB:{album_title}{LINE_ENDING}\
-                #EXTART:{artist_name}{LINE_ENDING}\
-                {location}{LINE_ENDING}",
-            )?;
+        use std::io::Write as _;
+        write!(
+            &mut buf,
+            "{LINE_ENDING}\
+                    #EXTINF:{duration},{track_artist_names} - {track_title}{LINE_ENDING}\
+                    #EXTALB:{album_title}{LINE_ENDING}\
+                    #EXTART:{artist_name}{LINE_ENDING}\
+                    {location}{LINE_ENDING}",
+        )?;
 
-            w.write_all(&buf).await?;
-            buf.clear();
-        }
+        w.write_all(&buf).await?;
+        buf.clear();
     }
 
     w.shutdown().await?;
+
     Ok(())
 }
 
-pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Result<()> {
-    let path_future = cx.prompt_for_new_path(
-        directories::UserDirs::new()
-            .context("Failed to get user directories")?
-            .document_dir()
-            .context("Failed to get documents directory")?,
-        Some(&format!("{playlist_name}.m3u8")),
-    );
+fn export_directory() -> anyhow::Result<PathBuf> {
+    let user_dirs = directories::UserDirs::new().context("Failed to get user directories")?;
+    Ok(user_dirs
+        .document_dir()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| user_dirs.home_dir().to_path_buf()))
+}
+
+fn export_m3u<F, Fut>(cx: &App, file_name: &str, write: F) -> anyhow::Result<()>
+where
+    F: FnOnce(BufWriter<File>, SqlitePool) -> Fut + Send + 'static,
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    let directory = export_directory()?;
+    let path_future = cx.prompt_for_new_path(&directory, Some(file_name));
     let pool = cx.global::<Pool>().0.clone();
 
     crate::RUNTIME.spawn(async move {
@@ -85,8 +93,8 @@ pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Res
         if let Err(err) = File::create(&path)
             .err_into()
             .map_ok(BufWriter::new)
-            .and_then(|f| write_m3u(f, &pool, pl_id))
-            .instrument(debug_span!("export_playlist", pl_id, path = %path.display()))
+            .and_then(|f| write(f, pool))
+            .instrument(debug_span!("export_m3u", path = %path.display()))
             .await
         {
             error!(?err, "Failed writing playlist to {}: {err}", path.display());
@@ -94,6 +102,38 @@ pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Res
     });
 
     Ok(())
+}
+
+pub fn export_playlist(cx: &App, pl_id: i64, playlist_name: &str) -> anyhow::Result<()> {
+    export_m3u(
+        cx,
+        &format!("{playlist_name}.m3u8"),
+        move |w, pool| async move {
+            let query = include_str!("../../queries/playlist/list_tracks_for_export.sql");
+            let entries = sqlx::query_as::<_, PlaylistEntry>(query)
+                .bind(pl_id)
+                .fetch(&pool);
+            write_m3u(w, entries).await
+        },
+    )
+}
+
+pub fn export_liked_artist_songs(
+    cx: &App,
+    artist_id: i64,
+    artist_name: &str,
+) -> anyhow::Result<()> {
+    export_m3u(
+        cx,
+        &format!("{artist_name}.m3u8"),
+        move |w, pool| async move {
+            let query = include_str!("../../queries/playlist/list_liked_artist_songs.sql");
+            let entries = sqlx::query_as::<_, PlaylistEntry>(query)
+                .bind(artist_id)
+                .fetch(&pool);
+            write_m3u(w, entries).await
+        },
+    )
 }
 
 #[derive(Debug, Default)]

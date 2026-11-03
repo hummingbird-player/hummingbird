@@ -4,10 +4,12 @@ use cntp_i18n::tr;
 use gpui::*;
 use prelude::FluentBuilder;
 use rustc_hash::FxHashMap;
+use tracing::error;
 
 use crate::{
     library::{
         db::{LikedTrackSortMethod, SortDirection, albums, artists, tracks},
+        playlist::export_liked_artist_songs,
         scan::ScanEvent,
         types::{Album, DBString, Track, table::AlbumColumn},
     },
@@ -16,6 +18,7 @@ use crate::{
     ui::{
         app::Pool,
         availability::{has_available_tracks, snapshot},
+        command_palette::{CommandCategory, CommandManager, CommandSpec},
         components::{
             async_resource::AsyncResource,
             button::{ButtonSize, button},
@@ -67,7 +70,11 @@ pub struct ArtistDetailView {
     resource:
         Entity<AsyncResource<(i64, LikedTrackSortMethod, LikedTrackSortMethod), ArtistDetailData>>,
     loaded: bool,
+    first_render: bool,
+    focus_handle: FocusHandle,
 }
+
+actions!(artist_detail, [ExportLiked]);
 
 #[derive(Clone)]
 struct ArtistDetailData {
@@ -127,6 +134,23 @@ impl ArtistDetailView {
                 scroll_handle.set_offset(Point::new(px(0.0), px(-offset)));
             }
 
+            let focus_handle = cx.focus_handle();
+
+            cx.register_command(
+                CommandSpec::new(
+                    ("artist_detail::export_liked", artist_id),
+                    Some(CommandCategory::Library),
+                    tr!("EXPORT_ARTIST_LIKED", "Export Artist Liked Songs to M3U"),
+                    ExportLiked,
+                )
+                .focus_handle(focus_handle.clone()),
+            );
+
+            cx.on_release(move |_, cx| {
+                cx.unregister_command(("artist_detail::export_liked", artist_id));
+            })
+            .detach();
+
             ArtistDetailView {
                 artist_id,
                 artist_name: None,
@@ -144,6 +168,8 @@ impl ArtistDetailView {
                 standalone_sort,
                 resource,
                 loaded: false,
+                first_render: true,
+                focus_handle,
             }
         });
 
@@ -503,7 +529,12 @@ impl ArtistDetailView {
 }
 
 impl Render for ArtistDetailView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.first_render {
+            self.first_render = false;
+            self.focus_handle.focus(window, cx);
+        }
+
         if !self.loaded {
             return div().into_any_element();
         }
@@ -805,7 +836,16 @@ impl Render for ArtistDetailView {
             None
         };
 
+        let artist_id = self.artist_id;
+        let artist_name = self.artist_name.clone().unwrap_or_default();
+
         div()
+            .track_focus(&self.focus_handle)
+            .on_action(move |_: &ExportLiked, _, cx| {
+                if let Err(err) = export_liked_artist_songs(cx, artist_id, artist_name.0.as_str()) {
+                    error!("Failed to export liked artist songs: {}", err);
+                }
+            })
             .flex()
             .flex_col()
             .w_full()

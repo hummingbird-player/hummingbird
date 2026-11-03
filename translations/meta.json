@@ -295,13 +295,13 @@
   },
   "ARTIST_ALBUMS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:905",
+    "definedIn": "src/ui/library/artist_detail_view.rs:945",
     "plural": false,
     "description": null
   },
   "ARTIST_LIKED_TRACKS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:592",
+    "definedIn": "src/ui/library/artist_detail_view.rs:623",
     "plural": false,
     "description": null
   },
@@ -608,6 +608,12 @@
   "EXPAND_SIDEBAR": {
     "context": "sidebar.rs",
     "definedIn": "src/ui/library/sidebar.rs:129",
+    "plural": false,
+    "description": null
+  },
+  "EXPORT_ARTIST_LIKED": {
+    "context": "artist_detail_view.rs",
+    "definedIn": "src/ui/library/artist_detail_view.rs:143",
     "plural": false,
     "description": null
   },
@@ -1411,7 +1417,7 @@
   },
   "SELECT_M3U": {
     "context": "playlist.rs",
-    "definedIn": "src/library/playlist.rs:156",
+    "definedIn": "src/library/playlist.rs:196",
     "plural": false,
     "description": null
   },
@@ -1627,7 +1633,7 @@
   },
   "SORT_ASCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:652",
+    "definedIn": "src/ui/library/artist_detail_view.rs:683",
     "plural": false,
     "description": null
   },
@@ -1639,7 +1645,7 @@
   },
   "SORT_DESCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:657",
+    "definedIn": "src/ui/library/artist_detail_view.rs:688",
     "plural": false,
     "description": null
   },
@@ -1651,19 +1657,19 @@
   },
   "SORT_RECENTLY_ADDED": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:668",
+    "definedIn": "src/ui/library/artist_detail_view.rs:699",
     "plural": false,
     "description": null
   },
   "SORT_RELEASE_ORDER": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:676",
+    "definedIn": "src/ui/library/artist_detail_view.rs:707",
     "plural": false,
     "description": null
   },
   "SORT_TITLE": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:672",
+    "definedIn": "src/ui/library/artist_detail_view.rs:703",
     "plural": false,
     "description": null
   },
