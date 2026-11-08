@@ -166,8 +166,13 @@ impl NavigationHistory {
     }
 
     /// Navigates to a new view. All history entries after the cursor are discarded, then the new
-    /// view is appended and the cursor advances to it. History is capped at 100 entries.
+    /// view is appended and the cursor advances to it. History is capped at 100 entries. If the
+    /// requested view is already the most recent one, the navigation request is ignored.
     pub fn navigate(&mut self, message: ViewSwitchMessage) {
+        if message == self.current() {
+            return;
+        }
+
         // Drop any forward history.
         self.history.truncate(self.cursor + 1);
         self.forward_peek_armed = true;
