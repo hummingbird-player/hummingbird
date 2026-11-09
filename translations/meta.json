@@ -1603,19 +1603,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:264",
+    "definedIn": "src/ui/library/context_menus.rs:266",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:266",
+    "definedIn": "src/ui/library/context_menus.rs:268",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:262",
+    "definedIn": "src/ui/library/context_menus.rs:264",
     "plural": false,
     "description": null
   },

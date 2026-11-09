@@ -34,6 +34,7 @@ where
     row: RowResource<(T::Identifier, Vec<C>), T, T::RowState>,
     columns: Arc<IndexMap<C, f32, FxBuildHasher>>,
     on_select: Option<OnSelectHandler<T, C>>,
+    menu_overlay: Entity<Option<AnyView>>,
 }
 
 impl<T, C> TableItem<T, C>
@@ -105,6 +106,7 @@ where
                 row,
                 columns: columns_read,
                 on_select,
+                menu_overlay: cx.new(|_| None),
             }
         })
     }
@@ -252,24 +254,27 @@ where
             ));
         }
 
-        match menu_rows {
-            Some((menu_row, row_state)) => context(self.index)
-                .w_full()
-                .h(px(TABLE_ROW_HEIGHT))
-                .with(row)
-                .try_menu_on_open(move |window, cx| {
-                    menu_row
-                        .get_context_menu(window, cx, &menu_context, GridContext::Table, &row_state)
-                        .map(|(menu, overlay)| {
-                            div()
-                                .bg(menu_bg)
-                                .child(menu)
-                                .when_some(overlay, |this, overlay| this.child(overlay))
-                                .into_any_element()
-                        })
-                })
-                .into_any_element(),
-            None => row.into_any_element(),
+        let Some((menu_row, row_state)) = menu_rows else {
+            return row.into_any_element();
+        };
+
+        let menu_overlay = self.menu_overlay.clone();
+        let menu = context(self.index)
+            .w_full()
+            .h(px(TABLE_ROW_HEIGHT))
+            .with(row)
+            .try_menu_on_open(move |window, cx| {
+                menu_row
+                    .get_context_menu(window, cx, &menu_context, GridContext::Table, &row_state)
+                    .map(|(menu, overlay)| {
+                        menu_overlay.update(cx, |current, _| *current = overlay);
+                        div().bg(menu_bg).child(menu).into_any_element()
+                    })
+            });
+
+        match self.menu_overlay.read(cx).clone() {
+            Some(overlay) => div().w_full().child(menu).child(overlay).into_any_element(),
+            None => menu.into_any_element(),
         }
     }
 }

@@ -375,7 +375,7 @@ impl TableData<AlbumColumn> for Album {
         context: &Self::ContextMenuContext,
         _grid_context: GridContext,
         row_state: &Self::RowState,
-    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyView>)> {
         Some(album_menu_for_table(
             self,
             context,
@@ -632,7 +632,7 @@ impl TableData<TrackColumn> for Track {
         context: &Self::ContextMenuContext,
         _grid_context: GridContext,
         row_state: &Self::RowState,
-    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyView>)> {
         Some(track_menu_for_table(
             self,
             is_track_available(cx, self),
@@ -785,7 +785,7 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
         _context: &Self::ContextMenuContext,
         _grid_context: GridContext,
         row_state: &Self::RowState,
-    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyView>)> {
         Some(artist_menu_for_table(
             self.id,
             self.name.0.clone(),

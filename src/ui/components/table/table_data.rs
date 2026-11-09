@@ -1,6 +1,6 @@
 use std::{fmt::Debug, future::Future, hash::Hash, pin::Pin, sync::Arc};
 
-use gpui::{AnyElement, App, Entity, SharedString, Window};
+use gpui::{AnyElement, AnyView, App, Entity, SharedString, Window};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use sqlx::SqlitePool;
@@ -166,7 +166,8 @@ where
     /// Returns the context menu for this row in the current display context.
     /// The first element is the menu content (rendered inside the context popup).
     /// The second element is an optional overlay (e.g. a modal) rendered outside
-    /// the context popup so it is not nested inside `deferred`.
+    /// the context popup so it is not nested inside `deferred`, and so it stays
+    /// mounted after the menu closes.
     fn get_context_menu(
         &self,
         _window: &mut Window,
@@ -174,7 +175,7 @@ where
         _context: &Self::ContextMenuContext,
         _grid_context: GridContext,
         _row_state: &Self::RowState,
-    ) -> Option<(AnyElement, Option<AnyElement>)> {
+    ) -> Option<(AnyElement, Option<AnyView>)> {
         None
     }
 

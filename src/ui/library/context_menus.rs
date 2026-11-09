@@ -7,7 +7,9 @@ use std::{path::Path, rc::Rc, sync::Arc};
 
 use camino::Utf8PathBuf;
 use cntp_i18n::tr;
-use gpui::{AnyElement, App, AppContext, Entity, IntoElement, Pixels, Point, SharedString, Window};
+use gpui::{
+    AnyElement, AnyView, App, AppContext, Entity, IntoElement, Pixels, Point, SharedString, Window,
+};
 
 use crate::{
     library::{
@@ -128,7 +130,7 @@ pub fn track_menu_for_table(
     context: &TrackContextMenuContext,
     window: &mut Window,
     cx: &mut App,
-) -> (AnyElement, Option<AnyElement>) {
+) -> (AnyElement, Option<AnyView>) {
     let (show_add_to, add_to) = add_to_playlist_state("track-menu-state", track.id, window, cx);
 
     let menu = TrackContextMenu::new(
@@ -141,7 +143,7 @@ pub fn track_menu_for_table(
     )
     .into_any_element();
 
-    (menu, Some(add_to.into_any_element()))
+    (menu, Some(add_to.into()))
 }
 
 pub fn album_menu_for_table(
@@ -150,13 +152,13 @@ pub fn album_menu_for_table(
     is_available: bool,
     window: &mut Window,
     cx: &mut App,
-) -> (AnyElement, Option<AnyElement>) {
+) -> (AnyElement, Option<AnyView>) {
     let (show_add_to, add_to) =
         add_album_to_playlist_state("album-menu-state", album.id, window, cx);
     let menu = AlbumContextMenu::new(Rc::new(album.clone()), show_add_to, *context, is_available)
         .into_any_element();
 
-    (menu, Some(add_to.into_any_element()))
+    (menu, Some(add_to.into()))
 }
 
 pub fn artist_menu_for_table(
@@ -165,13 +167,13 @@ pub fn artist_menu_for_table(
     is_available: bool,
     window: &mut Window,
     cx: &mut App,
-) -> (AnyElement, Option<AnyElement>) {
+) -> (AnyElement, Option<AnyView>) {
     let (show_add_to, add_to) =
         add_artist_to_playlist_state("artist-menu-state", artist_id, window, cx);
     let menu = ArtistContextMenu::new(artist_id, artist_name, show_add_to, is_available)
         .into_any_element();
 
-    (menu, Some(add_to.into_any_element()))
+    (menu, Some(add_to.into()))
 }
 
 pub fn play_from_track(cx: &mut App, track: &Track, queue_items: Vec<QueueItemData>) {

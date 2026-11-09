@@ -28,6 +28,7 @@ where
     id: ElementId,
     on_select: Option<OnSelectHandler<T, C>>,
     image_target: Option<Pixels>,
+    menu_overlay: Entity<Option<AnyView>>,
 }
 
 impl<T, C> GridItem<T, C>
@@ -66,6 +67,7 @@ where
                 id: ("grid-item", index).into(),
                 on_select,
                 image_target: None,
+                menu_overlay: cx.new(|_| None),
             }
         })
     }
@@ -221,24 +223,31 @@ where
                 )
             });
 
-        match loaded {
-            Some((row_data, row_state)) => context(self.id.clone())
-                .w_full()
-                .h_full()
-                .with(content)
-                .try_menu_on_open(move |window, cx| {
-                    row_data
-                        .get_context_menu(window, cx, &menu_context, grid_context, &row_state)
-                        .map(|(menu, overlay)| {
-                            div()
-                                .bg(menu_bg)
-                                .child(menu)
-                                .when_some(overlay, |this, overlay| this.child(overlay))
-                                .into_any_element()
-                        })
-                })
+        let Some((row_data, row_state)) = loaded else {
+            return content.into_any_element();
+        };
+
+        let menu_overlay = self.menu_overlay.clone();
+        let menu = context(self.id.clone())
+            .w_full()
+            .h_full()
+            .with(content)
+            .try_menu_on_open(move |window, cx| {
+                row_data
+                    .get_context_menu(window, cx, &menu_context, grid_context, &row_state)
+                    .map(|(menu, overlay)| {
+                        menu_overlay.update(cx, |current, _| *current = overlay);
+                        div().bg(menu_bg).child(menu).into_any_element()
+                    })
+            });
+
+        match self.menu_overlay.read(cx).clone() {
+            Some(overlay) => div()
+                .size_full()
+                .child(menu)
+                .child(overlay)
                 .into_any_element(),
-            None => content.into_any_element(),
+            None => menu.into_any_element(),
         }
     }
 }
