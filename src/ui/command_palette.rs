@@ -435,7 +435,7 @@ impl Render for CommandPalette {
 
             modal()
                 .transparent()
-                .child(div().w(px(550.0)).h(px(300.0)).child(palette.clone()))
+                .child(div().w(px(550.0)).h(px(500.0)).child(palette.clone()))
                 .on_exit(move |_, cx| {
                     show.update(cx, |show, cx| {
                         *show = false;

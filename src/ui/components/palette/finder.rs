@@ -897,89 +897,122 @@ where
                 }
             })
             .when_some(self.left.clone(), |div_outer, left| {
-                div_outer.child(match left {
-                    FinderItemLeft::Text(text) => div()
-                        .child(text)
-                        .text_ellipsis()
-                        .text_sm()
-                        .text_color(theme.text_secondary)
-                        .mr(px(4.0)),
-                    FinderItemLeft::Icon(icon_name) => {
-                        use crate::ui::components::icons::icon;
-                        div()
-                            .child(icon(icon_name).w(px(16.0)).h(px(16.0)))
-                            .mr(px(8.0))
-                    }
-                    FinderItemLeft::Image(key) => div()
-                        .rounded(px(2.0))
-                        .bg(theme.album_art_background)
-                        .shadow_sm()
-                        .w(px(16.0))
-                        .h(px(16.0))
-                        .flex_shrink_0()
-                        .mr(px(8.0))
-                        .child(
-                            managed_image(("finder-item-art", idx), key)
-                                .target_logical_px(16.0)
+                div_outer.when_some(
+                    match left {
+                        // rendered above the text instead
+                        FinderItemLeft::Text(_) => None,
+                        FinderItemLeft::Icon(icon_name) => Some({
+                            use crate::ui::components::icons::icon;
+                            div()
+                                .child(icon(icon_name).w(px(16.0)).h(px(16.0)))
+                                .mr(px(8.0))
+                        }),
+                        FinderItemLeft::Image(key) => Some(
+                            div()
+                                .rounded(px(2.0))
+                                .bg(theme.album_art_background)
+                                .shadow_sm()
                                 .w(px(16.0))
                                 .h(px(16.0))
-                                .rounded(px(2.0))
-                                .thumb(),
+                                .flex_shrink_0()
+                                .mr(px(8.0))
+                                .child(
+                                    managed_image(("finder-item-art", idx), key)
+                                        .target_logical_px(16.0)
+                                        .w(px(16.0))
+                                        .h(px(16.0))
+                                        .rounded(px(2.0))
+                                        .thumb(),
+                                ),
                         ),
-                })
+                    },
+                    |div_outer, left| div_outer.child(left),
+                )
             })
             .child(
                 div()
-                    .flex_shrink(1.0)
-                    .font_weight(FontWeight::BOLD)
-                    .text_sm()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
                     .overflow_hidden()
-                    .text_ellipsis()
-                    .child(self.middle.clone()),
-            )
-            .when_some(self.right.clone(), |div_outer, right| {
-                div_outer.child(match right {
-                    FinderItemRight::Text(text) => div()
-                        .ml_auto()
-                        .pl(px(8.0))
-                        .flex_shrink(1.0)
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .text_sm()
-                        .text_color(theme.text_secondary)
-                        .child(text),
-                    FinderItemRight::Keybinding(keystrokes) => div()
-                        .ml_auto()
-                        .pl(px(8.0))
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .children(keystrokes.into_iter().map(|parts| {
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(2.0))
-                                .children(parts.into_iter().map(|part| {
-                                    div()
-                                        .min_w(px(18.0))
-                                        .bg(theme.background_tertiary)
-                                        .px(px(4.0))
-                                        .flex()
-                                        .justify_center()
-                                        .border_1()
-                                        .border_color(theme.inner_border_color)
-                                        .rounded(px(4.0))
-                                        .text_xs()
-                                        .line_height(px(16.0))
+                    .when_some(
+                        match &self.left {
+                            Some(FinderItemLeft::Text(text)) => Some(text.clone()),
+                            _ => None,
+                        },
+                        |this, text| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_secondary)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(text),
+                            )
+                        },
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex_shrink(1.0)
+                                    .min_w_0()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_sm()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(self.middle.clone()),
+                            )
+                            .when_some(self.right.clone(), |div_outer, right| {
+                                div_outer.child(match right {
+                                    FinderItemRight::Text(text) => div()
+                                        .ml_auto()
+                                        .pl(px(8.0))
+                                        .flex_shrink(1.0)
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .text_sm()
                                         .text_color(theme.text_secondary)
-                                        .child(part)
-                                }))
-                        })),
-                })
-            });
+                                        .child(text),
+                                    FinderItemRight::Keybinding(keystrokes) => div()
+                                        .ml_auto()
+                                        .pl(px(8.0))
+                                        .flex_shrink_0()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .children(keystrokes.into_iter().map(|parts| {
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(px(2.0))
+                                                .children(parts.into_iter().map(|part| {
+                                                    div()
+                                                        .min_w(px(18.0))
+                                                        .bg(theme.background_tertiary)
+                                                        .px(px(4.0))
+                                                        .flex()
+                                                        .justify_center()
+                                                        .border_1()
+                                                        .border_color(theme.inner_border_color)
+                                                        .rounded(px(4.0))
+                                                        .text_xs()
+                                                        .line_height(px(16.0))
+                                                        .text_color(theme.text_secondary)
+                                                        .child(part)
+                                                }))
+                                        })),
+                                })
+                            }),
+                    ),
+            );
 
         let has_context_menu = self
             .item_data
