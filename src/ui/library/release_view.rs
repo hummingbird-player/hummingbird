@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc};
 
 use cntp_i18n::tr;
 use gpui::*;
@@ -25,7 +25,7 @@ use crate::{
             managed_image::{ManagedImageKey, managed_image},
             playback_controls::playback_controls,
             popover::{PopoverPosition, popover},
-            scrollbar::{ScrollableHandle, floating_scrollbar},
+            scrollbar::floating_scrollbar,
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
@@ -39,12 +39,10 @@ use crate::{
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
-        scroll_follow::SmoothScrollFollow,
         theme::Theme,
     },
 };
 
-const RELEASE_SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(250);
 pub const RELEASE_ARTWORK_SIZE: Pixels = px(140.0);
 
 fn release_artwork_key(album_id: i64) -> ManagedImageKey {
@@ -78,7 +76,6 @@ pub struct ReleaseView {
     release_info: Option<SharedString>,
     scroll_handle: ScrollHandle,
     pending_scroll: Option<usize>,
-    scroll_follow: SmoothScrollFollow,
     scroll_frame_scheduled: bool,
     all_liked: Option<bool>,
     menu_open: bool,
@@ -186,7 +183,6 @@ impl ReleaseView {
                 release_info: None,
                 scroll_handle,
                 pending_scroll: None,
-                scroll_follow: SmoothScrollFollow::new(RELEASE_SCROLL_ANIMATION_DURATION),
                 scroll_frame_scheduled: false,
                 all_liked: None,
                 menu_open: false,
@@ -574,64 +570,32 @@ impl ReleaseView {
         self.scroll_frame_scheduled = true;
         cx.on_next_frame(window, |this, window, cx| {
             this.scroll_frame_scheduled = false;
-            let reduced_motion = cx
-                .global::<crate::settings::SettingsGlobal>()
-                .model
-                .read(cx)
-                .interface
-                .reduced_motion;
-            this.advance_scroll_animation(window, cx, reduced_motion);
+            this.resolve_pending_scroll(window, cx);
         });
     }
 
-    fn advance_scroll_animation(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        reduced_motion: bool,
-    ) {
-        if let Some(pending_scroll) = self.pending_scroll {
-            match self.compute_follow_target(pending_scroll) {
-                FollowTarget::PendingLayout => {
-                    self.schedule_scroll_frame(window, cx);
-                    return;
-                }
-                FollowTarget::NoScrollNeeded => {
-                    self.pending_scroll = None;
-                    self.pulse_track(pending_scroll, cx);
-                }
-                FollowTarget::Target(target_scroll_top) => {
-                    let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
-                    if reduced_motion {
-                        self.scroll_follow
-                            .jump_to(&scroll_handle, target_scroll_top);
-                    } else {
-                        self.scroll_follow
-                            .animate_to(&scroll_handle, target_scroll_top);
-                    }
-                    self.pending_scroll = None;
-                    self.pulse_track(pending_scroll, cx);
-                }
-            }
-        }
-
-        let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
-        if reduced_motion {
-            if self.scroll_follow.snap(&scroll_handle) {
-                cx.notify();
-            }
+    fn resolve_pending_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending_scroll) = self.pending_scroll else {
             return;
+        };
+
+        match self.compute_follow_target(pending_scroll) {
+            FollowTarget::PendingLayout => {
+                self.schedule_scroll_frame(window, cx);
+                return;
+            }
+            FollowTarget::NoScrollNeeded => {}
+            FollowTarget::Target(target_scroll_top) => {
+                let current_offset = self.scroll_handle.offset();
+                self.scroll_handle
+                    .set_offset(Point::new(current_offset.x, -target_scroll_top));
+            }
         }
 
-        let changed = self.scroll_follow.advance(&scroll_handle);
+        self.pending_scroll = None;
+        self.pulse_track(pending_scroll, cx);
 
-        if self.scroll_follow.is_active() {
-            self.schedule_scroll_frame(window, cx);
-        }
-
-        if changed {
-            cx.notify();
-        }
+        cx.notify();
     }
 
     fn pulse_track(&self, track_index: usize, cx: &mut Context<Self>) {
@@ -651,8 +615,11 @@ impl ReleaseView {
         };
 
         let max_scroll_top = self.scroll_handle.max_offset().y.max(px(0.0));
-        let raw_offset_y = viewport.origin.y - item_bounds.origin.y;
-        let target_scroll_top = (-raw_offset_y).max(px(0.0)).min(max_scroll_top);
+
+        let item_center = item_bounds.origin.y - viewport.origin.y + item_bounds.size.height / 2.0;
+        let target_scroll_top = (item_center - viewport.size.height / 2.0)
+            .max(px(0.0))
+            .min(max_scroll_top);
         let current_scroll_top = -self.scroll_handle.offset().y;
 
         if (target_scroll_top - current_scroll_top).abs() <= px(0.1) {
@@ -677,20 +644,8 @@ impl Render for ReleaseView {
         }
         let padding = detail_view_padding(cx);
 
-        let settings = cx
-            .global::<crate::settings::SettingsGlobal>()
-            .model
-            .read(cx);
-        let reduced_motion = settings.interface.reduced_motion;
-        if self.pending_scroll.is_some() || self.scroll_follow.is_active() {
-            if reduced_motion {
-                // Reduced motion still needs one pass to resolve pending layout and snap any
-                // in-flight scroll animation to its final position; we just skip scheduling
-                // another animated frame afterward.
-                self.advance_scroll_animation(window, cx, reduced_motion);
-            } else {
-                self.schedule_scroll_frame(window, cx);
-            }
+        if self.pending_scroll.is_some() {
+            self.schedule_scroll_frame(window, cx);
         }
 
         let theme = cx.global::<Theme>().clone();
@@ -728,6 +683,8 @@ impl Render for ReleaseView {
             .relative()
             .overflow_hidden()
             .when(!full_width, |this| this.max_w(px(TABLE_MAX_WIDTH)))
+            // hide the release view if there's a pending scroll
+            .when(self.pending_scroll.is_some(), |this| this.invisible())
             .child(
                 div()
                     .id("release-view")
