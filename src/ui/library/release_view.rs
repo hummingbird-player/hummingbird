@@ -598,6 +598,7 @@ impl ReleaseView {
                 }
                 FollowTarget::NoScrollNeeded => {
                     self.pending_scroll = None;
+                    self.pulse_track(pending_scroll, cx);
                 }
                 FollowTarget::Target(target_scroll_top) => {
                     let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
@@ -609,6 +610,7 @@ impl ReleaseView {
                             .animate_to(&scroll_handle, target_scroll_top);
                     }
                     self.pending_scroll = None;
+                    self.pulse_track(pending_scroll, cx);
                 }
             }
         }
@@ -629,6 +631,12 @@ impl ReleaseView {
 
         if changed {
             cx.notify();
+        }
+    }
+
+    fn pulse_track(&self, track_index: usize, cx: &mut Context<Self>) {
+        if let Some(track_listing) = self.track_listing.as_ref() {
+            track_listing.pulse_track(track_index, cx);
         }
     }
 

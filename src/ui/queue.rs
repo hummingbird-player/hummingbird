@@ -38,7 +38,7 @@ use cntp_i18n::{tr, trn};
 use gpui::*;
 use prelude::FluentBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::time::Duration;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use super::{
     components::button::{ButtonSize, ButtonStyle, button},
@@ -49,7 +49,7 @@ use super::{
     },
     scroll_follow::SmoothScrollFollow,
     theme::Theme,
-    util::{create_or_retrieve_view_keyed, prune_views_keyed, retain_views},
+    util::{FocusPulse, create_or_retrieve_view_keyed, prune_views_keyed, retain_views},
 };
 
 /// The list identifier for queue drag-drop operations
@@ -149,6 +149,7 @@ pub struct QueueItem {
     is_liked: Option<i64>,
     library_data: Option<Entity<AsyncResource<i64, QueueItemLibraryData>>>,
     selected_liked: Option<Entity<AsyncResource<Vec<i64>, Vec<PlaylistItemRow>>>>,
+    focus_pulse: FocusPulse,
 }
 
 #[derive(Clone)]
@@ -265,6 +266,7 @@ impl QueueItem {
                 is_liked: None,
                 library_data,
                 selected_liked: None,
+                focus_pulse: FocusPulse::default(),
             }
         })
     }
@@ -272,10 +274,14 @@ impl QueueItem {
     pub fn update_idx(&mut self, idx: usize) {
         self.idx = idx;
     }
+
+    fn pulse(&mut self) {
+        self.focus_pulse.trigger();
+    }
 }
 
 impl Render for QueueItem {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = self.item.as_mut();
         let album_id = data.as_ref().and_then(|item| item.get_db_album_id());
         let track_id = data.as_ref().and_then(|item| item.get_db_id());
@@ -292,6 +298,7 @@ impl Render for QueueItem {
             .as_ref()
             .is_some_and(|queue_item| is_track_path_available(cx, queue_item.get_path()));
         let is_selected = self.selection.read(cx).contains(self.idx);
+        let focus_pulse = self.focus_pulse.render(theme.list_item_selected, window);
 
         if let Some(item) = ui_data.as_ref() {
             let scrollbar_always_visible = {
@@ -457,6 +464,7 @@ impl Render for QueueItem {
                                 selection_for_aux.update(cx, |s, cx| s.select(idx, cx));
                             }
                         })
+                        .children(focus_pulse)
                         .when_some(self.add_to.clone(), |this, that| this.child(that))
                         .child(DropIndicator::with_state(
                             item_state.is_drop_target_before,
@@ -801,6 +809,8 @@ pub struct Queue {
     /// hover/drag guards on auto-follow are bypassed until the animation ends
     force_follow: bool,
     scroll_follow: SmoothScrollFollow,
+    /// index of whatever item needs to pulse (if there is one)
+    pending_pulse: Rc<Cell<Option<usize>>>,
 }
 
 impl Queue {
@@ -823,6 +833,7 @@ impl Queue {
                     this.last_queue_position = new_position;
                     this.follow_current_pending = true;
                     this.scroll_follow.cancel();
+                    this.pending_pulse.set(None);
                 }
 
                 let valid_keys: Vec<usize> = cx
@@ -856,6 +867,7 @@ impl Queue {
                 follow_frame_scheduled: false,
                 force_follow: false,
                 scroll_follow: SmoothScrollFollow::new(QUEUE_FOLLOW_ANIMATION_DURATION),
+                pending_pulse: Rc::new(Cell::new(None)),
             }
         })
     }
@@ -881,6 +893,7 @@ impl Render for Queue {
         let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
         let selection = self.selection.clone();
+        let pending_pulse = self.pending_pulse.clone();
         let reduced_motion = cx
             .global::<SettingsGlobal>()
             .model
@@ -1236,6 +1249,10 @@ impl Render for Queue {
                                         if view.read(cx).idx != idx {
                                             view.update(cx, |q, _| q.update_idx(idx));
                                         }
+                                        if pending_pulse.get() == Some(idx) {
+                                            pending_pulse.set(None);
+                                            view.update(cx, |q, _| q.pulse());
+                                        }
 
                                         div().child(view)
                                     })
@@ -1359,6 +1376,11 @@ impl Queue {
                             .animate_to(&scroll_handle, target_scroll_top);
                     }
                     self.follow_current_pending = false;
+                    if self.force_follow {
+                        let position = cx.global::<Models>().queue.read(cx).position;
+                        self.pending_pulse.set(Some(position));
+                        cx.notify();
+                    }
                 }
             }
         }

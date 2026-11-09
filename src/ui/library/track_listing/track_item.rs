@@ -13,7 +13,7 @@ use crate::ui::library::context_menus::track::TrackContextMenu;
 use crate::ui::models::{
     HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, subscribe_liked_updates, toggle_like,
 };
-use crate::ui::util::{DurationPadding, format_duration};
+use crate::ui::util::{DurationPadding, FocusPulse, format_duration};
 
 use crate::library::{db::playlists, types::Track};
 use crate::media::numbering::{NumberDisplayMode, format_track_position, side_letter};
@@ -52,6 +52,7 @@ pub struct TrackItem {
     queue_context: Option<Arc<Vec<Track>>>,
     show_go_to_album: bool,
     show_go_to_artist: bool,
+    focus_pulse: FocusPulse,
 }
 
 #[derive(Eq, PartialEq)]
@@ -162,8 +163,15 @@ impl TrackItem {
                 queue_context,
                 show_go_to_album,
                 show_go_to_artist,
+                focus_pulse: FocusPulse::default(),
             }
         })
+    }
+
+    /// Pulses the row background to highlight it after it has been scrolled into view.
+    pub fn pulse(&mut self, cx: &mut Context<Self>) {
+        self.focus_pulse.trigger();
+        cx.notify();
     }
 }
 
@@ -360,6 +368,7 @@ impl Render for TrackItem {
         let padding = detail_view_padding(cx);
         let current_track = cx.global::<PlaybackInfo>().current_track.read(cx).clone();
         let is_available = self.is_available;
+        let focus_pulse = self.focus_pulse.render(theme.list_item_selected, window);
 
         let track_location_for_drag = self.track.location.clone();
         let album_id = self.track.album_id;
@@ -468,6 +477,8 @@ impl Render for TrackItem {
                                             theme.list_item
                                         })
                                     })
+                                    .relative()
+                                    .children(focus_pulse)
                                     .max_w_full()
                                     .when(self.left_field == TrackItemLeftField::TrackNum, |this| {
                                         this.child(

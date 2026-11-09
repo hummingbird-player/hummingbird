@@ -89,6 +89,12 @@ impl TrackListing {
         &self.original_tracks
     }
 
+    pub fn pulse_track(&self, index: usize, cx: &mut App) {
+        if let Some(track) = self.tracks.get(index) {
+            track.update(cx, |track, cx| track.pulse(cx));
+        }
+    }
+
     pub fn track_elements(&self) -> Vec<AnyElement> {
         self.tracks
             .iter()

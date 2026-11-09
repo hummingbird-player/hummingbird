@@ -319,13 +319,13 @@
   },
   "CLEAR_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:933",
+    "definedIn": "src/ui/queue.rs:946",
     "plural": false,
     "description": null
   },
   "CLOSE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:944",
+    "definedIn": "src/ui/queue.rs:957",
     "plural": false,
     "description": null
   },
@@ -661,13 +661,13 @@
   },
   "GO_TO_ALBUM": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:674",
+    "definedIn": "src/ui/queue.rs:682",
     "plural": false,
     "description": null
   },
   "GO_TO_ARTIST": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:694",
+    "definedIn": "src/ui/queue.rs:702",
     "plural": false,
     "description": null
   },
@@ -1081,13 +1081,13 @@
   },
   "QUEUE_JUMP_TO_CURRENT": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:1277",
+    "definedIn": "src/ui/queue.rs:1294",
     "plural": false,
     "description": null
   },
   "QUEUE_TITLE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:926",
+    "definedIn": "src/ui/queue.rs:939",
     "plural": false,
     "description": null
   },
@@ -1135,7 +1135,7 @@
   },
   "REMOVE_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:766",
+    "definedIn": "src/ui/queue.rs:774",
     "plural": false,
     "description": null
   },
@@ -1147,7 +1147,7 @@
   },
   "REMOVE_N_FROM_QUEUE": {
     "context": "queue.rs",
-    "definedIn": "src/ui/queue.rs:653",
+    "definedIn": "src/ui/queue.rs:661",
     "plural": true,
     "description": null
   },
@@ -1777,13 +1777,13 @@
   },
   "TRACK_DISC": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:209",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:217",
     "plural": false,
     "description": null
   },
   "TRACK_DISC_SUBTITLE": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:203",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:211",
     "plural": false,
     "description": null
   },
@@ -1795,7 +1795,7 @@
   },
   "TRACK_SIDE": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:197",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:205",
     "plural": false,
     "description": null
   },

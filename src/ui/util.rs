@@ -1,12 +1,17 @@
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;
-use std::{path::Path, sync::Arc};
+use std::{
+    f32::consts::TAU,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use globwalk::GlobWalkerBuilder;
 use gpui::{
-    AnyElement, App, Bounds, Element, ElementId, Entity, GlobalElementId, InspectorElementId,
-    IntoElement, LayoutId, ParentElement, Pixels, Render, RenderImage, Stateful, StyleRefinement,
-    Styled, Window,
+    AnyElement, App, Bounds, Div, Element, ElementId, Entity, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Render, RenderImage,
+    Stateful, StyleRefinement, Styled, Window, div,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::debug;
@@ -294,4 +299,40 @@ pub fn find_art_file_for_path(path: &Path) -> Option<Arc<Path>> {
             .filter_map(|e| e.ok());
 
     glob.next().map(|e| Arc::from(e.path()))
+}
+
+pub const FOCUS_PULSE_DURATION: Duration = Duration::from_millis(1200);
+const FOCUS_PULSE_COUNT: f32 = 2.0;
+
+#[derive(Default)]
+pub struct FocusPulse {
+    started_at: Option<Instant>,
+}
+
+impl FocusPulse {
+    pub fn trigger(&mut self) {
+        self.started_at = Some(Instant::now());
+    }
+
+    fn intensity(&mut self) -> Option<f32> {
+        let started_at = self.started_at?;
+        let progress = started_at.elapsed().as_secs_f32() / FOCUS_PULSE_DURATION.as_secs_f32();
+
+        if progress >= 1.0 {
+            self.started_at = None;
+            return None;
+        }
+
+        Some((1.0 - (progress * FOCUS_PULSE_COUNT * TAU).cos()) / 2.0)
+    }
+
+    pub fn render(&mut self, color: impl Into<Hsla>, window: &mut Window) -> Option<Div> {
+        let intensity = self.intensity()?;
+        window.request_animation_frame();
+
+        let mut color = color.into();
+        color.a *= intensity;
+
+        Some(div().absolute().inset_0().bg(color))
+    }
 }
