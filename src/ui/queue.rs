@@ -1430,19 +1430,12 @@ impl Queue {
         }
 
         let current_scroll_top = -scroll_handle.offset().y;
-        let current_scroll_bottom = current_scroll_top + viewport_height;
         let max_scroll_top = scroll_handle.max_offset().y.max(px(0.0));
 
-        let item_top = px(position as f32 * QUEUE_ITEM_HEIGHT);
-        let item_bottom = item_top + px(QUEUE_ITEM_HEIGHT);
-
-        let target_scroll_top = if item_top < current_scroll_top {
-            item_top
-        } else if item_bottom > current_scroll_bottom {
-            (item_bottom - viewport_height).min(max_scroll_top)
-        } else {
-            return FollowTarget::NoScrollNeeded;
-        };
+        let item_center = px((position as f32 + 0.5) * QUEUE_ITEM_HEIGHT);
+        let target_scroll_top = (item_center - viewport_height / 2.0)
+            .max(px(0.0))
+            .min(max_scroll_top);
 
         if (target_scroll_top - current_scroll_top).abs() <= px(0.1) {
             FollowTarget::NoScrollNeeded
