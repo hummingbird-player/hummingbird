@@ -28,8 +28,8 @@ impl Header {
         cx.new(|cx| Self {
             scan_status: ScanStatus::new(cx),
             menu_bar: if cfg!(not(target_os = "macos")) {
-                let menus = cx.get_menus().unwrap();
-                Some(MenuBar::new(cx, menus))
+                // platforms without app menus (e.g. iOS) return None here
+                cx.get_menus().map(|menus| MenuBar::new(cx, menus))
             } else {
                 None
             },

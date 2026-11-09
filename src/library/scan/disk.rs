@@ -173,6 +173,12 @@ fn physical_device_id(mount_point: &Path) -> Option<String> {
 
         Some(windows_physical_drive_id(letter).unwrap_or_else(|| format!("drive_{letter}")))
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = mount_point;
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
