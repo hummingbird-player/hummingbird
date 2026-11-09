@@ -33,7 +33,7 @@ use super::{
         resizable::{ResizeEdge, resizable},
         slider::slider,
     },
-    constants::PANEL_ROUNDING,
+    constants::{PANEL_GAP, PANEL_ROUNDING},
     global_actions::{Next, PlayPause, Previous, StopAfterCurrent},
     models::{Models, PlaybackInfo},
     now_playing::NowPlaying,
@@ -66,8 +66,52 @@ impl Controls {
     }
 }
 
+/// Below this width the controls bar stacks its sections vertically instead of side by side.
+const COMPACT_CONTROLS_WIDTH: Pixels = px(700.0);
+const CONTROLS_ROW_HEIGHT: Pixels = px(60.0);
+
+pub fn controls_are_compact(window: &Window) -> bool {
+    window.viewport_size().width < COMPACT_CONTROLS_WIDTH
+}
+
+/// Total height of the controls bar for the current window size.
+pub fn controls_height(window: &Window) -> Pixels {
+    if controls_are_compact(window) {
+        CONTROLS_ROW_HEIGHT * 3.0 + PANEL_GAP * 2.0
+    } else {
+        CONTROLS_ROW_HEIGHT
+    }
+}
+
 impl Render for Controls {
-    fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        if controls_are_compact(window) {
+            let row = || div().flex().w_full().h(CONTROLS_ROW_HEIGHT).flex_shrink_0();
+
+            return div()
+                .flex()
+                .flex_col()
+                .gap(PANEL_GAP)
+                .w_full()
+                .on_any_mouse_down(|_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .child(
+                    row().child(
+                        AnyView::from(self.info_section.clone())
+                            .cached(StyleRefinement::default().flex().w_full()),
+                    ),
+                )
+                .child(row().child(self.scrubber.clone()))
+                .child(
+                    row().child(
+                        AnyView::from(self.secondary_controls.clone())
+                            .cached(StyleRefinement::default().flex().w_full().h_full()),
+                    ),
+                )
+                .into_any_element();
+        }
+
         div()
             .flex()
             .h(px(60.0))
@@ -104,6 +148,7 @@ impl Render for Controls {
                         .cached(StyleRefinement::default().flex().w_full().h_full()),
                 ),
             )
+            .into_any_element()
     }
 }
 

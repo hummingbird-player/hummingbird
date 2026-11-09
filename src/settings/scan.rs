@@ -1,4 +1,4 @@
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "ios")))]
 use std::fs::exists;
 
 use camino::Utf8PathBuf;
@@ -77,7 +77,25 @@ fn retrieve_default_paths() -> Vec<Utf8PathBuf> {
             .collect()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    // the app sandbox has no Music folder; use Documents, which is where files land when they're
+    // copied in through Finder, the Files app, or `simctl`
+    #[cfg(target_os = "ios")]
+    {
+        let Some(home) = std::env::var_os("HOME") else {
+            return default_paths_failure("$HOME isn't set");
+        };
+        let dir = std::path::PathBuf::from(home).join("Documents");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return default_paths_failure(&format!("couldn't create {}: {e}", dir.display()));
+        }
+
+        match Utf8PathBuf::from_path_buf(dir) {
+            Ok(path) => vec![path],
+            Err(_) => default_paths_failure("the Documents directory path isn't valid UTF-8"),
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "ios")))]
     {
         let Some(user_directories) = directories::UserDirs::new() else {
             return default_paths_failure("couldn't find your home directory");

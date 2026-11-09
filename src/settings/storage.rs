@@ -53,7 +53,12 @@ fn default_lyrics_fraction() -> f32 {
 }
 
 fn default_show_queue() -> bool {
-    true
+    // the queue covers the whole library on a phone-sized screen
+    !cfg!(target_os = "ios")
+}
+
+fn default_sidebar_collapsed() -> bool {
+    cfg!(target_os = "ios")
 }
 
 fn default_controls_left_width() -> f32 {
@@ -138,7 +143,7 @@ pub struct StorageData {
     pub liked_tracks_sort_method: LikedTrackSortMethod,
     #[serde(default = "default_playlist_sort_methods")]
     pub playlist_sort_methods: HashMap<i64, PlaylistTrackSortMethod>,
-    #[serde(default)]
+    #[serde(default = "default_sidebar_collapsed")]
     pub sidebar_collapsed: bool,
     /// Fraction (0..1) of the lyrics panel height
     #[serde(default = "default_lyrics_fraction")]
@@ -239,7 +244,7 @@ impl Default for StorageData {
             table_settings: HashMap::new(),
             liked_tracks_sort_method: default_liked_tracks_sort_method(),
             playlist_sort_methods: default_playlist_sort_methods(),
-            sidebar_collapsed: false,
+            sidebar_collapsed: default_sidebar_collapsed(),
             lyrics_fraction: f32::from(DEFAULT_LYRICS_FRACTION),
             controls_left_width: f32::from(DEFAULT_CONTROLS_LEFT_WIDTH),
             controls_right_width: f32::from(DEFAULT_CONTROLS_RIGHT_WIDTH),

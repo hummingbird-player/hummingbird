@@ -55,7 +55,7 @@ use super::{
         window_chrome::window_chrome,
     },
     constants::PANEL_GAP,
-    controls::Controls,
+    controls::{Controls, controls_height},
     global_actions::register_actions,
     header::Header,
     library::Library,
@@ -91,7 +91,7 @@ const NORMAL_MIN_SIZE: Size<Pixels> = size(px(800.0), px(600.0));
 const THEATER_MIN_SIZE: Size<Pixels> = size(px(320.0), px(240.0));
 
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
 
         if *self.theater_mode.read(cx) {
@@ -159,7 +159,7 @@ impl Render for MainWindow {
                                 .w_full()
                                 .flex()
                                 .flex_shrink_0()
-                                .h(px(60.0)),
+                                .h(controls_height(window)),
                         ),
                     )
                     .child(
