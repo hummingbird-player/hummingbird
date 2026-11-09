@@ -26,7 +26,8 @@ use crate::{
         },
         library::context_menus::{
             AlbumContextMenuContext, TrackContextMenuContext, album_menu_for_table,
-            play_album_next, play_track_next, track_menu_for_table,
+            artist_menu_for_table, play_album_next, play_artist_next, play_track_next,
+            track_menu_for_table,
         },
         models::LIKED_SONGS_PLAYLIST_ID,
         util::{DurationPadding, format_duration},
@@ -775,6 +776,32 @@ impl TableData<ArtistColumn> for ArtistWithCounts {
 
     fn is_available(&self, cx: &mut App, row_state: &Self::RowState) -> bool {
         has_available_location(cx, &row_state.track_locations)
+    }
+
+    fn get_context_menu(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut App,
+        _context: &Self::ContextMenuContext,
+        _grid_context: GridContext,
+        row_state: &Self::RowState,
+    ) -> Option<(gpui::AnyElement, Option<gpui::AnyElement>)> {
+        Some(artist_menu_for_table(
+            self.id,
+            self.name.0.clone(),
+            has_available_location(cx, &row_state.track_locations),
+            window,
+            cx,
+        ))
+    }
+
+    fn handle_middle_mouse(
+        &self,
+        _window: &mut gpui::Window,
+        cx: &mut App,
+        _grid_context: GridContext,
+    ) {
+        play_artist_next(cx, self.id);
     }
 
     fn available_columns() -> IndexMap<ArtistColumn, f32, FxBuildHasher> {

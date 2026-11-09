@@ -271,7 +271,7 @@
   },
   "ADD_TO_SELECTED_PLAYLIST": {
     "context": "add_to_playlist.rs",
-    "definedIn": "src/ui/library/add_to_playlist.rs:86",
+    "definedIn": "src/ui/library/add_to_playlist.rs:89",
     "plural": false,
     "description": null
   },
@@ -295,13 +295,13 @@
   },
   "ARTIST_ALBUMS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:945",
+    "definedIn": "src/ui/library/artist_detail_view.rs:1021",
     "plural": false,
     "description": null
   },
   "ARTIST_LIKED_TRACKS": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:623",
+    "definedIn": "src/ui/library/artist_detail_view.rs:695",
     "plural": false,
     "description": null
   },
@@ -349,73 +349,73 @@
   },
   "COLUMN_ALBUM": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:450",
+    "definedIn": "src/library/types/table.rs:451",
     "plural": false,
     "description": null
   },
   "COLUMN_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:666",
+    "definedIn": "src/library/types/table.rs:667",
     "plural": false,
     "description": null
   },
   "COLUMN_ARTIST": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:196",
+    "definedIn": "src/library/types/table.rs:197",
     "plural": false,
     "description": null
   },
   "COLUMN_CATALOG_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:200",
+    "definedIn": "src/library/types/table.rs:201",
     "plural": false,
     "description": null
   },
   "COLUMN_DATE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:198",
+    "definedIn": "src/library/types/table.rs:199",
     "plural": false,
     "description": null
   },
   "COLUMN_GENRES": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:197",
+    "definedIn": "src/library/types/table.rs:198",
     "plural": false,
     "description": null
   },
   "COLUMN_LABEL": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:199",
+    "definedIn": "src/library/types/table.rs:200",
     "plural": false,
     "description": null
   },
   "COLUMN_LENGTH": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:202",
+    "definedIn": "src/library/types/table.rs:203",
     "plural": false,
     "description": null
   },
   "COLUMN_NAME": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:665",
+    "definedIn": "src/library/types/table.rs:666",
     "plural": false,
     "description": null
   },
   "COLUMN_TITLE": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:195",
+    "definedIn": "src/library/types/table.rs:196",
     "plural": false,
     "description": null
   },
   "COLUMN_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:667",
+    "definedIn": "src/library/types/table.rs:668",
     "plural": false,
     "description": null
   },
   "COLUMN_TRACK_COUNT": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:201",
+    "definedIn": "src/library/types/table.rs:202",
     "plural": false,
     "description": null
   },
@@ -613,7 +613,13 @@
   },
   "EXPORT_ARTIST_LIKED": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:143",
+    "definedIn": "src/ui/library/artist_detail_view.rs:146",
+    "plural": false,
+    "description": null
+  },
+  "EXPORT_ARTIST_LIKED_MENU": {
+    "context": "artist.rs",
+    "definedIn": "src/ui/library/context_menus/artist.rs:96",
     "plural": false,
     "description": null
   },
@@ -1141,7 +1147,7 @@
   },
   "REMOVE_FROM_SELECTED_PLAYLIST": {
     "context": "add_to_playlist.rs",
-    "definedIn": "src/ui/library/add_to_playlist.rs:93",
+    "definedIn": "src/ui/library/add_to_playlist.rs:96",
     "plural": false,
     "description": null
   },
@@ -1190,6 +1196,12 @@
   "RESCAN_ALBUM": {
     "context": "album.rs",
     "definedIn": "src/ui/library/context_menus/album.rs:131",
+    "plural": false,
+    "description": null
+  },
+  "RESCAN_ARTIST": {
+    "context": "artist.rs",
+    "definedIn": "src/ui/library/context_menus/artist.rs:105",
     "plural": false,
     "description": null
   },
@@ -1591,19 +1603,19 @@
   },
   "SHOW_IN_FILE_EXPLORER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:226",
+    "definedIn": "src/ui/library/context_menus.rs:264",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FILE_MANAGER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:228",
+    "definedIn": "src/ui/library/context_menus.rs:266",
     "plural": false,
     "description": null
   },
   "SHOW_IN_FINDER": {
     "context": "context_menus.rs",
-    "definedIn": "src/ui/library/context_menus.rs:224",
+    "definedIn": "src/ui/library/context_menus.rs:262",
     "plural": false,
     "description": null
   },
@@ -1639,7 +1651,7 @@
   },
   "SORT_ASCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:683",
+    "definedIn": "src/ui/library/artist_detail_view.rs:755",
     "plural": false,
     "description": null
   },
@@ -1651,7 +1663,7 @@
   },
   "SORT_DESCENDING": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:688",
+    "definedIn": "src/ui/library/artist_detail_view.rs:760",
     "plural": false,
     "description": null
   },
@@ -1663,19 +1675,19 @@
   },
   "SORT_RECENTLY_ADDED": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:699",
+    "definedIn": "src/ui/library/artist_detail_view.rs:771",
     "plural": false,
     "description": null
   },
   "SORT_RELEASE_ORDER": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:707",
+    "definedIn": "src/ui/library/artist_detail_view.rs:779",
     "plural": false,
     "description": null
   },
   "SORT_TITLE": {
     "context": "artist_detail_view.rs",
-    "definedIn": "src/ui/library/artist_detail_view.rs:703",
+    "definedIn": "src/ui/library/artist_detail_view.rs:775",
     "plural": false,
     "description": null
   },
@@ -1711,19 +1723,19 @@
   },
   "TABLE_ALBUMS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:248",
+    "definedIn": "src/library/types/table.rs:249",
     "plural": false,
     "description": null
   },
   "TABLE_ARTISTS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:703",
+    "definedIn": "src/library/types/table.rs:704",
     "plural": false,
     "description": null
   },
   "TABLE_TRACKS": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:495",
+    "definedIn": "src/library/types/table.rs:496",
     "plural": false,
     "description": null
   },
@@ -1789,7 +1801,7 @@
   },
   "TRACK_NUMBER": {
     "context": "table.rs",
-    "definedIn": "src/library/types/table.rs:448",
+    "definedIn": "src/library/types/table.rs:449",
     "plural": false,
     "description": null
   },

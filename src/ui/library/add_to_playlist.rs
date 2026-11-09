@@ -10,7 +10,7 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{self, TrackColumn, playlists, tracks},
+        db::{self, SortDirection, TrackColumn, playlists, tracks},
         types::Playlist,
     },
     ui::{
@@ -32,6 +32,7 @@ enum TrackList {
     Single(i64),
     Multi(Vec<i64>),
     Album(i64),
+    Artist(i64),
 }
 
 impl TrackList {
@@ -47,7 +48,9 @@ impl TrackList {
         match self {
             TrackList::Single(id) => *id,
             TrackList::Multi(ids) => ids[0],
-            TrackList::Album(_) => panic!("album track list must be resolved before use"),
+            TrackList::Album(_) | TrackList::Artist(_) => {
+                panic!("album and artist track lists must be resolved before use")
+            }
         }
     }
 
@@ -59,7 +62,7 @@ impl TrackList {
         match self {
             TrackList::Single(id) => std::slice::from_ref(id),
             TrackList::Multi(ids) => ids,
-            TrackList::Album(_) => &[],
+            TrackList::Album(_) | TrackList::Artist(_) => &[],
         }
     }
 }
@@ -121,6 +124,10 @@ impl AddToPlaylist {
 
     pub fn new_album(cx: &mut App, show: Entity<bool>, album_id: i64) -> Entity<Self> {
         Self::new_with_track_list(cx, show, TrackList::Album(album_id))
+    }
+
+    pub fn new_artist(cx: &mut App, show: Entity<bool>, artist_id: i64) -> Entity<Self> {
+        Self::new_with_track_list(cx, show, TrackList::Artist(artist_id))
     }
 
     fn new_with_track_list(
@@ -355,6 +362,13 @@ async fn resolve_track_list(
             tracks()
                 .from_album(album_id)
                 .sort_asc(TrackColumn::TrackNumber)
+                .fetch_ids(pool)
+                .await?,
+        )),
+        TrackList::Artist(artist_id) => Ok(TrackList::from_ids(
+            tracks()
+                .from_artist(artist_id)
+                .sort_release(SortDirection::Ascending)
                 .fetch_ids(pool)
                 .await?,
         )),

@@ -18,7 +18,8 @@ use crate::{
         },
         library::context_menus::{
             AlbumContextMenuContext, TrackContextMenuContext, add_album_to_playlist_state,
-            add_to_playlist_state, album::AlbumContextMenu, play_album_next, play_track_next,
+            add_artist_to_playlist_state, add_to_playlist_state, album::AlbumContextMenu,
+            artist::ArtistContextMenu, play_album_next, play_artist_next, play_track_next,
             track::TrackContextMenu,
         },
         models::LIKED_SONGS_PLAYLIST_ID,
@@ -166,15 +167,12 @@ impl PaletteItem for SearchPaletteItem {
                 })
                 .detach();
             }
-            _ => (),
+            SearchPaletteItem::Artist { id, .. } => play_artist_next(cx, *id),
         }
     }
 
     fn has_context_menu(&self) -> bool {
-        matches!(
-            self,
-            SearchPaletteItem::Album { .. } | SearchPaletteItem::Track { .. }
-        )
+        true
     }
 
     fn context_menu(&self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
@@ -265,7 +263,14 @@ impl PaletteItem for SearchPaletteItem {
                     None
                 }
             }
-            _ => None,
+            SearchPaletteItem::Artist { id, name } => {
+                let (show_add_to, _) =
+                    add_artist_to_playlist_state("pi_context_artist_add_to", *id, window, cx);
+                Some(
+                    ArtistContextMenu::new(*id, name.clone().into(), show_add_to, true)
+                        .into_any_element(),
+                )
+            }
         }
     }
 
@@ -280,7 +285,11 @@ impl PaletteItem for SearchPaletteItem {
                     add_album_to_playlist_state("pi_context_album_add_to", *id, window, cx);
                 Some(add_to.into_any_element())
             }
-            _ => None,
+            SearchPaletteItem::Artist { id, .. } => {
+                let (_, add_to) =
+                    add_artist_to_playlist_state("pi_context_artist_add_to", *id, window, cx);
+                Some(add_to.into_any_element())
+            }
         }
     }
 }

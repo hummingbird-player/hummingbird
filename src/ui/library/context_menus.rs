@@ -1,4 +1,5 @@
 pub mod album;
+pub mod artist;
 pub mod info_section;
 pub mod track;
 
@@ -10,7 +11,10 @@ use gpui::{AnyElement, App, AppContext, Entity, IntoElement, Pixels, Point, Shar
 
 use crate::{
     library::{
-        db::{self, TrackColumn, album_paths, artists, playlists, tracks},
+        db::{
+            self, SortDirection, TrackColumn, TrackQuery, album_paths, artists, playlists, tracks,
+        },
+        playlist::export_liked_artist_songs,
         scan::ScanInterface,
         types::{Album, Track},
     },
@@ -24,7 +28,9 @@ use crate::{
         library::{
             ViewSwitchMessage,
             add_to_playlist::AddToPlaylist,
-            context_menus::{album::AlbumContextMenu, track::TrackContextMenu},
+            context_menus::{
+                album::AlbumContextMenu, artist::ArtistContextMenu, track::TrackContextMenu,
+            },
         },
         models::{Models, PlaybackInfo, PlaylistEvent},
         util::reveal_path_for_file_manager,
@@ -98,6 +104,23 @@ pub(crate) fn add_album_to_playlist_state(
     (state.show.clone(), state.add_to.clone())
 }
 
+/// Creates or retrieves the `AddToPlaylist` keyed state for the given artist,
+/// returning the show toggle and the playlist entity.
+pub(crate) fn add_artist_to_playlist_state(
+    key: &'static str,
+    artist_id: i64,
+    window: &mut Window,
+    cx: &mut App,
+) -> (Entity<bool>, Entity<AddToPlaylist>) {
+    let menu_state = window.use_keyed_state((key, artist_id as usize), cx, |_, cx| {
+        let show = cx.new(|_| false);
+        let add_to = AddToPlaylist::new_artist(cx, show.clone(), artist_id);
+        AddToPlaylistState { show, add_to }
+    });
+    let state = menu_state.read(cx);
+    (state.show.clone(), state.add_to.clone())
+}
+
 pub fn track_menu_for_table(
     track: &Track,
     is_available: bool,
@@ -131,6 +154,21 @@ pub fn album_menu_for_table(
     let (show_add_to, add_to) =
         add_album_to_playlist_state("album-menu-state", album.id, window, cx);
     let menu = AlbumContextMenu::new(Rc::new(album.clone()), show_add_to, *context, is_available)
+        .into_any_element();
+
+    (menu, Some(add_to.into_any_element()))
+}
+
+pub fn artist_menu_for_table(
+    artist_id: i64,
+    artist_name: SharedString,
+    is_available: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> (AnyElement, Option<AnyElement>) {
+    let (show_add_to, add_to) =
+        add_artist_to_playlist_state("artist-menu-state", artist_id, window, cx);
+    let menu = ArtistContextMenu::new(artist_id, artist_name, show_add_to, is_available)
         .into_any_element();
 
     (menu, Some(add_to.into_any_element()))
@@ -431,41 +469,38 @@ pub(crate) fn navigate_to_artist(cx: &mut App, artist_id: i64) {
 }
 
 #[derive(Clone, Copy)]
-enum AlbumQueueAction {
+enum QueueAction {
     Replace,
     PlayNext,
     Shuffle,
     Append,
 }
 
-fn apply_album_queue_action(cx: &mut App, album_id: i64, action: AlbumQueueAction) {
+fn apply_queue_action(cx: &mut App, query: TrackQuery, action: QueueAction) {
     let pool = cx.global::<Pool>().0.clone();
     cx.spawn(async move |cx| {
-        let request = crate::RUNTIME.spawn(async move {
-            tracks()
-                .from_album(album_id)
-                .sort_asc(TrackColumn::TrackNumber)
-                .fetch_list(&pool)
-                .await
+        let request = crate::RUNTIME.spawn({
+            let query = query.clone();
+            async move { query.for_playback().fetch_rows(&pool).await }
         });
-        let tracks = match request.await {
-            Ok(Ok(tracks)) => tracks,
+        let rows = match request.await {
+            Ok(Ok(rows)) => rows,
             Ok(Err(error)) => {
-                tracing::error!(?error, album_id, "could not load album tracks");
+                tracing::error!(?error, ?query, "could not load tracks to queue");
                 return;
             }
             Err(error) => {
-                tracing::error!(?error, album_id, "album track query task failed");
+                tracing::error!(?error, ?query, "track queue query task failed");
                 return;
             }
         };
 
         cx.update(|cx| {
             let availability = snapshot(cx);
-            let queue_items: Vec<_> = tracks
+            let queue_items: Vec<_> = rows
                 .into_iter()
-                .filter(|track| availability.is_track_path_available(&track.location))
-                .map(|track| QueueItemData::new(cx, track.location, Some(track.id), track.album_id))
+                .filter(|row| availability.is_track_path_available(&row.location))
+                .map(|row| QueueItemData::new(cx, row.location, Some(row.id), row.album_id))
                 .collect();
             if queue_items.is_empty() {
                 return;
@@ -473,38 +508,66 @@ fn apply_album_queue_action(cx: &mut App, album_id: i64, action: AlbumQueueActio
 
             let interface = cx.global::<PlaybackInterface>();
             match action {
-                AlbumQueueAction::Replace => replace_queue(queue_items, cx),
-                AlbumQueueAction::PlayNext => {
+                QueueAction::Replace => replace_queue(queue_items, cx),
+                QueueAction::PlayNext => {
                     let position = cx.global::<Models>().queue.read(cx).position + 1;
                     interface.insert_list_at(queue_items, position);
                 }
-                AlbumQueueAction::Shuffle => {
+                QueueAction::Shuffle => {
                     if !*cx.global::<PlaybackInfo>().shuffling.read(cx) {
                         interface.toggle_shuffle();
                     }
                     replace_queue(queue_items, cx);
                 }
-                AlbumQueueAction::Append => interface.queue_list(queue_items),
+                QueueAction::Append => interface.queue_list(queue_items),
             }
         });
     })
     .detach();
 }
 
+fn album_tracks(album_id: i64) -> TrackQuery {
+    tracks()
+        .from_album(album_id)
+        .sort_asc(TrackColumn::TrackNumber)
+}
+
+fn artist_tracks(artist_id: i64) -> TrackQuery {
+    tracks()
+        .from_artist(artist_id)
+        .sort_release(SortDirection::Ascending)
+}
+
 fn play_album_now(cx: &mut App, album: &Album) {
-    apply_album_queue_action(cx, album.id, AlbumQueueAction::Replace);
+    apply_queue_action(cx, album_tracks(album.id), QueueAction::Replace);
 }
 
 pub fn play_album_next(cx: &mut App, album: &Album) {
-    apply_album_queue_action(cx, album.id, AlbumQueueAction::PlayNext);
+    apply_queue_action(cx, album_tracks(album.id), QueueAction::PlayNext);
 }
 
 fn shuffle_album(cx: &mut App, album: &Album) {
-    apply_album_queue_action(cx, album.id, AlbumQueueAction::Shuffle);
+    apply_queue_action(cx, album_tracks(album.id), QueueAction::Shuffle);
 }
 
 fn queue_album(cx: &mut App, album: &Album) {
-    apply_album_queue_action(cx, album.id, AlbumQueueAction::Append);
+    apply_queue_action(cx, album_tracks(album.id), QueueAction::Append);
+}
+
+fn play_artist_now(cx: &mut App, artist_id: i64) {
+    apply_queue_action(cx, artist_tracks(artist_id), QueueAction::Replace);
+}
+
+pub fn play_artist_next(cx: &mut App, artist_id: i64) {
+    apply_queue_action(cx, artist_tracks(artist_id), QueueAction::PlayNext);
+}
+
+fn shuffle_artist(cx: &mut App, artist_id: i64) {
+    apply_queue_action(cx, artist_tracks(artist_id), QueueAction::Shuffle);
+}
+
+fn queue_artist(cx: &mut App, artist_id: i64) {
+    apply_queue_action(cx, artist_tracks(artist_id), QueueAction::Append);
 }
 
 pub(crate) fn rescan_album(cx: &mut App, album: &Album) {
@@ -532,6 +595,48 @@ pub(crate) fn rescan_album(cx: &mut App, album: &Album) {
         }
     })
     .detach();
+}
+
+pub(crate) fn rescan_artist(cx: &mut App, artist_id: i64) {
+    let pool = cx.global::<Pool>().0.clone();
+    let scanner = cx.global::<ScanInterface>().clone();
+    cx.spawn(async move |_| {
+        let request = crate::RUNTIME.spawn(async move {
+            let album_folders = album_paths()
+                .for_artist(artist_id)
+                .fetch_rows(&pool)
+                .await?;
+            let standalone_tracks = tracks()
+                .standalone_for_artist(artist_id)
+                .for_playback()
+                .fetch_rows(&pool)
+                .await?;
+            Ok::<_, sqlx::Error>(
+                album_folders
+                    .into_iter()
+                    .map(|row| row.path)
+                    .chain(standalone_tracks.into_iter().map(|row| row.location))
+                    .filter_map(|path| Utf8PathBuf::from_path_buf(path).ok())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        match request.await {
+            Ok(Ok(paths)) => scanner.rescan_paths(paths),
+            Ok(Err(error)) => {
+                tracing::error!(?error, artist_id, "could not list paths for artist rescan");
+            }
+            Err(error) => {
+                tracing::error!(?error, artist_id, "artist path query task failed");
+            }
+        }
+    })
+    .detach();
+}
+
+pub(crate) fn export_artist_liked(cx: &App, artist_id: i64, artist_name: &str) {
+    if let Err(error) = export_liked_artist_songs(cx, artist_id, artist_name) {
+        tracing::error!(?error, artist_id, "could not export liked artist songs");
+    }
 }
 
 pub(crate) fn reveal_album_in_file_manager(cx: &mut App, album_id: i64) {

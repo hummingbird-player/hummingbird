@@ -4,12 +4,10 @@ use cntp_i18n::tr;
 use gpui::*;
 use prelude::FluentBuilder;
 use rustc_hash::FxHashMap;
-use tracing::error;
 
 use crate::{
     library::{
         db::{LikedTrackSortMethod, SortDirection, albums, artists, tracks},
-        playlist::export_liked_artist_songs,
         scan::ScanEvent,
         types::{Album, DBString, Track, table::AlbumColumn},
     },
@@ -23,8 +21,9 @@ use crate::{
             async_resource::AsyncResource,
             button::{ButtonSize, button},
             dropdown::dropdown,
-            icons::{SORT_ASCENDING, SORT_DESCENDING, icon},
+            icons::{DOTS_VERTICAL, SORT_ASCENDING, SORT_DESCENDING, icon},
             playback_controls::playback_controls,
+            popover::{PopoverPosition, popover},
             scrollbar::floating_scrollbar,
             table::{
                 grid_item::GridItem,
@@ -35,7 +34,10 @@ use crate::{
         },
         constants::REGULAR_BUTTON_ICON_SIZE,
         library::{
-            context_menus::AlbumContextMenuContext,
+            context_menus::{
+                AlbumContextMenuContext, add_artist_to_playlist_state, artist::ArtistContextMenu,
+                export_artist_liked,
+            },
             library_view_header::LibraryViewHeader,
             track_listing::{
                 ArtistNameVisibility,
@@ -71,6 +73,7 @@ pub struct ArtistDetailView {
         Entity<AsyncResource<(i64, LikedTrackSortMethod, LikedTrackSortMethod), ArtistDetailData>>,
     loaded: bool,
     first_render: bool,
+    menu_open: bool,
     focus_handle: FocusHandle,
 }
 
@@ -169,11 +172,79 @@ impl ArtistDetailView {
                 resource,
                 loaded: false,
                 first_render: true,
+                menu_open: false,
                 focus_handle,
             }
         });
 
         view
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        self.menu_open = false;
+        cx.notify();
+    }
+
+    fn render_menu_button(
+        &self,
+        is_available: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let menu_open = self.menu_open;
+        let artist_id = self.artist_id;
+
+        let (show_add_to, add_to) =
+            add_artist_to_playlist_state("artist-menu-state", artist_id, window, cx);
+        let menu_btn = div()
+            .relative()
+            .flex()
+            .child(
+                button()
+                    .id("artist-menu-button")
+                    .size(ButtonSize::Large)
+                    .flex_none()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+
+                            this.menu_open = !menu_open;
+                            cx.notify();
+                        }),
+                    )
+                    .child(icon(DOTS_VERTICAL).size(px(16.0)).my_auto()),
+            )
+            .when(menu_open, |this| {
+                let artist_name = self.artist_name.clone().unwrap_or_default().0;
+                let weak_self = cx.entity().downgrade();
+                let close = move |cx: &mut App| {
+                    weak_self.update(cx, |this, cx| this.close_menu(cx)).ok();
+                };
+                let close_for_dismiss = close.clone();
+                let close_for_out = close.clone();
+                this.child(
+                    popover()
+                        .position(PopoverPosition::BottomRight)
+                        .edge_offset(px(4.0))
+                        .p(px(0.0))
+                        .on_dismiss(move |_, cx| close_for_dismiss(cx))
+                        .on_mouse_down_out(move |_, _, cx| close_for_out(cx))
+                        .child(
+                            div()
+                                .id("artist-menu-container")
+                                .on_click(move |_, _, cx| close(cx))
+                                .child(ArtistContextMenu::new(
+                                    artist_id,
+                                    artist_name,
+                                    show_add_to,
+                                    is_available,
+                                )),
+                        ),
+                )
+            });
+
+        div().child(menu_btn).child(add_to).into_any_element()
     }
 
     pub fn get_scroll_offset(&self) -> f32 {
@@ -538,6 +609,8 @@ impl Render for ArtistDetailView {
         if !self.loaded {
             return div().into_any_element();
         }
+        let has_available_artist_tracks = has_available_tracks(cx, self.all_tracks.as_ref());
+        let menu_button = self.render_menu_button(has_available_artist_tracks, window, cx);
         let theme = cx.global::<Theme>();
         let entity = cx.entity();
         let standalone_entity = entity.clone();
@@ -574,7 +647,6 @@ impl Render for ArtistDetailView {
                         && availability.is_track_path_available(&track.location)
                 })
             });
-        let has_available_artist_tracks = has_available_tracks(cx, self.all_tracks.as_ref());
 
         let current_track_in_liked = cx
             .global::<PlaybackInfo>()
@@ -842,9 +914,7 @@ impl Render for ArtistDetailView {
         div()
             .track_focus(&self.focus_handle)
             .on_action(move |_: &ExportLiked, _, cx| {
-                if let Err(err) = export_liked_artist_songs(cx, artist_id, artist_name.0.as_str()) {
-                    error!("Failed to export liked artist songs: {}", err);
-                }
+                export_artist_liked(cx, artist_id, &artist_name.0);
             })
             .flex()
             .flex_col()
@@ -895,34 +965,40 @@ impl Render for ArtistDetailView {
                                             }),
                                     )
                                     .when(!self.all_tracks.is_empty(), |this| {
-                                        this.child(div().pb(padding).child(playback_controls(
-                                            "artist",
-                                            has_available_artist_tracks,
-                                            current_track_in_artist,
-                                            is_playing,
-                                            {
-                                                let all_tracks = self.all_tracks.clone();
-                                                let availability = availability.clone();
-                                                move |cx| {
-                                                    all_tracks
-                                                        .iter()
-                                                        .filter(|track| {
-                                                            availability.is_track_path_available(
-                                                                &track.location,
-                                                            )
-                                                        })
-                                                        .map(|track| {
-                                                            QueueItemData::new(
-                                                                cx,
-                                                                track.location.clone(),
-                                                                Some(track.id),
-                                                                track.album_id,
-                                                            )
-                                                        })
-                                                        .collect()
-                                                }
-                                            },
-                                        )))
+                                        this.child(
+                                            div().pb(padding).child(
+                                                playback_controls(
+                                                    "artist",
+                                                    has_available_artist_tracks,
+                                                    current_track_in_artist,
+                                                    is_playing,
+                                                    {
+                                                        let all_tracks = self.all_tracks.clone();
+                                                        let availability = availability.clone();
+                                                        move |cx| {
+                                                            all_tracks
+                                                                .iter()
+                                                                .filter(|track| {
+                                                                    availability
+                                                                        .is_track_path_available(
+                                                                            &track.location,
+                                                                        )
+                                                                })
+                                                                .map(|track| {
+                                                                    QueueItemData::new(
+                                                                        cx,
+                                                                        track.location.clone(),
+                                                                        Some(track.id),
+                                                                        track.album_id,
+                                                                    )
+                                                                })
+                                                                .collect()
+                                                        }
+                                                    },
+                                                )
+                                                .trailing(menu_button),
+                                            ),
+                                        )
                                     }),
                             )
                             .when(album_count > 0, |this| {

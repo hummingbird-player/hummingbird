@@ -121,6 +121,7 @@ pub struct TrackLyricsRow {
 #[derive(Clone, Debug, Default)]
 pub struct AlbumPathQuery {
     album_id: Option<i64>,
+    artist_id: Option<i64>,
     order_by_disc: bool,
 }
 
@@ -562,6 +563,11 @@ impl AlbumPathQuery {
         self
     }
 
+    pub fn for_artist(mut self, artist_id: i64) -> Self {
+        self.artist_id = Some(artist_id);
+        self
+    }
+
     pub fn order_by_disc(mut self) -> Self {
         self.order_by_disc = true;
         self
@@ -569,8 +575,17 @@ impl AlbumPathQuery {
 
     pub async fn fetch_rows(self, pool: &SqlitePool) -> sqlx::Result<Vec<AlbumPathRow>> {
         let mut query = QueryBuilder::new("SELECT path FROM album_path");
+        let mut has_filter = false;
         if let Some(album_id) = self.album_id {
-            query.push(" WHERE album_id = ").push_bind(album_id);
+            push_filter_prefix(&mut query, &mut has_filter);
+            query.push("album_id = ").push_bind(album_id);
+        }
+        if let Some(artist_id) = self.artist_id {
+            push_filter_prefix(&mut query, &mut has_filter);
+            query
+                .push("album_id IN (SELECT album_id FROM album_artist WHERE artist_id = ")
+                .push_bind(artist_id)
+                .push(")");
         }
         if self.order_by_disc {
             query.push(" ORDER BY disc_num");
