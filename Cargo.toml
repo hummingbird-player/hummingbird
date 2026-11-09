@@ -37,8 +37,8 @@ discord-rich-presence = "1"
 file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
-gpui = { package = "gpui-unofficial", version = "1.25" }
-gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.25", features = ["wayland", "x11", "font-kit"] }
+gpui = { package = "gpui-unofficial", version = "1.27" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.27", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 icu_collator = "2.1"
 indexmap = { version = "2", features = ["serde"] }

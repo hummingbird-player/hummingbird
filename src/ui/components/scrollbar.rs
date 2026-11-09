@@ -9,7 +9,7 @@ use gpui::{
     AbsoluteLength, App, Background, BorderStyle, Bounds, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
     InteractiveElement, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Refineable, RenderOnce, ScrollHandle, ScrollWheelEvent, Style,
+    ParentElement, Pixels, Refineable, RenderOnce, ScrollEvent, ScrollHandle, Style,
     StyleRefinement, Styled, UniformListScrollHandle, Window, black, div, px, quad, rgb, white,
 };
 
@@ -566,7 +566,7 @@ impl Element for Scrollbar {
                 });
 
                 // show if scrolled
-                window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
+                window.on_mouse_event(move |ev: &ScrollEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }

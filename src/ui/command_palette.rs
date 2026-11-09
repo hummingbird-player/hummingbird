@@ -191,11 +191,11 @@ impl Hash for Command {
     }
 }
 
-fn binding_label(binding: &gpui::KeyBinding) -> SharedString {
+fn binding_label(binding: &gpui::KeyBinding, os: gpui::OperatingSystem) -> SharedString {
     binding
         .keystrokes()
         .iter()
-        .map(|key| key.to_string())
+        .map(|key| key.display(os).to_string())
         .collect::<Vec<String>>()
         .join(" + ")
         .into()
@@ -216,12 +216,13 @@ impl PaletteItem for Command {
     }
 
     fn right_content(&self, cx: &mut gpui::App) -> Option<SharedString> {
+        let os = cx.platform_info().os;
         self.action.with_action(cx, |cx, action| {
             cx.key_bindings()
                 .borrow()
                 .bindings_for_action(action)
                 .last()
-                .map(binding_label)
+                .map(|binding| binding_label(binding, os))
         })?
     }
 }

@@ -304,7 +304,7 @@ impl Render for Lyrics {
                         cx.notify();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(move |this, _, _, cx| {
+                .on_scroll(cx.listener(move |this, _, _, cx| {
                     if playback_state == PlaybackState::Playing {
                         this.register_user_interaction();
                     }

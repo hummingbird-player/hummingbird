@@ -557,7 +557,7 @@ impl Element for Knob {
             {
                 let hitbox = hitbox.clone();
                 let state = state.clone();
-                window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
+                window.on_mouse_event(move |ev: &ScrollEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
                     }

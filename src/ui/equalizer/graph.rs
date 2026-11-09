@@ -1037,7 +1037,7 @@ impl Element for EqGraph {
                 let state = state.clone();
                 let config = config.clone();
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
+                window.on_mouse_event(move |ev: &ScrollEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
                     }

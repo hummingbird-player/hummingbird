@@ -69,15 +69,8 @@ pub fn load_default_keymap(cx: &mut App) {
                         .unwrap_or_else(|err| panic!("invalid context {:?}: {err}", ctx)),
                 )
             });
-            KeyBinding::load(
-                &e.key,
-                action,
-                context_predicate,
-                false,
-                None,
-                &gpui::DummyKeyboardMapper,
-            )
-            .unwrap_or_else(|err| panic!("invalid key {:?}: {err}", e.key))
+            KeyBinding::load(&e.key, action, context_predicate, false, None, cx)
+                .unwrap_or_else(|err| panic!("invalid key {:?}: {err}", e.key))
         })
         .collect();
 
