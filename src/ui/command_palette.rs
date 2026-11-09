@@ -238,14 +238,58 @@ impl PaletteItem for Command {
     }
 
     fn right_content(&self, cx: &mut gpui::App) -> Option<FinderItemRight> {
+        self.with_binding(cx, |binding, os| {
+            FinderItemRight::Keybinding(binding_parts(binding, os))
+        })
+    }
+}
+
+impl Command {
+    /// Calls `f` with the binding shown for this command, if it has one.
+    fn with_binding<R>(
+        &self,
+        cx: &mut App,
+        f: impl FnOnce(&gpui::KeyBinding, gpui::OperatingSystem) -> R,
+    ) -> Option<R> {
         let os = cx.platform_info().os;
         self.action.with_action(cx, |cx, action| {
             cx.key_bindings()
                 .borrow()
                 .bindings_for_action(action)
                 .last()
-                .map(|binding| FinderItemRight::Keybinding(binding_parts(binding, os)))
+                .map(|binding| f(binding, os))
         })?
+    }
+
+    /// The string the palette matches against: the command name, followed by its binding both as
+    /// displayed (e.g. "⌘ ⇧ P" on macOS) and as typed ("cmd shift p"), so bindings can be
+    /// searched without typing symbols.
+    fn search_text(&self, cx: &mut App) -> Utf32String {
+        let binding = self.with_binding(cx, |binding, os| {
+            let displayed = binding_parts(binding, os)
+                .iter()
+                .flatten()
+                .map(SharedString::as_ref)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let typed = binding
+                .keystrokes()
+                .iter()
+                .map(|keystroke| keystroke.unparse(os).replace('-', " "))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            if displayed.eq_ignore_ascii_case(&typed) {
+                displayed
+            } else {
+                format!("{displayed} {typed}")
+            }
+        });
+
+        match binding {
+            Some(binding) => format!("{} {binding}", self.name).into(),
+            None => self.name.as_ref().into(),
+        }
     }
 }
 
@@ -334,7 +378,7 @@ impl CommandPalette {
     pub fn new(cx: &mut App, _: &mut Window) -> Entity<Self> {
         cx.new(|cx| {
             let show = cx.new(|_| false);
-            let matcher: MatcherFunc = Box::new(|item, _| item.name.to_string().into());
+            let matcher: MatcherFunc = Box::new(|item, cx| item.search_text(cx));
 
             let show_clone = show.clone();
             let on_accept: OnAccept = Box::new(move |item, cx| {
