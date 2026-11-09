@@ -14,7 +14,7 @@ use crate::{
             async_resource::AsyncResource,
             icons::{DISC, USERS},
             managed_image::ManagedImageKey,
-            palette::{FinderItemLeft, PaletteItem},
+            palette::{FinderItemLeft, FinderItemRight, PaletteItem},
         },
         library::context_menus::{
             AlbumContextMenuContext, TrackContextMenuContext, add_album_to_playlist_state,
@@ -112,10 +112,14 @@ impl PaletteItem for SearchPaletteItem {
         }
     }
 
-    fn right_content(&self, _cx: &mut App) -> Option<SharedString> {
+    fn right_content(&self, _cx: &mut App) -> Option<FinderItemRight> {
         match self {
-            SearchPaletteItem::Album { artist, .. } => Some(artist.clone().into()),
-            SearchPaletteItem::Track { artists, .. } => Some(artists.clone().into()),
+            SearchPaletteItem::Album { artist, .. } => {
+                Some(FinderItemRight::Text(artist.clone().into()))
+            }
+            SearchPaletteItem::Track { artists, .. } => {
+                Some(FinderItemRight::Text(artists.clone().into()))
+            }
             SearchPaletteItem::Artist { .. } => None,
         }
     }

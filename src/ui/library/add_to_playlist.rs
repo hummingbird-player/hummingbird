@@ -19,7 +19,9 @@ use crate::{
             async_resource::AsyncResource,
             icons::PLAYLIST_ADD,
             modal::modal,
-            palette::{ExtraItem, ExtraItemProvider, FinderItemLeft, Palette, PaletteItem},
+            palette::{
+                ExtraItem, ExtraItemProvider, FinderItemLeft, FinderItemRight, Palette, PaletteItem,
+            },
         },
         models::{Models, PlaylistEvent},
     },
@@ -97,7 +99,7 @@ impl PaletteItem for PlaylistChoice {
         }
     }
 
-    fn right_content(&self, cx: &mut App) -> Option<SharedString> {
+    fn right_content(&self, cx: &mut App) -> Option<FinderItemRight> {
         self.1.right_content(cx)
     }
 }

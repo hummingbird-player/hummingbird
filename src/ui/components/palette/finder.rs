@@ -29,7 +29,7 @@ const MAX_VISIBLE_PER_CATEGORY: usize = 5;
 pub trait PaletteItem {
     fn left_content(&self, cx: &mut App) -> Option<FinderItemLeft>;
     fn middle_content(&self, cx: &mut App) -> SharedString;
-    fn right_content(&self, cx: &mut App) -> Option<SharedString>;
+    fn right_content(&self, cx: &mut App) -> Option<FinderItemRight>;
     fn is_enabled(&self, _cx: &App) -> bool {
         true
     }
@@ -58,7 +58,7 @@ pub trait PaletteItem {
 pub struct ExtraItem {
     pub left: Option<FinderItemLeft>,
     pub middle: SharedString,
-    pub right: Option<SharedString>,
+    pub right: Option<FinderItemRight>,
     pub on_accept: Arc<dyn Fn(&mut App) + Send + Sync>,
 }
 
@@ -730,7 +730,7 @@ where
     id: ElementId,
     left: Option<FinderItemLeft>,
     middle: SharedString,
-    right: Option<SharedString>,
+    right: Option<FinderItemRight>,
     idx: usize,
     current_selection: usize,
     is_enabled: bool,
@@ -744,6 +744,12 @@ pub enum FinderItemLeft {
     Text(SharedString),
     Icon(SharedString),
     Image(ManagedImageKey),
+}
+
+#[derive(Clone)]
+pub enum FinderItemRight {
+    Text(SharedString),
+    Keybinding(Vec<Vec<SharedString>>),
 }
 
 impl<T, MatcherFunc, OnAccept> FinderItem<T, MatcherFunc, OnAccept>
@@ -932,8 +938,8 @@ where
                     .child(self.middle.clone()),
             )
             .when_some(self.right.clone(), |div_outer, right| {
-                div_outer.child(
-                    div()
+                div_outer.child(match right {
+                    FinderItemRight::Text(text) => div()
                         .ml_auto()
                         .pl(px(8.0))
                         .flex_shrink(1.0)
@@ -941,8 +947,38 @@ where
                         .text_ellipsis()
                         .text_sm()
                         .text_color(theme.text_secondary)
-                        .child(right),
-                )
+                        .child(text),
+                    FinderItemRight::Keybinding(keystrokes) => div()
+                        .ml_auto()
+                        .pl(px(8.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .children(keystrokes.into_iter().map(|parts| {
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(2.0))
+                                .children(parts.into_iter().map(|part| {
+                                    div()
+                                        .min_w(px(18.0))
+                                        .bg(theme.background_tertiary)
+                                        .px(px(4.0))
+                                        .flex()
+                                        .justify_center()
+                                        .border_1()
+                                        .border_color(theme.inner_border_color)
+                                        .rounded(px(4.0))
+                                        .text_xs()
+                                        .line_height(px(16.0))
+                                        .text_color(theme.text_secondary)
+                                        .child(part)
+                                }))
+                        })),
+                })
             });
 
         let has_context_menu = self

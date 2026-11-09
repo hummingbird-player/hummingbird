@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 use cntp_i18n::{I18N_MANAGER, I18nString, tr, tr_noop};
 use gpui::{
     Action, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Global, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, actions, div, px,
+    Keystroke, Modifiers, ParentElement, Render, SharedString, Styled, Window, actions, div, px,
 };
 use nucleo::Utf32String;
 use rustc_hash::FxHashMap;
@@ -12,7 +12,7 @@ use std::hash::Hash;
 use tracing::error;
 
 use crate::ui::components::modal::{ModalActive, modal};
-use crate::ui::components::palette::{FinderItemLeft, Palette, PaletteItem};
+use crate::ui::components::palette::{FinderItemLeft, FinderItemRight, Palette, PaletteItem};
 
 actions!(hummingbird, [OpenPalette]);
 
@@ -191,14 +191,36 @@ impl Hash for Command {
     }
 }
 
-fn binding_label(binding: &gpui::KeyBinding, os: gpui::OperatingSystem) -> SharedString {
+fn binding_parts(binding: &gpui::KeyBinding, os: gpui::OperatingSystem) -> Vec<Vec<SharedString>> {
+    let display = |modifiers: Modifiers, key: &str| -> SharedString {
+        let keystroke = Keystroke {
+            modifiers,
+            key: key.to_string(),
+            key_char: None,
+        };
+        let label = keystroke.display(os).to_string();
+
+        label.strip_suffix('-').unwrap_or(&label).to_string().into()
+    };
+
     binding
         .keystrokes()
         .iter()
-        .map(|key| key.display(os).to_string())
-        .collect::<Vec<String>>()
-        .join(" + ")
-        .into()
+        .map(|keystroke| {
+            let modifiers = keystroke.modifiers();
+            [
+                (modifiers.control, Modifiers::control()),
+                (modifiers.alt, Modifiers::alt()),
+                (modifiers.platform, Modifiers::command()),
+                (modifiers.shift, Modifiers::shift()),
+            ]
+            .into_iter()
+            .filter(|(pressed, _)| *pressed)
+            .map(|(_, modifier)| display(modifier, ""))
+            .chain(std::iter::once(display(Modifiers::none(), keystroke.key())))
+            .collect()
+        })
+        .collect()
 }
 
 impl PaletteItem for Command {
@@ -215,14 +237,14 @@ impl PaletteItem for Command {
         self.name.clone()
     }
 
-    fn right_content(&self, cx: &mut gpui::App) -> Option<SharedString> {
+    fn right_content(&self, cx: &mut gpui::App) -> Option<FinderItemRight> {
         let os = cx.platform_info().os;
         self.action.with_action(cx, |cx, action| {
             cx.key_bindings()
                 .borrow()
                 .bindings_for_action(action)
                 .last()
-                .map(|binding| binding_label(binding, os))
+                .map(|binding| FinderItemRight::Keybinding(binding_parts(binding, os)))
         })?
     }
 }

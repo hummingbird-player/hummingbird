@@ -19,7 +19,9 @@ use crate::{
             async_resource::AsyncResource,
             icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},
             modal::modal,
-            palette::{ExtraItem, ExtraItemProvider, FinderItemLeft, Palette, PaletteItem},
+            palette::{
+                ExtraItem, ExtraItemProvider, FinderItemLeft, FinderItemRight, Palette, PaletteItem,
+            },
         },
     },
 };
@@ -41,7 +43,7 @@ impl PaletteItem for Playlist {
         .into()
     }
 
-    fn right_content(&self, _: &mut App) -> Option<SharedString> {
+    fn right_content(&self, _: &mut App) -> Option<FinderItemRight> {
         None
     }
 }

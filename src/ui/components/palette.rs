@@ -1,6 +1,6 @@
 mod finder;
 
-pub use finder::{ExtraItem, ExtraItemProvider, FinderItemLeft, PaletteItem};
+pub use finder::{ExtraItem, ExtraItemProvider, FinderItemLeft, FinderItemRight, PaletteItem};
 use tracing::trace;
 
 use std::sync::Arc;
