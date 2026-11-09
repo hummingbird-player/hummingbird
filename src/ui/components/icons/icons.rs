@@ -3,8 +3,10 @@
 // The filter-* icons are original works, see assets/icons/LICENSE-hummingbird-icons
 
 pub const ADJUSTMENTS: &str = "!bundled:icons/adjustments.svg";
+pub const ARROW_DOWN: &str = "!bundled:icons/arrow-down.svg";
 pub const ARROW_LEFT: &str = "!bundled:icons/arrow-left.svg";
 pub const ARROW_RIGHT: &str = "!bundled:icons/arrow-right.svg";
+pub const ARROW_UP: &str = "!bundled:icons/arrow-up.svg";
 pub const SHUFFLE: &str = "!bundled:icons/arrows-shuffle.svg";
 pub const CIRCLE_PLUS: &str = "!bundled:icons/circle-plus.svg";
 pub const FOLDER_CHECK: &str = "!bundled:icons/folder-check.svg";

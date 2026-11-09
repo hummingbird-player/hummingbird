@@ -16,7 +16,8 @@ use crate::{
                 handle_track_drop_multi,
             },
             icons::{
-                CROSS, DISC, FOLDER_SEARCH, PLAYLIST_ADD, STAR, STAR_FILLED, TRASH, USERS, icon,
+                ARROW_DOWN, ARROW_UP, CROSS, DISC, FOLDER_SEARCH, PLAYLIST_ADD, STAR, STAR_FILLED,
+                TRASH, USERS, icon,
             },
             managed_image::{ManagedImageKey, managed_image},
             menu::{menu, menu_item, menu_separator},
@@ -796,6 +797,9 @@ pub struct Queue {
     queue_hovered: bool,
     follow_current_pending: bool,
     follow_frame_scheduled: bool,
+    /// set when the user explicitly asks to jump to the current track, so the
+    /// hover/drag guards on auto-follow are bypassed until the animation ends
+    force_follow: bool,
     scroll_follow: SmoothScrollFollow,
 }
 
@@ -850,6 +854,7 @@ impl Queue {
                 queue_hovered: false,
                 follow_current_pending: initial_has_current_track,
                 follow_frame_scheduled: false,
+                force_follow: false,
                 scroll_follow: SmoothScrollFollow::new(QUEUE_FOLLOW_ANIMATION_DURATION),
             }
         })
@@ -884,17 +889,27 @@ impl Render for Queue {
             .reduced_motion;
         let is_dragging = self.drag_drop_manager.read(cx).state.is_dragging;
 
-        if self.scroll_follow.is_active() && (self.queue_hovered || is_dragging) {
+        if !self.scroll_follow.is_active() && !self.follow_current_pending {
+            self.force_follow = false;
+        }
+        let force_follow = self.force_follow;
+
+        if self.scroll_follow.is_active() && (self.queue_hovered || is_dragging) && !force_follow {
             self.scroll_follow.cancel();
         }
+
+        let jump_button_above = if force_follow || queue_len == 0 {
+            None
+        } else {
+            self.current_track_offscreen(cx)
+        };
 
         if reduced_motion {
             if self.follow_current_pending || self.scroll_follow.is_active() {
                 self.advance_follow_animation(window, cx, reduced_motion);
             }
         } else if (self.follow_current_pending || self.scroll_follow.is_active())
-            && !self.queue_hovered
-            && !is_dragging
+            && ((!self.queue_hovered && !is_dragging) || force_follow)
         {
             self.schedule_follow_frame(window, cx);
         }
@@ -1235,9 +1250,61 @@ impl Render for Queue {
                         .flex_col()
                         .track_scroll(&scroll_handle),
                     )
-                    .child(floating_scrollbar("queue_scrollbar", scroll_handle).right(px(4.0))),
+                    .child(floating_scrollbar("queue_scrollbar", scroll_handle).right(px(4.0)))
+                    .when_some(jump_button_above, |this, direction| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .when(direction == TrackDirection::Above, |d| d.top(px(8.0)))
+                                .when(direction == TrackDirection::Below, |d| d.bottom(px(8.0)))
+                                .left_0()
+                                .right_0()
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    button()
+                                        .style(ButtonStyle::Regular)
+                                        .border_color(theme.elevated_border_color)
+                                        .shadow_lg()
+                                        .child(
+                                            icon(match direction {
+                                                TrackDirection::Above => ARROW_UP,
+                                                TrackDirection::Below => ARROW_DOWN,
+                                            })
+                                            .size(px(14.0))
+                                            .my_auto(),
+                                        )
+                                        .child(tr!("QUEUE_JUMP_TO_CURRENT", "Jump to current"))
+                                        .id("queue-jump-to-current")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            let reduced_motion = cx
+                                                .global::<SettingsGlobal>()
+                                                .model
+                                                .read(cx)
+                                                .interface
+                                                .reduced_motion;
+                                            this.force_follow = true;
+                                            this.follow_current_pending = true;
+                                            this.scroll_follow.cancel();
+                                            this.advance_follow_animation(
+                                                window,
+                                                cx,
+                                                reduced_motion,
+                                            );
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                    }),
             )
     }
+}
+
+#[derive(PartialEq, Eq)]
+enum TrackDirection {
+    Above,
+    Below,
 }
 
 impl Queue {
@@ -1265,7 +1332,9 @@ impl Queue {
         cx: &mut Context<Self>,
         reduced_motion: bool,
     ) {
-        if self.queue_hovered || self.drag_drop_manager.read(cx).state.is_dragging {
+        if !self.force_follow
+            && (self.queue_hovered || self.drag_drop_manager.read(cx).state.is_dragging)
+        {
             self.scroll_follow.cancel();
             return;
         }
@@ -1313,6 +1382,34 @@ impl Queue {
         }
 
         cx.notify();
+    }
+
+    fn current_track_offscreen(&self, cx: &App) -> Option<TrackDirection> {
+        let queue = cx.global::<Models>().queue.read(cx);
+        let position = queue.position;
+        let queue_len = queue.data.read().expect("could not read queue").len();
+        if position >= queue_len {
+            return None;
+        }
+
+        let scroll_handle: ScrollableHandle = self.scroll_handle.clone().into();
+        let viewport_height = scroll_handle.bounds().size.height;
+        if viewport_height <= px(0.0) {
+            return None;
+        }
+
+        let scroll_top = (-scroll_handle.offset().y).max(px(0.0));
+        let scroll_bottom = scroll_top + viewport_height;
+        let item_top = px(position as f32 * QUEUE_ITEM_HEIGHT);
+        let item_bottom = item_top + px(QUEUE_ITEM_HEIGHT);
+
+        if item_bottom <= scroll_top {
+            Some(TrackDirection::Above)
+        } else if item_top >= scroll_bottom {
+            Some(TrackDirection::Below)
+        } else {
+            None
+        }
     }
 
     fn compute_follow_target(&self, cx: &App) -> FollowTarget {

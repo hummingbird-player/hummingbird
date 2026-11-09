@@ -450,7 +450,7 @@ impl Column for TrackColumn {
             TrackColumn::Album => tr!("COLUMN_ALBUM", "Album").into(),
             TrackColumn::Artist => tr!("COLUMN_ARTIST").into(),
             TrackColumn::Genres => tr!("COLUMN_GENRES").into(),
-            TrackColumn::Length => tr!("COLUMN_LENGTH", "Length").into(),
+            TrackColumn::Length => tr!("COLUMN_LENGTH").into(),
         }
     }
 

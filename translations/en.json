@@ -194,6 +194,7 @@
     "other": "Play {{count}} tracks now"
   },
   "PREVIOUS_TRACK": "Previous Track",
+  "QUEUE_JUMP_TO_CURRENT": "Jump to current",
   "QUEUE_TITLE": "Queue",
   "QUIT": "Quit Hummingbird",
   "REFRESH_FOLDER": "Refresh",
