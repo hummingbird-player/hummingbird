@@ -3,7 +3,6 @@ name: Nix
 on:
   push:
     branches: ["master"]
-  pull_request:
 
 jobs:
   build:
@@ -24,6 +23,7 @@ jobs:
         with:
           name: hummingbird
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pushFilter: '-(cargo-(package|src|git)-.*|cargo-vendor-dir|vendor-cargo-deps|vendor-registry|linkLockedDeps|source|rust-default-[0-9.]+|(rustc|cargo|rust-std|rust-src|rust-docs|clippy-preview|rustfmt-preview|llvm-tools-preview)-[0-9.]+-[a-z0-9_]+-[a-z0-9_-]+|.*\.tar\.(gz|xz|bz2|zst)|hummingbird-(clippy|tarpaulin)-.*)$'
       - name: Build
         run: nix build -L .#default
       - name: Check (clippy, tarpaulin)

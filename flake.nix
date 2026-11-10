@@ -115,8 +115,10 @@
         }));
 
         checks = lib.mergeAttrs self'.packages {
-          cargoClippy = craneLib.cargoClippy craneArgs;
-          cargoTarpaulin = craneLib.cargoTarpaulin craneArgs;
+          # Leaf checks: don't keep their target/ dirs as outputs (tarpaulin's
+          # instrumented build alone is several GB and would get pushed to Cachix).
+          cargoClippy = craneLib.cargoClippy (craneArgs // {doInstallCargoArtifacts = false;});
+          cargoTarpaulin = craneLib.cargoTarpaulin (craneArgs // {doInstallCargoArtifacts = false;});
         };
 
         devShells.default = let
