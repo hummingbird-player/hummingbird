@@ -70,15 +70,15 @@
             ];
             HUMMINGBIRD_RELEASE_CHANNEL = "flake";
           }));
+        HUMMINGBIRD_VERSION_ID = builtins.substring 0 7 (inputs.self.rev or "dirty");
         cargoArtifacts = craneLib.buildDepsOnly (mkArgs {});
-        craneArgs = mkArgs {inherit cargoArtifacts;};
+        craneArgs = mkArgs {inherit cargoArtifacts HUMMINGBIRD_VERSION_ID;};
       in {
         formatter = pkgs.alejandra;
         apps = builtins.mapAttrs (_: pkg: {program = pkg + /bin/hummingbird;}) self'.packages;
         packages.default = craneLib.buildPackage (mkArgs (prev: {
-          inherit cargoArtifacts;
+          inherit cargoArtifacts HUMMINGBIRD_VERSION_ID;
           CARGO_PROFILE = "release";
-          HUMMINGBIRD_VERSION_ID = builtins.substring 0 7 (inputs.self.rev or "dirty");
           nativeBuildInputs =
             prev.nativeBuildInputs
             ++ [
@@ -115,8 +115,6 @@
         }));
 
         checks = lib.mergeAttrs self'.packages {
-          # Leaf checks: don't keep their target/ dirs as outputs (tarpaulin's
-          # instrumented build alone is several GB and would get pushed to Cachix).
           cargoClippy = craneLib.cargoClippy (craneArgs // {doInstallCargoArtifacts = false;});
           cargoTarpaulin = craneLib.cargoTarpaulin (craneArgs // {doInstallCargoArtifacts = false;});
         };
