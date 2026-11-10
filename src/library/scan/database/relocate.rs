@@ -4,7 +4,7 @@ use sqlx::SqliteConnection;
 use super::{recompute_album_artists, recompute_album_genres};
 use crate::library::scan::artist_match::ArtistMatcher;
 
-/// Move a track row after a case-only rename. Merge playlists/lyrics if the new path already has a row.
+/// Move a track row after a spelling-only rename. Merge playlists/lyrics if the new path already has a row.
 pub async fn relocate_track(
     conn: &mut SqliteConnection,
     matcher: &mut ArtistMatcher,

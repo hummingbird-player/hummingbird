@@ -42,6 +42,7 @@ gpui = { package = "gpui-unofficial", version = "1.27" }
 gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.27", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 icu_collator = "2.1"
+icu_normalizer = "2.1"
 indexmap = { version = "2", features = ["serde"] }
 infer = "0.22"
 intx = "0.1"

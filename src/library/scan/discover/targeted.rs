@@ -21,13 +21,14 @@ use crate::library::scan::{
         canonicalize_or_keep, classify, delete_tracks, fold_excluded_roots, is_missing,
         is_under_excluded, missing_paths, schedule_directory_read,
     },
-    fs_case::{fold_path, starts_with_folded},
+    fs_case::{fold_path_with, is_case_insensitive},
     record::ScanRecord,
 };
 
 struct RescanState {
     scan_record: Arc<Mutex<ScanRecord>>,
-    folded_targets: FxHashSet<Utf8PathBuf>,
+    /// Folded targets paired with their volume's case sensitivity.
+    folded_targets: FxHashSet<(Utf8PathBuf, bool)>,
     /// Recorded paths under the target folders. Built lazily on first use.
     folded_index: Option<FoldedIndex>,
 }
@@ -36,25 +37,30 @@ impl RescanState {
     fn new(scan_record: Arc<Mutex<ScanRecord>>, targets: &FxHashSet<Utf8PathBuf>) -> Self {
         Self {
             scan_record,
-            folded_targets: targets.iter().map(|target| fold_path(target)).collect(),
+            folded_targets: targets
+                .iter()
+                .map(|target| {
+                    let case_insensitive = is_case_insensitive(target);
+                    (fold_path_with(target, case_insensitive), case_insensitive)
+                })
+                .collect(),
             folded_index: None,
         }
     }
 }
 
-/// Index recorded paths under folded targets, filtering prefixes first to avoid Unix stats.
+/// Index recorded paths under folded targets. Keys fold by their target's case rule to avoid a
+/// Unix stat per key.
 fn index_records_under(
     records: &FxHashMap<Utf8PathBuf, SystemTime>,
-    folded_targets: &FxHashSet<Utf8PathBuf>,
+    folded_targets: &FxHashSet<(Utf8PathBuf, bool)>,
 ) -> FoldedIndex {
     let mut index = FoldedIndex::default();
     'records: for (key, ts) in records {
-        for target in folded_targets {
-            if starts_with_folded(key, target) {
-                index
-                    .entry(fold_path(key))
-                    .or_default()
-                    .push((key.clone(), *ts));
+        for (target, case_insensitive) in folded_targets {
+            let folded = fold_path_with(key, *case_insensitive);
+            if folded.starts_with(target) {
+                index.entry(folded).or_default().push((key.clone(), *ts));
                 continue 'records;
             }
         }
@@ -62,7 +68,7 @@ fn index_records_under(
     index
 }
 
-/// Discover under the given paths. Skip unchanged files, send case-only renames on `relocate_tx`.
+/// Discover under the given paths. Skip unchanged files, send spelling-only renames on `relocate_tx`.
 #[allow(clippy::too_many_arguments)]
 pub async fn rescan_discover(
     paths: Vec<Utf8PathBuf>,
@@ -490,6 +496,34 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(path_rx.blocking_recv().unwrap().path, path);
         assert_eq!(relocate_rx.blocking_recv(), Some((old, path, UNIX_EPOCH)));
+        assert!(relocate_rx.blocking_recv().is_none());
+    }
+
+    #[test]
+    fn rescan_discover_relocates_normalization_only_renames() {
+        register_test_media_providers();
+        let dir = TestDir::new("rescan-test");
+        let path = write_track(&dir, "Ce\u{301}u.flac");
+        let ts = file_scan_timestamp(&path).unwrap();
+
+        // recorded precomposed before another tool rewrote the name decomposed
+        let old = dir.utf8_join("C\u{e9}u.flac");
+        let record = shared_record_with(&old, ts);
+
+        let (count, mut path_rx, mut relocate_rx) =
+            run_rescan(vec![dir.utf8_path()], Some(record), true);
+
+        if !old.try_exists().unwrap() {
+            // the volume keeps both spellings as different names - treat as new
+            assert_eq!(count, 1);
+            assert_eq!(path_rx.blocking_recv().unwrap().path, path);
+            assert!(relocate_rx.blocking_recv().is_none());
+            return;
+        }
+
+        assert_eq!(count, 0);
+        assert!(path_rx.blocking_recv().is_none());
+        assert_eq!(relocate_rx.blocking_recv(), Some((old, path, ts)));
         assert!(relocate_rx.blocking_recv().is_none());
     }
 

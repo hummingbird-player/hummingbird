@@ -35,7 +35,7 @@ pub(super) use cleanup::{
 pub(super) use directory::file_scan_timestamp;
 pub(super) use directory::{PendingDirectoryRead, schedule_directory_read};
 
-/// Case-only rename that retains the old timestamp so modified content still rescans.
+/// Spelling-only rename that retains the old timestamp so modified content still rescans.
 pub(crate) type Relocation = (Utf8PathBuf, Utf8PathBuf, SystemTime);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +87,7 @@ pub(super) type FoldedIndex = FxHashMap<Utf8PathBuf, Vec<(Utf8PathBuf, SystemTim
 pub(super) enum DiscoverAction {
     Skip,
     Scan(SystemTime),
-    /// Possible case-only rename - confirm with `same_file` after releasing the record lock.
+    /// Possible spelling-only rename - confirm with `same_file` after releasing the record lock.
     Relocate {
         candidates: Vec<(Utf8PathBuf, SystemTime)>,
         ts: SystemTime,
@@ -126,7 +126,7 @@ pub(super) fn classify(
     (DiscoverAction::Scan(timestamp), Vec::new())
 }
 
-/// Apply a case-only rename. Returns a timestamp if metadata still needs reading.
+/// Apply a spelling-only rename. Returns a timestamp if metadata still needs reading.
 pub(super) async fn apply_relocation(
     path: &Utf8Path,
     timestamp: SystemTime,

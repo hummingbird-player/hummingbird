@@ -3433,6 +3433,7 @@ dependencies = [
  "gpui-platform-gpui-unofficial",
  "gpui-unofficial 1.27.0",
  "icu_collator",
+ "icu_normalizer",
  "image",
  "imagesize",
  "indexmap",

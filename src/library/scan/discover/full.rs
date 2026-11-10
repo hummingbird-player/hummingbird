@@ -523,6 +523,58 @@ mod tests {
         assert!(relocate_rx.blocking_recv().is_none());
     }
 
+    #[test]
+    fn discover_merges_normalization_variant_record_spellings() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-merge-test");
+        let on_disk = write_track(&dir, "Ce\u{301}u.flac");
+        // recorded precomposed before another tool rewrote the name decomposed
+        let precomposed = on_disk.parent().unwrap().join("C\u{e9}u.flac");
+        let ts = file_scan_timestamp(&on_disk).unwrap();
+
+        let mut record = ScanRecord::new_current();
+        record.records.insert(on_disk.clone(), ts);
+        record.records.insert(precomposed.clone(), ts);
+
+        let (count, mut path_rx, mut relocate_rx) =
+            run_discover(scan_settings(dir.utf8_path()), record);
+
+        assert_eq!(count, 0);
+        assert!(path_rx.blocking_recv().is_none());
+        if same_file(&precomposed, &on_disk) {
+            assert_eq!(
+                relocate_rx.blocking_recv(),
+                Some((precomposed, on_disk, ts))
+            );
+        }
+        assert!(relocate_rx.blocking_recv().is_none());
+    }
+
+    #[test]
+    fn discover_keeps_distinct_files_that_differ_only_by_normalization() {
+        register_test_media_providers();
+        let dir = TestDir::new("discover-merge-test");
+        let decomposed = write_track(&dir, "Ce\u{301}u.flac");
+        let precomposed = write_track(&dir, "C\u{e9}u.flac");
+        if same_file(&decomposed, &precomposed) {
+            return;
+        }
+
+        let mut record = ScanRecord::new_current();
+        for path in [&decomposed, &precomposed] {
+            record
+                .records
+                .insert(path.clone(), file_scan_timestamp(path).unwrap());
+        }
+
+        let (count, mut path_rx, mut relocate_rx) =
+            run_discover(scan_settings(dir.utf8_path()), record);
+
+        assert_eq!(count, 0);
+        assert!(path_rx.blocking_recv().is_none());
+        assert!(relocate_rx.blocking_recv().is_none());
+    }
+
     // trailing-dot dirs need the \\?\ prefix - folded paths are for comparison only
     #[test]
     fn discover_relocates_paths_that_require_the_verbatim_prefix() {

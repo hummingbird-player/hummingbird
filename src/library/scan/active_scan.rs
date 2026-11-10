@@ -87,7 +87,7 @@ impl ActiveScan {
         ));
         let (decode_fail_tx, decode_fail_rx) =
             tokio::sync::mpsc::channel::<(Utf8PathBuf, SystemTime, ScanReadError)>(meta_capacity);
-        // case-only renames found during discovery
+        // spelling-only renames found during discovery
         let (relocate_tx, relocate_rx) = tokio::sync::mpsc::channel::<Relocation>(64);
 
         let cancel_flag = Arc::new(AtomicBool::new(false));

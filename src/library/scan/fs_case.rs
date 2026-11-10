@@ -1,4 +1,4 @@
-//! Case sensitivity checks and path folding for comparisons.
+//! Case sensitivity checks and path folding (case and Unicode normalization) for comparisons.
 //! Folded paths are for comparison only - never use them for I/O or storage.
 
 use std::{
@@ -7,6 +7,7 @@ use std::{
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
+use icu_normalizer::ComposingNormalizerBorrowed;
 use rustc_hash::FxHashMap;
 
 const OS_DEFAULT_CASE_INSENSITIVE: bool = cfg!(any(windows, target_os = "macos"));
@@ -136,26 +137,26 @@ fn strip_verbatim(path: &str) -> Cow<'_, str> {
     }
 }
 
-/// Case-insensitive prefix check without calling [`fold_path`] (avoids a Unix stat).
-pub fn starts_with_folded(key: &Utf8Path, folded_prefix: &Utf8Path) -> bool {
-    let key = strip_verbatim(key.as_str()).to_lowercase();
-    let mut key_chars = key.chars();
-    for expected in folded_prefix.as_str().chars() {
-        if key_chars.next() != Some(expected) {
-            return false;
-        }
-    }
-    // prefix must end on a path component boundary
-    key_chars.next().is_none_or(|c| c == '/' || c == '\\')
+/// Build a comparison key - strip \\?\, fold case on case-insensitive volumes, normalize to NFC.
+pub fn fold_path(path: &Utf8Path) -> Utf8PathBuf {
+    fold_path_with(path, is_case_insensitive(path))
 }
 
-/// Build a comparison key - strip \\?\ and fold case on case-insensitive volumes.
-pub fn fold_path(path: &Utf8Path) -> Utf8PathBuf {
-    let normalized = strip_verbatim(path.as_str());
-    if is_case_insensitive(path) {
-        Utf8PathBuf::from(normalized.to_lowercase())
+/// [`fold_path`] with a known case rule, skipping its Unix stat. Names that differ only by
+/// Unicode normalization fold together on every volume; discover confirms relocations with
+/// [`same_file`] before merging.
+pub fn fold_path_with(path: &Utf8Path, case_insensitive: bool) -> Utf8PathBuf {
+    let stripped = strip_verbatim(path.as_str());
+    let cased = if case_insensitive {
+        stripped.to_lowercase()
     } else {
-        Utf8PathBuf::from(normalized.into_owned())
+        stripped.into_owned()
+    };
+    let nfc = ComposingNormalizerBorrowed::new_nfc();
+    if nfc.is_normalized(&cased) {
+        Utf8PathBuf::from(cased)
+    } else {
+        Utf8PathBuf::from(nfc.normalize(&cased).into_owned())
     }
 }
 
@@ -247,46 +248,18 @@ mod tests {
     }
 
     #[test]
-    fn starts_with_folded_matches_on_component_boundaries_only() {
-        let prefix = Utf8Path::new("/music/artist");
-        assert!(starts_with_folded(
-            Utf8Path::new("/Music/Artist/album/track.flac"),
-            prefix
-        ));
-        assert!(starts_with_folded(Utf8Path::new("/music/artist"), prefix));
-        assert!(!starts_with_folded(
-            Utf8Path::new("/Music/Artist2/track.flac"),
-            prefix
-        ));
-        assert!(!starts_with_folded(
-            Utf8Path::new("/music-other/track.flac"),
-            Utf8Path::new("/music")
-        ));
-        assert!(!starts_with_folded(Utf8Path::new("/music"), prefix));
+    fn fold_path_matches_precomposed_and_decomposed_spellings() {
+        let precomposed = Utf8Path::new("/music/C\u{e9}u/Samba do Nosso C\u{e9}u.mp3");
+        let decomposed = Utf8Path::new("/music/Ce\u{301}u/Samba do Nosso Ce\u{301}u.mp3");
+        assert_eq!(fold_path(precomposed), fold_path(decomposed));
+        assert!(paths_equal(precomposed, decomposed));
     }
 
     #[test]
-    fn starts_with_folded_folds_unicode_like_fold_path() {
-        let prefix = Utf8Path::new("/müsik/straße");
-        assert!(starts_with_folded(
-            Utf8Path::new("/MÜSIK/STRAßE/track.flac"),
-            prefix
-        ));
-        assert!(!starts_with_folded(
-            Utf8Path::new("/MUSIK/STRASSE/track.flac"),
-            prefix
-        ));
-    }
-
-    #[test]
-    fn starts_with_folded_folds_final_sigma_like_fold_path() {
-        // str::to_lowercase maps word-final Σ to ς, char::to_lowercase does not
-        let prefix = "/music/AΣ".to_lowercase();
-        assert_eq!(prefix, "/music/aς");
-        assert!(starts_with_folded(
-            Utf8Path::new("/music/AΣ/track.flac"),
-            Utf8Path::new(&prefix)
-        ));
+    fn fold_path_with_lowercases_only_for_case_insensitive_volumes() {
+        let path = Utf8Path::new("/Music/CE\u{301}U.flac");
+        assert_eq!(fold_path_with(path, false), "/Music/C\u{c9}U.flac");
+        assert_eq!(fold_path_with(path, true), "/music/c\u{e9}u.flac");
     }
 
     #[test]
