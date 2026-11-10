@@ -68,15 +68,17 @@
                 (pkgs.darwinMinVersionHook "10.15")
               ])
             ];
-            HUMMINGBIRD_VERSION_ID = builtins.substring 0 7 (inputs.self.rev or "dirty");
             HUMMINGBIRD_RELEASE_CHANNEL = "flake";
           }));
-        craneArgs = mkArgs (prev: {cargoArtifacts = craneLib.buildDepsOnly prev;});
+        cargoArtifacts = craneLib.buildDepsOnly (mkArgs {});
+        craneArgs = mkArgs {inherit cargoArtifacts;};
       in {
         formatter = pkgs.alejandra;
         apps = builtins.mapAttrs (_: pkg: {program = pkg + /bin/hummingbird;}) self'.packages;
         packages.default = craneLib.buildPackage (mkArgs (prev: {
+          inherit cargoArtifacts;
           CARGO_PROFILE = "release";
+          HUMMINGBIRD_VERSION_ID = builtins.substring 0 7 (inputs.self.rev or "dirty");
           nativeBuildInputs =
             prev.nativeBuildInputs
             ++ [
@@ -155,4 +157,9 @@
           };
       };
     };
+
+  nixConfig = {
+    extra-substituters = ["https://hummingbird.cachix.org"];
+    extra-trusted-public-keys = ["hummingbird.cachix.org-1:VtMID9Kzgs2ySWx+lOydbz25JZ4U79U5uM5sgD7h+i0="];
+  };
 }
