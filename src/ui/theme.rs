@@ -200,7 +200,7 @@ where
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            window_background: WindowBackgroundAppearance::Opaque,
+            window_background: WindowBackgroundAppearance::Blurred,
 
             frame_background: rgb(0x010102),
             background_primary: rgb(0x121213),
@@ -228,7 +228,7 @@ impl Default for Theme {
             playback_button_hover: rgb(0x35353E),
             playback_button_active: rgb(0x0A0A0B),
             playback_button_border: rgba(0x00000000),
-            playback_button_toggled: rgb(0x5C87DB),
+            playback_button_toggled: rgb(0x507FC4),
             playback_button_repeat_one: rgb(0x63C58D),
             stop_after_current_indicator: rgb(0xF0A868),
 
@@ -238,8 +238,8 @@ impl Default for Theme {
 
             list_item: rgba(0x00000000),
             list_item_alternate: rgb(0x18181A),
-            list_item_hover: rgb(0x252528),
-            list_item_active: rgb(0x212122),
+            list_item_hover: rgb(0x2A2A2E),
+            list_item_active: rgb(0x232324),
             list_item_current: rgb(0x1F1F21),
             list_item_selected: rgb(0x1B294A),
 
@@ -247,11 +247,11 @@ impl Default for Theme {
             close_button_hover: rgb(0xA41717),
             close_button_active: rgb(0x650000),
 
-            button_primary: rgb(0x466AB0),
+            button_primary: rgb(0x3766AD),
             button_primary_border: rgba(0x00000000),
-            button_primary_hover: rgb(0x557AC2),
+            button_primary_hover: rgb(0x457BCC),
             button_primary_border_hover: rgba(0x00000000),
-            button_primary_active: rgb(0x38599C),
+            button_primary_active: rgb(0x2E5999),
             button_primary_border_active: rgba(0x00000000),
             button_primary_text: rgb(0xE0E7F7),
 
@@ -279,22 +279,22 @@ impl Default for Theme {
             button_danger_border_active: rgba(0x00000000),
             button_danger_text: rgb(0xE9D4D4),
 
-            slider_foreground: rgb(0x466AB0),
+            slider_foreground: rgb(0x3766AD),
             slider_background: rgb(0x302F35),
 
             eq_grid_line: rgb(0x303032),
             eq_grid_line_zero: rgb(0x303032),
-            eq_curve: rgb(0x466AB0),
-            eq_curve_fill: rgba(0x5A77C54F),
+            eq_curve: rgb(0x3766AD),
+            eq_curve_fill: rgba(0x5A85C54F),
             eq_band_curve: rgb(0x7D8699),
             eq_dot: rgb(0xA0A1AD),
-            eq_dot_selected: rgb(0x466AB0),
+            eq_dot_selected: rgb(0x3766AD),
             eq_dot_disabled: rgb(0x5F5F71),
             eq_spectrum_pre: rgba(0xA0A1AD1A),
-            eq_spectrum_post: rgba(0x5573B545),
-            eq_spectrum_edge: rgba(0x5A77C54F),
+            eq_spectrum_post: rgba(0x557BB545),
+            eq_spectrum_edge: rgba(0x5A85C54F),
 
-            elevated_background: rgb(0x18181B),
+            elevated_background: rgb(0x1A1A1B),
             elevated_border_color: rgb(0x222223),
 
             menu_item: rgba(0x00000000),
@@ -314,8 +314,8 @@ impl Default for Theme {
             palette_item_active: rgb(0x212122),
             palette_item_border_active: rgba(0x00000000),
 
-            scrollbar_background: rgb(0x28272E),
-            scrollbar_foreground: rgb(0x636371),
+            scrollbar_background: rgb(0x2B2A2E),
+            scrollbar_foreground: rgb(0x686871),
 
             textbox_background: rgb(0x303032),
             textbox_border: rgba(0x00000000),
@@ -326,10 +326,10 @@ impl Default for Theme {
             checkbox_border: rgba(0x00000000),
             checkbox_border_hover: rgba(0x00000000),
             checkbox_border_active: rgba(0x00000000),
-            checkbox_checked: rgb(0xE4E9F7),
-            checkbox_checked_bg: rgb(0x466AB0),
-            checkbox_checked_bg_hover: rgb(0x557AC2),
-            checkbox_checked_bg_active: rgb(0x38599C),
+            checkbox_checked: rgb(0xE4ECF7),
+            checkbox_checked_bg: rgb(0x3766AD),
+            checkbox_checked_bg_hover: rgb(0x457BCC),
+            checkbox_checked_bg_active: rgb(0x2E5999),
             checkbox_checked_border: rgba(0x00000000),
             checkbox_checked_border_hover: rgba(0x00000000),
             checkbox_checked_border_active: rgba(0x00000000),
@@ -338,14 +338,14 @@ impl Default for Theme {
             callout_border: rgba(0x5B45008E),
             callout_text: rgb(0xF0EBDE),
 
-            liked_song: rgb(0x466AB0),
+            liked_song: rgb(0x3766AD),
 
             status_success: rgb(0x54CE8B),
             status_error: rgb(0xE54D4D),
             status_disabled: rgb(0x636371),
 
             toast_info_background: rgb(0x1E1E1F),
-            toast_info_border: rgb(0x282829),
+            toast_info_border: rgb(0x262629),
             toast_info_text: rgb(0xE8E9F2),
             toast_info_track: rgb(0xA0A1AD),
 
