@@ -227,6 +227,8 @@ mod tests {
 
     #[gpui::test]
     async fn completed_result_is_ready_before_foreground_publication(cx: &mut TestAppContext) {
+        // results arrive from Tokio threads, so wait in real time instead of skipping to the timeout
+        cx.executor().allow_parking();
         let resource = AsyncResource::new(cx, "bridged", async { Ok(42) });
         let bridge = cx.read_entity(&resource, |resource, _| {
             resource.bridge.as_ref().unwrap().clone()
@@ -247,6 +249,7 @@ mod tests {
 
     #[gpui::test]
     async fn publishes_ready_and_failed_states_once(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         let (ready_tx, ready_rx) = mpsc::channel();
         let resource = AsyncResource::new(cx, "ready", async move {
             ready_tx.send(()).unwrap();
@@ -303,6 +306,7 @@ mod tests {
 
     #[gpui::test]
     async fn refetch_preserves_previous_state_until_new_result_is_ready(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         let (initial_finished_tx, initial_finished_rx) = mpsc::channel();
         let resource = AsyncResource::new(cx, "initial", async move {
             initial_finished_tx.send(()).unwrap();
@@ -344,6 +348,7 @@ mod tests {
 
     #[gpui::test]
     async fn replacement_cancels_work_and_rejects_stale_results(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         let (old_finished_tx, old_finished_rx) = mpsc::channel();
         let resource = AsyncResource::new(cx, 1, async move {
             old_finished_tx.send(()).unwrap();
