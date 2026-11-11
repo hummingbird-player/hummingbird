@@ -42,7 +42,7 @@ async fn load_search_items(
         }
     };
 
-    let availability: HashMap<i64, bool> = {
+    let album_availability: HashMap<i64, bool> = {
         let mut available_albums = HashMap::new();
 
         for row in paths {
@@ -59,7 +59,10 @@ async fn load_search_items(
         Ok(album_data) => album_data
             .into_iter()
             .map(|album| {
-                let available = availability.get(&album.id).copied().unwrap_or_default();
+                let available = album_availability
+                    .get(&album.id)
+                    .copied()
+                    .unwrap_or_default();
                 (
                     album.id,
                     album.title.0.to_string(),
@@ -100,6 +103,7 @@ async fn load_search_items(
                         .map(|artists| artists.0.to_string())
                         .unwrap_or_default(),
                     track.album_id,
+                    availability.is_track_path_available(&track.location),
                 )
             })
             .collect(),

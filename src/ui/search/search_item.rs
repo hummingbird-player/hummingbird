@@ -44,6 +44,7 @@ pub enum SearchPaletteItem {
         title: String,
         artists: String,
         album_id: Option<i64>,
+        available: bool,
     },
 }
 
@@ -55,7 +56,7 @@ impl SearchPaletteItem {
     pub fn from_search_results(
         albums: Vec<(i64, String, Option<String>, String, bool)>,
         artists: Vec<(i64, String)>,
-        tracks: Vec<(i64, String, String, Option<i64>)>,
+        tracks: Vec<(i64, String, String, Option<i64>, bool)>,
     ) -> Vec<Arc<SearchPaletteItem>> {
         let mut items: Vec<Arc<SearchPaletteItem>> = Vec::new();
 
@@ -73,12 +74,13 @@ impl SearchPaletteItem {
             }));
         }
 
-        for (id, title, artists, album_id) in tracks {
+        for (id, title, artists, album_id, available) in tracks {
             items.push(Arc::new(SearchPaletteItem::Track {
                 id,
                 title,
                 artists,
                 album_id,
+                available,
             }));
         }
 
@@ -129,7 +131,7 @@ impl PaletteItem for SearchPaletteItem {
         match self {
             SearchPaletteItem::Album { available, .. } => *available,
             SearchPaletteItem::Artist { .. } => true,
-            SearchPaletteItem::Track { album_id, .. } => album_id.is_some(),
+            SearchPaletteItem::Track { available, .. } => *available,
         }
     }
 

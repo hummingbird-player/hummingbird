@@ -151,6 +151,8 @@ pub struct TrackSearchRow {
     pub title: DBString,
     pub artist_names: Option<DBString>,
     pub album_id: Option<i64>,
+    #[sqlx(try_from = "String")]
+    pub location: PathBuf,
 }
 
 #[derive(sqlx::FromRow)]
@@ -392,7 +394,9 @@ impl TrackQuery {
                 }
             }
             TrackProjection::Search => {
-                query.push("track.id, track.title, track.artist_names, track.album_id");
+                query.push(
+                    "track.id, track.title, track.artist_names, track.album_id, track.location",
+                );
             }
             TrackProjection::Playback => {
                 query.push("track.id, track.album_id, track.location");
