@@ -16,6 +16,7 @@ online = ["dep:zed-reqwest"]
 libre-services = ["online"]
 proprietary-services = ["online"]
 default = ["libre-services", "proprietary-services"]
+runtime-shaders = ["gpui_platform/runtime_shaders"]
 
 [dependencies]
 anyhow = "1"

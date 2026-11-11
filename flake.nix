@@ -68,6 +68,7 @@
                 (pkgs.darwinMinVersionHook "10.15")
               ])
             ];
+            cargoExtraArgs = "--locked" + lib.optionalString isDarwin " --features runtime-shaders";
             HUMMINGBIRD_RELEASE_CHANNEL = "flake";
           }));
         HUMMINGBIRD_VERSION_ID = builtins.substring 0 7 (inputs.self.rev or "dirty");
