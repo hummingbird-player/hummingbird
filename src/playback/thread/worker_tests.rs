@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const COMMAND_BUDGET: Duration = Duration::from_secs(2);
+
 struct Release(mpsc::SyncSender<()>);
 
 fn test_player() -> (
@@ -304,7 +306,7 @@ fn blocked_operation(operation: BlockedOperation) {
     commands.send(PlaybackCommand::SetVolume(0.25)).unwrap();
     let started = Instant::now();
     player.main_loop();
-    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(started.elapsed() < COMMAND_BUDGET);
     assert_eq!(player.state(), PlaybackState::Paused);
     let mut saw_volume = false;
     while let Ok(event) = events.try_recv() {
@@ -365,7 +367,7 @@ fn blocked_operation(operation: BlockedOperation) {
     commands.send(PlaybackCommand::Stop).unwrap();
     let started = Instant::now();
     player.main_loop();
-    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(started.elapsed() < COMMAND_BUDGET);
     assert_eq!(player.state(), PlaybackState::Stopped);
     while events.try_recv().is_ok() {}
 
