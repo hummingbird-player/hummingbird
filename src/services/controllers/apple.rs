@@ -3,7 +3,10 @@ use std::{path::Path, ptr::NonNull};
 use async_trait::async_trait;
 use block2::RcBlock;
 use objc2::{AnyThread, rc::Retained, runtime::ProtocolObject};
-use objc2_app_kit::NSImage;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSImage as PlatformImage;
+#[cfg(target_os = "ios")]
+use objc2_ui_kit::UIImage as PlatformImage;
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSData, NSMutableDictionary, NSNumber, NSString};
 use objc2_media_player::{
@@ -23,11 +26,11 @@ use crate::{
 
 use super::{ControllerBridge, InitPlaybackController, PlaybackController};
 
-pub struct MacMediaPlayerController {
+pub struct AppleMediaPlayerController {
     bridge: ControllerBridge,
 }
 
-impl MacMediaPlayerController {
+impl AppleMediaPlayerController {
     unsafe fn new_file(&mut self, path: &Path) {
         unsafe {
             debug!("New file: {:?}", path);
@@ -134,8 +137,8 @@ impl MacMediaPlayerController {
             };
 
             let data = NSData::with_bytes(art);
-            let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
-                error!("Failed to create NSImage from album art");
+            let Some(image) = PlatformImage::initWithData(PlatformImage::alloc(), &data) else {
+                error!("Failed to create image from album art");
                 return;
             };
             // there's a good chance this leaks memory
@@ -146,11 +149,20 @@ impl MacMediaPlayerController {
 
             let request_handler = RcBlock::new(move |_cg: CGSize| image);
             let bounds_size = CGSize::new(size.width as f64, size.height as f64);
+            #[cfg(target_os = "macos")]
             let artwork = MPMediaItemArtwork::initWithBoundsSize_requestHandler(
                 MPMediaItemArtwork::alloc(),
                 bounds_size,
                 &request_handler,
             );
+            // objc2-media-player only binds this initializer on macOS (with NSImage), so call
+            // it directly on iOS, where the handler returns a UIImage instead
+            #[cfg(target_os = "ios")]
+            let artwork: Retained<MPMediaItemArtwork> = objc2::msg_send![
+                MPMediaItemArtwork::alloc(),
+                initWithBoundsSize: bounds_size,
+                requestHandler: &*request_handler,
+            ];
 
             let media_center = MPNowPlayingInfoCenter::defaultCenter();
             let now_playing: Retained<NSMutableDictionary<NSString>> =
@@ -259,7 +271,7 @@ impl MacMediaPlayerController {
 }
 
 #[async_trait]
-impl PlaybackController for MacMediaPlayerController {
+impl PlaybackController for AppleMediaPlayerController {
     async fn position_changed(&mut self, new_position: u64) -> anyhow::Result<()> {
         unsafe {
             self.new_position(new_position);
@@ -310,12 +322,12 @@ impl PlaybackController for MacMediaPlayerController {
     }
 }
 
-impl InitPlaybackController for MacMediaPlayerController {
+impl InitPlaybackController for AppleMediaPlayerController {
     fn init(
         bridge: ControllerBridge,
         _handle: Option<RawWindowHandle>,
     ) -> anyhow::Result<Box<dyn PlaybackController>> {
-        let mmpc = MacMediaPlayerController { bridge };
+        let mmpc = AppleMediaPlayerController { bridge };
         unsafe { mmpc.attach_command_handlers() };
         Ok(Box::new(mmpc))
     }

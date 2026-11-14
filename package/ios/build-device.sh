@@ -12,17 +12,15 @@
 #                         the profile allows)
 #   HUMMINGBIRD_DEVICE    device identifier for `xcrun devicectl`; when set, the app is installed
 #
-# Extra arguments are passed to `cargo build` (e.g. --release).
+# Always builds in release mode: debug builds read their assets from the source tree at runtime,
+# which doesn't exist on the device. Extra arguments are passed to `cargo build`.
 set -euo pipefail
 
 repository_root="$(git rev-parse --show-toplevel)"
 target_directory="${CARGO_TARGET_DIR:-"$repository_root/target"}"
 info_plist="$repository_root/package/ios/Info.plist"
 bundle_id="$(plutil -extract CFBundleIdentifier raw "$info_plist")"
-profile_directory="debug"
-for argument in "$@"; do
-    [[ "$argument" == "--release" ]] && profile_directory="release"
-done
+profile_directory="release"
 
 work_directory="$(mktemp -d)"
 trap 'rm -rf "$work_directory"' EXIT
@@ -78,7 +76,7 @@ fi
 echo "Signing with: $identity"
 
 cd "$repository_root"
-IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo build --target aarch64-apple-ios "$@"
+IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo build --release --target aarch64-apple-ios "$@"
 
 build_directory="$target_directory/aarch64-apple-ios/$profile_directory"
 app_directory="$build_directory/Hummingbird.app"

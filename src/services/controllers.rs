@@ -1,5 +1,5 @@
-#[cfg(target_os = "macos")]
-mod macos;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple;
 #[cfg(target_os = "linux")]
 mod mpris;
 #[cfg(target_os = "windows")]
@@ -311,12 +311,12 @@ pub fn init_pbc_task(cx: &mut App, window: &Window) {
             .map(|v| v.as_raw())
     };
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        if let Ok(macos_pc) = macos::MacMediaPlayerController::init(bridge, rwh) {
-            list.insert("macos".to_string(), macos_pc);
+        if let Ok(apple_pc) = apple::AppleMediaPlayerController::init(bridge, rwh) {
+            list.insert("macos".to_string(), apple_pc);
         } else {
-            error!("Failed to initialize MacMediaPlayerController!");
+            error!("Failed to initialize AppleMediaPlayerController!");
             warn!("Desktop integration will be unavailable.");
         }
     }

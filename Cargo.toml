@@ -124,10 +124,12 @@ winreg = { version = "0.56", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 core-text = "=21.0.0" # GPUI issue, zed#47168
+objc2-app-kit = { version = "0.3", features = ["NSImage"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 block2 = "0.6"
 imagesize = "0.15"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSImage"] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
 objc2-foundation = { version = "0.3", features = [
     "NSData",
@@ -139,6 +141,7 @@ objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes"] }
+objc2-ui-kit = { version = "0.3", features = ["UIImage"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

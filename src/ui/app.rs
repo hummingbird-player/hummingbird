@@ -434,6 +434,8 @@ pub fn run() -> anyhow::Result<()> {
         cx.set_text_rendering_mode(TextRenderingMode::Grayscale);
 
         find_fonts(cx).expect("unable to load fonts");
+        #[cfg(target_os = "ios")]
+        let data_files_relocated = crate::ios::relocate_data_files(&data_dir);
         setup_settings(cx, data_dir.join("settings.json"));
         setup_theme(cx, data_dir.clone());
 
@@ -457,6 +459,11 @@ pub fn run() -> anyhow::Result<()> {
             })
             .expect("fatal: unable to create database pool");
         cx.set_global(Pool(pool.clone()));
+
+        #[cfg(target_os = "ios")]
+        if crate::RUNTIME.block_on(crate::ios::relocate_library_paths(&pool)) || data_files_relocated {
+            crate::ios::discard_scan_record(&data_dir);
+        }
 
         let storage = Storage::new(data_dir.join("app_data.json"));
         let storage_data = storage.load_or_default();

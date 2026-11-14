@@ -1,3 +1,6 @@
+#[cfg(any(target_os = "ios", test))]
+pub mod container;
+
 use std::{ffi::OsStr, path::PathBuf, sync::OnceLock};
 
 use directories::ProjectDirs;
