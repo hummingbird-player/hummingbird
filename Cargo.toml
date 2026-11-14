@@ -137,6 +137,9 @@ objc2-foundation = { version = "0.3", features = [
 ] }
 objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 mpris-server = "0.11"

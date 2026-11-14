@@ -17,6 +17,8 @@ use crate::media::{
 
 mod devices;
 mod errors;
+#[cfg(target_os = "ios")]
+mod ios;
 mod library;
 mod logging;
 mod media;
@@ -66,6 +68,9 @@ fn main() -> anyhow::Result<()> {
 
     I18N_MANAGER.load_source(tr_load!());
     crate::logging::init()?;
+
+    #[cfg(target_os = "ios")]
+    ios::configure_audio_session();
 
     // do this even when updating is disabled since it doesn't really hurt anything
     #[cfg(not(target_os = "macos"))]
