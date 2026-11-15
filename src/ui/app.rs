@@ -59,7 +59,10 @@ use super::{
     global_actions::register_actions,
     header::Header,
     library::Library,
-    mobile::bottom_bar::BottomBar,
+    mobile::{
+        bottom_bar::BottomBar,
+        controls::{MOBILE_CONTROLS_HEIGHT, MobileControls},
+    },
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
     platform::mobile_layout,
     right_sidebar::RightSidebar,
@@ -71,7 +74,8 @@ use super::{
 };
 
 struct MainWindow {
-    pub controls: Entity<Controls>,
+    /// [`Controls`] on desktop, [`MobileControls`] in the mobile layout.
+    pub controls: AnyView,
     pub right_sidebar: Entity<RightSidebar>,
     pub library: Entity<Library>,
     /// Phone navigation bar; only present in the mobile layout.
@@ -183,12 +187,16 @@ impl Render for MainWindow {
                                 .max_h_full()
                                 .overflow_hidden()
                                 .child(
-                                    AnyView::from(self.controls.clone()).cached(
+                                    self.controls.clone().cached(
                                         StyleRefinement::default()
                                             .w_full()
                                             .flex()
                                             .flex_shrink_0()
-                                            .h(controls_height(window)),
+                                            .h(if mobile_layout() {
+                                                MOBILE_CONTROLS_HEIGHT
+                                            } else {
+                                                controls_height(window)
+                                            }),
                                     ),
                                 )
                                 .child(
@@ -390,7 +398,11 @@ fn build_main_window(
         .detach();
 
         MainWindow {
-            controls: Controls::new(cx, show_queue.clone(), show_lyrics.clone()),
+            controls: if mobile_layout() {
+                MobileControls::new(cx).into()
+            } else {
+                Controls::new(cx, show_queue.clone(), show_lyrics.clone()).into()
+            },
             right_sidebar: RightSidebar::new(cx, show_queue.clone(), show_lyrics.clone()),
             library: Library::new(cx),
             bottom_bar: mobile_layout().then(|| BottomBar::new(cx)),
