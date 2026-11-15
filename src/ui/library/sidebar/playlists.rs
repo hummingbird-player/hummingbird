@@ -7,6 +7,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder, px, rgba,
 };
 use rustc_hash::FxHashMap;
+use sqlx::SqlitePool;
 use tracing::error;
 
 use crate::{
@@ -49,7 +50,7 @@ const PLAYLIST_SIDEBAR_COLLAPSED_ART_SIZE: f32 = 24.0;
 type PlaylistCoverArtIdMap = Arc<FxHashMap<i64, PlaylistCoverArtIds>>;
 
 pub struct PlaylistList {
-    playlists: Entity<AsyncResource<(), Arc<Vec<Playlist>>>>,
+    playlists: Entity<PlaylistsResource>,
     nav_model: Entity<NavigationHistory>,
     scroll_handle: ScrollHandle,
     popover_open: bool,
@@ -64,13 +65,41 @@ pub struct PlaylistList {
     cover_art: FxHashMap<i64, PlaylistCoverArtIds>,
 }
 
+pub(in crate::ui::library) type PlaylistsResource = AsyncResource<(), Arc<Vec<Playlist>>>;
+
+async fn fetch_playlists(pool: SqlitePool) -> anyhow::Result<Arc<Vec<Playlist>>> {
+    Ok(Arc::new(playlists().fetch_list(&pool).await?))
+}
+
+/// Loads the playlist list and keeps it up to date as playlists are created, renamed,
+/// reordered or deleted. The calling view is re-rendered whenever the list changes.
+pub(in crate::ui::library) fn live_playlists<V: 'static>(
+    cx: &mut Context<V>,
+) -> Entity<PlaylistsResource> {
+    let pool = cx.global::<Pool>().0.clone();
+    let resource = AsyncResource::new(cx, (), fetch_playlists(pool));
+    cx.observe(&resource, |_, _, cx| cx.notify()).detach();
+
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+    let weak_resource = resource.downgrade();
+    cx.subscribe(&playlist_tracker, move |_, _, _: &PlaylistEvent, cx| {
+        let Some(resource) = weak_resource.upgrade() else {
+            return;
+        };
+        let pool = cx.global::<Pool>().0.clone();
+        resource.update(cx, |resource, cx| {
+            resource.load(cx, (), fetch_playlists(pool));
+        });
+    })
+    .detach();
+
+    resource
+}
+
 impl PlaylistList {
     pub fn new(cx: &mut App, nav_model: Entity<NavigationHistory>) -> Entity<Self> {
-        cx.new(|cx| {
-            let pool = cx.global::<Pool>().0.clone();
-            let playlists_resource = AsyncResource::new(cx, (), async move {
-                Ok(Arc::new(playlists().fetch_list(&pool).await?))
-            });
+        cx.new(|cx: &mut Context<Self>| {
+            let playlists_resource = live_playlists(cx);
             let cover_art_resource = AsyncResource::new(cx, (), {
                 let pool = cx.global::<Pool>().0.clone();
                 fetch_cover_art(pool)
@@ -86,11 +115,8 @@ impl PlaylistList {
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
 
+            // the playlist list itself is kept up to date by live_playlists
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-
-            cx.observe(&playlists_resource, |_, _, cx| cx.notify())
-                .detach();
-
             cx.subscribe(
                 &playlist_tracker,
                 |this: &mut Self, _, ev: &PlaylistEvent, cx| {
@@ -98,14 +124,8 @@ impl PlaylistList {
                         *this.art_revisions.entry(*id).or_default() += 1;
                     }
                     let pool = cx.global::<Pool>().0.clone();
-                    let covers_pool = pool.clone();
                     this.cover_art_resource.update(cx, |resource, cx| {
-                        resource.load(cx, (), fetch_cover_art(covers_pool));
-                    });
-                    this.playlists.update(cx, |resource, cx| {
-                        resource.load(cx, (), async move {
-                            Ok(Arc::new(playlists().fetch_list(&pool).await?))
-                        });
+                        resource.load(cx, (), fetch_cover_art(pool));
                     });
                 },
             )
@@ -326,23 +346,13 @@ impl Render for PlaylistList {
                 ))
             });
 
-        let current_view = self.nav_model.read(cx).current();
-
         let two_column = cx
             .global::<SettingsGlobal>()
             .model
             .read(cx)
             .interface
             .two_column_library;
-
-        let sidebar_view = if two_column && current_view.is_detail_page() {
-            self.nav_model
-                .read(cx)
-                .last_matching(ViewSwitchMessage::is_key_page)
-                .unwrap_or(current_view)
-        } else {
-            current_view
-        };
+        let sidebar_view = self.nav_model.read(cx).navigation_view(two_column);
 
         let rename_input = self.rename_playlist_input.clone();
         let weak_entity = cx.entity().downgrade();

@@ -17,6 +17,7 @@ pub mod library;
 mod lyrics;
 pub mod models;
 mod now_playing;
+pub mod platform;
 mod queue;
 mod right_sidebar;
 mod scroll_follow;

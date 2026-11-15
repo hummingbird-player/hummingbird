@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-mod playlists;
+pub(super) mod playlists;
 
 pub struct Sidebar {
     playlists: Entity<PlaylistList>,
@@ -102,24 +102,13 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
-        let current_view = self.nav_model.read(cx).current();
         let two_column = cx
             .global::<SettingsGlobal>()
             .model
             .read(cx)
             .interface
             .two_column_library;
-
-        // In two-column mode, the sidebar should reflect the *left* pane, not the
-        // right (detail) pane.  Derive the effective view the same way Library does.
-        let sidebar_view = if two_column && current_view.is_detail_page() {
-            self.nav_model
-                .read(cx)
-                .last_matching(ViewSwitchMessage::is_key_page)
-                .unwrap_or(current_view)
-        } else {
-            current_view
-        };
+        let sidebar_view = self.nav_model.read(cx).navigation_view(two_column);
         let sidebar_width = cx.global::<Models>().sidebar_width.clone();
         let sidebar_collapsed_entity = cx.global::<Models>().sidebar_collapsed.clone();
         let collapsed = *sidebar_collapsed_entity.read(cx);

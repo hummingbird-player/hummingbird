@@ -4,6 +4,7 @@ use smallvec::SmallVec;
 use crate::ui::{
     components::icons::{CROSS, MAXIMIZE, MINIMIZE, MINUS, icon},
     constants::APP_ROUNDING,
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -51,6 +52,10 @@ impl RenderOnce for WindowHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let decorations = window.window_decorations();
         let theme = cx.global::<Theme>();
+
+        if mobile_layout() {
+            return div().id("titlebar").h(window.insets().safe_area.top);
+        }
 
         let left_container = div()
             .pl(px(12.0))

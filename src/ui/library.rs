@@ -33,6 +33,7 @@ use crate::{
             sidebar::Sidebar,
             update_playlist::UpdatePlaylist,
         },
+        platform::mobile_layout,
         theme::Theme,
     },
 };
@@ -43,6 +44,7 @@ pub mod add_to_playlist;
 mod album_view;
 mod artist_detail_view;
 mod artist_view;
+mod bottom_bar;
 mod collection_summary;
 pub mod context_menus;
 pub mod files_view;
@@ -56,6 +58,8 @@ mod table_view_header;
 mod track_listing;
 mod track_view;
 mod update_playlist;
+
+pub use bottom_bar::BottomBar;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 
@@ -108,6 +112,20 @@ impl NavigationHistory {
 
     pub fn current(&self) -> ViewSwitchMessage {
         self.history[self.cursor]
+    }
+
+    /// The view that navigation UI (sidebar, bottom bar) should highlight.
+    ///
+    /// In two-column mode this reflects the *left* pane rather than the detail page shown on
+    /// the right, mirroring how `Library` picks its left view.
+    pub fn navigation_view(&self, two_column: bool) -> ViewSwitchMessage {
+        let current = self.current();
+        if two_column && current.is_detail_page() {
+            self.last_matching(ViewSwitchMessage::is_key_page)
+                .unwrap_or(current)
+        } else {
+            current
+        }
     }
 
     pub fn can_go_back(&self) -> bool {
@@ -328,7 +346,8 @@ pub struct Library {
     left_view: Option<LibraryView>,
     right_view: Option<LibraryView>,
     section: LibrarySection,
-    sidebar: Entity<Sidebar>,
+    /// `None` in the phone layout, where `BottomBar` handles navigation instead.
+    sidebar: Option<Entity<Sidebar>>,
     show_update_playlist: Entity<bool>,
     update_playlist: Entity<UpdatePlaylist>,
     focus_handle: FocusHandle,
@@ -654,7 +673,7 @@ impl Library {
             .detach();
 
             let mut library = Library {
-                sidebar: Sidebar::new(cx, switcher_model.clone()),
+                sidebar: (!mobile_layout()).then(|| Sidebar::new(cx, switcher_model.clone())),
                 view,
                 view_message: initial_message,
                 left_view: None,
@@ -921,11 +940,9 @@ impl Render for Library {
             .max_w_full()
             .max_h_full()
             .overflow_hidden()
-            .child(
-                self.sidebar
-                    .clone()
-                    .cached(Sidebar::layout_style(cx).mr_auto()),
-            )
+            .when_some(self.sidebar.clone(), |this, sidebar| {
+                this.child(sidebar.cached(Sidebar::layout_style(cx).mr_auto()))
+            })
             .child(content)
             .child(self.update_playlist.clone())
     }

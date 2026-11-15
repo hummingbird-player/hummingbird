@@ -58,8 +58,9 @@ use super::{
     controls::{Controls, controls_height},
     global_actions::register_actions,
     header::Header,
-    library::Library,
+    library::{BottomBar, Library},
     models::{self, CurrentTrack, Models, PlaybackInfo, build_models},
+    platform::mobile_layout,
     right_sidebar::RightSidebar,
     search::SearchView,
     settings::close_orphaned_settings_windows,
@@ -72,6 +73,8 @@ struct MainWindow {
     pub controls: Entity<Controls>,
     pub right_sidebar: Entity<RightSidebar>,
     pub library: Entity<Library>,
+    /// Phone navigation bar; only present in the mobile layout.
+    pub bottom_bar: Option<Entity<BottomBar>>,
     pub header: Entity<Header>,
     pub search: Entity<SearchView>,
     pub artist_picker: Entity<ArtistPickerView>,
@@ -153,6 +156,10 @@ impl Render for MainWindow {
                     .flex_col_reverse()
                     .max_w_full()
                     .max_h_full()
+                    // first child is the bottom-most because of flex_col_reverse
+                    .when_some(self.bottom_bar.clone(), |this, bottom_bar| {
+                        this.child(bottom_bar)
+                    })
                     .child(
                         AnyView::from(self.controls.clone()).cached(
                             StyleRefinement::default()
@@ -357,6 +364,7 @@ fn build_main_window(
             controls: Controls::new(cx, show_queue.clone(), show_lyrics.clone()),
             right_sidebar: RightSidebar::new(cx, show_queue.clone(), show_lyrics.clone()),
             library: Library::new(cx),
+            bottom_bar: mobile_layout().then(|| BottomBar::new(cx)),
             header: Header::new(cx),
             search: SearchView::new(cx),
             artist_picker: ArtistPickerView::new(cx),
