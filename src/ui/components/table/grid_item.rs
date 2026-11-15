@@ -13,8 +13,27 @@ use crate::ui::{
         managed_image::managed_image,
     },
     models::Models,
+    platform::mobile_layout,
     theme::Theme,
 };
+
+/// Padding inside each grid item. Adjacent items' padding forms the visible gap between them,
+/// so containers add back the difference from [`GRID_ITEM_PADDING_DESKTOP`] to keep the outer
+/// padding the same on every layout.
+pub fn grid_item_padding() -> Pixels {
+    if mobile_layout() {
+        px(4.0)
+    } else {
+        GRID_ITEM_PADDING_DESKTOP
+    }
+}
+
+pub const GRID_ITEM_PADDING_DESKTOP: Pixels = px(8.0);
+
+/// Extra container padding needed so the outer edge matches the desktop layout.
+pub fn grid_item_padding_compensation() -> Pixels {
+    GRID_ITEM_PADDING_DESKTOP - grid_item_padding()
+}
 
 #[derive(Clone)]
 pub struct GridItem<T, C>
@@ -129,7 +148,7 @@ where
             .h_full()
             .flex()
             .flex_col()
-            .p(px(8.0))
+            .p(grid_item_padding())
             .rounded_lg()
             .id(self.id.clone())
             .when_some(self.on_select.clone(), {

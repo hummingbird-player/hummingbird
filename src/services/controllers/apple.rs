@@ -5,8 +5,6 @@ use block2::RcBlock;
 use objc2::{AnyThread, rc::Retained, runtime::ProtocolObject};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSImage as PlatformImage;
-#[cfg(target_os = "ios")]
-use objc2_ui_kit::UIImage as PlatformImage;
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSData, NSMutableDictionary, NSNumber, NSString};
 use objc2_media_player::{
@@ -16,6 +14,8 @@ use objc2_media_player::{
     MPNowPlayingPlaybackState, MPRemoteCommandCenter, MPRemoteCommandEvent,
     MPRemoteCommandHandlerStatus,
 };
+#[cfg(target_os = "ios")]
+use objc2_ui_kit::UIImage as PlatformImage;
 use raw_window_handle::RawWindowHandle;
 use tracing::{debug, error};
 

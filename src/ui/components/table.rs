@@ -811,14 +811,14 @@ where
 
         let grid_canvas = {
             let gap = 0.0;
-            let grid_padding = 4.0;
+            let grid_padding = px(4.0) + grid_item::grid_item_padding_compensation();
 
             div()
                 .relative()
                 .w_full()
                 .flex()
                 .h_full()
-                .px(px(grid_padding))
+                .px(grid_padding)
                 .overflow_y_hidden()
                 .when_some(items.clone(), |this, items| {
                     let items_len = items.len();
@@ -860,7 +860,7 @@ where
                                 views.retain(|idx, _| range.contains(idx));
                             });
                         })
-                        .py(px(grid_padding)),
+                        .py(grid_padding),
                     )
                     .child(floating_scrollbar("grid-scrollbar", grid_scroll_handle).right(px(4.0)))
                 })

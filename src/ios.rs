@@ -105,8 +105,8 @@ pub fn relocate_data_files(data_dir: &Path) -> bool {
         };
 
         let temp_path = path.with_extension("json.relocating");
-        let result = std::fs::write(&temp_path, updated)
-            .and_then(|()| std::fs::rename(&temp_path, &path));
+        let result =
+            std::fs::write(&temp_path, updated).and_then(|()| std::fs::rename(&temp_path, &path));
         match result {
             Ok(()) => {
                 info!("Relocated saved paths in {name} to container {current_id}");

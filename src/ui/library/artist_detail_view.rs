@@ -26,7 +26,7 @@ use crate::{
             popover::{PopoverPosition, popover},
             scrollbar::floating_scrollbar,
             table::{
-                grid_item::GridItem,
+                grid_item::{GridItem, grid_item_padding, grid_item_padding_compensation},
                 table_data::{GridContext, TABLE_MAX_WIDTH},
             },
             tooltip::build_tooltip,
@@ -1021,14 +1021,14 @@ impl Render for ArtistDetailView {
                                         .child(tr!("ARTIST_ALBUMS", "Albums")),
                                 )
                                 .child(
-                                    // Grid items have 8px of internal padding, so this
-                                    // wrapper keeps the album art aligned with the
-                                    // section header above it.
+                                    // Grid items have internal padding, so this wrapper
+                                    // keeps the album art aligned with the section header
+                                    // above it and the outer spacing layout-independent.
                                     div()
-                                        .pl(padding - px(8.0))
-                                        .pr(px(4.0))
-                                        .pt(px(2.0))
-                                        .pb(px(10.0))
+                                        .pl(padding - grid_item_padding())
+                                        .pr(px(4.0) + grid_item_padding_compensation())
+                                        .pt(px(2.0) + grid_item_padding_compensation())
+                                        .pb(px(10.0) + grid_item_padding_compensation())
                                         .w_full()
                                         .child(
                                             uniform_grid(

@@ -73,9 +73,7 @@ async fn fetch_playlists(pool: SqlitePool) -> anyhow::Result<Arc<Vec<Playlist>>>
 
 /// Loads the playlist list and keeps it up to date as playlists are created, renamed,
 /// reordered or deleted. The calling view is re-rendered whenever the list changes.
-pub(in crate::ui) fn live_playlists<V: 'static>(
-    cx: &mut Context<V>,
-) -> Entity<PlaylistsResource> {
+pub(in crate::ui) fn live_playlists<V: 'static>(cx: &mut Context<V>) -> Entity<PlaylistsResource> {
     let pool = cx.global::<Pool>().0.clone();
     let resource = AsyncResource::new(cx, (), fetch_playlists(pool));
     cx.observe(&resource, |_, _, cx| cx.notify()).detach();

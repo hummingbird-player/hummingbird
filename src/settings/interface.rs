@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 192.0;
-pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 128.0;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub const DEFAULT_GRID_MIN_ITEM_WIDTH: f32 = 96.0;
+pub const MIN_GRID_MIN_ITEM_WIDTH: f32 = 96.0;
 pub const MAX_GRID_MIN_ITEM_WIDTH: f32 = 384.0;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
