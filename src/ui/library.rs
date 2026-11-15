@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use album_view::AlbumView;
 use artist_detail_view::ArtistDetailView;
 use artist_view::ArtistView;
+use back_swipe::BackSwipe;
 use cntp_i18n::tr;
 use files_view::FilesView;
 use gpui::{prelude::FluentBuilder, *};
@@ -44,6 +45,7 @@ pub mod add_to_playlist;
 mod album_view;
 mod artist_detail_view;
 mod artist_view;
+mod back_swipe;
 mod collection_summary;
 pub mod context_menus;
 pub mod files_view;
@@ -58,8 +60,16 @@ mod track_listing;
 mod track_view;
 mod update_playlist;
 
-
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
+
+/// Whether going back means going up a level (from a release to its album list or artist, from
+/// an artist to the artist list), as the iOS back button and edge swipe do, instead of stepping
+/// back through history.
+pub const BACK_GOES_UP: bool = cfg!(target_os = "ios");
+
+/// The padding the app puts around the library in the phone layout, which the library applies
+/// itself on the leading edge (see [`Library`]'s render).
+pub const MOBILE_EDGE_PADDING: Pixels = px(6.0);
 
 /// The left padding used by the detail views (release, artist detail, playlist)
 /// and the track rows within them.
@@ -343,7 +353,6 @@ pub struct Library {
     view_message: ViewSwitchMessage,
     left_view: Option<LibraryView>,
     right_view: Option<LibraryView>,
-    section: LibrarySection,
     /// `None` in the phone layout, where `BottomBar` handles navigation instead.
     sidebar: Option<Entity<Sidebar>>,
     show_update_playlist: Entity<bool>,
@@ -352,6 +361,12 @@ pub struct Library {
     scroll_state: ScrollStateStorage,
     reclaim_focus: bool,
     _focus_lost_sub: Option<Subscription>,
+    /// In the phone layout, the page the user last navigated away from, kept alive so going back
+    /// to it (and the back swipe's preview of it) is instant and keeps its exact state.
+    back_view: Option<(ViewSwitchMessage, LibraryView)>,
+    /// The artists of the current release, for finding its parent in the artists section.
+    release_artists: Option<ReleaseArtists>,
+    back_swipe: BackSwipe,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -454,6 +469,56 @@ fn make_view(
     }
 }
 
+/// The page one level up from the current one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentPage {
+    /// The current page is at the top of its section.
+    None,
+    Page(ViewSwitchMessage),
+    /// A release in the artists section, whose parent is one of its artists, which haven't been
+    /// looked up yet.
+    UnresolvedArtist(i64),
+}
+
+/// The artists of a release, keyed by album id.
+type ReleaseArtists = (i64, Vec<i64>);
+
+fn parent_page(
+    history: &NavigationHistory,
+    release_artists: Option<&ReleaseArtists>,
+) -> ParentPage {
+    match history.current() {
+        ViewSwitchMessage::Release(album_id, _)
+            if library_section_from_history(history) == LibrarySection::Artists =>
+        {
+            let Some((_, artist_ids)) = release_artists.filter(|(id, _)| *id == album_id) else {
+                return ParentPage::UnresolvedArtist(album_id);
+            };
+            // prefer the artist the user came from, if the release belongs to it
+            let parent = match history.previous() {
+                Some(ViewSwitchMessage::Artist(id)) if artist_ids.contains(&id) => Some(id),
+                _ => artist_ids.first().copied(),
+            };
+            parent.map_or(ParentPage::None, |id| {
+                ParentPage::Page(ViewSwitchMessage::Artist(id))
+            })
+        }
+        ViewSwitchMessage::Release(_, _) => ParentPage::Page(ViewSwitchMessage::Albums),
+        ViewSwitchMessage::Artist(_) => ParentPage::Page(ViewSwitchMessage::Artists),
+        _ => ParentPage::None,
+    }
+}
+
+/// The message that takes the user to `destination`: back through history when it is the
+/// previous entry, so going up doesn't grow the history.
+fn message_to(history: &NavigationHistory, destination: ViewSwitchMessage) -> ViewSwitchMessage {
+    if history.previous() == Some(destination) {
+        ViewSwitchMessage::Back
+    } else {
+        destination
+    }
+}
+
 fn library_section_from_history(history: &NavigationHistory) -> LibrarySection {
     LibrarySection::from_message(&history.current())
         .or_else(|| {
@@ -474,8 +539,6 @@ impl Library {
             .read(cx)
             .interface
             .two_column_library;
-
-        self.section = library_section_from_history(history);
 
         if two_column {
             if current_msg.is_detail_page() {
@@ -522,7 +585,6 @@ impl Library {
                 &switcher_model,
                 &scroll_state,
             );
-            let section = library_section_from_history(switcher_model.read(cx));
 
             cx.subscribe(
                 &switcher_model,
@@ -542,6 +604,13 @@ impl Library {
                         this.reclaim_focus = true;
                     }
 
+                    let left_message = this.view_message;
+                    let left_view = this.view.clone();
+                    // a drag that hasn't finished is about a page that is going away
+                    if this.back_swipe.is_dragging() {
+                        this.back_swipe = BackSwipe::Idle;
+                    }
+
                     this.view = match message {
                         ViewSwitchMessage::Back => {
                             let destination =
@@ -553,7 +622,15 @@ impl Library {
 
                             if let Some(dest) = destination {
                                 debug!("back → {:?}", dest);
-                                make_view(&dest, ViewOpenMode::Restore, cx, &m, &this.scroll_state)
+                                this.take_back_view(dest).unwrap_or_else(|| {
+                                    make_view(
+                                        &dest,
+                                        ViewOpenMode::Restore,
+                                        cx,
+                                        &m,
+                                        &this.scroll_state,
+                                    )
+                                })
                             } else {
                                 this.view.clone()
                             }
@@ -586,12 +663,30 @@ impl Library {
                                 cx.notify();
                             });
 
-                            make_view(message, ViewOpenMode::Navigate, cx, &m, &this.scroll_state)
+                            this.take_back_view(*message).unwrap_or_else(|| {
+                                make_view(
+                                    message,
+                                    ViewOpenMode::Navigate,
+                                    cx,
+                                    &m,
+                                    &this.scroll_state,
+                                )
+                            })
                         }
                     };
 
                     this.view_message = m.read(cx).current();
                     this.sync_visible_views(&m, cx);
+
+                    // keep the page just left alive when it is now the previous entry, so going
+                    // back to it is instant
+                    let left_is_previous = m.read(cx).previous() == Some(left_message)
+                        && this.view_message != left_message;
+                    this.back_view = (mobile_layout()
+                        && left_is_previous
+                        && !matches!(message, ViewSwitchMessage::Refresh))
+                    .then_some((left_message, left_view));
+                    this.fetch_release_artists(false, cx);
 
                     cx.notify();
                 },
@@ -676,17 +771,133 @@ impl Library {
                 view_message: initial_message,
                 left_view: None,
                 right_view: None,
-                section,
                 update_playlist: UpdatePlaylist::new(cx, show_update_playlist.clone()),
                 show_update_playlist,
                 focus_handle,
                 scroll_state,
                 reclaim_focus: true,
                 _focus_lost_sub: None,
+                back_view: None,
+                release_artists: None,
+                back_swipe: BackSwipe::Idle,
             };
             library.sync_visible_views(&switcher_model, cx);
+            library.fetch_release_artists(false, cx);
             library
         })
+    }
+
+    fn take_back_view(&mut self, message: ViewSwitchMessage) -> Option<LibraryView> {
+        self.back_view
+            .take_if(|(cached, _)| *cached == message)
+            .map(|(_, view)| view)
+    }
+
+    fn parent_page(&self, cx: &App) -> ParentPage {
+        let history = cx.global::<Models>().switcher_model.read(cx);
+        parent_page(history, self.release_artists.as_ref())
+    }
+
+    /// Goes up a level from the current page, if it isn't at the top of its section.
+    fn navigate_up(&mut self, cx: &mut Context<Self>) {
+        let switcher = cx.global::<Models>().switcher_model.clone();
+        match self.parent_page(cx) {
+            ParentPage::Page(destination) => {
+                let message = message_to(switcher.read(cx), destination);
+                switcher.update(cx, |_, cx| cx.emit(message));
+            }
+            ParentPage::UnresolvedArtist(_) => self.fetch_release_artists(true, cx),
+            ParentPage::None => {}
+        }
+    }
+
+    /// Looks up the current release's artists if its parent depends on them, then goes up if
+    /// `navigate` is set and the user is still on that release.
+    ///
+    /// Runs whenever a release opens, so the back swipe knows where it leads before it starts.
+    fn fetch_release_artists(&mut self, navigate: bool, cx: &mut Context<Self>) {
+        let ParentPage::UnresolvedArtist(album_id) = self.parent_page(cx) else {
+            return;
+        };
+
+        let pool = cx.global::<Pool>().0.clone();
+        cx.spawn(async move |this, cx| {
+            let task = crate::RUNTIME
+                .spawn(async move { artists().related_to_album(album_id).fetch_ids(&pool).await });
+            let artist_ids = match task.await {
+                Ok(Ok(ids)) => ids,
+                Ok(Err(error)) => {
+                    debug!(?error, album_id, "failed to resolve release parent");
+                    return;
+                }
+                Err(error) => {
+                    tracing::error!(?error, album_id, "resolve release parent task panicked");
+                    return;
+                }
+            };
+            this.update(cx, |this, cx| {
+                this.release_artists = Some((album_id, artist_ids));
+                // the release may have been left while the lookup ran
+                let current = cx.global::<Models>().switcher_model.read(cx).current();
+                if navigate
+                    && matches!(current, ViewSwitchMessage::Release(id, _) if id == album_id)
+                {
+                    this.navigate_up(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn handle_back_gesture(
+        &mut self,
+        event: &BackGestureEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.phase {
+            BackGesturePhase::Started => {
+                self.back_swipe = BackSwipe::Idle;
+                let ParentPage::Page(target) = self.parent_page(cx) else {
+                    return;
+                };
+                let preview = self.take_back_view(target).unwrap_or_else(|| {
+                    let switcher = cx.global::<Models>().switcher_model.clone();
+                    make_view(
+                        &target,
+                        ViewOpenMode::Restore,
+                        cx,
+                        &switcher,
+                        &self.scroll_state,
+                    )
+                });
+                self.back_swipe = BackSwipe::Dragging {
+                    target,
+                    preview,
+                    progress: event.progress,
+                };
+            }
+            BackGesturePhase::Progressed => self.back_swipe.update_progress(event.progress),
+            BackGesturePhase::Committed | BackGesturePhase::Cancelled => {
+                let commit = event.phase == BackGesturePhase::Committed;
+                let Some((target, preview)) =
+                    self.back_swipe.release(&self.view, commit, event.progress)
+                else {
+                    return;
+                };
+                // navigating picks the preview back up, so the page underneath becomes the
+                // current page as is; a cancelled swipe keeps it for the next one
+                self.back_view = Some((target, preview));
+                if commit {
+                    let switcher = cx.global::<Models>().switcher_model.clone();
+                    let message = message_to(switcher.read(cx), target);
+                    switcher.update(cx, |_, cx| cx.emit(message));
+                }
+            }
+        }
+        cx.notify();
     }
 }
 
@@ -760,7 +971,10 @@ impl Render for Library {
             })
         });
 
-        let content = if let (true, Some(left), Some(right)) = (
+        let content = if mobile_layout() {
+            // the phone layout is always a single column, which the back swipe slides aside
+            self.back_swipe.render(&self.view, &single_column, window)
+        } else if let (true, Some(left), Some(right)) = (
             two_column,
             self.left_view.as_ref(),
             self.right_view.as_ref(),
@@ -824,88 +1038,16 @@ impl Render for Library {
             .id("library")
             .track_focus(&self.focus_handle)
             .key_context("Library")
-            .on_action(cx.listener(|this, _: &EscapeBack, _, cx| {
-                let switcher = cx.global::<Models>().switcher_model.clone();
-                let current = switcher.read(cx).current();
-
-                if let ViewSwitchMessage::Release(album_id, _) = current
-                    && this.section == LibrarySection::Artists
-                {
-                    let pool = cx.global::<Pool>().0.clone();
-                    let previous = switcher.read(cx).previous();
-                    cx.spawn(async move |this, cx| {
-                        let task = crate::RUNTIME.spawn(async move {
-                            artists().related_to_album(album_id).fetch_ids(&pool).await
-                        });
-                        let artist_ids = match task.await {
-                            Ok(Ok(ids)) => ids,
-                            Ok(Err(error)) => {
-                                debug!(?error, album_id, "failed to resolve release parent");
-                                return;
-                            }
-                            Err(error) => {
-                                tracing::error!(
-                                    ?error,
-                                    album_id,
-                                    "resolve release parent task panicked"
-                                );
-                                return;
-                            }
-                        };
-                        this.update(cx, |this, cx| {
-                            if this.section != LibrarySection::Artists
-                                || switcher.read(cx).current() != current
-                            {
-                                return;
-                            }
-                            let parent_artist = match previous {
-                                Some(ViewSwitchMessage::Artist(id)) if artist_ids.contains(&id) => {
-                                    Some(id)
-                                }
-                                _ => artist_ids.first().copied(),
-                            };
-                            if let Some(dest) = parent_artist.map(ViewSwitchMessage::Artist) {
-                                let msg = if switcher.read(cx).previous() == Some(dest) {
-                                    ViewSwitchMessage::Back
-                                } else {
-                                    dest
-                                };
-                                switcher.update(cx, |_, cx| cx.emit(msg));
-                            }
-                        })
-                        .ok();
-                    })
-                    .detach();
-                    return;
-                }
-
-                let parent = match current {
-                    ViewSwitchMessage::Release(album_id, _) => {
-                        let _ = album_id;
-                        Some(ViewSwitchMessage::Albums)
-                    }
-                    ViewSwitchMessage::Artist(_) => Some(ViewSwitchMessage::Artists),
-                    _ => None, // Already at top level
-                };
-
-                if let Some(dest) = parent {
-                    // If the previous history entry matches the parent, go back
-                    // instead of creating a new history entry.
-                    let msg = if switcher.read(cx).previous() == Some(dest) {
-                        ViewSwitchMessage::Back
-                    } else {
-                        dest
-                    };
+            .on_action(cx.listener(|this, _: &EscapeBack, _, cx| this.navigate_up(cx)))
+            .on_action(cx.listener(|this, _: &NavigateBack, _, cx| {
+                if BACK_GOES_UP {
+                    this.navigate_up(cx);
+                } else {
+                    let switcher = cx.global::<Models>().switcher_model.clone();
                     switcher.update(cx, |_, cx| {
-                        cx.emit(msg);
+                        cx.emit(ViewSwitchMessage::Back);
                     });
                 }
-            }))
-            .on_action(cx.listener(|_, _: &NavigateBack, _, cx| {
-                let switcher = cx.global::<Models>().switcher_model.clone();
-                switcher.update(cx, |_, cx| {
-                    cx.emit(ViewSwitchMessage::Back);
-                });
             }))
             .on_action(cx.listener(|_, _: &NavigateForward, _, cx| {
                 let switcher = cx.global::<Models>().switcher_model.clone();
@@ -931,6 +1073,18 @@ impl Render for Library {
                     });
                 },
             )
+            .when(mobile_layout(), |this| {
+                // the app pads the library away from the screen edge; this takes that padding
+                // over so edge swipes start over the library
+                this.pl(MOBILE_EDGE_PADDING)
+            })
+            .when(
+                mobile_layout()
+                    && (self.back_swipe.is_active()
+                        || matches!(self.parent_page(cx), ParentPage::Page(_))),
+                // only listen when there is somewhere to go, since listening claims the swipe
+                |this| this.on_back_gesture(cx.listener(Self::handle_back_gesture)),
+            )
             .w_full()
             .h_full()
             .flex()
@@ -943,5 +1097,97 @@ impl Render for Library {
             })
             .child(content)
             .child(self.update_playlist.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // not a glob import: `gpui::*` would bring in gpui's own `test` attribute
+    use super::{NavigationHistory, ParentPage, ViewSwitchMessage, message_to, parent_page};
+
+    fn history(pages: &[ViewSwitchMessage]) -> NavigationHistory {
+        let mut history = NavigationHistory::new(pages[0]);
+        for page in &pages[1..] {
+            history.navigate(*page);
+        }
+        history
+    }
+
+    #[test]
+    fn release_in_albums_goes_up_to_albums() {
+        let history = history(&[
+            ViewSwitchMessage::Albums,
+            ViewSwitchMessage::Release(1, None),
+        ]);
+        assert_eq!(
+            parent_page(&history, None),
+            ParentPage::Page(ViewSwitchMessage::Albums)
+        );
+        assert_eq!(
+            message_to(&history, ViewSwitchMessage::Albums),
+            ViewSwitchMessage::Back
+        );
+    }
+
+    #[test]
+    fn artist_goes_up_to_artists() {
+        let history = history(&[ViewSwitchMessage::Tracks, ViewSwitchMessage::Artist(4)]);
+        assert_eq!(
+            parent_page(&history, None),
+            ParentPage::Page(ViewSwitchMessage::Artists)
+        );
+        // the artist list isn't the previous entry, so it is navigated to
+        assert_eq!(
+            message_to(&history, ViewSwitchMessage::Artists),
+            ViewSwitchMessage::Artists
+        );
+    }
+
+    #[test]
+    fn top_level_pages_have_no_parent() {
+        for page in [
+            ViewSwitchMessage::Albums,
+            ViewSwitchMessage::Artists,
+            ViewSwitchMessage::Tracks,
+            ViewSwitchMessage::Files,
+            ViewSwitchMessage::Playlist(2),
+        ] {
+            let history = history(&[ViewSwitchMessage::Albums, page]);
+            assert_eq!(parent_page(&history, None), ParentPage::None, "{page:?}");
+        }
+    }
+
+    #[test]
+    fn release_in_artists_needs_its_artists() {
+        let history = history(&[
+            ViewSwitchMessage::Artists,
+            ViewSwitchMessage::Artist(4),
+            ViewSwitchMessage::Release(1, None),
+        ]);
+        assert_eq!(parent_page(&history, None), ParentPage::UnresolvedArtist(1));
+        // artists looked up for another release don't count
+        assert_eq!(
+            parent_page(&history, Some(&(2, vec![4]))),
+            ParentPage::UnresolvedArtist(1)
+        );
+    }
+
+    #[test]
+    fn release_in_artists_prefers_the_artist_it_came_from() {
+        let history = history(&[
+            ViewSwitchMessage::Artists,
+            ViewSwitchMessage::Artist(4),
+            ViewSwitchMessage::Release(1, None),
+        ]);
+        assert_eq!(
+            parent_page(&history, Some(&(1, vec![3, 4]))),
+            ParentPage::Page(ViewSwitchMessage::Artist(4))
+        );
+        // when the release isn't by the previous artist, its first artist is the parent
+        assert_eq!(
+            parent_page(&history, Some(&(1, vec![3]))),
+            ParentPage::Page(ViewSwitchMessage::Artist(3))
+        );
+        assert_eq!(parent_page(&history, Some(&(1, vec![]))), ParentPage::None);
     }
 }

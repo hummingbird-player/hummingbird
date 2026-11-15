@@ -58,7 +58,7 @@ use super::{
     controls::{Controls, controls_height},
     global_actions::register_actions,
     header::Header,
-    library::Library,
+    library::{Library, MOBILE_EDGE_PADDING},
     mobile::{
         bottom_bar::BottomBar,
         controls::{MOBILE_CONTROLS_HEIGHT, MobileControls},
@@ -202,6 +202,9 @@ impl Render for MainWindow {
                                 .child(
                                     div()
                                         .my(PANEL_GAP)
+                                        // the library pads its own leading edge (see
+                                        // `MOBILE_EDGE_PADDING`)
+                                        .when(mobile_layout(), |this| this.ml(-MOBILE_EDGE_PADDING))
                                         .w_full()
                                         .h_full()
                                         .flex()

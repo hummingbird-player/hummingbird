@@ -1,3 +1,7 @@
+> [!WARNING]
+> This is an *experimental* mobile (iOS-only) version of Hummingbird. None of the code here is
+> final and it will not represent the final version. You should not daily drive this.
+
 # Hummingbird
 
 ![screenshot](docs/screenshot.png)

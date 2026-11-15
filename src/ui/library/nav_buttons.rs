@@ -15,7 +15,7 @@ use crate::ui::{
     theme::Theme,
 };
 
-use super::ViewSwitchMessage;
+use super::{BACK_GOES_UP, NavigateBack, ViewSwitchMessage};
 
 #[derive(IntoElement)]
 pub struct NavButtons {}
@@ -40,7 +40,12 @@ impl RenderOnce for NavButtons {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let vsm = cx.global::<Models>().switcher_model.clone();
         let history = vsm.read(cx);
-        let can_go_back = history.can_go_back();
+        let can_go_back = if BACK_GOES_UP {
+            // every detail page has a parent; top-level pages are the top of their section
+            history.current().is_detail_page()
+        } else {
+            history.can_go_back()
+        };
         let can_go_forward = history.can_go_forward();
         let peek_generation = history.forward_peek_generation();
         let should_peek = history.forward_peek_active();
@@ -56,18 +61,7 @@ impl RenderOnce for NavButtons {
                 .flex()
                 .occlude()
                 .gap(px(2.0))
-                .child(
-                    nav_button("back", ARROW_LEFT)
-                        .disabled(!can_go_back)
-                        .on_click({
-                            let vsm = vsm.clone();
-                            move |_, _, cx| {
-                                vsm.update(cx, |_, cx| {
-                                    cx.emit(ViewSwitchMessage::Back);
-                                })
-                            }
-                        }),
-                )
+                .child(back_button(can_go_back))
                 .child(
                     nav_button("forward", ARROW_RIGHT)
                         .disabled(!can_go_forward)
@@ -139,20 +133,24 @@ impl RenderOnce for NavButtons {
             .occlude()
             .group(NAV_BUTTONS_HOVER_GROUP)
             .child(forward)
-            .child(
-                nav_button("back", ARROW_LEFT)
-                    .disabled(!can_go_back)
-                    .on_click({
-                        let vsm = vsm.clone();
-                        move |_, _, cx| {
-                            vsm.update(cx, |_, cx| {
-                                cx.emit(ViewSwitchMessage::Back);
-                            })
-                        }
-                    }),
-            )
+            .child(back_button(can_go_back))
             .into_any_element()
     }
+}
+
+/// Goes back through history, or up a level where [`BACK_GOES_UP`] (through [`NavigateBack`],
+/// which the library handles).
+fn back_button(can_go_back: bool) -> impl IntoElement {
+    nav_button("back", ARROW_LEFT)
+        .disabled(!can_go_back)
+        .on_click(|_, window, cx| {
+            if BACK_GOES_UP {
+                window.dispatch_action(Box::new(NavigateBack), cx);
+            } else {
+                let vsm = cx.global::<Models>().switcher_model.clone();
+                vsm.update(cx, |_, cx| cx.emit(ViewSwitchMessage::Back));
+            }
+        })
 }
 
 pub fn nav_buttons() -> impl IntoElement {
