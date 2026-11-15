@@ -271,9 +271,13 @@ impl TextInput {
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Tapping the field is how a dismissed on-screen keyboard gets brought back; focus alone
+        // won't do it while the field is still focused. A no-op on desktop.
+        window.request_virtual_keyboard();
+
         let offset = self.index_for_mouse_position(event.position);
         self.is_selecting = true;
 

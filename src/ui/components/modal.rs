@@ -156,14 +156,26 @@ fn overlay(window: &Window, cx: &App) -> Stateful<Div> {
 /// [`overlay`] laid out for the mobile layout: its child is pinned to the bottom of the
 /// screen at full width, inset by [`MOBILE_SHEET_MARGIN`] (plus the safe area).
 fn sheet_overlay(window: &Window, cx: &App) -> Stateful<Div> {
-    let safe_area = window.insets().safe_area;
+    let (top, bottom) = sheet_insets(window);
 
     overlay(window, cx)
         .flex_col()
         .justify_end()
         .px(MOBILE_SHEET_MARGIN)
-        .pt(MOBILE_SHEET_MARGIN + safe_area.top)
-        .pb(MOBILE_SHEET_MARGIN + safe_area.bottom)
+        .pt(top)
+        .pb(bottom)
+}
+
+/// The space [`sheet_overlay`] keeps clear above and below its child: the sheet margin plus
+/// the safe area, and at the bottom the on-screen keyboard when it's taller.
+fn sheet_insets(window: &Window) -> (Pixels, Pixels) {
+    let insets = window.insets();
+    let bottom = insets.safe_area.bottom.max(insets.ime.bottom);
+
+    (
+        MOBILE_SHEET_MARGIN + insets.safe_area.top,
+        MOBILE_SHEET_MARGIN + bottom,
+    )
 }
 
 /// Presents a pop-up (menu, popover, dropdown, ...) as a bottom sheet over the modal
@@ -187,6 +199,18 @@ pub fn modal_width(width: impl Into<Length>) -> Length {
         relative(1.0).into()
     } else {
         width.into()
+    }
+}
+
+/// Height for the contents of a [`Modal`]: `height` on desktop; in the mobile layout, all of
+/// the height the sheet has, above the on-screen keyboard. Meant for tall, scrolling content
+/// like palettes.
+pub fn modal_height(height: Pixels, window: &Window) -> Pixels {
+    if mobile_layout() {
+        let (top, bottom) = sheet_insets(window);
+        (window.viewport_size().height - top - bottom).max(px(0.0))
+    } else {
+        height
     }
 }
 

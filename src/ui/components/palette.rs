@@ -6,16 +6,19 @@ use tracing::trace;
 use std::sync::Arc;
 
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, FocusHandle, FontWeight, IntoElement,
-    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 use nucleo::Utf32String;
 
 use crate::ui::components::{
+    icons::{CROSS, icon},
     input::{EnrichedInputAction, TextInput},
+    modal::CloseModal,
     palette::finder::Finder,
 };
-use crate::ui::theme::Theme;
+use crate::ui::{platform::mobile_layout, theme::Theme};
 
 pub struct Palette<T, MatcherFunc, OnAccept>
 where
@@ -165,6 +168,58 @@ where
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
 
+        let input = div()
+            .py(px(12.0))
+            .px(px(14.0))
+            .line_height(px(18.0))
+            .h(px(44.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.elevated_border_color)
+            .bg(theme.elevated_background)
+            .rounded(px(8.0))
+            .child(self.input.clone());
+
+        // There's no Escape key on a phone, and the palette fills the sheet, leaving almost no
+        // backdrop to tap, so give it an explicit way out.
+        let header = if mobile_layout() {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .w_full()
+                .flex_shrink_0()
+                // take whatever width the button leaves
+                .child(input.flex_1().min_w(px(0.0)))
+                .child(
+                    // styled like the input box beside it
+                    div()
+                        .id("palette-cancel")
+                        .size(px(44.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(theme.elevated_border_color)
+                        .bg(theme.elevated_background)
+                        .rounded(px(8.0))
+                        .active(|this| {
+                            this.bg(theme.palette_item_active)
+                                .border_color(theme.palette_item_border_active)
+                        })
+                        .child(icon(CROSS).size(px(16.0)))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(CloseModal), cx);
+                        }),
+                )
+                .into_any_element()
+        } else {
+            input.w_full().flex_shrink_0().into_any_element()
+        };
+
         div()
             // the rest of the design is going to pretend this bg isn't here, but it's here
             // to stop the visual noise from the background from going through
@@ -174,22 +229,7 @@ where
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child(
-                div()
-                    .w_full()
-                    .py(px(12.0))
-                    .px(px(14.0))
-                    .line_height(px(18.0))
-                    .h(px(44.0))
-                    .flex_shrink_0()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(theme.elevated_border_color)
-                    .bg(theme.elevated_background)
-                    .rounded(px(8.0))
-                    .child(self.input.clone()),
-            )
+            .child(header)
             .child(
                 div()
                     .flex()

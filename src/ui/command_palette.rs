@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::hash::Hash;
 use tracing::error;
 
-use crate::ui::components::modal::{ModalActive, modal, modal_width};
+use crate::ui::components::modal::{ModalActive, modal, modal_height, modal_width};
 use crate::ui::components::palette::{FinderItemLeft, FinderItemRight, Palette, PaletteItem};
 
 actions!(hummingbird, [OpenPalette]);
@@ -482,7 +482,7 @@ impl Render for CommandPalette {
                 .child(
                     div()
                         .w(modal_width(px(550.0)))
-                        .h(px(500.0))
+                        .h(modal_height(px(500.0), window))
                         .child(palette.clone()),
                 )
                 .on_exit(move |_, cx| {

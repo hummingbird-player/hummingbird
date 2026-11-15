@@ -18,7 +18,7 @@ use crate::{
         components::{
             async_resource::AsyncResource,
             icons::PLAYLIST_ADD,
-            modal::{modal, modal_width},
+            modal::{modal, modal_height, modal_width},
             palette::{
                 ExtraItem, ExtraItemProvider, FinderItemLeft, FinderItemRight, Palette, PaletteItem,
             },
@@ -392,7 +392,7 @@ impl Render for AddToPlaylist {
                 .child(
                     div()
                         .w(modal_width(px(550.0)))
-                        .h(px(300.0))
+                        .h(modal_height(px(300.0), window))
                         .child(palette.clone()),
                 )
                 .on_exit(move |_, cx| {

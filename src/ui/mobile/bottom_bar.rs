@@ -20,6 +20,7 @@ use crate::{
             icons::{ADJUSTMENTS, DISC, FOLDER, MUSIC, PLAYLIST, SEARCH, STAR, USERS, icon},
             styling::AdditionalStyleUtil,
         },
+        global_actions::Search,
         library::{
             NavigationHistory, ViewSwitchMessage,
             sidebar::playlists::{PlaylistsResource, live_playlists},
@@ -229,7 +230,10 @@ impl BottomBar {
                 bottom_bar_item("bottom-bar-search")
                     .w(width)
                     .icon(SEARCH)
-                    .label(tr!("SEARCH")),
+                    .label(tr!("SEARCH"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(Search), cx);
+                    }),
             )
     }
 
