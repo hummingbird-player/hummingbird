@@ -7,7 +7,7 @@ use model::SearchModel;
 use std::sync::atomic::Ordering;
 
 use super::{
-    components::modal::modal,
+    components::modal::{modal, modal_width},
     global_actions::Search,
     library::{NavigationHistory, ViewSwitchMessage},
     models::Models,
@@ -96,7 +96,12 @@ impl Render for SearchView {
                     })
                     .expect("failed to update search view")
                 })
-                .child(div().w(px(550.0)).h(px(500.0)).child(self.search.clone()))
+                .child(
+                    div()
+                        .w(modal_width(px(550.0)))
+                        .h(px(500.0))
+                        .child(self.search.clone()),
+                )
                 .into_any_element()
         } else {
             div().hidden().into_any_element()

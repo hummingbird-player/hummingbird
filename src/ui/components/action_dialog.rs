@@ -401,7 +401,7 @@ impl RenderOnce for ActionDialog {
 
         dialog.child(
             div()
-                .w(self.width)
+                .w(modal::modal_width(self.width))
                 .p(px(24.0))
                 .max_w_full()
                 .flex()

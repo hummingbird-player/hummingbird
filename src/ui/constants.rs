@@ -14,6 +14,9 @@ pub const INNER_PANEL_ROUNDING: gpui::Pixels = px(6.0);
 pub const MAIN_CONTROL_ROUNDING: gpui::Pixels = px(6.0);
 pub const INNER_CONTROL_ROUNDING: gpui::Pixels = px(4.0);
 
+/// Gap between a mobile bottom sheet (modals, menus, popovers) and the screen edges.
+pub const MOBILE_SHEET_MARGIN: gpui::Pixels = px(6.0);
+
 pub const REGULAR_BUTTON_ICON_SIZE: gpui::Pixels = px(14.0);
 
 /// Artwork size in the header of the release and playlist detail views.

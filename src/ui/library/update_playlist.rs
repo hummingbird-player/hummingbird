@@ -18,7 +18,7 @@ use crate::{
         components::{
             async_resource::AsyncResource,
             icons::{PLAYLIST, PLAYLIST_ADD, STAR_FILLED},
-            modal::modal,
+            modal::{modal, modal_width},
             palette::{
                 ExtraItem, ExtraItemProvider, FinderItemLeft, FinderItemRight, Palette, PaletteItem,
             },
@@ -169,7 +169,12 @@ impl Render for UpdatePlaylist {
 
             modal()
                 .transparent()
-                .child(div().w(px(550.0)).h(px(300.0)).child(palette.clone()))
+                .child(
+                    div()
+                        .w(modal_width(px(550.0)))
+                        .h(px(300.0))
+                        .child(palette.clone()),
+                )
                 .on_exit(move |_, cx| {
                     show.update(cx, |show, cx| {
                         *show = false;

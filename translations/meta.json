@@ -7,85 +7,85 @@
   },
   "ABOUT_COMMUNITY_BEFORE_LINKS": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:115",
+    "definedIn": "src/ui/about.rs:119",
     "plural": false,
     "description": null
   },
   "ABOUT_COMMUNITY_DISCORD": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:128",
+    "definedIn": "src/ui/about.rs:132",
     "plural": false,
     "description": null
   },
   "ABOUT_COMMUNITY_END": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:132",
+    "definedIn": "src/ui/about.rs:136",
     "plural": false,
     "description": null
   },
   "ABOUT_COMMUNITY_MIDDLE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:122",
+    "definedIn": "src/ui/about.rs:126",
     "plural": false,
     "description": null
   },
   "ABOUT_COMMUNITY_WEBSITE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:120",
+    "definedIn": "src/ui/about.rs:124",
     "plural": false,
     "description": null
   },
   "ABOUT_COPYRIGHT": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:135",
+    "definedIn": "src/ui/about.rs:139",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_AFTER_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:155",
+    "definedIn": "src/ui/about.rs:159",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_BEFORE_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:143",
+    "definedIn": "src/ui/about.rs:147",
     "plural": false,
     "description": null
   },
   "ABOUT_LICENSE_LINK": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:151",
+    "definedIn": "src/ui/about.rs:155",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_BUG": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:101",
+    "definedIn": "src/ui/about.rs:105",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_CODE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:108",
+    "definedIn": "src/ui/about.rs:112",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_END": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:110",
+    "definedIn": "src/ui/about.rs:114",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_MIDDLE": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:103",
+    "definedIn": "src/ui/about.rs:107",
     "plural": false,
     "description": null
   },
   "ABOUT_LINKS_START": {
     "context": "about.rs",
-    "definedIn": "src/ui/about.rs:89",
+    "definedIn": "src/ui/about.rs:93",
     "plural": false,
     "description": "Because the UI framework we use doesn't support inline elements, we have to use a seperate string for each part of this text. Use a zero-width space (U+200B) if a part isn't needed."
   },
@@ -463,7 +463,7 @@
   },
   "DROPDOWN_PLACEHOLDER": {
     "context": "dropdown.rs",
-    "definedIn": "src/ui/components/dropdown.rs:83",
+    "definedIn": "src/ui/components/dropdown.rs:85",
     "plural": false,
     "description": null
   },
@@ -481,43 +481,43 @@
   },
   "EQ_BAND_DISABLED": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:212",
+    "definedIn": "src/ui/equalizer/band_editor.rs:214",
     "plural": false,
     "description": null
   },
   "EQ_BAND_ENABLED": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:210",
+    "definedIn": "src/ui/equalizer/band_editor.rs:212",
     "plural": false,
     "description": null
   },
   "EQ_BAND_FREQ": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:141",
+    "definedIn": "src/ui/equalizer/band_editor.rs:143",
     "plural": false,
     "description": null
   },
   "EQ_BAND_GAIN": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:154",
+    "definedIn": "src/ui/equalizer/band_editor.rs:156",
     "plural": false,
     "description": null
   },
   "EQ_BAND_NUMBER": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:239",
+    "definedIn": "src/ui/equalizer/band_editor.rs:241",
     "plural": false,
     "description": null
   },
   "EQ_BAND_Q": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:174",
+    "definedIn": "src/ui/equalizer/band_editor.rs:176",
     "plural": false,
     "description": null
   },
   "EQ_BAND_REMOVE": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:225",
+    "definedIn": "src/ui/equalizer/band_editor.rs:227",
     "plural": false,
     "description": null
   },
@@ -547,31 +547,31 @@
   },
   "EQ_FILTER_BAND_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:123",
+    "definedIn": "src/ui/equalizer/band_editor.rs:125",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_BELL": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:109",
+    "definedIn": "src/ui/equalizer/band_editor.rs:111",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_HIGH_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:118",
+    "definedIn": "src/ui/equalizer/band_editor.rs:120",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_LOW_PASS": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:113",
+    "definedIn": "src/ui/equalizer/band_editor.rs:115",
     "plural": false,
     "description": null
   },
   "EQ_FILTER_NOTCH": {
     "context": "band_editor.rs",
-    "definedIn": "src/ui/equalizer/band_editor.rs:128",
+    "definedIn": "src/ui/equalizer/band_editor.rs:130",
     "plural": false,
     "description": null
   },

@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use gpui::*;
 
-use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
+use crate::ui::{
+    components::modal::bottom_sheet, constants::MAIN_CONTROL_ROUNDING, platform::mobile_layout,
+    theme::Theme,
+};
 
 actions!(context, [CloseContextMenu]);
 
@@ -87,36 +90,44 @@ impl RenderOnce for ContextMenu {
         };
 
         let overlay = if let (Some(pos), Some(menu)) = (position, menu) {
-            Some(
-                anchored().position(pos).child(deferred(
-                    menu.occlude()
-                        .border_1()
-                        .shadow_sm()
-                        .rounded(MAIN_CONTROL_ROUNDING)
-                        .border_color(theme.elevated_border_color)
-                        .bg(theme.elevated_background)
-                        .id("menu")
-                        .track_focus(&focus_handle)
-                        .on_click(move |_, _, cx| {
-                            state_click.update(cx, |pos, cx| {
-                                *pos = None;
-                                cx.notify();
-                            });
-                        })
-                        .on_mouse_down_out(move |_, _, cx| {
-                            state_out.update(cx, |pos, cx| {
-                                *pos = None;
-                                cx.notify();
-                            });
-                        })
-                        .on_action(move |_: &CloseContextMenu, _, cx| {
-                            state_esc.update(cx, |pos, cx| {
-                                *pos = None;
-                                cx.notify();
-                            });
-                        }),
-                )),
-            )
+            Some({
+                let menu = menu
+                    .occlude()
+                    .border_1()
+                    .shadow_sm()
+                    .rounded(MAIN_CONTROL_ROUNDING)
+                    .border_color(theme.elevated_border_color)
+                    .bg(theme.elevated_background)
+                    .id("menu")
+                    .track_focus(&focus_handle)
+                    .on_click(move |_, _, cx| {
+                        state_click.update(cx, |pos, cx| {
+                            *pos = None;
+                            cx.notify();
+                        });
+                    })
+                    .on_mouse_down_out(move |_, _, cx| {
+                        state_out.update(cx, |pos, cx| {
+                            *pos = None;
+                            cx.notify();
+                        });
+                    })
+                    .on_action(move |_: &CloseContextMenu, _, cx| {
+                        state_esc.update(cx, |pos, cx| {
+                            *pos = None;
+                            cx.notify();
+                        });
+                    });
+
+                if mobile_layout() {
+                    bottom_sheet(menu.w_full(), window, cx).into_any_element()
+                } else {
+                    anchored()
+                        .position(pos)
+                        .child(deferred(menu))
+                        .into_any_element()
+                }
+            })
         } else {
             None
         };

@@ -12,9 +12,11 @@ use crate::ui::{
     components::{
         icons::{CHEVRON_DOWN, icon},
         menu::{menu, menu_check_item},
+        modal::bottom_sheet,
         segmented_control::ChangeHandler,
     },
     constants::MAIN_CONTROL_ROUNDING,
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -277,11 +279,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 })
                 .child(option_menu);
 
-            Some(
+            Some(if mobile_layout() {
+                bottom_sheet(popup_content.w_full().mt(px(0.0)), window, cx).into_any_element()
+            } else {
                 anchored()
                     .anchor(Anchor::TopLeft)
-                    .child(deferred(popup_content)),
-            )
+                    .child(deferred(popup_content))
+                    .into_any_element()
+            })
         } else {
             None
         };

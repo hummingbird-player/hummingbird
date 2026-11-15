@@ -6,6 +6,7 @@ use crate::ui::{
         tooltip::build_tooltip,
     },
     constants::INNER_CONTROL_ROUNDING,
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -105,9 +106,9 @@ impl BaseMenuItem {
             .rounded(INNER_CONTROL_ROUNDING)
             .flex()
             .items_center()
-            .px(px(5.0))
-            .pt(px(4.0))
-            .pb(px(5.0))
+            .px(scaled_padding(5.0))
+            .pt(scaled_padding(4.0))
+            .pb(scaled_padding(5.0))
             .line_height(rems(1.1))
             .min_w_full()
             .bg(theme.menu_item)
@@ -432,8 +433,8 @@ impl RenderOnce for Menu {
         self.div
             .when(self.full_width, |this| this.w_full())
             .when(!self.full_width, |this| this.min_w(px(200.0)))
-            .px(px(2.0))
-            .py(px(2.0))
+            .px(scaled_padding(2.0))
+            .py(scaled_padding(2.0))
             .flex()
             .flex_col()
             .gap(px(1.0))
@@ -447,5 +448,15 @@ pub fn menu() -> Menu {
         items: vec![],
         div: div(),
         full_width: false,
+    }
+}
+
+/// Menus and their items get 1.5x the padding (rounded to whole pixels) in the mobile layout,
+/// for larger touch targets.
+fn scaled_padding(value: f32) -> Pixels {
+    if mobile_layout() {
+        px((value * 1.5).round())
+    } else {
+        px(value)
     }
 }

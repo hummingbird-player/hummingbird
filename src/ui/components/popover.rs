@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui::{actions, prelude::FluentBuilder};
 
-use crate::ui::theme::Theme;
+use crate::ui::{components::modal::bottom_sheet, platform::mobile_layout, theme::Theme};
 
 pub type OnDismissHandler = dyn Fn(&mut Window, &mut App);
 
@@ -78,8 +78,9 @@ impl InteractiveElement for Popover {
 }
 
 impl RenderOnce for Popover {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let mobile = mobile_layout();
         let content = self
             .div
             .occlude()
@@ -94,7 +95,12 @@ impl RenderOnce for Popover {
                 })
             });
 
-        deferred(anchor(self.position, self.edge_offset, content))
+        if mobile {
+            // Overrides any width the caller set so the sheet spans the screen.
+            bottom_sheet(content.w_full().min_w(px(0.0)), window, cx).into_any_element()
+        } else {
+            deferred(anchor(self.position, self.edge_offset, content)).into_any_element()
+        }
     }
 }
 

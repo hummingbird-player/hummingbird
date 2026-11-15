@@ -4,9 +4,11 @@ use super::{
     components::{
         context::CloseContextMenu,
         menu::{menu, menu_item},
+        modal::bottom_sheet,
     },
     library::context_menus::navigate_to_artist,
     models::{ArtistPickerState, Models},
+    platform::mobile_layout,
     theme::Theme,
 };
 use crate::library::scan::ScanEvent;
@@ -94,22 +96,26 @@ impl Render for ArtistPickerView {
 
         let theme = cx.global::<Theme>();
 
+        let picker = div()
+            .occlude()
+            .border_1()
+            .shadow_sm()
+            .rounded(px(6.0))
+            .border_color(theme.elevated_border_color)
+            .bg(theme.elevated_background)
+            .id("artist-picker")
+            .track_focus(&self.focus_handle)
+            .on_mouse_down_out(move |_, _, cx| close(cx))
+            .on_action(move |_: &CloseContextMenu, _, cx| close(cx))
+            .child(items);
+
+        if mobile_layout() {
+            return bottom_sheet(picker.w_full(), window, cx).into_any_element();
+        }
+
         anchored()
             .position(position)
-            .child(deferred(
-                div()
-                    .occlude()
-                    .border_1()
-                    .shadow_sm()
-                    .rounded(px(6.0))
-                    .border_color(theme.elevated_border_color)
-                    .bg(theme.elevated_background)
-                    .id("artist-picker")
-                    .track_focus(&self.focus_handle)
-                    .on_mouse_down_out(move |_, _, cx| close(cx))
-                    .on_action(move |_: &CloseContextMenu, _, cx| close(cx))
-                    .child(items),
-            ))
+            .child(deferred(picker))
             .into_any_element()
     }
 }

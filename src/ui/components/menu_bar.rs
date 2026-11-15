@@ -1,7 +1,11 @@
 use gpui::{OwnedMenu, OwnedMenuItem, prelude::FluentBuilder, *};
 
 use crate::ui::{
-    components::menu::{menu, menu_item, menu_separator},
+    components::{
+        menu::{menu, menu_item, menu_separator},
+        modal::bottom_sheet,
+    },
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -20,7 +24,7 @@ impl MenuBar {
 }
 
 impl Render for MenuBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
 
         div()
@@ -129,31 +133,34 @@ impl Render for MenuBar {
                                 };
                             }
 
-                            Some(
+                            let popup = div()
+                                .occlude()
+                                .border_1()
+                                .shadow_sm()
+                                .rounded(px(6.0))
+                                .border_color(theme.elevated_border_color)
+                                .bg(theme.elevated_background)
+                                .id(("menu-bar-popup", menu_index))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_menu = None;
+                                    cx.notify();
+                                }))
+                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_menu = None;
+                                    cx.notify();
+                                }))
+                                .child(popup_menu);
+
+                            Some(if mobile_layout() {
+                                bottom_sheet(popup.w_full(), window, cx).into_any_element()
+                            } else {
                                 anchored()
                                     .anchor(Anchor::TopLeft)
                                     .offset(point(px(-8.0), px(10.0)))
-                                    .child(deferred(
-                                        div()
-                                            .occlude()
-                                            .border_1()
-                                            .shadow_sm()
-                                            .rounded(px(6.0))
-                                            .border_color(theme.elevated_border_color)
-                                            .bg(theme.elevated_background)
-                                            .id(("menu-bar-popup", menu_index))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.open_menu = None;
-                                                cx.notify();
-                                            }))
-                                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.open_menu = None;
-                                                cx.notify();
-                                            }))
-                                            .child(popup_menu),
-                                    )),
-                            )
+                                    .child(deferred(popup))
+                                    .into_any_element()
+                            })
                         } else {
                             None
                         };

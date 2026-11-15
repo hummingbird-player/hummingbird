@@ -1,11 +1,12 @@
 use cntp_i18n::tr;
 use gpui::{
     FocusHandle, FontWeight, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    StatefulInteractiveElement, Styled, div, img, px, retain_all,
+    StatefulInteractiveElement, Styled, div, img, prelude::FluentBuilder, px, retain_all,
 };
 
 use super::{
     components::modal::{OnExitHandler, modal},
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -55,26 +56,29 @@ impl RenderOnce for AboutDialog {
                         .flex()
                         .flex_col()
                         .child(
-                            div().flex().mr(px(200.0)).child(
-                                div()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::BOLD)
-                                            .font_family("Lexend")
-                                            .text_size(px(36.0))
-                                            .line_height(px(36.0))
-                                            .ml(px(-2.0))
-                                            .child(tr!("APP_NAME")),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.0))
-                                            .line_height(px(13.0))
-                                            .text_color(theme.text_secondary)
-                                            .mt(px(1.0))
-                                            .child(crate::VERSION_STRING),
-                                    ),
-                            ),
+                            div()
+                                .flex()
+                                .when(!mobile_layout(), |this| this.mr(px(200.0)))
+                                .child(
+                                    div()
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::BOLD)
+                                                .font_family("Lexend")
+                                                .text_size(px(36.0))
+                                                .line_height(px(36.0))
+                                                .ml(px(-2.0))
+                                                .child(tr!("APP_NAME")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .line_height(px(13.0))
+                                                .text_color(theme.text_secondary)
+                                                .mt(px(1.0))
+                                                .child(crate::VERSION_STRING),
+                                        ),
+                                ),
                         )
                         .child(
                             div().mt(px(15.0)).flex().child(

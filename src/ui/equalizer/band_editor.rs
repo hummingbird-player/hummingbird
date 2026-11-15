@@ -17,10 +17,12 @@ use crate::{
                 POWER, TRASH, icon,
             },
             knob::knob,
+            modal::bottom_sheet,
             segmented_control::segmented_control,
             tooltip::build_tooltip,
         },
         equalizer::mapping::{MAX_FREQ, MIN_FREQ, format_hz, parse_hz},
+        platform::mobile_layout,
         theme::Theme,
     },
 };
@@ -270,6 +272,10 @@ impl RenderOnce for BandEditor {
                     .child(q_knob),
             )
             .child(footer);
+
+        if mobile_layout() {
+            return bottom_sheet(panel.w_full(), window, cx).priority(1);
+        }
 
         deferred(
             anchored()
