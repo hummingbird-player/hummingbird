@@ -42,7 +42,7 @@ use crate::{
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
-        constants::REGULAR_BUTTON_ICON_SIZE,
+        constants::{DETAIL_ARTWORK_SIZE, MOBILE_DETAIL_ARTWORK_SIZE, REGULAR_BUTTON_ICON_SIZE},
         library::{
             collection_summary::format_collection_summary,
             context_menus::playlist::PlaylistContextMenu,
@@ -53,6 +53,7 @@ use crate::{
             },
         },
         models::{Models, PlaylistEvent},
+        platform::mobile_layout,
         theme::Theme,
         util::{create_or_retrieve_view, prune_views_keyed},
     },
@@ -752,7 +753,11 @@ impl Render for PlaylistView {
 
         let entity = cx.entity();
         let mut sort_dropdown = dropdown("playlist-sort-dropdown")
-            .w(px(220.0))
+            .w(if mobile_layout() {
+                px(140.0)
+            } else {
+                px(220.0)
+            })
             .flex_shrink_0()
             .selected(Self::base_sort(current_sort))
             .on_change(move |method: &PlaylistTrackSortMethod, _, cx| {
@@ -763,6 +768,157 @@ impl Render for PlaylistView {
         for method in BASE_SORT_METHODS {
             sort_dropdown = sort_dropdown.option(method, sort_method_label(method));
         }
+
+        let mobile = mobile_layout();
+        let artwork_size = if mobile {
+            MOBILE_DETAIL_ARTWORK_SIZE
+        } else {
+            DETAIL_ARTWORK_SIZE
+        };
+
+        let artwork = playlist_art(pl_id)
+            .size(artwork_size)
+            .radius(if mobile { px(6.0) } else { px(8.0) })
+            .has_image(has_image)
+            .revision(art_revision)
+            .cover_art_ids(cover_art_ids)
+            .system(is_liked_songs || playlist_type == PlaylistType::System);
+
+        let title = div()
+            .font_weight(FontWeight::EXTRA_BOLD)
+            .map(|this| {
+                if mobile {
+                    this.text_size(rems(1.75)).line_height(rems(2.0))
+                } else {
+                    this.text_size(rems(2.5))
+                        .line_height(rems(2.75))
+                        .mb(px(11.0))
+                }
+            })
+            .w_full()
+            .text_ellipsis()
+            .child(if is_liked_songs {
+                div().child(tr!("LIKED_SONGS"))
+            } else {
+                div().child(playlist_name)
+            });
+
+        let controls = div()
+            .flex()
+            .items_end()
+            .justify_between()
+            .gap(px(12.0))
+            .w_full()
+            .child(
+                playback_controls("playlist", !items_clone.is_empty(), false, false, {
+                    let playback_items = items_clone.clone();
+                    move |cx| {
+                        playback_items
+                            .iter()
+                            .map(|row| {
+                                QueueItemData::new(
+                                    cx,
+                                    row.track.location.clone(),
+                                    Some(row.track.id),
+                                    row.track.album_id,
+                                )
+                            })
+                            .collect()
+                    }
+                })
+                .trailing(menu_button),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.0))
+                    .items_center()
+                    .flex_shrink(1.0)
+                    .overflow_x_hidden()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_secondary)
+                            .flex_shrink_0()
+                            .child(collection_summary),
+                    )
+                    .when(!is_custom_sort, |this| {
+                        this.child(
+                            button()
+                                .size(ButtonSize::Large)
+                                .id("playlist-sort-direction-button")
+                                .on_click(cx.listener(|this: &mut PlaylistView, _, _, cx| {
+                                    this.toggle_sort_order(cx);
+                                }))
+                                .child(
+                                    icon(if Self::is_descending(self.sort_method) {
+                                        SORT_DESCENDING
+                                    } else {
+                                        SORT_ASCENDING
+                                    })
+                                    .text_color(theme.text_secondary)
+                                    .size(REGULAR_BUTTON_ICON_SIZE),
+                                )
+                                .tooltip(if Self::is_descending(self.sort_method) {
+                                    build_tooltip(tr!("SORT_ASCENDING"))
+                                } else {
+                                    build_tooltip(tr!("SORT_DESCENDING"))
+                                }),
+                        )
+                    })
+                    .child(sort_dropdown),
+            );
+
+        let header = if mobile {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .overflow_x_hidden()
+                .flex_shrink_0()
+                .px(padding)
+                .w_full()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .w_full()
+                        .overflow_x_hidden()
+                        .child(artwork)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_shrink(1.0)
+                                .w_full()
+                                .overflow_x_hidden()
+                                .child(title),
+                        ),
+                )
+                .child(controls)
+        } else {
+            div()
+                .flex()
+                .overflow_x_hidden()
+                .flex_shrink(1.0)
+                .px(padding)
+                .w_full()
+                .child(artwork)
+                .child(
+                    div()
+                        .ml(px(16.0))
+                        .mt_auto()
+                        .flex_shrink(1.0)
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .overflow_x_hidden()
+                        .child(title)
+                        .child(controls),
+                )
+        };
 
         div()
             .id("playlist-view")
@@ -789,125 +945,7 @@ impl Render for PlaylistView {
                     .flex_shrink(1.0)
                     .flex_col()
                     .h_full()
-                    .child(
-                        div()
-                            .flex()
-                            .overflow_x_hidden()
-                            .flex_shrink(1.0)
-                            .px(padding)
-                            .w_full()
-                            .child(
-                                playlist_art(pl_id)
-                                    .size(px(132.0))
-                                    .has_image(has_image)
-                                    .revision(art_revision)
-                                    .cover_art_ids(cover_art_ids)
-                                    .system(is_liked_songs || playlist_type == PlaylistType::System),
-                            )
-                            .child(
-                                div()
-                                    .ml(px(16.0))
-                                    .mt_auto()
-                                    .flex_shrink(1.0)
-                                    .flex()
-                                    .flex_col()
-                                    .w_full()
-                                    .overflow_x_hidden()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::EXTRA_BOLD)
-                                            .text_size(rems(2.5))
-                                            .line_height(rems(2.75))
-                                            .mb(px(11.0))
-                                            .w_full()
-                                            .text_ellipsis()
-                                            .child(if is_liked_songs {
-                                                div().child(tr!("LIKED_SONGS"))
-                                            } else {
-                                                div().child(playlist_name)
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_end()
-                                            .justify_between()
-                                            .gap(px(12.0))
-                                            .w_full()
-                                            .child(playback_controls(
-                                                "playlist",
-                                                !items_clone.is_empty(),
-                                                false,
-                                                false,
-                                                {
-                                                    let playback_items = items_clone.clone();
-                                                    move |cx| {
-                                                    playback_items
-                                                        .iter()
-                                                        .map(|row| {
-                                                            QueueItemData::new(
-                                                                cx,
-                                                                row.track.location.clone(),
-                                                                Some(row.track.id),
-                                                                row.track.album_id,
-                                                            )
-                                                        })
-                                                        .collect()
-                                                    }
-                                                },
-                                            )
-                                            .trailing(menu_button))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .gap(px(12.0))
-                                                    .items_center()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .text_color(theme.text_secondary)
-                                                            .child(collection_summary),
-                                                    )
-                                                    .when(!is_custom_sort, |this| {
-                                                        this.child(
-                                                            button()
-                                                                .size(ButtonSize::Large)
-                                                                .id("playlist-sort-direction-button")
-                                                                .on_click(cx.listener(
-                                                                    |this: &mut PlaylistView, _, _, cx| {
-                                                                        this.toggle_sort_order(cx);
-                                                                    },
-                                                                ))
-                                                                .child(
-                                                                    icon(
-                                                                        if Self::is_descending(
-                                                                            self.sort_method,
-                                                                        ) {
-                                                                            SORT_DESCENDING
-                                                                        } else {
-                                                                            SORT_ASCENDING
-                                                                        },
-                                                                    )
-                                                                    .text_color(theme.text_secondary)
-                                                                    .size(REGULAR_BUTTON_ICON_SIZE),
-                                                                )
-                                                                .tooltip(
-                                                                    if Self::is_descending(self.sort_method)
-                                                                    {
-                                                                        build_tooltip(tr!("SORT_ASCENDING"))
-                                                                    } else {
-                                                                        build_tooltip(tr!(
-                                                                            "SORT_DESCENDING"
-                                                                        ))
-                                                                    },
-                                                                ),
-                                                        )
-                                                    })
-                                                    .child(sort_dropdown),
-                                            ),
-                                    ),
-                            ),
-                    )
+                    .child(header)
                     .child(
                         div()
                             .id("playlist-list-container")
@@ -1208,7 +1246,11 @@ impl Render for PlaylistView {
                                                             track,
                                                             idx,
                                                             false,
-                                                            ArtistNameVisibility::Always,
+                                                            if mobile_layout() {
+                                                                ArtistNameVisibility::Never
+                                                            } else {
+                                                                ArtistNameVisibility::Always
+                                                            },
                                                             TrackItemLeftField::Art,
                                                             Some(TrackPlaylistInfo {
                                                                 id: pl_id,

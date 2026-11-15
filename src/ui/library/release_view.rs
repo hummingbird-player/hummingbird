@@ -29,6 +29,7 @@ use crate::{
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
         },
+        constants::{DETAIL_ARTWORK_SIZE, MOBILE_DETAIL_ARTWORK_SIZE},
         library::{
             collection_summary::format_collection_summary,
             context_menus::{
@@ -39,11 +40,10 @@ use crate::{
             track_listing::{ArtistNameVisibility, TrackListing},
         },
         models::{LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, PlaylistEvent, toggle_album_like},
+        platform::mobile_layout,
         theme::Theme,
     },
 };
-
-pub const RELEASE_ARTWORK_SIZE: Pixels = px(140.0);
 
 fn release_artwork_key(album_id: i64) -> ManagedImageKey {
     ManagedImageKey::Album(album_id)
@@ -221,7 +221,11 @@ impl ReleaseView {
         self.track_listing = Some(TrackListing::new(
             cx,
             data.tracks.clone(),
-            ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone()),
+            if mobile_layout() {
+                ArtistNameVisibility::Never
+            } else {
+                ArtistNameVisibility::OnlyIfDifferent(self.artist_name.clone())
+            },
             album.number_display_mode,
             false,
             true,
@@ -272,8 +276,165 @@ impl ReleaseView {
         window: &mut Window,
         cx: &mut Context<Self>,
         padding: Pixels,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let availability = snapshot(cx);
+        let mobile = mobile_layout();
+        let artwork_size = if mobile {
+            MOBILE_DETAIL_ARTWORK_SIZE
+        } else {
+            DETAIL_ARTWORK_SIZE
+        };
+        let artwork_rounding = if mobile { px(6.0) } else { px(10.0) };
+
+        let artwork = div()
+            .rounded(artwork_rounding)
+            .bg(theme.album_art_background)
+            .shadow_sm()
+            .w(artwork_size)
+            .h(artwork_size)
+            .flex_shrink_0()
+            .overflow_hidden()
+            .child(
+                managed_image(
+                    ("release-artwork", self.album().id as usize),
+                    release_artwork_key(self.album().id),
+                )
+                .target_logical_px(f32::from(artwork_size))
+                .w(artwork_size)
+                .h(artwork_size)
+                .overflow_hidden()
+                .flex()
+                // TODO: Ideally this should be ObjectFit::Cover, but this
+                // breaks rounding
+                // FIXME: This is a GPUI bug
+                .object_fit(ObjectFit::Fill)
+                .rounded(artwork_rounding),
+            );
+
+        let artist = div()
+            .id(("release_view_artist", self.album().id as usize))
+            .text_ellipsis()
+            .cursor_pointer()
+            .text_color(theme.text_secondary)
+            .map(|this| {
+                if mobile {
+                    this.text_size(px(13.0))
+                        .line_height(px(13.0))
+                        .mb(px(4.0))
+                        .mt(px(3.0))
+                } else {
+                    this.text_size(px(15.0)).line_height(px(15.0)).mb(px(5.0))
+                }
+            })
+            .on_click({
+                let album_id = self.album().id;
+                move |ev, _, cx| {
+                    navigate_to_album_artists(cx, album_id, ev.position());
+                }
+            })
+            .when_some(self.artist_name.clone(), |this, artist| this.child(artist));
+
+        let title = div()
+            .font_weight(FontWeight::EXTRA_BOLD)
+            .map(|this| {
+                if mobile {
+                    this.text_size(rems(1.75)).line_height(rems(2.0))
+                } else {
+                    this.text_size(rems(2.5))
+                        .line_height(rems(2.75))
+                        .mb(px(11.0))
+                }
+            })
+            .w_full()
+            .text_ellipsis()
+            .child(self.album().title.clone());
+
+        let controls = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.0))
+            .child(
+                playback_controls(
+                    "release",
+                    has_available_tracks,
+                    current_track_in_album,
+                    is_playing,
+                    {
+                        let tracks = self
+                            .track_listing
+                            .as_ref()
+                            .expect("release data is loaded before use")
+                            .tracks()
+                            .clone();
+                        let availability = availability.clone();
+                        move |cx| {
+                            tracks
+                                .iter()
+                                .filter(|track| {
+                                    availability.is_track_path_available(&track.location)
+                                })
+                                .map(|track| {
+                                    QueueItemData::new(
+                                        cx,
+                                        track.location.clone(),
+                                        Some(track.id),
+                                        track.album_id,
+                                    )
+                                })
+                                .collect()
+                        }
+                    },
+                )
+                .show_add_to_queue(false)
+                .trailing(self.render_menu_button(window, cx)),
+            )
+            .child(self.render_like_button(theme))
+            .child(
+                div()
+                    .ml_auto()
+                    .text_sm()
+                    .text_color(theme.text_secondary)
+                    .child(self.collection_summary.clone()),
+            );
+
+        if mobile {
+            // Two rows: artwork + names, then the controls.
+            return div()
+                .pt(px(49.0) + padding)
+                .px(padding)
+                .pb(padding)
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .overflow_x_hidden()
+                .w_full()
+                .relative()
+                .child(LibraryViewHeader::detail("release_close"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.0))
+                        .w_full()
+                        .overflow_x_hidden()
+                        .child(artwork)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_shrink(1.0)
+                                .w_full()
+                                .overflow_x_hidden()
+                                .child(artist)
+                                .child(title),
+                        ),
+                )
+                .child(controls.w_full())
+                .into_any_element();
+        }
 
         div()
             .pt(px(49.0))
@@ -284,33 +445,7 @@ impl ReleaseView {
             .w_full()
             .relative()
             .child(LibraryViewHeader::detail("release_close"))
-            .child(
-                div()
-                    .m(padding)
-                    .rounded(px(10.0))
-                    .bg(theme.album_art_background)
-                    .shadow_sm()
-                    .w(RELEASE_ARTWORK_SIZE)
-                    .h(RELEASE_ARTWORK_SIZE)
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(
-                        managed_image(
-                            ("release-artwork", self.album().id as usize),
-                            release_artwork_key(self.album().id),
-                        )
-                        .target_logical_px(140.0)
-                        .w(RELEASE_ARTWORK_SIZE)
-                        .h(RELEASE_ARTWORK_SIZE)
-                        .overflow_hidden()
-                        .flex()
-                        // TODO: Ideally this should be ObjectFit::Cover, but this
-                        // breaks rounding
-                        // FIXME: This is a GPUI bug
-                        .object_fit(ObjectFit::Fill)
-                        .rounded(px(10.0)),
-                    ),
-            )
+            .child(artwork.m(padding))
             .child(
                 div()
                     .h_full()
@@ -321,85 +456,11 @@ impl ReleaseView {
                     .flex_col()
                     .w_full()
                     .overflow_x_hidden()
-                    .child(
-                        div()
-                            .id(("release_view_artist", self.album().id as usize))
-                            .text_ellipsis()
-                            .cursor_pointer()
-                            .text_size(px(15.0))
-                            .text_color(theme.text_secondary)
-                            .line_height(px(15.0))
-                            .mb(px(5.0))
-                            .on_click({
-                                let album_id = self.album().id;
-                                move |ev, _, cx| {
-                                    navigate_to_album_artists(cx, album_id, ev.position());
-                                }
-                            })
-                            .when_some(self.artist_name.clone(), |this, artist| this.child(artist)),
-                    )
-                    .child(
-                        div()
-                            .font_weight(FontWeight::EXTRA_BOLD)
-                            .text_size(rems(2.5))
-                            .line_height(rems(2.75))
-                            .mb(px(11.0))
-                            .w_full()
-                            .text_ellipsis()
-                            .child(self.album().title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(
-                                playback_controls(
-                                    "release",
-                                    has_available_tracks,
-                                    current_track_in_album,
-                                    is_playing,
-                                    {
-                                        let tracks = self
-                                            .track_listing
-                                            .as_ref()
-                                            .expect("release data is loaded before use")
-                                            .tracks()
-                                            .clone();
-                                        let availability = availability.clone();
-                                        move |cx| {
-                                            tracks
-                                                .iter()
-                                                .filter(|track| {
-                                                    availability
-                                                        .is_track_path_available(&track.location)
-                                                })
-                                                .map(|track| {
-                                                    QueueItemData::new(
-                                                        cx,
-                                                        track.location.clone(),
-                                                        Some(track.id),
-                                                        track.album_id,
-                                                    )
-                                                })
-                                                .collect()
-                                        }
-                                    },
-                                )
-                                .show_add_to_queue(false)
-                                .trailing(self.render_menu_button(window, cx)),
-                            )
-                            .child(self.render_like_button(theme))
-                            .child(
-                                div()
-                                    .ml_auto()
-                                    .text_sm()
-                                    .text_color(theme.text_secondary)
-                                    .child(self.collection_summary.clone()),
-                            ),
-                    ),
+                    .child(artist)
+                    .child(title)
+                    .child(controls),
             )
+            .into_any_element()
     }
 
     fn render_like_button(&self, theme: &Theme) -> AnyElement {
