@@ -44,7 +44,6 @@ pub mod add_to_playlist;
 mod album_view;
 mod artist_detail_view;
 mod artist_view;
-mod bottom_bar;
 mod collection_summary;
 pub mod context_menus;
 pub mod files_view;
@@ -53,13 +52,12 @@ pub mod missing_folder_dialog;
 pub mod nav_buttons;
 pub mod playlist_view;
 mod release_view;
-mod sidebar;
+pub(in crate::ui) mod sidebar;
 mod table_view_header;
 mod track_listing;
 mod track_view;
 mod update_playlist;
 
-pub use bottom_bar::BottomBar;
 
 actions!(library, [NavigateBack, NavigateForward, EscapeBack]);
 

@@ -12,6 +12,7 @@ pub struct WindowChrome {
     content: AnyElement,
     div: Div,
     background: Option<Hsla>,
+    content_padding: Pixels,
 }
 
 impl WindowChrome {
@@ -20,11 +21,18 @@ impl WindowChrome {
             content: content.into_any_element(),
             div: div(),
             background: None,
+            content_padding: px(6.0),
         }
     }
 
     pub fn background(mut self, color: impl Into<Hsla>) -> Self {
         self.background = Some(color.into());
+        self
+    }
+
+    /// Sets the padding between the window frame and the content (6px by default).
+    pub fn content_padding(mut self, padding: Pixels) -> Self {
+        self.content_padding = padding;
         self
     }
 }
@@ -164,7 +172,7 @@ impl RenderOnce for WindowChrome {
                     .flex_col()
                     .max_w_full()
                     .max_h_full()
-                    .p(px(6.0))
+                    .p(self.content_padding)
                     .child(self.content),
             );
 

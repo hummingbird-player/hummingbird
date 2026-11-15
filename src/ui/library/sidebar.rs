@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-pub(super) mod playlists;
+pub(in crate::ui) mod playlists;
 
 pub struct Sidebar {
     playlists: Entity<PlaylistList>,

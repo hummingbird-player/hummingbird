@@ -15,6 +15,7 @@ mod header;
 mod keymap;
 pub mod library;
 mod lyrics;
+pub mod mobile;
 pub mod models;
 mod now_playing;
 pub mod platform;
