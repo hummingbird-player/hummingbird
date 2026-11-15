@@ -1,10 +1,16 @@
 use std::path::Path;
 
+use gpui_ios::{StatusBarContentStyle, ios::set_status_bar_style};
+use objc2::MainThreadMarker;
 use objc2_avf_audio::{AVAudioSession, AVAudioSessionCategoryPlayback};
+use objc2_ui_kit::{UIApplication, UIUserInterfaceStyle, UIWindowScene};
 use sqlx::SqlitePool;
 use tracing::{info, warn};
 
-use crate::paths::container::{MARKER, container_id, is_container_id, relocate};
+use crate::{
+    paths::container::{MARKER, container_id, is_container_id, relocate},
+    ui::theme::Theme,
+};
 
 /// Puts the app's audio session in the playback category.
 ///
@@ -26,6 +32,45 @@ pub fn configure_audio_session() {
         }
         if let Err(error) = session.setActive_error(true) {
             warn!("Couldn't activate the audio session: {error:?}");
+        }
+    }
+}
+
+/// Tells UIKit whether the selected theme is light or dark, so the status bar, home indicator and
+/// system UI (keyboard, menus) are drawn in a contrasting color instead of the system default.
+///
+/// Must be called on the main thread, and again whenever the theme changes or a window opens, since
+/// the interface style is overridden per window.
+pub fn apply_theme_appearance(theme: &Theme) {
+    let Some(main_thread) = MainThreadMarker::new() else {
+        warn!("apply_theme_appearance called off the main thread; ignoring");
+        return;
+    };
+
+    // judge by the text color rather than a background, since several backgrounds are in use:
+    // light text means the theme is dark
+    let text = theme.text;
+    let luminance = 0.2126 * text.r + 0.7152 * text.g + 0.0722 * text.b;
+    let dark = luminance > 0.5;
+
+    set_status_bar_style(if dark {
+        StatusBarContentStyle::Light
+    } else {
+        StatusBarContentStyle::Dark
+    });
+
+    let style = if dark {
+        UIUserInterfaceStyle::Dark
+    } else {
+        UIUserInterfaceStyle::Light
+    };
+    let application = UIApplication::sharedApplication(main_thread);
+    for scene in application.connectedScenes().iter() {
+        let Ok(scene) = scene.downcast::<UIWindowScene>() else {
+            continue;
+        };
+        for window in scene.windows().iter() {
+            window.setOverrideUserInterfaceStyle(style);
         }
     }
 }

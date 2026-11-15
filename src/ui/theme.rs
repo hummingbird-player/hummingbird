@@ -556,10 +556,14 @@ pub fn setup_theme(cx: &mut App, data_dir: PathBuf) {
     });
 
     cx.set_global(load_selected_theme(&data_dir, selected_theme.as_deref()));
+    #[cfg(target_os = "ios")]
+    crate::ios::apply_theme_appearance(cx.global::<Theme>());
     let theme_transmitter = cx.new(|_| ThemeEvTransmitter);
 
     cx.subscribe(&theme_transmitter, |_, theme, cx| {
         cx.set_global(theme.clone());
+        #[cfg(target_os = "ios")]
+        crate::ios::apply_theme_appearance(theme);
         let theme = theme.clone();
         cx.defer(move |cx| {
             let windows = cx.windows();

@@ -25,7 +25,7 @@ mod scroll_follow;
 mod search;
 mod settings;
 mod theater;
-mod theme;
+pub mod theme;
 mod toasts;
 mod troubleshooting;
 pub mod util;

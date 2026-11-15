@@ -141,7 +141,17 @@ objc2-media-player = { version = "0.3", features = ["MPNowPlayingInfoCenter"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2-avf-audio = { version = "0.3", features = ["AVAudioSession", "AVAudioSessionTypes"] }
-objc2-ui-kit = { version = "0.3", features = ["UIImage"] }
+gpui_ios = { package = "gpui-ios-gpui-unofficial", version = "1.27" }
+objc2-ui-kit = { version = "0.3", features = [
+    "UIApplication",
+    "UIImage",
+    "UIInterface",
+    "UIResponder",
+    "UIScene",
+    "UIView",
+    "UIWindow",
+    "UIWindowScene",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

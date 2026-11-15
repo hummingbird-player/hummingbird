@@ -3408,6 +3408,7 @@ dependencies = [
  "file-rotate",
  "futures",
  "globwalk",
+ "gpui-ios-gpui-unofficial",
  "gpui-platform-gpui-unofficial",
  "gpui-unofficial",
  "icu_collator",

@@ -439,6 +439,9 @@ fn ensure_main_window(
     let window = cx.open_window(options, |window, cx| {
         build_main_window(window, cx, toast_layer)
     })?;
+    // the window didn't exist when the theme was first applied
+    #[cfg(target_os = "ios")]
+    crate::ios::apply_theme_appearance(cx.global::<Theme>());
     focus_main_window(window, cx);
     Ok(window)
 }

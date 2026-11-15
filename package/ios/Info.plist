@@ -44,6 +44,9 @@
 			</array>
 		</dict>
 	</dict>
+	<!-- the default theme is dark; the selected theme is applied at runtime (see src/ios.rs) -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiresFullScreen</key>
