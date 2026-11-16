@@ -146,6 +146,12 @@ impl TrackItem {
             })
             .detach();
 
+            let playback_info = cx.global::<PlaybackInfo>().clone();
+            cx.observe(&playback_info.current_track, |_: &mut Self, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
             Self {
                 hover_group: format!("track-{}", track.id).into(),
                 is_liked: None,

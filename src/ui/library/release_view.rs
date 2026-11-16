@@ -142,6 +142,16 @@ impl ReleaseView {
             })
             .detach();
 
+            let playback_info = cx.global::<PlaybackInfo>().clone();
+            cx.observe(&playback_info.current_track, |_: &mut Self, _, cx| {
+                cx.notify();
+            })
+            .detach();
+            cx.observe(&playback_info.playback_state, |_: &mut Self, _, cx| {
+                cx.notify();
+            })
+            .detach();
+
             let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
             cx.subscribe(&playlist_tracker, |this: &mut Self, _, ev, cx| {
                 if *ev != PlaylistEvent::PlaylistUpdated(LIKED_SONGS_PLAYLIST_ID) {

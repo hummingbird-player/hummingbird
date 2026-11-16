@@ -895,7 +895,7 @@
   },
   "LIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:413",
+    "definedIn": "src/ui/library/release_view.rs:423",
     "plural": false,
     "description": null
   },
@@ -1111,13 +1111,13 @@
   },
   "RELEASED_DATE": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:537",
+    "definedIn": "src/ui/library/release_view.rs:547",
     "plural": false,
     "description": null
   },
   "RELEASED_YEAR": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:552",
+    "definedIn": "src/ui/library/release_view.rs:562",
     "plural": false,
     "description": null
   },
@@ -1789,13 +1789,13 @@
   },
   "TRACK_DISC": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:217",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:223",
     "plural": false,
     "description": null
   },
   "TRACK_DISC_SUBTITLE": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:211",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:217",
     "plural": false,
     "description": null
   },
@@ -1807,7 +1807,7 @@
   },
   "TRACK_SIDE": {
     "context": "track_item.rs",
-    "definedIn": "src/ui/library/track_listing/track_item.rs:205",
+    "definedIn": "src/ui/library/track_listing/track_item.rs:211",
     "plural": false,
     "description": null
   },
@@ -1837,7 +1837,7 @@
   },
   "UNLIKE_ALBUM": {
     "context": "release_view.rs",
-    "definedIn": "src/ui/library/release_view.rs:411",
+    "definedIn": "src/ui/library/release_view.rs:421",
     "plural": false,
     "description": null
   },
