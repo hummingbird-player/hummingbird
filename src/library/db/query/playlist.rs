@@ -11,6 +11,7 @@ const PLAYLIST_COLUMNS: &str = "\
     playlist.created_at,
     playlist.type,
     playlist.position,
+    playlist.image IS NOT NULL AS has_image,
     COUNT(playlist_item.id) AS track_count,
     COALESCE(SUM(track.duration), 0) AS total_duration";
 

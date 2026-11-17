@@ -6,7 +6,6 @@ use crate::ui::{constants::MAIN_CONTROL_ROUNDING, theme::Theme};
 
 actions!(context, [CloseContextMenu]);
 
-type CloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type OpenHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>;
 
@@ -18,7 +17,6 @@ pub struct ContextMenu {
     pub(self) menu: Option<Div>,
     pub(self) menu_fn: Option<MenuBuilder>,
     pub(self) on_open: Option<OpenHandler>,
-    pub(self) on_close: Option<CloseHandler>,
 }
 
 impl ContextMenu {
@@ -40,11 +38,6 @@ impl ContextMenu {
         builder: impl Fn(&mut Window, &mut App) -> Option<AnyElement> + 'static,
     ) -> Self {
         self.menu_fn = Some(Rc::new(builder));
-        self
-    }
-
-    pub fn on_close(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        self.on_close = Some(Rc::new(handler));
         self
     }
 
@@ -81,9 +74,6 @@ impl RenderOnce for ContextMenu {
         let state_out = state.clone();
         let state_esc = state.clone();
         let on_open = self.on_open.clone();
-        let on_click_close = self.on_close.clone();
-        let on_out_close = self.on_close.clone();
-        let on_esc_close = self.on_close.clone();
         let focus_open = focus_handle.clone();
 
         let theme = cx.global::<Theme>().clone();
@@ -107,28 +97,19 @@ impl RenderOnce for ContextMenu {
                         .bg(theme.elevated_background)
                         .id("menu")
                         .track_focus(&focus_handle)
-                        .on_click(move |_, window, cx| {
-                            if let Some(on_close) = &on_click_close {
-                                on_close(window, cx);
-                            }
+                        .on_click(move |_, _, cx| {
                             state_click.update(cx, |pos, cx| {
                                 *pos = None;
                                 cx.notify();
                             });
                         })
-                        .on_mouse_down_out(move |_, window, cx| {
-                            if let Some(on_close) = &on_out_close {
-                                on_close(window, cx);
-                            }
+                        .on_mouse_down_out(move |_, _, cx| {
                             state_out.update(cx, |pos, cx| {
                                 *pos = None;
                                 cx.notify();
                             });
                         })
-                        .on_action(move |_: &CloseContextMenu, window, cx| {
-                            if let Some(on_close) = &on_esc_close {
-                                on_close(window, cx);
-                            }
+                        .on_action(move |_: &CloseContextMenu, _, cx| {
                             state_esc.update(cx, |pos, cx| {
                                 *pos = None;
                                 cx.notify();
@@ -167,6 +148,5 @@ pub fn context(id: impl Into<ElementId>) -> ContextMenu {
         menu: Some(div()),
         menu_fn: None,
         on_open: None,
-        on_close: None,
     }
 }

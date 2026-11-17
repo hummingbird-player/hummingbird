@@ -18,6 +18,7 @@ pub struct Playlist {
     #[sqlx(rename = "type")]
     pub playlist_type: PlaylistType,
     pub position: i64,
+    pub has_image: bool,
     pub track_count: i64,
     pub total_duration: i64,
 }

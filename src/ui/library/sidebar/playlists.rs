@@ -11,11 +11,8 @@ use tracing::error;
 use crate::{
     library::{
         db::{self, TrackColumn, playlists, tracks},
-        playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
-    playback::interface::PlaybackInterface,
-    playback::queue::QueueItemData,
     settings::SettingsGlobal,
     ui::{
         app::Pool,
@@ -28,15 +25,16 @@ use crate::{
                 DragDropListManager, DragPreview, DropIndicator, TrackDragData,
                 check_drag_cancelled, handle_drag_move, handle_drop,
             },
-            icons::{CROSS, FILE_EXPORT, PENCIL, PLAY, PLAYLIST, PLUS, SHUFFLE, STAR},
-            menu::{menu, menu_item, menu_separator},
+            icons::{PLAYLIST, PLUS, STAR},
             popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
             sidebar::sidebar_item,
             textbox::Textbox,
         },
-        library::{NavigationHistory, ViewSwitchMessage},
-        models::{Models, PlaybackInfo, PlaylistEvent},
+        library::{
+            NavigationHistory, ViewSwitchMessage, context_menus::playlist::PlaylistContextMenu,
+        },
+        models::{Models, PlaylistEvent},
         theme::Theme,
     },
 };
@@ -52,7 +50,6 @@ pub struct PlaylistList {
     new_playlist_input: Entity<Textbox>,
     rename_popover_playlist: Option<i64>,
     rename_playlist_input: Entity<Textbox>,
-    pending_delete_playlist: Option<i64>,
     drag_drop_manager: Entity<DragDropListManager>,
 }
 
@@ -121,7 +118,6 @@ impl PlaylistList {
                 new_playlist_input,
                 rename_popover_playlist: None,
                 rename_playlist_input,
-                pending_delete_playlist: None,
                 drag_drop_manager,
             }
         })
@@ -189,103 +185,6 @@ impl PlaylistList {
         self.rename_popover_playlist = None;
         cx.notify();
     }
-
-    fn clear_pending_delete_playlist(&mut self, cx: &mut Context<Self>) {
-        if self.pending_delete_playlist.take().is_some() {
-            cx.notify();
-        }
-    }
-}
-
-fn delete_playlist_and_refresh(pl_id: i64, cx: &mut App) {
-    let pool = cx.global::<Pool>().0.clone();
-    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-    let playlist_sort_methods = cx.global::<Models>().playlist_sort_methods.clone();
-    let switcher_model = cx.global::<Models>().switcher_model.clone();
-    cx.spawn(async move |cx| {
-        let task = crate::RUNTIME.spawn(async move { db::delete_playlist(&pool, pl_id).await });
-        match task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                error!("Failed to delete playlist: {err}");
-                return;
-            }
-            Err(err) => {
-                error!("delete playlist task panicked: {err}");
-                return;
-            }
-        }
-        playlist_tracker.update(cx, |_, cx| cx.emit(PlaylistEvent::PlaylistDeleted(pl_id)));
-        playlist_sort_methods.update(cx, |map, _| {
-            map.remove(&pl_id);
-        });
-        switcher_model.update(cx, |history, cx| {
-            history.retain(|v| *v != ViewSwitchMessage::Playlist(pl_id));
-            cx.emit(ViewSwitchMessage::Refresh);
-            cx.notify();
-        });
-    })
-    .detach();
-}
-
-enum PlaylistQueueAction {
-    Replace,
-    PlayNext,
-    Shuffle,
-    Append,
-}
-
-fn apply_playlist_queue_action(pl_id: i64, action: PlaylistQueueAction, cx: &mut App) {
-    let pool = cx.global::<Pool>().0.clone();
-    cx.spawn(async move |cx| {
-        let task = crate::RUNTIME.spawn(async move {
-            playlists()
-                .by_id(pl_id)
-                .track_rows()
-                .fetch_rows(&pool)
-                .await
-        });
-        let rows = match task.await {
-            Ok(Ok(rows)) => rows,
-            Ok(Err(err)) => {
-                error!("could not load playlist tracks: {err}");
-                return;
-            }
-            Err(err) => {
-                error!("playlist tracks task panicked: {err}");
-                return;
-            }
-        };
-        cx.update(|cx| {
-            let tracks = rows
-                .into_iter()
-                .map(|row| {
-                    QueueItemData::new(
-                        cx,
-                        row.track.location,
-                        Some(row.track.id),
-                        row.track.album_id,
-                    )
-                })
-                .collect();
-            let interface = cx.global::<PlaybackInterface>();
-            match action {
-                PlaylistQueueAction::Replace => interface.replace_queue(tracks),
-                PlaylistQueueAction::PlayNext => {
-                    let queue_position = cx.global::<Models>().queue.read(cx).position;
-                    interface.insert_list_at(tracks, queue_position + 1);
-                }
-                PlaylistQueueAction::Shuffle => {
-                    if !*cx.global::<PlaybackInfo>().shuffling.read(cx) {
-                        interface.toggle_shuffle();
-                    }
-                    interface.replace_queue(tracks);
-                }
-                PlaylistQueueAction::Append => interface.queue_list(tracks),
-            }
-        });
-    })
-    .detach();
 }
 
 impl Render for PlaylistList {
@@ -589,7 +488,6 @@ impl Render for PlaylistList {
             let rename_open = self.rename_popover_playlist == Some(pl_id);
             let weak_self = weak_entity.clone();
             let weak_self2 = weak_entity.clone();
-            let weak_context = weak_entity.clone();
             let name = playlist.name.0.clone();
 
             main = main.child(
@@ -597,156 +495,32 @@ impl Render for PlaylistList {
                     .relative()
                     .when(item_state.is_being_dragged, |this| this.opacity(0.5))
                     .child(
-                        context(("playlist", pl_id as usize))
-                            .with(item)
-                            .on_close(move |_, cx| {
-                                if let Some(entity) = weak_context.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.clear_pending_delete_playlist(cx);
-                                    });
-                                }
-                            })
-                            .child(
-                                div().bg(theme.elevated_background).child(
-                                    menu()
-                                        .item(menu_item(
-                                            "playlist_play",
-                                            Some(PLAY),
-                                            tr!("PLAY"),
-                                            move |_, _, cx| {
-                                                apply_playlist_queue_action(
-                                                    pl_id,
-                                                    PlaylistQueueAction::Replace,
-                                                    cx,
-                                                );
-                                            },
-                                        ))
-                                        .item(menu_item(
-                                            "playlist_play_next",
-                                            None::<&'static str>,
-                                            tr!("PLAY_NEXT"),
-                                            move |_, _, cx| {
-                                                apply_playlist_queue_action(
-                                                    pl_id,
-                                                    PlaylistQueueAction::PlayNext,
-                                                    cx,
-                                                );
-                                            },
-                                        ))
-                                        .item(menu_item(
-                                            "playlist_shuffle",
-                                            Some(SHUFFLE),
-                                            tr!("SHUFFLE"),
-                                            move |_, _, cx| {
-                                                apply_playlist_queue_action(
-                                                    pl_id,
-                                                    PlaylistQueueAction::Shuffle,
-                                                    cx,
-                                                );
-                                            },
-                                        ))
-                                        .item(menu_item(
-                                            "playlist_add_to_queue",
-                                            Some(PLUS),
-                                            tr!("ADD_TO_QUEUE"),
-                                            move |_, _, cx| {
-                                                apply_playlist_queue_action(
-                                                    pl_id,
-                                                    PlaylistQueueAction::Append,
-                                                    cx,
-                                                );
-                                            },
-                                        ))
-                                        .item(menu_separator())
-                                        .when(!is_system_playlist, |menu| {
-                                            menu.item(menu_item(
-                                                "rename_playlist",
-                                                Some(PENCIL),
-                                                tr!("RENAME_PLAYLIST", "Rename playlist"),
-                                                move |_, window, cx| {
-                                                    if let Some(entity) = weak_self.upgrade() {
-                                                        let name = name.clone();
-                                                        entity.update(cx, move |this, cx| {
-                                                            this.rename_popover_playlist =
-                                                                Some(pl_id);
-                                                            this.rename_playlist_input
-                                                                .read(cx)
-                                                                .focus_handle()
-                                                                .focus(window, cx);
+                        context(("playlist", pl_id as usize)).with(item).child(
+                            div().bg(theme.elevated_background).child(
+                                PlaylistContextMenu::new(pl_id, playlist_label, is_system_playlist)
+                                    .on_rename(move |window, cx| {
+                                        if let Some(entity) = weak_self.upgrade() {
+                                            let name = name.clone();
+                                            entity.update(cx, move |this, cx| {
+                                                this.rename_popover_playlist = Some(pl_id);
+                                                this.rename_playlist_input
+                                                    .read(cx)
+                                                    .focus_handle()
+                                                    .focus(window, cx);
 
-                                                            this.rename_playlist_input.update(
-                                                                cx,
-                                                                move |input, cx| {
-                                                                    input.set_value(cx, name);
-                                                                },
-                                                            );
-
-                                                            cx.notify();
-                                                        });
-                                                    }
-                                                },
-                                            ))
-                                        })
-                                        .item(menu_item(
-                                            "export_playlist",
-                                            Some(FILE_EXPORT),
-                                            tr!("EXPORT_PLAYLIST", "Export to M3U"),
-                                            {
-                                                move |_, _, cx| {
-                                                    // TODO: when toasts are added show this error
-                                                    let _ =
-                                                        export_playlist(cx, pl_id, &playlist_label);
-                                                }
-                                            },
-                                        ))
-                                        .when(!is_system_playlist, |menu| {
-                                            if self.pending_delete_playlist == Some(pl_id) {
-                                                let weak_for_delete = weak_entity.clone();
-                                                menu.item(
-                                                    menu_item(
-                                                        "delete_playlist_confirm",
-                                                        Some(CROSS),
-                                                        tr!(
-                                                            "DELETE_PLAYLIST_CONFIRM",
-                                                            "Click again to delete"
-                                                        ),
-                                                        move |_, _, cx| {
-                                                            if let Some(entity) =
-                                                                weak_for_delete.upgrade()
-                                                            {
-                                                                entity.update(cx, |this, cx| {
-                                                                    this.clear_pending_delete_playlist(cx);
-                                                                });
-                                                            }
-                                                            delete_playlist_and_refresh(pl_id, cx);
-                                                        },
-                                                    )
-                                                    .text_color(theme.status_error)
-                                                    .icon_color(theme.status_error),
-                                                )
-                                            } else {
-                                                let weak_for_confirm = weak_entity.clone();
-                                                menu.item(menu_item(
-                                                    "delete_playlist",
-                                                    Some(CROSS),
-                                                    tr!("DELETE_PLAYLIST", "Delete playlist"),
-                                                    move |_, _, cx| {
-                                                        if let Some(entity) =
-                                                            weak_for_confirm.upgrade()
-                                                        {
-                                                            entity.update(cx, |this, cx| {
-                                                                this.pending_delete_playlist =
-                                                                    Some(pl_id);
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                        cx.stop_propagation();
+                                                this.rename_playlist_input.update(
+                                                    cx,
+                                                    move |input, cx| {
+                                                        input.set_value(cx, name);
                                                     },
-                                                ))
-                                            }
-                                        }),
-                                ),
+                                                );
+
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
                             ),
+                        ),
                     )
                     .when(rename_open && !is_system_playlist, |this| {
                         this.child(

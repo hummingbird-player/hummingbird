@@ -1,6 +1,7 @@
 pub mod album;
 pub mod artist;
 pub mod info_section;
+pub mod playlist;
 pub mod track;
 
 use std::{path::Path, rc::Rc, sync::Arc};

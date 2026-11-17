@@ -74,6 +74,24 @@ pub async fn rename_playlist(pool: &SqlitePool, playlist_id: i64, name: &str) ->
     Ok(())
 }
 
+pub async fn set_playlist_art(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    image: &[u8],
+    thumb: &[u8],
+) -> sqlx::Result<()> {
+    let query = include_str!("../../queries/playlist/set_playlist_art.sql");
+
+    sqlx::query(query)
+        .bind(image)
+        .bind(thumb)
+        .bind(playlist_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 pub async fn reorder_playlist(
     pool: &SqlitePool,
     playlist_id: i64,

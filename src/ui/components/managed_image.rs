@@ -90,6 +90,7 @@ fn decode_to_render_image(data: &[u8], max_px: Option<u32>) -> anyhow::Result<Ar
 pub enum ManagedImageKey {
     Album(i64),
     Track(i64),
+    Playlist { id: i64, revision: u64 },
     TrackFile(PathBuf),
 }
 
@@ -131,7 +132,9 @@ impl ManagedImageKey {
                 )
                 .await?
             }
-            ManagedImageKey::Album(id) | ManagedImageKey::Track(id) => {
+            ManagedImageKey::Album(id)
+            | ManagedImageKey::Track(id)
+            | ManagedImageKey::Playlist { id, .. } => {
                 let query = match (self, thumb) {
                     (ManagedImageKey::Album(_), true) => {
                         include_str!("../../../queries/assets/find_album_thumb.sql")
@@ -144,6 +147,12 @@ impl ManagedImageKey {
                     }
                     (ManagedImageKey::Track(_), false) => {
                         include_str!("../../../queries/assets/find_track_art.sql")
+                    }
+                    (ManagedImageKey::Playlist { .. }, true) => {
+                        include_str!("../../../queries/assets/find_playlist_thumb.sql")
+                    }
+                    (ManagedImageKey::Playlist { .. }, false) => {
+                        include_str!("../../../queries/assets/find_playlist_art.sql")
                     }
                     (ManagedImageKey::TrackFile(_), _) => unreachable!(),
                 };
@@ -428,9 +437,7 @@ impl Element for ManagedImage {
             let mut corners = Corners::default();
             corners.refine(&self.style.corner_radii);
             let corner_radii = corners.to_pixels(window.rem_size());
-            if let Err(e) =
-                window.paint_image(new_bounds, new_bounds, corner_radii, image, 0, false)
-            {
+            if let Err(e) = window.paint_image(bounds, new_bounds, corner_radii, image, 0, false) {
                 error!("Failed to paint image: {:?}", e);
             }
         }

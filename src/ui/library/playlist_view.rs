@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, DragMoveEvent, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, Point, Render, SharedString, StatefulInteractiveElement, Styled,
-    UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder, px, rems, uniform_list,
+    AnyElement, App, AppContext, Context, DragMoveEvent, Entity, FocusHandle, FontWeight,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Point, Render, SharedString,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, actions, div,
+    prelude::FluentBuilder, px, rems, uniform_list,
 };
 use rustc_hash::FxHashMap;
 use tracing::error;
@@ -30,8 +31,10 @@ use crate::{
                 handle_track_drop,
             },
             dropdown::dropdown,
-            icons::{PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
+            icons::{DOTS_VERTICAL, PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
+            managed_image::{ManagedImageKey, managed_image},
             playback_controls::playback_controls,
+            popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
             tooltip::build_tooltip,
@@ -39,6 +42,7 @@ use crate::{
         constants::REGULAR_BUTTON_ICON_SIZE,
         library::{
             collection_summary::format_collection_summary,
+            context_menus::playlist::PlaylistContextMenu,
             library_view_header::LibraryViewHeader,
             track_listing::{
                 ArtistNameVisibility,
@@ -194,6 +198,8 @@ pub struct PlaylistView {
     drag_drop_manager: Entity<DragDropListManager>,
     list_id: gpui::ElementId,
     sort_method: PlaylistTrackSortMethod,
+    art_revision: u64,
+    menu_open: bool,
 }
 
 impl PlaylistView {
@@ -250,6 +256,7 @@ impl PlaylistView {
                         && *id == this.playlist_id
                     {
                         let id = *id;
+                        this.art_revision += 1;
                         let pool = cx.global::<Pool>().0.clone();
                         this.playlist.update(cx, |resource, cx| {
                             resource.load(cx, id, async move {
@@ -320,8 +327,68 @@ impl PlaylistView {
                 drag_drop_manager,
                 list_id,
                 sort_method,
+                art_revision: 0,
+                menu_open: false,
             }
         })
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        self.menu_open = false;
+        cx.notify();
+    }
+
+    fn render_menu_button(
+        &self,
+        playlist_id: i64,
+        label: SharedString,
+        is_system: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let menu_open = self.menu_open;
+
+        div()
+            .relative()
+            .flex()
+            .child(
+                button()
+                    .id("playlist-menu-button")
+                    .size(ButtonSize::Large)
+                    .flex_none()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+
+                            this.menu_open = !menu_open;
+                            cx.notify();
+                        }),
+                    )
+                    .child(icon(DOTS_VERTICAL).size(px(16.0)).my_auto()),
+            )
+            .when(menu_open, |this| {
+                let weak_self = cx.entity().downgrade();
+                let close = move |cx: &mut App| {
+                    weak_self.update(cx, |this, cx| this.close_menu(cx)).ok();
+                };
+                let close_for_dismiss = close.clone();
+                let close_for_out = close.clone();
+                this.child(
+                    popover()
+                        .position(PopoverPosition::BottomRight)
+                        .edge_offset(px(4.0))
+                        .p(px(0.0))
+                        .on_dismiss(move |_, cx| close_for_dismiss(cx))
+                        .on_mouse_down_out(move |_, _, cx| close_for_out(cx))
+                        .child(
+                            div()
+                                .id("playlist-menu-container")
+                                .on_click(move |_, _, cx| close(cx))
+                                .child(PlaylistContextMenu::new(playlist_id, label, is_system)),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     pub fn get_scroll_offset(&self) -> f32 {
@@ -574,7 +641,15 @@ impl Render for PlaylistView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         check_drag_cancelled(self.drag_drop_manager.clone(), cx);
 
-        let (pl_id, playlist_name, playlist_type, track_count, total_duration, is_liked_songs) = {
+        let (
+            pl_id,
+            playlist_name,
+            playlist_type,
+            track_count,
+            total_duration,
+            is_liked_songs,
+            has_image,
+        ) = {
             let playlist = self.playlist.read(cx);
             let Some(playlist) = playlist.ready().and_then(Option::as_ref) else {
                 return div().id("playlist-view").into_any_element();
@@ -586,8 +661,17 @@ impl Render for PlaylistView {
                 playlist.track_count,
                 playlist.total_duration,
                 playlist.is_liked_songs(),
+                playlist.has_image,
             )
         };
+        let art_revision = self.art_revision;
+        let menu_label: SharedString = if is_liked_songs {
+            tr!("LIKED_SONGS").into()
+        } else {
+            playlist_name.0.to_string().into()
+        };
+        let menu_button =
+            self.render_menu_button(pl_id, menu_label, playlist_type == PlaylistType::System, cx);
         let Some(items_clone) = self.playlist_track_ids.read(cx).ready().cloned() else {
             return div().id("playlist-view").into_any_element();
         };
@@ -673,14 +757,31 @@ impl Render for PlaylistView {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(
-                                        icon(if playlist_type == PlaylistType::System {
-                                            STAR
+                                    .map(|this| {
+                                        if has_image {
+                                            this.child(
+                                                managed_image(
+                                                    "playlist-art",
+                                                    ManagedImageKey::Playlist {
+                                                        id: pl_id,
+                                                        revision: art_revision,
+                                                    },
+                                                )
+                                                .target_logical_px(132.0)
+                                                .rounded(px(8.0))
+                                                .size_full(),
+                                            )
                                         } else {
-                                            PLAYLIST
-                                        })
-                                        .size(px(100.0)),
-                                    ),
+                                            this.child(
+                                                icon(if playlist_type == PlaylistType::System {
+                                                    STAR
+                                                } else {
+                                                    PLAYLIST
+                                                })
+                                                .size(px(100.0)),
+                                            )
+                                        }
+                                    }),
                             )
                             .child(
                                 div()
@@ -733,7 +834,8 @@ impl Render for PlaylistView {
                                                         .collect()
                                                     }
                                                 },
-                                            ))
+                                            )
+                                            .trailing(menu_button))
                                             .child(
                                                 div()
                                                     .flex()

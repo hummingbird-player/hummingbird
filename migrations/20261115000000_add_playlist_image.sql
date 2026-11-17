@@ -1,0 +1,2 @@
+ALTER TABLE playlist ADD COLUMN image BLOB;
+ALTER TABLE playlist ADD COLUMN thumb BLOB;
