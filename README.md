@@ -33,16 +33,17 @@ design standard.
   - More advanced playlist management
   - Statistics
   - Star rating
-- Cloud storage support:
-  - Jellyfin
-  - OpenSubsonic
-  - WebDAV
 - Full keyboard navigation
 - Sleep timer
 
 # Usage
 
 ## Stable Builds
+
+Official builds are signed with `minisign`. The signature is attached to the release and must be downloaded seperately and placed next to the binary you are attempting to verify. Verify with:
+```
+minisign -Vm <file> -P RWTVGbNhJ/77g9Dm280SNcfxaPz118Hgg8vI55tFX83sIMiObZuxpDyV
+```
 
 ### Windows, macOS and Linux AppImage
 Binaries for these platforms are officially available for 64-bit ARM and Intel architectures.
@@ -62,23 +63,17 @@ paru -S hummingbird-player
 ```
 
 ## NixOS
-A flake is available for NixOS users. Work towards upstreaming Hummingbird into nixpkgs is
-currently ongoing.
+A nix flake is available for NixOS users.
 
 ## Unstable Builds
 The latest commit is built automatically by CI and uploaded to the
 [latest](https://git.mailliw.org/hummingbird/hummingbird/releases/tag/latest) tag.
 
-Official builds are signed with `minisign`. The signature is attached to the release and must be downloaded seperately and placed next to the binary you are attempting to verify. Verify with:
-```
-minisign -Vm <file> -P RWTVGbNhJ/77g9Dm280SNcfxaPz118Hgg8vI55tFX83sIMiObZuxpDyV
-```
-
 ## Building
 For more detailed instructions, see the [Building](docs/building.md) documentation.
 
 ```sh
-# install relevant devel packages for xcb-common, x11, wayland, openssl, and pulseaudio if on Linux
+# install relevant devel packages for xcb-common, x11, wayland, openssl, and pipewire if on Linux
 git clone https://git.mailliw.org/hummingbird/hummingbird
 cd hummingbird
 
@@ -86,7 +81,8 @@ cd hummingbird
 # these can be obtained from https://www.last.fm/api/account/create
 # you can also set these in a .env file in the root of the project
 #
-# Hummingbird will still build without these keys, but scrobbling will be disabled
+# Hummingbird will still build without these keys, but scrobbling will be disabled unless those
+# keys are set in the environment at runtime
 export LASTFM_API_KEY="your key"
 export LASTFM_API_SECRET="your secret"
 

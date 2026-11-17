@@ -58,12 +58,23 @@ Colors are specified as CSS-style hex codes (`#ABCDEF`). Use `#00000000` for ful
 transparent colors. If a color is not specified, the color from the default theme
 is used.
 
-## Example
-A `theme.json` for the default theme is provided here.
+## Window background
 
+The `window_background` key controls how the window itself is drawn. It accepts one of:
+
+| Value           | Effect                                      |
+|-----------------|---------------------------------------------|
+| `"opaque"`      | Solid window background                     |
+| `"transparent"` | Transparent window background               |
+| `"blurred"`     | Blurred window background                   |
+
+Unsupported values fall back to `opaque`. On X11, blurred backgrounds require support
+for KDE blur hints.
+
+## Example
 ```json
 {
-  "window_background": "opaque", // "opaque", "transparent", "blurred"
+  "window_background": "opaque",
 
   "frame_background": "#000000",
   "background_primary": "#0D0E12",

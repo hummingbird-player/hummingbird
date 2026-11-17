@@ -200,7 +200,7 @@ where
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            window_background: WindowBackgroundAppearance::Blurred,
+            window_background: WindowBackgroundAppearance::Opaque,
 
             frame_background: rgb(0x010102),
             background_primary: rgb(0x121213),
