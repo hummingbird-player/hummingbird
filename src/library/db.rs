@@ -10,9 +10,9 @@ mod tests;
 pub use direction::SortDirection;
 pub use pool::create_pool;
 pub use query::{
-    AlbumColumn, ArtistColumn, PlaylistItemRow, PlaylistTrackRow, PlaylistTrackSortMethod,
-    TrackColumn, TrackDisplayRow, TrackQuery, album_paths, albums, artists, playlists, track_stats,
-    tracks,
+    AlbumColumn, ArtistColumn, PLAYLIST_COVER_TILES, PlaylistItemRow, PlaylistTrackRow,
+    PlaylistTrackSortMethod, TrackColumn, TrackDisplayRow, TrackQuery, album_paths, albums,
+    artists, playlists, track_stats, tracks,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

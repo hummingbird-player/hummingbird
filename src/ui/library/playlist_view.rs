@@ -12,7 +12,10 @@ use tracing::error;
 
 use crate::{
     library::{
-        db::{self, PlaylistTrackRow, PlaylistTrackSortMethod, TrackColumn, playlists, tracks},
+        db::{
+            self, PLAYLIST_COVER_TILES, PlaylistTrackRow, PlaylistTrackSortMethod, TrackColumn,
+            playlists, tracks,
+        },
         playlist::export_playlist,
         types::{Playlist, PlaylistType},
     },
@@ -185,10 +188,27 @@ impl Render for PlaylistTrackItem {
 
 type PlaylistTracksResource =
     Entity<AsyncResource<(i64, PlaylistTrackSortMethod), Arc<Vec<PlaylistTrackRow>>>>;
+type PlaylistCoverArtResource = Entity<AsyncResource<(i64, PlaylistTrackSortMethod), Vec<i64>>>;
+
+async fn fetch_cover_art(
+    pool: sqlx::SqlitePool,
+    playlist_id: i64,
+    sort_method: PlaylistTrackSortMethod,
+) -> anyhow::Result<Vec<i64>> {
+    Ok(playlists()
+        .by_id(playlist_id)
+        .cover_art()
+        .sort(sort_method)
+        .fetch(&pool)
+        .await?)
+}
 
 pub struct PlaylistView {
     playlist: Entity<AsyncResource<i64, Option<Playlist>>>,
     playlist_track_ids: PlaylistTracksResource,
+    cover_art: PlaylistCoverArtResource,
+    // last loaded covers, kept while a reload is pending so the art does not flicker
+    cover_art_ids: Vec<i64>,
     playlist_id: i64,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
     rendered_keys: Entity<Option<Vec<usize>>>,
@@ -239,6 +259,20 @@ impl PlaylistView {
                     ))
                 });
 
+            let pool = cx.global::<Pool>().0.clone();
+            let cover_art = AsyncResource::new(
+                cx,
+                (playlist_id, sort_method),
+                fetch_cover_art(pool, playlist_id, sort_method),
+            );
+            cx.observe(&cover_art, |this: &mut Self, resource, cx| {
+                if let Some(covers) = resource.read(cx).ready() {
+                    this.cover_art_ids = covers.clone();
+                    cx.notify();
+                }
+            })
+            .detach();
+
             cx.observe(&playlist, |_, _, cx| cx.notify()).detach();
             cx.observe(&playlist_track_ids, |this: &mut Self, resource, cx| {
                 if resource.read(cx).ready().is_some() {
@@ -262,6 +296,11 @@ impl PlaylistView {
                             resource.load(cx, id, async move {
                                 Ok(playlists().by_id(id).fetch_optional(&pool).await?)
                             });
+                        });
+                        let pool = cx.global::<Pool>().0.clone();
+                        let sort = this.sort_method;
+                        this.cover_art.update(cx, |resource, cx| {
+                            resource.load(cx, (id, sort), fetch_cover_art(pool, id, sort));
                         });
                         let pool = cx.global::<Pool>().0.clone();
                         let sort = this.sort_method;
@@ -318,6 +357,8 @@ impl PlaylistView {
             Self {
                 playlist,
                 playlist_track_ids,
+                cover_art,
+                cover_art_ids: Vec::new(),
                 playlist_id,
                 views,
                 rendered_keys,
@@ -417,6 +458,14 @@ impl PlaylistView {
         }
         self.sort_method = method;
         let playlist_id = self.playlist_id;
+        let pool = cx.global::<Pool>().0.clone();
+        self.cover_art.update(cx, |resource, cx| {
+            resource.load(
+                cx,
+                (playlist_id, method),
+                fetch_cover_art(pool, playlist_id, method),
+            );
+        });
         let pool = cx.global::<Pool>().0.clone();
         self.playlist_track_ids.update(cx, |resource, cx| {
             resource.load(cx, (playlist_id, method), async move {
@@ -665,6 +714,7 @@ impl Render for PlaylistView {
             )
         };
         let art_revision = self.art_revision;
+        let cover_art_ids = self.cover_art_ids.clone();
         let menu_label: SharedString = if is_liked_songs {
             tr!("LIKED_SONGS").into()
         } else {
@@ -771,7 +821,7 @@ impl Render for PlaylistView {
                                                 .rounded(px(8.0))
                                                 .size_full(),
                                             )
-                                        } else {
+                                        } else if is_liked_songs || cover_art_ids.is_empty() {
                                             this.child(
                                                 icon(if playlist_type == PlaylistType::System {
                                                     STAR
@@ -779,6 +829,36 @@ impl Render for PlaylistView {
                                                     PLAYLIST
                                                 })
                                                 .size(px(100.0)),
+                                            )
+                                        } else if cover_art_ids.len() < PLAYLIST_COVER_TILES {
+                                            this.child(
+                                                managed_image(
+                                                    "playlist-cover",
+                                                    ManagedImageKey::Artwork(cover_art_ids[0]),
+                                                )
+                                                .target_logical_px(132.0)
+                                                .rounded(px(8.0))
+                                                .size_full(),
+                                            )
+                                        } else {
+                                            this.flex_wrap().children(
+                                                cover_art_ids.iter().enumerate().map(
+                                                    |(index, artwork_id)| {
+                                                        managed_image(
+                                                            ("playlist-cover", index),
+                                                            ManagedImageKey::Artwork(*artwork_id),
+                                                        )
+                                                        .target_logical_px(66.0)
+                                                        .w(px(66.0))
+                                                        .h(px(66.0))
+                                                        .map(|tile| match index {
+                                                            0 => tile.rounded_tl(px(8.0)),
+                                                            1 => tile.rounded_tr(px(8.0)),
+                                                            2 => tile.rounded_bl(px(8.0)),
+                                                            _ => tile.rounded_br(px(8.0)),
+                                                        })
+                                                    },
+                                                ),
                                             )
                                         }
                                     }),

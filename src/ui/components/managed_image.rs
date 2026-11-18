@@ -90,6 +90,7 @@ fn decode_to_render_image(data: &[u8], max_px: Option<u32>) -> anyhow::Result<Ar
 pub enum ManagedImageKey {
     Album(i64),
     Track(i64),
+    Artwork(i64),
     Playlist { id: i64, revision: u64 },
     TrackFile(PathBuf),
 }
@@ -134,6 +135,7 @@ impl ManagedImageKey {
             }
             ManagedImageKey::Album(id)
             | ManagedImageKey::Track(id)
+            | ManagedImageKey::Artwork(id)
             | ManagedImageKey::Playlist { id, .. } => {
                 let query = match (self, thumb) {
                     (ManagedImageKey::Album(_), true) => {
@@ -147,6 +149,12 @@ impl ManagedImageKey {
                     }
                     (ManagedImageKey::Track(_), false) => {
                         include_str!("../../../queries/assets/find_track_art.sql")
+                    }
+                    (ManagedImageKey::Artwork(_), true) => {
+                        include_str!("../../../queries/assets/find_artwork_thumb.sql")
+                    }
+                    (ManagedImageKey::Artwork(_), false) => {
+                        include_str!("../../../queries/assets/find_artwork_art.sql")
                     }
                     (ManagedImageKey::Playlist { .. }, true) => {
                         include_str!("../../../queries/assets/find_playlist_thumb.sql")

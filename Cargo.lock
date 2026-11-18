@@ -3446,6 +3446,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "sqlx",
+ "strum",
  "symphonia",
  "symphonia-adapter-fdk-aac",
  "symphonia-adapter-libopus",

@@ -93,6 +93,7 @@ dotenvy = "0.15"
 vergen = { version = "10", features = ["build"] }
 
 [dev-dependencies]
+strum = { version = "0.28", features = ["derive"] }
 gpui = { package = "gpui-unofficial", version = "1", features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

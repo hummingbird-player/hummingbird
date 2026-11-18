@@ -1,3 +1,4 @@
+use futures::TryStreamExt as _;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
@@ -16,6 +17,7 @@ const PLAYLIST_COLUMNS: &str = "\
     COALESCE(SUM(track.duration), 0) AS total_duration";
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(strum::EnumIter))]
 pub enum PlaylistTrackSortMethod {
     Custom,
     TitleAsc,
@@ -37,6 +39,17 @@ pub struct PlaylistQuery {
 
 #[derive(Clone, Debug)]
 pub struct PlaylistTrackQuery {
+    playlist_id: i64,
+    sort_method: PlaylistTrackSortMethod,
+}
+
+pub const PLAYLIST_COVER_TILES: usize = 4;
+
+/// Upper bound on how many items the cover lookup will look through.
+const PLAYLIST_COVER_SCAN_LIMIT: i64 = 500;
+
+#[derive(Clone, Debug)]
+pub struct PlaylistCoverArtQuery {
     playlist_id: i64,
     sort_method: PlaylistTrackSortMethod,
 }
@@ -87,6 +100,14 @@ impl PlaylistQuery {
     pub fn track_rows(self) -> PlaylistTrackQuery {
         PlaylistTrackQuery {
             playlist_id: self.require_id("track_rows"),
+            sort_method: PlaylistTrackSortMethod::Custom,
+        }
+    }
+
+    /// Selects the first distinct artwork IDs in the playlist, in display order.
+    pub fn cover_art(self) -> PlaylistCoverArtQuery {
+        PlaylistCoverArtQuery {
+            playlist_id: self.require_id("cover_art"),
             sort_method: PlaylistTrackSortMethod::Custom,
         }
     }
@@ -318,4 +339,46 @@ fn push_track_ordering(query: &mut QueryBuilder<Sqlite>, sort_method: PlaylistTr
         }
     };
     query.push(", playlist_item.id ASC");
+}
+
+impl PlaylistCoverArtQuery {
+    pub fn sort(mut self, sort_method: PlaylistTrackSortMethod) -> Self {
+        self.sort_method = sort_method;
+        self
+    }
+
+    /// Returns up to [`PLAYLIST_COVER_TILES`] distinct artwork IDs, following the same ordering
+    /// as [`PlaylistTrackQuery::fetch_rows`].
+    pub async fn fetch(self, pool: &SqlitePool) -> sqlx::Result<Vec<i64>> {
+        let mut query = QueryBuilder::new("");
+        self.push_sql(&mut query);
+        let mut covers = Vec::with_capacity(PLAYLIST_COVER_TILES);
+        let mut rows = query.build_query_scalar::<Option<i64>>().fetch(pool);
+
+        while let Some(artwork_id) = rows.try_next().await? {
+            if let Some(artwork_id) = artwork_id
+                && !covers.contains(&artwork_id)
+            {
+                covers.push(artwork_id);
+                if covers.len() == PLAYLIST_COVER_TILES {
+                    break;
+                }
+            }
+        }
+
+        Ok(covers)
+    }
+
+    pub(in crate::library::db) fn push_sql(&self, query: &mut QueryBuilder<Sqlite>) {
+        query.push(
+            "SELECT COALESCE(track.artwork_id, album.artwork_id)
+             FROM playlist_item
+             JOIN track ON track.id = playlist_item.track_id
+             LEFT JOIN album ON album.id = track.album_id
+             WHERE playlist_item.playlist_id = ",
+        );
+        query.push_bind(self.playlist_id).push(" ORDER BY ");
+        push_track_ordering(query, self.sort_method);
+        query.push(" LIMIT ").push_bind(PLAYLIST_COVER_SCAN_LIMIT);
+    }
 }

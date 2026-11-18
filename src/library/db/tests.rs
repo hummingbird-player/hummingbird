@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use strum::IntoEnumIterator as _;
 
 use super::query::TrackQuery;
 use super::{
@@ -1308,4 +1309,146 @@ async fn typed_non_entity_read_projections_preserve_legacy_queries() {
 
     let stats = track_stats().fetch_row(pool).await.unwrap();
     assert_eq!(stats.track_count, 1);
+}
+
+async fn insert_artwork(pool: &SqlitePool, id: i64) {
+    sqlx::query("INSERT INTO artwork (id, hash, image, thumb) VALUES ($1, $1, x'00', x'00')")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn set_artwork(pool: &SqlitePool, table: &str, id: i64, artwork_id: i64) {
+    let query = match table {
+        "album" => "UPDATE album SET artwork_id = $1 WHERE id = $2",
+        "track" => "UPDATE track SET artwork_id = $1 WHERE id = $2",
+        _ => unreachable!(),
+    };
+    sqlx::query(query)
+        .bind(artwork_id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn insert_playlist_item(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    track_id: i64,
+    created_at: &str,
+    position: i64,
+) {
+    sqlx::query(
+        "INSERT INTO playlist_item (playlist_id, track_id, created_at, position)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(playlist_id)
+    .bind(track_id)
+    .bind(created_at)
+    .bind(position)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn playlist_cover_art_follows_every_sort_method() {
+    let db = TestDatabase::new("playlist-cover-art-sorts").await;
+    let pool = db.pool();
+
+    sqlx::query("INSERT INTO playlist (id, name, position) VALUES (2, 'Mix', 1)")
+        .execute(pool)
+        .await
+        .unwrap();
+    for id in [100, 200, 400, 500, 600, 700] {
+        insert_artwork(pool, id).await;
+    }
+    insert_album(pool, 10, "Beta", "Alpha", None, None, None).await;
+    insert_album(pool, 20, "Alpha", "Beta", None, None, None).await;
+    insert_album(pool, 30, "Gamma", "Gamma", None, None, None).await;
+    insert_album(pool, 40, "Delta", "Delta", None, None, None).await;
+    set_artwork(pool, "album", 10, 100).await;
+    set_artwork(pool, "album", 20, 200).await;
+    set_artwork(pool, "album", 40, 400).await;
+
+    // (track id, title, album, duration, own artwork, added at); the track id doubles as the
+    // playlist position. Equal timestamps exercise the position tie-break in recently-added orders.
+    let tracks = [
+        (1, "Zulu", Some(10), 100, None, "2020-01-02 00:00:00"),
+        (2, "Alpha", Some(20), 300, None, "2020-01-01 00:00:00"),
+        (3, "Mike", Some(10), 200, None, "2020-01-02 00:00:00"),
+        (4, "Echo", Some(30), 400, None, "2020-01-03 00:00:00"),
+        (5, "Kilo", Some(30), 500, Some(500), "2020-01-02 00:00:00"),
+        (6, "Bravo", None, 600, Some(600), "2020-01-01 00:00:00"),
+        (7, "Lima", Some(40), 700, None, "2020-01-03 00:00:00"),
+        (8, "Oscar", Some(10), 800, Some(700), "2020-01-02 00:00:00"),
+    ];
+    for (id, title, album, duration, artwork, created_at) in tracks {
+        insert_track(pool, id, title, album, None, duration, Some(1)).await;
+        if let Some(artwork) = artwork {
+            set_artwork(pool, "track", id, artwork).await;
+        }
+        insert_playlist_item(pool, 2, id, created_at, id).await;
+    }
+
+    let track_artwork = |track_id: i64| -> Option<i64> {
+        let (_, _, album, _, own, _) = tracks.iter().find(|t| t.0 == track_id).unwrap();
+        own.or(match album {
+            Some(10) => Some(100),
+            Some(20) => Some(200),
+            Some(40) => Some(400),
+            _ => None,
+        })
+    };
+
+    for sort_method in PlaylistTrackSortMethod::iter() {
+        let rows = playlists()
+            .by_id(2)
+            .track_rows()
+            .sort(sort_method)
+            .fetch_rows(pool)
+            .await
+            .unwrap();
+        let mut expected = Vec::new();
+        for artwork in rows.iter().filter_map(|row| track_artwork(row.track.id)) {
+            if !expected.contains(&artwork) && expected.len() < 4 {
+                expected.push(artwork);
+            }
+        }
+
+        let covers = playlists()
+            .by_id(2)
+            .cover_art()
+            .sort(sort_method)
+            .fetch(pool)
+            .await
+            .unwrap();
+        assert_eq!(covers, expected, "{sort_method:?}");
+    }
+
+    let custom = playlists().by_id(2).cover_art().fetch(pool).await.unwrap();
+    assert_eq!(custom, vec![100, 200, 500, 600]);
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn playlist_cover_art_stops_looking_after_the_scan_limit() {
+    let db = TestDatabase::new("playlist-cover-art-limit").await;
+    let pool = db.pool();
+
+    insert_artwork(pool, 1).await;
+    insert_album(pool, 1, "Album", "Artist", None, None, None).await;
+    for id in 1..=501 {
+        insert_track(pool, id, "Track", Some(1), None, 100, Some(1)).await;
+        insert_playlist_item(pool, 1, id, "2020-01-01 00:00:00", id).await;
+    }
+    set_artwork(pool, "track", 501, 1).await;
+
+    let covers = playlists().by_id(1).cover_art().fetch(pool).await.unwrap();
+    assert!(covers.is_empty(), "{covers:?}");
+
+    db.close().await;
 }
