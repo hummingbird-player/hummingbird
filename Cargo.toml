@@ -23,12 +23,11 @@ anyhow = "1"
 audioadapter-buffers = "5"
 async-compression = { version = "0.4", features = ["zlib", "tokio"] }
 async-trait = "0.1"
-base64 = "0.23"
 bitflags = "2"
 camino = { version = "1", features = ["serde1"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-cntp_i18n = { version = "0.3", features = ["gpui"] }
+cntp_i18n = { version = "0.4", features = ["gpui"] }
 console-subscriber = { version = "0.5", optional = true }
 cpal = { version = "0.18.2", features = ["pipewire"] }
 dateparser = "0.3"
@@ -38,19 +37,17 @@ discord-rich-presence = "1"
 file-rotate = "0.8.0"
 futures = "0.3"
 globwalk = "0.9"
-gpui = { package = "gpui-unofficial", version = "1.27" }
-gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.27", features = ["wayland", "x11", "font-kit"] }
+gpui = { package = "gpui-unofficial", version = "1.28" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.28", features = ["wayland", "x11", "font-kit"] }
 image = "0.25"
 icu_collator = "2.1"
 indexmap = { version = "2", features = ["serde"] }
-infer = "0.22"
 intx = "0.1"
 itertools = "0.15"
 lofty = "0.25"
 md5 = "0.8"
 mimalloc = { version = "0.1", features = ["no_thp"] }
 minisign-verify = { version = "0.3", optional = true }
-moka = { version = "0.12", features = ["sync"] }
 notify = "8"
 nucleo = "0.5"
 open = "5"
@@ -80,7 +77,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1"
 url = "2.5"
-urlencoding = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = true, features = [
     "json",
@@ -90,12 +86,9 @@ zed-reqwest = { version = "0.12.15-zed", default-features = false, optional = tr
 ] }
 notify-debouncer-full = "0.7.0"
 
-[patch.crates-io]
-gpui-unofficial = { git = "https://git.mailliw.org/hummingbird/gpui-unofficial-shim" }
-
 [build-dependencies]
 anyhow = "1"
-cntp_i18n_gen = "0.3"
+cntp_i18n_gen = "0.4"
 dotenvy = "0.15"
 vergen = { version = "10", features = ["build"] }
 
@@ -125,15 +118,13 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging"
 ] }
-windows-future = "0.3"
-windows-result = "0.4"
 winreg = { version = "0.56", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 core-text = "=21.0.0" # GPUI issue, zed#47168
 block2 = "0.6"
-imagesize = "0.14"
+imagesize = "0.15"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSImage"] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }

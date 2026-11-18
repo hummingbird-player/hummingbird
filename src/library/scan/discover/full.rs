@@ -312,8 +312,8 @@ mod tests {
             .iter()
             .map(|p| p.file_name().unwrap().to_string())
             .collect();
-        assert!(names.contains(&"track1.flac".to_string()));
-        assert!(names.contains(&"track2.mp3".to_string()));
+        assert!(names.iter().any(|name| name == "track1.flac"));
+        assert!(names.iter().any(|name| name == "track2.mp3"));
     }
 
     #[test]

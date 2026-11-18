@@ -8,7 +8,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     contemporary-rs = {
-      url = "github:vicr123/contemporary-rs/v0.1.0";
+      url = "github:vicr123/contemporary-rs/v0.4.1";
       flake = false;
     };
   };
