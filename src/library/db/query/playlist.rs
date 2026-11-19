@@ -45,6 +45,8 @@ pub struct PlaylistTrackQuery {
 
 pub const PLAYLIST_COVER_TILES: usize = 4;
 
+pub type PlaylistCoverArtIds = smallvec::SmallVec<[i64; PLAYLIST_COVER_TILES]>;
+
 /// Upper bound on how many items the cover lookup will look through.
 const PLAYLIST_COVER_SCAN_LIMIT: i64 = 500;
 
@@ -349,10 +351,10 @@ impl PlaylistCoverArtQuery {
 
     /// Returns up to [`PLAYLIST_COVER_TILES`] distinct artwork IDs, following the same ordering
     /// as [`PlaylistTrackQuery::fetch_rows`].
-    pub async fn fetch(self, pool: &SqlitePool) -> sqlx::Result<Vec<i64>> {
+    pub async fn fetch(self, pool: &SqlitePool) -> sqlx::Result<PlaylistCoverArtIds> {
         let mut query = QueryBuilder::new("");
         self.push_sql(&mut query);
-        let mut covers = Vec::with_capacity(PLAYLIST_COVER_TILES);
+        let mut covers = PlaylistCoverArtIds::new();
         let mut rows = query.build_query_scalar::<Option<i64>>().fetch(pool);
 
         while let Some(artwork_id) = rows.try_next().await? {

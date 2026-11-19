@@ -13,7 +13,7 @@ use tracing::error;
 use crate::{
     library::{
         db::{
-            self, PLAYLIST_COVER_TILES, PlaylistTrackRow, PlaylistTrackSortMethod, TrackColumn,
+            self, PlaylistCoverArtIds, PlaylistTrackRow, PlaylistTrackSortMethod, TrackColumn,
             playlists, tracks,
         },
         playlist::export_playlist,
@@ -34,9 +34,9 @@ use crate::{
                 handle_track_drop,
             },
             dropdown::dropdown,
-            icons::{DOTS_VERTICAL, PLAYLIST, SORT_ASCENDING, SORT_DESCENDING, STAR, icon},
-            managed_image::{ManagedImageKey, managed_image},
+            icons::{DOTS_VERTICAL, SORT_ASCENDING, SORT_DESCENDING, icon},
             playback_controls::playback_controls,
+            playlist_art::playlist_art,
             popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
             table::table_data::TABLE_MAX_WIDTH,
@@ -188,13 +188,14 @@ impl Render for PlaylistTrackItem {
 
 type PlaylistTracksResource =
     Entity<AsyncResource<(i64, PlaylistTrackSortMethod), Arc<Vec<PlaylistTrackRow>>>>;
-type PlaylistCoverArtResource = Entity<AsyncResource<(i64, PlaylistTrackSortMethod), Vec<i64>>>;
+type PlaylistCoverArtResource =
+    Entity<AsyncResource<(i64, PlaylistTrackSortMethod), PlaylistCoverArtIds>>;
 
 async fn fetch_cover_art(
     pool: sqlx::SqlitePool,
     playlist_id: i64,
     sort_method: PlaylistTrackSortMethod,
-) -> anyhow::Result<Vec<i64>> {
+) -> anyhow::Result<PlaylistCoverArtIds> {
     Ok(playlists()
         .by_id(playlist_id)
         .cover_art()
@@ -208,7 +209,7 @@ pub struct PlaylistView {
     playlist_track_ids: PlaylistTracksResource,
     cover_art: PlaylistCoverArtResource,
     // last loaded covers, kept while a reload is pending so the art does not flicker
-    cover_art_ids: Vec<i64>,
+    cover_art_ids: PlaylistCoverArtIds,
     playlist_id: i64,
     views: Entity<FxHashMap<usize, Entity<PlaylistTrackItem>>>,
     rendered_keys: Entity<Option<Vec<usize>>>,
@@ -358,7 +359,7 @@ impl PlaylistView {
                 playlist,
                 playlist_track_ids,
                 cover_art,
-                cover_art_ids: Vec::new(),
+                cover_art_ids: PlaylistCoverArtIds::new(),
                 playlist_id,
                 views,
                 rendered_keys,
@@ -796,72 +797,12 @@ impl Render for PlaylistView {
                             .px(padding)
                             .w_full()
                             .child(
-                                div()
-                                    .bg(theme.album_art_background)
-                                    .shadow_sm()
-                                    .w(px(132.0))
-                                    .h(px(132.0))
-                                    .flex_shrink_0()
-                                    .rounded(px(8.0))
-                                    .overflow_hidden()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .map(|this| {
-                                        if has_image {
-                                            this.child(
-                                                managed_image(
-                                                    "playlist-art",
-                                                    ManagedImageKey::Playlist {
-                                                        id: pl_id,
-                                                        revision: art_revision,
-                                                    },
-                                                )
-                                                .target_logical_px(132.0)
-                                                .rounded(px(8.0))
-                                                .size_full(),
-                                            )
-                                        } else if is_liked_songs || cover_art_ids.is_empty() {
-                                            this.child(
-                                                icon(if playlist_type == PlaylistType::System {
-                                                    STAR
-                                                } else {
-                                                    PLAYLIST
-                                                })
-                                                .size(px(100.0)),
-                                            )
-                                        } else if cover_art_ids.len() < PLAYLIST_COVER_TILES {
-                                            this.child(
-                                                managed_image(
-                                                    "playlist-cover",
-                                                    ManagedImageKey::Artwork(cover_art_ids[0]),
-                                                )
-                                                .target_logical_px(132.0)
-                                                .rounded(px(8.0))
-                                                .size_full(),
-                                            )
-                                        } else {
-                                            this.flex_wrap().children(
-                                                cover_art_ids.iter().enumerate().map(
-                                                    |(index, artwork_id)| {
-                                                        managed_image(
-                                                            ("playlist-cover", index),
-                                                            ManagedImageKey::Artwork(*artwork_id),
-                                                        )
-                                                        .target_logical_px(66.0)
-                                                        .w(px(66.0))
-                                                        .h(px(66.0))
-                                                        .map(|tile| match index {
-                                                            0 => tile.rounded_tl(px(8.0)),
-                                                            1 => tile.rounded_tr(px(8.0)),
-                                                            2 => tile.rounded_bl(px(8.0)),
-                                                            _ => tile.rounded_br(px(8.0)),
-                                                        })
-                                                    },
-                                                ),
-                                            )
-                                        }
-                                    }),
+                                playlist_art(pl_id)
+                                    .size(px(132.0))
+                                    .has_image(has_image)
+                                    .revision(art_revision)
+                                    .cover_art_ids(cover_art_ids)
+                                    .system(is_liked_songs || playlist_type == PlaylistType::System),
                             )
                             .child(
                                 div()

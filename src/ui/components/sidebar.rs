@@ -1,7 +1,7 @@
 use gpui::{
-    App, Div, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels,
-    RenderOnce, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
-    Window, deferred, div, prelude::FluentBuilder, px,
+    AnyElement, App, Div, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement, StyleRefinement,
+    Styled, Window, deferred, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -65,6 +65,7 @@ pub struct SidebarItem {
     parent_div: Stateful<Div>,
     children_div: Div,
     icon: Option<&'static str>,
+    custom_icon: Option<AnyElement>,
     active: bool,
     collapsed: bool,
     secondary_background: bool,
@@ -75,6 +76,11 @@ pub struct SidebarItem {
 impl SidebarItem {
     pub fn icon(mut self, icon: &'static str) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn custom_icon(mut self, element: impl IntoElement) -> Self {
+        self.custom_icon = Some(element.into_any_element());
         self
     }
 
@@ -157,8 +163,8 @@ impl RenderOnce for SidebarItem {
             .rounded(px(4.0))
             .py(px(7.0))
             .line_height(px(18.0))
-            .gap(px(6.0))
-            .font_weight(FontWeight::SEMIBOLD)
+            .gap(px(9.0))
+            .font_weight(FontWeight::MEDIUM)
             .hover(|this| {
                 this.bg(theme.nav_button_hover)
                     .border_color(theme.nav_button_hover_border)
@@ -168,7 +174,13 @@ impl RenderOnce for SidebarItem {
                     .border_color(theme.nav_button_active_border)
             })
             .when_none(&self.icon, |this| {
+                if self.custom_icon.is_some() {
+                    return this;
+                }
                 this.child(div().size(px(18.0)).flex_shrink_0().min_w(px(18.0)))
+            })
+            .when_some(self.custom_icon, |this, element| {
+                this.child(div().flex_shrink_0().child(element))
             })
             .when_some(self.icon, |this, used_icon| {
                 this.child(
@@ -181,6 +193,7 @@ impl RenderOnce for SidebarItem {
             .when(!self.collapsed, |this| {
                 this.child(
                     self.children_div
+                        .mt(px(1.0))
                         .flex_shrink(1.0)
                         .flex_col()
                         .flex()
@@ -240,6 +253,7 @@ pub fn sidebar_item(id: impl Into<ElementId>) -> SidebarItem {
         parent_div: div().id(element_id),
         children_div: div(),
         icon: None,
+        custom_icon: None,
         active: false,
         collapsed: false,
         secondary_background: false,

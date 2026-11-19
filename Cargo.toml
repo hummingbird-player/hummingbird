@@ -149,17 +149,14 @@ split-debuginfo = "unpacked"
 inherits = "release"
 debug = "full"
 strip = "none"
-lto = "none"
 opt-level = "s"
 
 [profile.release]
 opt-level = "s"
-lto = "thin"
 strip = "symbols"
 
 [profile.release-distro]
 inherits = "release"
 codegen-units = 1
-lto = "fat"
 debug = "full"
 split-debuginfo = "packed"

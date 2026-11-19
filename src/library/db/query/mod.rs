@@ -6,6 +6,7 @@ mod track;
 pub use album::{AlbumColumn, albums};
 pub use artist::{ArtistColumn, artists};
 pub use playlist::{
-    PLAYLIST_COVER_TILES, PlaylistItemRow, PlaylistTrackRow, PlaylistTrackSortMethod, playlists,
+    PLAYLIST_COVER_TILES, PlaylistCoverArtIds, PlaylistItemRow, PlaylistTrackRow,
+    PlaylistTrackSortMethod, playlists,
 };
 pub use track::{TrackColumn, TrackDisplayRow, TrackQuery, album_paths, track_stats, tracks};

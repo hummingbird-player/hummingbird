@@ -6,11 +6,12 @@ use gpui::{
     ParentElement, Render, ScrollHandle, StatefulInteractiveElement, StyleRefinement, Styled,
     Window, div, prelude::FluentBuilder, px, rgba,
 };
+use rustc_hash::FxHashMap;
 use tracing::error;
 
 use crate::{
     library::{
-        db::{self, TrackColumn, playlists, tracks},
+        db::{self, PlaylistCoverArtIds, TrackColumn, playlists, tracks},
         types::{Playlist, PlaylistType},
     },
     settings::SettingsGlobal,
@@ -25,7 +26,8 @@ use crate::{
                 DragDropListManager, DragPreview, DropIndicator, TrackDragData,
                 check_drag_cancelled, handle_drag_move, handle_drop,
             },
-            icons::{PLAYLIST, PLUS, STAR},
+            icons::{PLUS, icon},
+            playlist_art::playlist_art,
             popover::{PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
             sidebar::sidebar_item,
@@ -41,6 +43,10 @@ use crate::{
 
 const PLAYLIST_SIDEBAR_LIST_ID: &str = "sidebar-playlists";
 const PLAYLIST_SIDEBAR_ITEM_HEIGHT: f32 = 55.0; // effective height is + 1 px because of gap
+const PLAYLIST_SIDEBAR_ART_SIZE: f32 = 36.0;
+const PLAYLIST_SIDEBAR_COLLAPSED_ART_SIZE: f32 = 24.0;
+
+type PlaylistCoverArtIdMap = Arc<FxHashMap<i64, PlaylistCoverArtIds>>;
 
 pub struct PlaylistList {
     playlists: Entity<AsyncResource<(), Arc<Vec<Playlist>>>>,
@@ -51,6 +57,11 @@ pub struct PlaylistList {
     rename_popover_playlist: Option<i64>,
     rename_playlist_input: Entity<Textbox>,
     drag_drop_manager: Entity<DragDropListManager>,
+    // bumped when a playlist updates so its user-defined image is reloaded
+    art_revisions: FxHashMap<i64, u64>,
+    cover_art_resource: Entity<AsyncResource<(), PlaylistCoverArtIdMap>>,
+    // last loaded covers, kept while a reload is pending so the art does not flicker
+    cover_art: FxHashMap<i64, PlaylistCoverArtIds>,
 }
 
 impl PlaylistList {
@@ -60,6 +71,17 @@ impl PlaylistList {
             let playlists_resource = AsyncResource::new(cx, (), async move {
                 Ok(Arc::new(playlists().fetch_list(&pool).await?))
             });
+            let cover_art_resource = AsyncResource::new(cx, (), {
+                let pool = cx.global::<Pool>().0.clone();
+                fetch_cover_art(pool)
+            });
+            cx.observe(&cover_art_resource, |this: &mut Self, resource, cx| {
+                if let Some(covers) = resource.read(cx).ready() {
+                    this.cover_art = (**covers).clone();
+                }
+                cx.notify();
+            })
+            .detach();
             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
@@ -71,8 +93,15 @@ impl PlaylistList {
 
             cx.subscribe(
                 &playlist_tracker,
-                |this: &mut Self, _, _: &PlaylistEvent, cx| {
+                |this: &mut Self, _, ev: &PlaylistEvent, cx| {
+                    if let PlaylistEvent::PlaylistUpdated(id) = ev {
+                        *this.art_revisions.entry(*id).or_default() += 1;
+                    }
                     let pool = cx.global::<Pool>().0.clone();
+                    let covers_pool = pool.clone();
+                    this.cover_art_resource.update(cx, |resource, cx| {
+                        resource.load(cx, (), fetch_cover_art(covers_pool));
+                    });
                     this.playlists.update(cx, |resource, cx| {
                         resource.load(cx, (), async move {
                             Ok(Arc::new(playlists().fetch_list(&pool).await?))
@@ -119,6 +148,9 @@ impl PlaylistList {
                 rename_popover_playlist: None,
                 rename_playlist_input,
                 drag_drop_manager,
+                art_revisions: FxHashMap::default(),
+                cover_art_resource,
+                cover_art: FxHashMap::default(),
             }
         })
     }
@@ -330,12 +362,20 @@ impl Render for PlaylistList {
 
             let item_state = DragDropItemState::for_index(self.drag_drop_manager.read(cx), idx);
 
-            let mut item = sidebar_item(("main-sidebar-pl", playlist.id as u64)).icon(
-                if playlist.playlist_type == PlaylistType::System {
-                    STAR
-                } else {
-                    PLAYLIST
-                },
+            let art_size = if collapsed {
+                PLAYLIST_SIDEBAR_COLLAPSED_ART_SIZE
+            } else {
+                PLAYLIST_SIDEBAR_ART_SIZE
+            };
+            let mut item = sidebar_item(("main-sidebar-pl", playlist.id as u64)).custom_icon(
+                playlist_art(pl_id)
+                    .size(px(art_size))
+                    .radius(px(4.0))
+                    .placeholder_background(!collapsed)
+                    .has_image(playlist.has_image)
+                    .revision(self.art_revisions.get(&pl_id).copied().unwrap_or(0))
+                    .cover_art_ids(self.cover_art.get(&pl_id).cloned().unwrap_or_default())
+                    .system(playlist.playlist_type == PlaylistType::System),
             );
 
             if collapsed {
@@ -577,6 +617,11 @@ impl Render for PlaylistList {
             );
         }
 
+        let art_size = if collapsed {
+            PLAYLIST_SIDEBAR_COLLAPSED_ART_SIZE
+        } else {
+            PLAYLIST_SIDEBAR_ART_SIZE
+        };
         let popover_open = self.popover_open;
         let new_playlist_input = self.new_playlist_input.clone();
         let weak_self = cx.entity().downgrade();
@@ -586,7 +631,15 @@ impl Render for PlaylistList {
                 .relative()
                 .child(
                     sidebar_item("new-playlist-btn")
-                        .icon(PLUS)
+                        .custom_icon(
+                            div()
+                                .w(px(art_size))
+                                .h(px(18.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon(PLUS).size(px(18.0))),
+                        )
                         .when(!collapsed, |this| {
                             this.child(tr!("NEW_PLAYLIST", "New Playlist"))
                         })
@@ -674,4 +727,24 @@ impl Render for PlaylistList {
                 this.child(floating_scrollbar("playlist_list_scrollbar", scroll_handle))
             })
     }
+}
+
+async fn fetch_cover_art(
+    pool: sqlx::SqlitePool,
+) -> anyhow::Result<Arc<FxHashMap<i64, PlaylistCoverArtIds>>> {
+    let mut covers = FxHashMap::default();
+    for playlist in playlists().fetch_list(&pool).await? {
+        if playlist.has_image || playlist.playlist_type == PlaylistType::System {
+            continue;
+        }
+        covers.insert(
+            playlist.id,
+            playlists()
+                .by_id(playlist.id)
+                .cover_art()
+                .fetch(&pool)
+                .await?,
+        );
+    }
+    Ok(Arc::new(covers))
 }

@@ -19,6 +19,7 @@ pub mod modal;
 pub mod nav_button;
 pub mod palette;
 pub mod playback_controls;
+pub mod playlist_art;
 pub mod popover;
 pub mod resizable;
 pub mod scrollbar;

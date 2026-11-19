@@ -1425,11 +1425,11 @@ async fn playlist_cover_art_follows_every_sort_method() {
             .fetch(pool)
             .await
             .unwrap();
-        assert_eq!(covers, expected, "{sort_method:?}");
+        assert_eq!(covers.as_slice(), expected, "{sort_method:?}");
     }
 
     let custom = playlists().by_id(2).cover_art().fetch(pool).await.unwrap();
-    assert_eq!(custom, vec![100, 200, 500, 600]);
+    assert_eq!(custom.as_slice(), [100, 200, 500, 600]);
 
     db.close().await;
 }
