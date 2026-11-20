@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::*;
 
 use super::{
@@ -5,6 +7,7 @@ use super::{
         context::CloseContextMenu,
         menu::{menu, menu_item},
         modal::bottom_sheet,
+        sheet::Sheet,
     },
     library::context_menus::navigate_to_artist,
     models::{ArtistPickerState, Models},
@@ -77,6 +80,20 @@ impl Render for ArtistPickerView {
             self.focused = true;
         }
 
+        // in the mobile layout the picker slides away before it closes
+        let sheet = mobile_layout().then(|| {
+            Sheet::new(
+                "artist-picker-sheet",
+                Some(Rc::new(|_, cx| close(cx))),
+                window,
+                cx,
+            )
+        });
+        let dismiss: Rc<dyn Fn(&mut App)> = match sheet.clone() {
+            Some(sheet) => Rc::new(move |cx| sheet.dismiss(cx)),
+            None => Rc::new(close),
+        };
+
         let mut items = menu();
         for (id, name) in artists.iter() {
             let id = *id;
@@ -85,9 +102,12 @@ impl Render for ArtistPickerView {
                     ("artist", id as usize),
                     None::<SharedString>,
                     name.clone(),
-                    move |_, _, cx| {
-                        navigate_to_artist(cx, id);
-                        close(cx);
+                    {
+                        let dismiss = dismiss.clone();
+                        move |_, _, cx| {
+                            navigate_to_artist(cx, id);
+                            dismiss(cx);
+                        }
                     },
                 )
                 .never_icon(),
@@ -106,11 +126,11 @@ impl Render for ArtistPickerView {
             .id("artist-picker")
             .track_focus(&self.focus_handle)
             .on_mouse_down_out(move |_, _, cx| close(cx))
-            .on_action(move |_: &CloseContextMenu, _, cx| close(cx))
+            .on_action(move |_: &CloseContextMenu, _, cx| dismiss(cx))
             .child(items);
 
-        if mobile_layout() {
-            return bottom_sheet(picker.w_full(), window, cx).into_any_element();
+        if let Some(sheet) = sheet {
+            return bottom_sheet(&sheet, picker.w_full(), window, cx).into_any_element();
         }
 
         anchored()

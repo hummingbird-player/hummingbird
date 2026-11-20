@@ -3,8 +3,8 @@ use std::rc::Rc;
 use cntp_i18n::tr;
 use gpui::{
     Anchor, App, Div, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, actions,
-    anchored, deferred, div, px,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, actions, anchored, deferred, div, prelude::FluentBuilder, px,
 };
 use smallvec::SmallVec;
 
@@ -14,6 +14,8 @@ use crate::ui::{
         menu::{menu, menu_check_item},
         modal::bottom_sheet,
         segmented_control::ChangeHandler,
+        sheet::Sheet,
+        touch_pan::keep_touch_pans_unless_at_top,
     },
     constants::MAIN_CONTROL_ROUNDING,
     platform::mobile_layout,
@@ -69,6 +71,32 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
         let is_open = window.use_keyed_state((self.id.clone(), "open"), cx, |_, _| false);
         let highlighted_index =
             window.use_keyed_state((self.id.clone(), "highlighted"), cx, |_, _| None::<usize>);
+        // in the mobile layout the list is a sheet, which slides away before it closes
+        let sheet = (mobile_layout() && *is_open.read(cx)).then(|| {
+            let is_open = is_open.clone();
+            Sheet::new(
+                (self.id.clone(), "sheet"),
+                Some(Rc::new(move |_: &mut Window, cx: &mut App| {
+                    is_open.write(cx, false)
+                })),
+                window,
+                cx,
+            )
+        });
+        let close: Rc<dyn Fn(&mut App)> = match sheet.clone() {
+            Some(sheet) => Rc::new(move |cx| sheet.dismiss(cx)),
+            None => {
+                let is_open = is_open.clone();
+                Rc::new(move |cx| is_open.write(cx, false))
+            }
+        };
+        let scroll = sheet.is_some().then(|| {
+            window
+                .use_keyed_state((self.id.clone(), "scroll"), cx, |_, _| ScrollHandle::new())
+                .read(cx)
+                .clone()
+        });
+
         let focus_handle = window
             .use_keyed_state((self.id.clone(), "focus"), cx, |_, cx| cx.focus_handle())
             .read(cx);
@@ -169,14 +197,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                             {
                                 let highlighted = highlighted_index.clone();
                                 let on_change = self.on_change.clone();
-                                let is_open = is_open.clone();
+                                let close = close.clone();
 
                                 move |_, window, cx| {
                                     highlighted.write(cx, Some(idx));
                                     if let Some(on_change) = &on_change {
                                         (on_change)(&option.0, window, cx);
                                     }
-                                    is_open.write(cx, false);
+                                    close(cx);
                                 }
                             },
                         )
@@ -200,11 +228,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 .mt(px(4.0))
                 .track_focus(focus_handle)
                 .key_context("Dropdown")
+                .when_some(scroll, |this, scroll| {
+                    this.track_scroll(&scroll).on_scroll(move |event, _, cx| {
+                        keep_touch_pans_unless_at_top(event, scroll.offset().y >= px(0.0), cx)
+                    })
+                })
                 .on_action({
-                    let is_open = is_open.clone();
-                    move |_: &Close, _, cx| {
-                        is_open.write(cx, false);
-                    }
+                    let close = close.clone();
+                    move |_: &Close, _, cx| close(cx)
                 })
                 .on_action({
                     let highlighted = highlighted_index.clone();
@@ -258,7 +289,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                     }
                 })
                 .on_action({
-                    let is_open = is_open.clone();
+                    let close = close.clone();
                     let highlighted = highlighted_index.clone();
                     let options = self.options.clone();
                     let on_change = self.on_change.clone();
@@ -267,7 +298,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                             && let Some(on_change) = &on_change
                         {
                             (on_change)(&option.0, window, cx);
-                            is_open.write(cx, false);
+                            close(cx);
                         }
                     }
                 })
@@ -279,8 +310,9 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Dropdown<T> {
                 })
                 .child(option_menu);
 
-            Some(if mobile_layout() {
-                bottom_sheet(popup_content.w_full().mt(px(0.0)), window, cx).into_any_element()
+            Some(if let Some(sheet) = sheet {
+                bottom_sheet(&sheet, popup_content.w_full().mt(px(0.0)), window, cx)
+                    .into_any_element()
             } else {
                 anchored()
                     .anchor(Anchor::TopLeft)

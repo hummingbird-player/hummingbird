@@ -1,16 +1,13 @@
 //! Touch swipes over theater mode: down to close it, left/right to change tracks.
 //!
-//! GPUI turns touch pans into axis-locked [`ScrollEvent`]s (`Started`, `Moved`..., `Ended`, then
-//! any fling momentum as more `Moved`s and a final `Ended`). A swipe is the stretch from
-//! `Started` to the first `Ended`; the momentum that follows belongs to no swipe and is ignored.
-//!
-//! Every event of a pan is delivered at the position it *started* at, so whatever listens for
-//! the rest of a swipe must not depend on what's under that point once things start moving (see
-//! `TheaterView`'s capture-phase listener).
+//! A swipe follows one touch pan, from `Started` to the first `Ended`; the momentum that follows
+//! belongs to no swipe and is ignored (see [`crate::ui::components::touch_pan`]).
 
 use std::time::{Duration, Instant};
 
-use gpui::{Axis, Pixels, Point, ScrollEvent, TouchPhase, px};
+use gpui::{Axis, ScrollEvent, TouchPhase};
+
+use crate::ui::components::touch_pan::{Pan, pan_delta};
 
 /// How far down a slow swipe has to travel to close theater mode.
 const DISMISS_DISTANCE: f32 = 120.0;
@@ -69,34 +66,10 @@ pub(super) struct SwipeOffsets {
     pub(super) track_opacity: f32,
 }
 
-struct ActiveSwipe {
-    started: Instant,
-    /// Decided by the first movement. A pan that catches a fling (e.g. the coasting left over
-    /// from the previous swipe) starts with no movement at all.
-    axis: Option<Axis>,
-    /// The finger's travel since the touch started.
-    total: Point<Pixels>,
-}
-
-impl ActiveSwipe {
-    fn travel(&self) -> (f32, f32) {
-        match self.axis {
-            Some(Axis::Vertical) => (0.0, f32::from(self.total.y).max(0.0)),
-            Some(Axis::Horizontal) => (f32::from(self.total.x), 0.0),
-            None => (0.0, 0.0),
-        }
-    }
-
-    fn add(&mut self, delta: Point<Pixels>) {
-        self.total += delta;
-        if self.axis.is_none() && self.total != Point::default() {
-            self.axis = Some(if self.total.x.abs() > self.total.y.abs() {
-                Axis::Horizontal
-            } else {
-                Axis::Vertical
-            });
-        }
-    }
+/// The finger's travel along a swipe's axis: down only, or sideways.
+fn swipe_travel(pan: &Pan) -> (f32, f32) {
+    let travel = pan.travel();
+    (travel.x, travel.y.max(0.0))
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -120,7 +93,7 @@ enum Motion {
 }
 
 pub(super) struct Swipe {
-    active: Option<ActiveSwipe>,
+    active: Option<Pan>,
     motion: Motion,
 }
 
@@ -156,19 +129,13 @@ impl Swipe {
             return false;
         }
         self.motion = Motion::Idle;
-        let mut active = ActiveSwipe {
-            started: now,
-            axis: None,
-            total: Point::default(),
-        };
-        active.add(event.delta.pixel_delta(px(16.0)));
-        self.active = Some(active);
+        self.active = Some(Pan::start(event, now));
         true
     }
 
     /// Follows the rest of an active swipe's pan; returns what to do once it's released.
     pub(super) fn update(&mut self, event: &ScrollEvent, now: Instant) -> Option<Release> {
-        let delta = event.delta.pixel_delta(px(16.0));
+        let delta = pan_delta(event);
         match event.touch_phase {
             TouchPhase::Started => {
                 self.start(event, now);
@@ -176,15 +143,15 @@ impl Swipe {
             }
             TouchPhase::Moved => {
                 if let Some(active) = &mut self.active {
-                    active.add(delta);
+                    active.add(delta, now);
                 }
                 None
             }
             TouchPhase::Ended => {
                 let mut active = self.active.take()?;
-                active.add(delta);
+                active.add(delta, now);
                 let release = Self::resolve(&active, now);
-                let (x, y) = active.travel();
+                let (x, y) = swipe_travel(&active);
                 self.motion = match release {
                     Some(Release::Dismiss) => Motion::Idle,
                     Some(Release::Switch(direction)) => Motion::SlideOut {
@@ -198,7 +165,7 @@ impl Swipe {
             }
             TouchPhase::Cancelled => {
                 if let Some(active) = self.active.take() {
-                    let (x, y) = active.travel();
+                    let (x, y) = swipe_travel(&active);
                     self.motion = Motion::Settle { started: now, x, y };
                 }
                 None
@@ -206,17 +173,16 @@ impl Swipe {
         }
     }
 
-    fn resolve(active: &ActiveSwipe, now: Instant) -> Option<Release> {
-        let flick = now.duration_since(active.started) <= FLICK_TIME;
+    fn resolve(active: &Pan, now: Instant) -> Option<Release> {
+        let flick = now.duration_since(active.started()) <= FLICK_TIME;
         let passes = |distance: f32, threshold: f32| {
             distance >= threshold || (flick && distance >= FLICK_DISTANCE)
         };
-        match active.axis? {
-            Axis::Vertical => {
-                passes(f32::from(active.total.y), DISMISS_DISTANCE).then_some(Release::Dismiss)
-            }
+        let travel = active.travel();
+        match active.axis()? {
+            Axis::Vertical => passes(travel.y, DISMISS_DISTANCE).then_some(Release::Dismiss),
             Axis::Horizontal => {
-                let x = f32::from(active.total.x);
+                let x = travel.x;
                 // dragging the finger leftward pulls the next track in, like paging forward
                 if passes(-x, SWITCH_DISTANCE) {
                     Some(Release::Switch(Direction::Next))
@@ -246,7 +212,7 @@ impl Swipe {
 
     pub(super) fn offsets(&self, now: Instant) -> SwipeOffsets {
         if let Some(active) = &self.active {
-            let (x, y) = active.travel();
+            let (x, y) = swipe_travel(active);
             return SwipeOffsets {
                 view_y: y,
                 track_x: x,
@@ -310,7 +276,7 @@ impl Swipe {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{ScrollDelta, ScrollSource, point};
+    use gpui::{ScrollDelta, ScrollSource, point, px};
 
     use super::*;
 

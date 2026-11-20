@@ -6,7 +6,11 @@ use gpui::{
 };
 use gpui::{actions, prelude::FluentBuilder};
 
-use crate::ui::{components::modal::bottom_sheet, platform::mobile_layout, theme::Theme};
+use crate::ui::{
+    components::{modal::bottom_sheet, sheet::Sheet},
+    platform::mobile_layout,
+    theme::Theme,
+};
 
 pub type OnDismissHandler = dyn Fn(&mut Window, &mut App);
 
@@ -79,8 +83,12 @@ impl InteractiveElement for Popover {
 
 impl RenderOnce for Popover {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
         let mobile = mobile_layout();
+        // Popovers close from their callers' `on_mouse_down_out`, so a sheet without a dismiss
+        // handler is left to that and only animates in.
+        let sheet =
+            mobile.then(|| Sheet::new("popover-sheet", self.on_dismiss.clone(), window, cx));
+        let theme = cx.global::<Theme>();
         let content = self
             .div
             .occlude()
@@ -90,14 +98,16 @@ impl RenderOnce for Popover {
             .rounded(px(6.0))
             .shadow_md()
             .when_some(self.on_dismiss, |this, on_dismiss| {
-                this.on_action(move |_: &ClosePopover, window, cx| {
-                    on_dismiss(window, cx);
+                let sheet = sheet.clone();
+                this.on_action(move |_: &ClosePopover, window, cx| match &sheet {
+                    Some(sheet) => sheet.dismiss(cx),
+                    None => on_dismiss(window, cx),
                 })
             });
 
-        if mobile {
+        if let Some(sheet) = sheet {
             // Overrides any width the caller set so the sheet spans the screen.
-            bottom_sheet(content.w_full().min_w(px(0.0)), window, cx).into_any_element()
+            bottom_sheet(&sheet, content.w_full().min_w(px(0.0)), window, cx).into_any_element()
         } else {
             deferred(anchor(self.position, self.edge_offset, content)).into_any_element()
         }

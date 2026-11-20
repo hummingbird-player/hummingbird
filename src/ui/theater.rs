@@ -13,7 +13,6 @@ use tracing::warn;
 
 use crate::{
     playback::interface::PlaybackInterface,
-    settings::SettingsGlobal,
     ui::{
         app::Pool,
         components::{
@@ -22,6 +21,7 @@ use crate::{
             nav_button::nav_button,
             styling::Surface,
             tooltip::build_tooltip,
+            touch_pan::{keep_touch_pans, reduced_motion},
             window_header::header,
         },
         constants::APP_SHADOW_SIZE,
@@ -589,7 +589,7 @@ impl TheaterView {
                     .flex()
                     .items_center()
                     .h(px(PROGRESS_HEIGHT))
-                    .on_scroll(swallow_touch_pans)
+                    .on_scroll(keep_touch_pans)
                     .child(self.progress.clone()),
             )
             .child(
@@ -605,7 +605,7 @@ impl TheaterView {
                         .flex()
                         .items_center()
                         .h(px(VOLUME_HEIGHT))
-                        .on_scroll(swallow_touch_pans)
+                        .on_scroll(keep_touch_pans)
                         .child(self.volume.clone()),
                 )
             })
@@ -624,7 +624,7 @@ impl TheaterView {
             .min_w(px(0.0))
             .overflow_hidden()
             // lyrics and the queue scroll; don't let that turn into a swipe
-            .on_scroll(swallow_touch_pans)
+            .on_scroll(keep_touch_pans)
             .child(view)
     }
 
@@ -713,22 +713,6 @@ impl TheaterView {
                 queue_target,
             ))
     }
-}
-
-/// Stops touch pans that start over this element from reaching the theater view's swipe
-/// handling (sliders, scrolling panels).
-fn swallow_touch_pans(event: &ScrollEvent, _: &mut Window, cx: &mut App) {
-    if event.source == ScrollSource::Touch {
-        cx.stop_propagation();
-    }
-}
-
-fn reduced_motion(cx: &App) -> bool {
-    cx.global::<SettingsGlobal>()
-        .model
-        .read(cx)
-        .interface
-        .reduced_motion
 }
 
 impl Render for TheaterView {

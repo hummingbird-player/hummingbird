@@ -19,6 +19,7 @@ use crate::{
             knob::knob,
             modal::bottom_sheet,
             segmented_control::segmented_control,
+            sheet::Sheet,
             tooltip::build_tooltip,
         },
         equalizer::mapping::{MAX_FREQ, MIN_FREQ, format_hz, parse_hz},
@@ -274,7 +275,8 @@ impl RenderOnce for BandEditor {
             .child(footer);
 
         if mobile_layout() {
-            return bottom_sheet(panel.w_full(), window, cx).priority(1);
+            let sheet = Sheet::new("eq-band-sheet", Some(self.on_dismiss.clone()), window, cx);
+            return bottom_sheet(&sheet, panel.w_full(), window, cx).priority(1);
         }
 
         deferred(

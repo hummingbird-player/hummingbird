@@ -5,6 +5,7 @@ use gpui::*;
 use prelude::FluentBuilder;
 
 use crate::ui::{
+    components::sheet::Sheet,
     constants::{APP_ROUNDING, APP_SHADOW_SIZE, MOBILE_SHEET_MARGIN},
     platform::mobile_layout,
     theme::Theme,
@@ -60,15 +61,46 @@ impl RenderOnce for Modal {
         let theme = cx.global::<Theme>();
         let border_color = theme.elevated_border_color;
         let background = theme.elevated_background;
+        let overlay_color = theme.modal_overlay_bg;
+        let transparent = self.transparent;
 
-        let backdrop = if mobile {
-            sheet_overlay(window, cx)
-        } else {
-            overlay(window, cx)
-        };
+        let content = self
+            .div
+            .occlude()
+            .flex()
+            .flex_col()
+            .map(|this| if mobile { this.w_full() } else { this.m_auto() })
+            .when(!transparent, |this| {
+                this.border_color(border_color)
+                    .border_1()
+                    .bg(background)
+                    .rounded(px(8.0))
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            });
+
+        if mobile {
+            // the sheet slides away before `on_exit` runs, whether it's swiped, tapped outside
+            // or closed with `CloseModal`
+            let sheet = Sheet::new("modal-sheet", self.on_exit, window, cx);
+            let close = sheet.clone();
+            let backdrop =
+                sheet_overlay(window, cx).on_action(move |_: &CloseModal, _, cx| close.dismiss(cx));
+
+            return anchored()
+                .position(point(px(0.0), px(0.0)))
+                .child(deferred(sheet.render(
+                    backdrop,
+                    overlay_color,
+                    content,
+                    window,
+                    cx,
+                )));
+        }
 
         anchored().position(point(px(0.0), px(0.0))).child(deferred(
-            backdrop
+            overlay(window, cx)
                 .when_some(self.on_exit, |this, on_exit| {
                     let on_exit_clone = Rc::clone(&on_exit);
                     this.on_any_mouse_down(move |_, window, cx| {
@@ -78,22 +110,7 @@ impl RenderOnce for Modal {
                         on_exit(window, cx);
                     })
                 })
-                .child(
-                    self.div
-                        .occlude()
-                        .flex()
-                        .flex_col()
-                        .map(|this| if mobile { this.w_full() } else { this.m_auto() })
-                        .when(!self.transparent, |this| {
-                            this.border_color(border_color)
-                                .border_1()
-                                .bg(background)
-                                .rounded(px(8.0))
-                        })
-                        .on_any_mouse_down(|_, _, cx| {
-                            cx.stop_propagation();
-                        }),
-                ),
+                .child(content),
         ))
     }
 }
@@ -181,14 +198,23 @@ fn sheet_insets(window: &Window) -> (Pixels, Pixels) {
 /// Presents a pop-up (menu, popover, dropdown, ...) as a bottom sheet over the modal
 /// backdrop. Used in the mobile layout.
 ///
-/// The backdrop doesn't dismiss anything itself: pop-ups are expected to close from
-/// `on_mouse_down_out`, which fires when the backdrop is pressed. The content should fill
-/// the available width (e.g. `w_full()`).
-pub fn bottom_sheet(content: impl IntoElement, window: &Window, cx: &App) -> Deferred {
+/// The sheet springs up when it opens. If `sheet` has a dismiss handler, tapping the backdrop or
+/// swiping the sheet down slides it away and then calls the handler; pressing the backdrop doesn't
+/// reach the content's `on_mouse_down_out` listeners. Without a handler, the pop-up is expected to
+/// close from `on_mouse_down_out`, which fires when the backdrop is pressed. The content should
+/// fill the available width (e.g. `w_full()`).
+pub fn bottom_sheet(
+    sheet: &Sheet,
+    content: impl IntoElement,
+    window: &mut Window,
+    cx: &mut App,
+) -> Deferred {
+    let overlay_color = cx.global::<Theme>().modal_overlay_bg;
+    let backdrop = sheet_overlay(window, cx);
     deferred(
         anchored()
             .position(point(px(0.0), px(0.0)))
-            .child(sheet_overlay(window, cx).child(content)),
+            .child(sheet.render(backdrop, overlay_color, content, window, cx)),
     )
 }
 

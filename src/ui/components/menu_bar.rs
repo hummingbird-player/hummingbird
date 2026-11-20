@@ -1,9 +1,12 @@
+use std::rc::Rc;
+
 use gpui::{OwnedMenu, OwnedMenuItem, prelude::FluentBuilder, *};
 
 use crate::ui::{
     components::{
         menu::{menu, menu_item, menu_separator},
         modal::bottom_sheet,
+        sheet::Sheet,
     },
     platform::mobile_layout,
     theme::Theme,
@@ -25,7 +28,7 @@ impl MenuBar {
 
 impl Render for MenuBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<Theme>();
+        let theme = cx.global::<Theme>().clone();
 
         div()
             .id("menu-bar")
@@ -88,6 +91,23 @@ impl Render for MenuBar {
                             );
 
                         let popup = if is_open {
+                            // in the mobile layout the menu slides away before it closes
+                            let sheet = mobile_layout().then(|| {
+                                let entity = cx.entity().downgrade();
+                                Sheet::new(
+                                    ("menu-bar-sheet", menu_index),
+                                    Some(Rc::new(move |_: &mut Window, cx: &mut App| {
+                                        entity
+                                            .update(cx, |this, cx| {
+                                                this.open_menu = None;
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                    })),
+                                    window,
+                                    cx,
+                                )
+                            });
                             let mut popup_menu = menu();
 
                             for (item_index, item) in top_level_menu.items.iter().enumerate() {
@@ -141,10 +161,16 @@ impl Render for MenuBar {
                                 .border_color(theme.elevated_border_color)
                                 .bg(theme.elevated_background)
                                 .id(("menu-bar-popup", menu_index))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_menu = None;
-                                    cx.notify();
-                                }))
+                                .on_click({
+                                    let sheet = sheet.clone();
+                                    cx.listener(move |this, _, _, cx| match &sheet {
+                                        Some(sheet) => sheet.dismiss(cx),
+                                        None => {
+                                            this.open_menu = None;
+                                            cx.notify();
+                                        }
+                                    })
+                                })
                                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.open_menu = None;
@@ -152,8 +178,8 @@ impl Render for MenuBar {
                                 }))
                                 .child(popup_menu);
 
-                            Some(if mobile_layout() {
-                                bottom_sheet(popup.w_full(), window, cx).into_any_element()
+                            Some(if let Some(sheet) = sheet {
+                                bottom_sheet(&sheet, popup.w_full(), window, cx).into_any_element()
                             } else {
                                 anchored()
                                     .anchor(Anchor::TopLeft)

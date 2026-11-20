@@ -20,7 +20,9 @@ use crate::ui::{
         context::context,
         input::EnrichedInputAction,
         managed_image::{ManagedImageKey, managed_image},
+        touch_pan::keep_touch_pans_unless_at_top,
     },
+    platform::mobile_layout,
     theme::Theme,
 };
 
@@ -519,51 +521,66 @@ where
         let current_selection = self.current_selection.clone();
         let weak_finder = cx.weak_entity();
 
-        div().w_full().h_full().id("finder").flex().child(
-            list(self.list_state.clone(), move |idx, _, cx| {
-                let extras_len = extra_items.len();
-                if idx < extras_len {
-                    render_extra_item(
-                        &extra_items[idx],
-                        idx,
-                        &views_model,
-                        &rendered_keys,
-                        &current_selection,
-                        &weak_finder,
-                        cx,
-                    )
-                } else {
-                    let display_idx = idx - extras_len;
-                    match display_list.get(display_idx) {
-                        Some(DisplayEntry::Header(header)) => render_header(header, cx),
-                        Some(DisplayEntry::Item(item)) => render_item(
-                            item,
+        let list_state = self.list_state.clone();
+
+        div()
+            .w_full()
+            .h_full()
+            .id("finder")
+            .flex()
+            .when(mobile_layout(), |this| {
+                // a scrolled list takes downward swipes, so they don't drag the sheet away
+                this.on_scroll(move |event, _, cx| {
+                    let top = list_state.logical_scroll_top();
+                    let at_top = top.item_ix == 0 && top.offset_in_item <= px(0.0);
+                    keep_touch_pans_unless_at_top(event, at_top, cx);
+                })
+            })
+            .child(
+                list(self.list_state.clone(), move |idx, _, cx| {
+                    let extras_len = extra_items.len();
+                    if idx < extras_len {
+                        render_extra_item(
+                            &extra_items[idx],
                             idx,
                             &views_model,
                             &rendered_keys,
                             &current_selection,
                             &weak_finder,
                             cx,
-                        ),
-                        Some(DisplayEntry::ShowMore(_, count)) => render_show_more(
-                            idx,
-                            *count,
-                            extras_len,
-                            &current_selection,
-                            &weak_finder,
-                            cx,
-                        ),
-                        None => div().into_any_element(),
+                        )
+                    } else {
+                        let display_idx = idx - extras_len;
+                        match display_list.get(display_idx) {
+                            Some(DisplayEntry::Header(header)) => render_header(header, cx),
+                            Some(DisplayEntry::Item(item)) => render_item(
+                                item,
+                                idx,
+                                &views_model,
+                                &rendered_keys,
+                                &current_selection,
+                                &weak_finder,
+                                cx,
+                            ),
+                            Some(DisplayEntry::ShowMore(_, count)) => render_show_more(
+                                idx,
+                                *count,
+                                extras_len,
+                                &current_selection,
+                                &weak_finder,
+                                cx,
+                            ),
+                            None => div().into_any_element(),
+                        }
                     }
-                }
-            })
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .py(px(6.0))
-            .w_full()
-            .h_full(),
-        )
+                })
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .py(px(6.0))
+                .w_full()
+                .h_full(),
+            )
     }
 }
 

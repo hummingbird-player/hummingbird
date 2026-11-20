@@ -560,6 +560,16 @@ impl EntityInputHandler for TextInput {
         })
     }
 
+    // Native text services need the document's extent: the iOS backend won't raise the
+    // on-screen keyboard for a field that doesn't report one.
+    fn text_length_utf16(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.content.encode_utf16().count())
+    }
+
     fn marked_text_range(
         &self,
         _window: &mut Window,
