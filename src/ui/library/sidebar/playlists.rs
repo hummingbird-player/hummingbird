@@ -28,8 +28,8 @@ use crate::{
                 check_drag_cancelled, handle_drag_move, handle_drop,
             },
             icons::{PLUS, icon},
-            playlist_art::playlist_art,
-            popover::{PopoverPosition, popover},
+            playlist_art::{PlaylistArt, playlist_art},
+            popover::{Popover, PopoverPosition, popover},
             scrollbar::{ScrollableHandle, floating_scrollbar},
             sidebar::sidebar_item,
             textbox::Textbox,
@@ -58,11 +58,7 @@ pub struct PlaylistList {
     rename_popover_playlist: Option<i64>,
     rename_playlist_input: Entity<Textbox>,
     drag_drop_manager: Entity<DragDropListManager>,
-    // bumped when a playlist updates so its user-defined image is reloaded
-    art_revisions: FxHashMap<i64, u64>,
-    cover_art_resource: Entity<AsyncResource<(), PlaylistCoverArtIdMap>>,
-    // last loaded covers, kept while a reload is pending so the art does not flicker
-    cover_art: FxHashMap<i64, PlaylistCoverArtIds>,
+    art_cache: Entity<PlaylistArtCache>,
 }
 
 pub(in crate::ui) type PlaylistsResource = AsyncResource<(), Arc<Vec<Playlist>>>;
@@ -98,36 +94,11 @@ impl PlaylistList {
     pub fn new(cx: &mut App, nav_model: Entity<NavigationHistory>) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
             let playlists_resource = live_playlists(cx);
-            let cover_art_resource = AsyncResource::new(cx, (), {
-                let pool = cx.global::<Pool>().0.clone();
-                fetch_cover_art(pool)
-            });
-            cx.observe(&cover_art_resource, |this: &mut Self, resource, cx| {
-                if let Some(covers) = resource.read(cx).ready() {
-                    this.cover_art = (**covers).clone();
-                }
-                cx.notify();
-            })
-            .detach();
+            let art_cache = PlaylistArtCache::new(cx);
+            cx.observe(&art_cache, |_, _, cx| cx.notify()).detach();
             let sidebar_collapsed = cx.global::<Models>().sidebar_collapsed.clone();
             cx.observe(&sidebar_collapsed, |_, _, cx| cx.notify())
                 .detach();
-
-            // the playlist list itself is kept up to date by live_playlists
-            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-            cx.subscribe(
-                &playlist_tracker,
-                |this: &mut Self, _, ev: &PlaylistEvent, cx| {
-                    if let PlaylistEvent::PlaylistUpdated(id) = ev {
-                        *this.art_revisions.entry(*id).or_default() += 1;
-                    }
-                    let pool = cx.global::<Pool>().0.clone();
-                    this.cover_art_resource.update(cx, |resource, cx| {
-                        resource.load(cx, (), fetch_cover_art(pool));
-                    });
-                },
-            )
-            .detach();
 
             cx.observe(&nav_model, |_, _, cx| {
                 cx.notify();
@@ -166,9 +137,7 @@ impl PlaylistList {
                 rename_popover_playlist: None,
                 rename_playlist_input,
                 drag_drop_manager,
-                art_revisions: FxHashMap::default(),
-                cover_art_resource,
-                cover_art: FxHashMap::default(),
+                art_cache,
             }
         })
     }
@@ -179,19 +148,7 @@ impl PlaylistList {
             return;
         }
 
-        let pool = cx.global::<Pool>().0.clone();
-        let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
-        cx.spawn(async move |_, cx| {
-            let task = crate::RUNTIME.spawn(async move { db::create_playlist(&pool, &name).await });
-            match task.await {
-                Ok(Ok(id)) => playlist_tracker.update(cx, |_, cx| {
-                    cx.emit(PlaylistEvent::PlaylistUpdated(id));
-                }),
-                Ok(Err(err)) => error!("Failed to create playlist: {err}"),
-                Err(err) => error!("create playlist task panicked: {err}"),
-            }
-        })
-        .detach();
+        create_playlist(name.to_string(), cx);
 
         self.popover_open = false;
         self.new_playlist_input.update(cx, |tb, cx| tb.reset(cx));
@@ -376,14 +333,12 @@ impl Render for PlaylistList {
                 PLAYLIST_SIDEBAR_ART_SIZE
             };
             let mut item = sidebar_item(("main-sidebar-pl", playlist.id as u64)).custom_icon(
-                playlist_art(pl_id)
+                self.art_cache
+                    .read(cx)
+                    .art(playlist)
                     .size(px(art_size))
                     .radius(px(4.0))
-                    .placeholder_background(!collapsed)
-                    .has_image(playlist.has_image)
-                    .revision(self.art_revisions.get(&pl_id).copied().unwrap_or(0))
-                    .cover_art_ids(self.cover_art.get(&pl_id).cloned().unwrap_or_default())
-                    .system(playlist.playlist_type == PlaylistType::System),
+                    .placeholder_background(!collapsed),
             );
 
             if collapsed {
@@ -632,7 +587,6 @@ impl Render for PlaylistList {
         };
         let popover_open = self.popover_open;
         let new_playlist_input = self.new_playlist_input.clone();
-        let weak_self = cx.entity().downgrade();
 
         main = main.child(
             div()
@@ -671,52 +625,13 @@ impl Render for PlaylistList {
                         ),
                 )
                 .when(popover_open, |this| {
-                    let weak_self_for_dismiss = weak_self.clone();
-                    this.child(
-                        popover()
-                            .position(PopoverPosition::RightTop)
-                            .edge_offset(px(12.0))
-                            .on_dismiss(move |_, cx| {
-                                if let Some(entity) = weak_self_for_dismiss.upgrade() {
-                                    entity.update(cx, |this, cx| this.close_popover(cx));
-                                }
-                            })
-                            .min_w(px(250.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.0))
-                            .on_any_mouse_down(|_, _, cx| {
-                                cx.stop_propagation();
-                            })
-                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.close_popover(cx);
-                            }))
-                            .child(new_playlist_input.clone())
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_end()
-                                    .gap(px(6.0))
-                                    .child(
-                                        button()
-                                            .id("cancel-playlist")
-                                            .child(tr!("CANCEL", "Cancel"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.close_popover(cx);
-                                            })),
-                                    )
-                                    .child(
-                                        button()
-                                            .id("create-playlist")
-                                            .intent(ButtonIntent::Primary)
-                                            .child(tr!("CREATE", "Create"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.handle_submit(cx);
-                                            })),
-                                    ),
-                            ),
-                    )
+                    this.child(new_playlist_popover(
+                        new_playlist_input,
+                        PopoverPosition::RightTop,
+                        Self::close_popover,
+                        Self::handle_submit,
+                        cx,
+                    ))
                 }),
         );
 
@@ -734,6 +649,137 @@ impl Render for PlaylistList {
             .when(!collapsed, |this| {
                 this.child(floating_scrollbar("playlist_list_scrollbar", scroll_handle))
             })
+    }
+}
+
+/// Creates a playlist named `name`, notifying the playlist tracker once it exists.
+pub(in crate::ui) fn create_playlist(name: String, cx: &mut App) {
+    let pool = cx.global::<Pool>().0.clone();
+    let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+    cx.spawn(async move |cx| {
+        let task = crate::RUNTIME.spawn(async move { db::create_playlist(&pool, &name).await });
+        match task.await {
+            Ok(Ok(id)) => playlist_tracker.update(cx, |_, cx| {
+                cx.emit(PlaylistEvent::PlaylistUpdated(id));
+            }),
+            Ok(Err(err)) => error!("Failed to create playlist: {err}"),
+            Err(err) => error!("create playlist task panicked: {err}"),
+        }
+    })
+    .detach();
+}
+
+/// The popover that asks for a new playlist's name. `close` dismisses it and `submit` creates
+/// the playlist from `input`.
+pub(in crate::ui) fn new_playlist_popover<V: 'static>(
+    input: Entity<Textbox>,
+    position: PopoverPosition,
+    close: fn(&mut V, &mut Context<V>),
+    submit: fn(&mut V, &mut Context<V>),
+    cx: &mut Context<V>,
+) -> Popover {
+    let weak_self = cx.entity().downgrade();
+
+    popover()
+        .position(position)
+        .edge_offset(px(12.0))
+        .on_dismiss(move |_, cx| {
+            if let Some(entity) = weak_self.upgrade() {
+                entity.update(cx, close);
+            }
+        })
+        .min_w(px(250.0))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .on_any_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
+        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            close(this, cx);
+        }))
+        .child(input)
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .gap(px(6.0))
+                .child(
+                    button()
+                        .id("cancel-playlist")
+                        .child(tr!("CANCEL", "Cancel"))
+                        .on_click(cx.listener(move |this, _, _, cx| close(this, cx))),
+                )
+                .child(
+                    button()
+                        .id("create-playlist")
+                        .intent(ButtonIntent::Primary)
+                        .child(tr!("CREATE", "Create"))
+                        .on_click(cx.listener(move |this, _, _, cx| submit(this, cx))),
+                ),
+        )
+}
+
+/// What each playlist's art should show: the revision of its user-defined image and the album
+/// covers used when it has none. Kept up to date as playlists change; observers are notified.
+pub(in crate::ui) struct PlaylistArtCache {
+    // bumped when a playlist updates so its user-defined image is reloaded
+    art_revisions: FxHashMap<i64, u64>,
+    cover_art_resource: Entity<AsyncResource<(), PlaylistCoverArtIdMap>>,
+    // last loaded covers, kept while a reload is pending so the art does not flicker
+    cover_art: FxHashMap<i64, PlaylistCoverArtIds>,
+}
+
+impl PlaylistArtCache {
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|cx: &mut Context<Self>| {
+            let pool = cx.global::<Pool>().0.clone();
+            let cover_art_resource = AsyncResource::new(cx, (), fetch_cover_art(pool));
+            cx.observe(&cover_art_resource, |this: &mut Self, resource, cx| {
+                if let Some(covers) = resource.read(cx).ready() {
+                    this.cover_art = (**covers).clone();
+                }
+                cx.notify();
+            })
+            .detach();
+
+            let playlist_tracker = cx.global::<Models>().playlist_tracker.clone();
+            cx.subscribe(
+                &playlist_tracker,
+                |this: &mut Self, _, ev: &PlaylistEvent, cx| {
+                    if let PlaylistEvent::PlaylistUpdated(id) = ev {
+                        *this.art_revisions.entry(*id).or_default() += 1;
+                    }
+                    let pool = cx.global::<Pool>().0.clone();
+                    this.cover_art_resource.update(cx, |resource, cx| {
+                        resource.load(cx, (), fetch_cover_art(pool));
+                    });
+                    cx.notify();
+                },
+            )
+            .detach();
+
+            Self {
+                art_revisions: FxHashMap::default(),
+                cover_art_resource,
+                cover_art: FxHashMap::default(),
+            }
+        })
+    }
+
+    /// The art for `playlist`, at the component's default size.
+    pub fn art(&self, playlist: &Playlist) -> PlaylistArt {
+        playlist_art(playlist.id)
+            .has_image(playlist.has_image)
+            .revision(self.art_revisions.get(&playlist.id).copied().unwrap_or(0))
+            .cover_art_ids(
+                self.cover_art
+                    .get(&playlist.id)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+            .system(playlist.playlist_type == PlaylistType::System)
     }
 }
 

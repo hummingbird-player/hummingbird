@@ -13,17 +13,21 @@ use gpui::{
 };
 
 use crate::{
-    library::types::{Playlist, PlaylistType},
+    library::types::Playlist,
     settings::SettingsGlobal,
     ui::{
         components::{
-            icons::{ADJUSTMENTS, DISC, FOLDER, MUSIC, PLAYLIST, SEARCH, STAR, USERS, icon},
-            styling::AdditionalStyleUtil,
+            icons::{DISC, FOLDER, MUSIC, PLUS, SEARCH, USERS, icon},
+            popover::PopoverPosition,
+            textbox::Textbox,
         },
         global_actions::Search,
         library::{
             NavigationHistory, ViewSwitchMessage,
-            sidebar::playlists::{PlaylistsResource, live_playlists},
+            sidebar::playlists::{
+                PlaylistArtCache, PlaylistsResource, create_playlist, live_playlists,
+                new_playlist_popover,
+            },
         },
         models::Models,
         theme::Theme,
@@ -33,7 +37,8 @@ use crate::{
 /// Height of the bar, excluding any bottom safe-area inset.
 pub const BOTTOM_BAR_HEIGHT: Pixels = px(56.0);
 const PLAYLIST_PEEK_WIDTH: Pixels = px(16.0);
-const PLAYLIST_ITEM_SIZE: Pixels = px(44.0);
+const PLAYLIST_ITEM_SIZE: Pixels = px(40.0);
+const PLAYLIST_ITEM_MARGIN: Pixels = px(4.0);
 const BAR_PADDING: Pixels = px(6.0);
 const DESTINATION_COUNT: f32 = 5.0;
 const ITEM_ICON_SIZE: Pixels = px(20.0);
@@ -138,23 +143,40 @@ fn bottom_bar_item(id: impl Into<ElementId>) -> BottomBarItem {
 pub struct BottomBar {
     nav_model: Entity<NavigationHistory>,
     playlists: Entity<PlaylistsResource>,
+    art_cache: Entity<PlaylistArtCache>,
     scroll_handle: ScrollHandle,
+    popover_open: bool,
+    new_playlist_input: Entity<Textbox>,
 }
 
 impl BottomBar {
     pub fn new(cx: &mut App) -> Entity<Self> {
         let nav_model = cx.global::<Models>().switcher_model.clone();
 
-        cx.new(|cx| {
+        cx.new(|cx: &mut Context<Self>| {
             cx.observe(&nav_model, |_, _, cx| cx.notify()).detach();
 
             let settings = cx.global::<SettingsGlobal>().model.clone();
             cx.observe(&settings, |_, _, cx| cx.notify()).detach();
 
+            let art_cache = PlaylistArtCache::new(cx);
+            cx.observe(&art_cache, |_, _, cx| cx.notify()).detach();
+
+            let weak_self = cx.entity().downgrade();
+            let new_playlist_input =
+                Textbox::new_with_submit(cx, StyleRefinement::default(), move |cx| {
+                    if let Some(entity) = weak_self.upgrade() {
+                        entity.update(cx, |this, cx| this.submit_new_playlist(cx));
+                    }
+                });
+
             Self {
                 nav_model,
                 playlists: live_playlists(cx),
+                art_cache,
                 scroll_handle: ScrollHandle::new(),
+                popover_open: false,
+                new_playlist_input,
             }
         })
     }
@@ -237,32 +259,77 @@ impl BottomBar {
             )
     }
 
-    fn render_playlist(
-        &self,
-        playlist: &Playlist,
-        view: ViewSwitchMessage,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    fn render_playlist(&self, playlist: &Playlist, cx: &mut Context<Self>) -> Stateful<Div> {
         let id = playlist.id;
-        let theme = cx.global::<Theme>();
-
-        let icon_name = if playlist.playlist_type == PlaylistType::System {
-            STAR
-        } else {
-            PLAYLIST
-        };
 
         div()
             .id(("bottom-bar-playlist", id as u64))
-            .size(px(40.0))
-            .m(px(4.0))
-            .flex()
-            .justify_center()
-            .items_center()
-            .bg(theme.album_art_background)
+            .flex_shrink_0()
+            .m(PLAYLIST_ITEM_MARGIN)
             .on_click(Self::navigate(ViewSwitchMessage::Playlist(id), cx))
-            .child(icon(icon_name).size(px(16.0)))
-            .rounded(px(6.0))
+            .child(
+                self.art_cache
+                    .read(cx)
+                    .art(playlist)
+                    .size(PLAYLIST_ITEM_SIZE)
+                    .radius(px(6.0)),
+            )
+    }
+
+    fn render_new_playlist(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.global::<Theme>();
+
+        div()
+            .relative()
+            .flex_shrink_0()
+            .m(PLAYLIST_ITEM_MARGIN)
+            .child(
+                div()
+                    .id("bottom-bar-new-playlist")
+                    .size(PLAYLIST_ITEM_SIZE)
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .rounded(px(6.0))
+                    .text_color(theme.text_secondary)
+                    .active(|this| this.bg(theme.nav_button_active))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.popover_open = true;
+                        this.new_playlist_input
+                            .read(cx)
+                            .focus_handle()
+                            .focus(window, cx);
+                        cx.notify();
+                    }))
+                    .child(icon(PLUS).size(ITEM_ICON_SIZE)),
+            )
+            .when(self.popover_open, |this| {
+                this.child(new_playlist_popover(
+                    self.new_playlist_input.clone(),
+                    PopoverPosition::TopRight,
+                    Self::close_new_playlist,
+                    Self::submit_new_playlist,
+                    cx,
+                ))
+            })
+    }
+
+    fn close_new_playlist(&mut self, cx: &mut Context<Self>) {
+        self.popover_open = false;
+        cx.notify();
+    }
+
+    fn submit_new_playlist(&mut self, cx: &mut Context<Self>) {
+        let name = self.new_playlist_input.read(cx).value(cx);
+        if name.is_empty() {
+            return;
+        }
+
+        create_playlist(name.to_string(), cx);
+
+        self.popover_open = false;
+        self.new_playlist_input.update(cx, |tb, cx| tb.reset(cx));
+        cx.notify();
     }
 }
 
@@ -282,7 +349,7 @@ impl Render for BottomBar {
         let playlists = self.playlists.read(cx).ready().cloned().unwrap_or_default();
         let playlist_items: Vec<_> = playlists
             .iter()
-            .map(|playlist| self.render_playlist(playlist, view, cx))
+            .map(|playlist| self.render_playlist(playlist, cx))
             .collect();
 
         // The bar is the bottom-most element, so its background runs under the home indicator
@@ -310,17 +377,16 @@ impl Render for BottomBar {
                     .p(BAR_PADDING)
                     .pt(px(0.0))
                     .child(self.render_destinations(view, window, cx))
-                    .when(!playlist_items.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .w(px(1.0))
-                                .my(px(6.0))
-                                .mr(px(6.0))
-                                .flex_shrink_0()
-                                .bg(border),
-                        )
-                    })
-                    .children(playlist_items),
+                    .child(
+                        div()
+                            .w(px(1.0))
+                            .my(px(6.0))
+                            .mr(px(6.0))
+                            .flex_shrink_0()
+                            .bg(border),
+                    )
+                    .children(playlist_items)
+                    .child(self.render_new_playlist(cx)),
             )
     }
 }

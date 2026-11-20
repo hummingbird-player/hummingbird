@@ -313,7 +313,7 @@
   },
   "CANCEL": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:704",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:711",
     "plural": false,
     "description": null
   },
@@ -427,7 +427,7 @@
   },
   "CREATE": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:713",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:718",
     "plural": false,
     "description": null
   },
@@ -895,7 +895,7 @@
   },
   "LIKED_SONGS": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:366",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:323",
     "plural": false,
     "description": null
   },
@@ -925,7 +925,7 @@
   },
   "NEW_PLAYLIST": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:652",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:606",
     "plural": false,
     "description": null
   },
@@ -1057,7 +1057,7 @@
   },
   "PLAYLIST_TRACK_COUNT": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:412",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:367",
     "plural": true,
     "description": null
   },
@@ -1165,7 +1165,7 @@
   },
   "RENAME": {
     "context": "playlists.rs",
-    "definedIn": "src/ui/library/sidebar/playlists.rs:612",
+    "definedIn": "src/ui/library/sidebar/playlists.rs:567",
     "plural": false,
     "description": null
   },
