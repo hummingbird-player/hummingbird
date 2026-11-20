@@ -6,10 +6,28 @@ use std::{
 
 use gpui::*;
 
-use crate::ui::theme::Theme;
+use crate::ui::{components::touch_pan::DoubleTap, theme::Theme};
 
 type ClickHandler = dyn FnMut(f32, &mut Window, &mut App);
 type DoubleClickHandler = dyn FnMut(&mut Window, &mut App);
+
+struct DragState {
+    dragging: bool,
+    last_change: Instant,
+    value: f32,
+    double_tap: DoubleTap,
+}
+
+impl Default for DragState {
+    fn default() -> Self {
+        DragState {
+            dragging: false,
+            last_change: Instant::now(),
+            value: 0.0,
+            double_tap: DoubleTap::default(),
+        }
+    }
+}
 
 pub struct Slider {
     pub(self) id: Option<ElementId>,
@@ -158,16 +176,85 @@ impl Element for Slider {
             window.with_optional_element_state(
                 id,
                 #[allow(clippy::type_complexity)]
-                move |v: Option<Option<Rc<RefCell<(bool, Instant, f32)>>>>, cx| {
-                    let drag_state = v
-                        .flatten()
-                        .unwrap_or_else(|| Rc::new(RefCell::new((false, Instant::now(), 0.0))));
+                move |v: Option<Option<Rc<RefCell<DragState>>>>, cx| {
+                    let drag_state = v.flatten().unwrap_or_default();
                     let func = func.clone();
                     let func_move = func.clone();
                     let func_release = func.clone();
 
                     let drag_state_1 = drag_state.clone();
                     let hitbox = hitbox.clone();
+                    let value_at = move |position: Point<Pixels>| {
+                        let relative_x: f32 = (position.x - bounds.origin.x).into();
+                        let width: f32 = bounds.size.width.into();
+                        (relative_x / width).clamp(0.0, 1.0)
+                    };
+
+                    // On touch screens a finger that moves becomes a pan, not mouse moves, so the
+                    // slider claims touches that start on it as touch drags. Claimed touches no
+                    // longer become taps either, so taps and double taps are handled here too.
+                    {
+                        let func = func.clone();
+                        let on_double_click = on_double_click.clone();
+                        let drag_state = drag_state.clone();
+                        let hitbox = hitbox.clone();
+                        cx.on_mouse_event(move |ev: &TouchDragEvent, phase, window, cx| {
+                            let mut state = drag_state.borrow_mut();
+                            match ev.phase {
+                                TouchPhase::Started => {
+                                    if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window)
+                                    {
+                                        return;
+                                    }
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+
+                                    let now = Instant::now();
+                                    let double_tap = state.double_tap.starts_double_tap(ev);
+                                    if double_tap && let Some(on_double_click) = &on_double_click {
+                                        state.dragging = false;
+                                        drop(state);
+                                        (on_double_click.borrow_mut())(window, cx);
+                                        return;
+                                    }
+
+                                    let value = value_at(ev.position);
+                                    state.dragging = true;
+                                    state.last_change = now;
+                                    state.value = value;
+                                    drop(state);
+                                    (func.borrow_mut())(value, window, cx);
+                                }
+                                TouchPhase::Moved => {
+                                    if !state.dragging {
+                                        return;
+                                    }
+                                    let value = value_at(ev.position);
+                                    state.value = value;
+                                    let now = Instant::now();
+                                    if now.duration_since(state.last_change) >= min_interval {
+                                        state.last_change = now;
+                                        drop(state);
+                                        (func.borrow_mut())(value, window, cx);
+                                    }
+                                }
+                                TouchPhase::Ended | TouchPhase::Cancelled => {
+                                    if !state.dragging {
+                                        return;
+                                    }
+                                    state.dragging = false;
+                                    state.double_tap.touch_ended(ev);
+                                    let value = state.value;
+                                    drop(state);
+                                    // like a mouse release, a throttled slider gets the final
+                                    // value it may have skipped
+                                    if ev.phase == TouchPhase::Ended && change_interval.is_some() {
+                                        (func.borrow_mut())(value, window, cx);
+                                    }
+                                }
+                            }
+                        });
+                    }
 
                     cx.on_mouse_event(move |ev: &MouseDownEvent, _, window, cx| {
                         if !hitbox.is_hovered(window) {
@@ -182,41 +269,35 @@ impl Element for Slider {
                                 (on_double_click.borrow_mut())(window, cx);
                             }
 
-                            drag_state_1.borrow_mut().0 = false;
+                            drag_state_1.borrow_mut().dragging = false;
                             return;
                         }
 
-                        let relative = ev.position - bounds.origin;
-                        let relative_x: f32 = relative.x.into();
-                        let width: f32 = bounds.size.width.into();
-                        let value = (relative_x / width).clamp(0.0, 1.0);
+                        let value = value_at(ev.position);
 
                         (func.borrow_mut())(value, window, cx);
                         let mut state = drag_state_1.borrow_mut();
-                        state.0 = true;
-                        state.1 = Instant::now();
-                        state.2 = value;
+                        state.dragging = true;
+                        state.last_change = Instant::now();
+                        state.value = value;
                     });
 
                     let drag_state_2 = drag_state.clone();
 
                     cx.on_mouse_event(move |ev: &MouseMoveEvent, _, window, cx| {
                         let mut state = drag_state_2.borrow_mut();
-                        if !state.0 {
+                        if !state.dragging {
                             return;
                         }
 
-                        let relative = ev.position - bounds.origin;
-                        let relative_x: f32 = relative.x.into();
-                        let width: f32 = bounds.size.width.into();
-                        let value = (relative_x / width).clamp(0.0, 1.0);
-
-                        state.2 = value;
+                        let value = value_at(ev.position);
+                        state.value = value;
 
                         let now = Instant::now();
-                        if now.duration_since(state.1) >= min_interval {
+                        if now.duration_since(state.last_change) >= min_interval {
+                            state.last_change = now;
+                            drop(state);
                             (func_move.borrow_mut())(value, window, cx);
-                            state.1 = now;
                         }
                     });
 
@@ -225,10 +306,13 @@ impl Element for Slider {
 
                     cx.on_mouse_event(move |_ev: &MouseUpEvent, _, window, cx| {
                         let mut state = drag_state_3.borrow_mut();
-                        if state.0 && flush_on_release {
-                            (func_release.borrow_mut())(state.2, window, cx);
+                        let was_dragging = state.dragging;
+                        state.dragging = false;
+                        let value = state.value;
+                        drop(state);
+                        if was_dragging && flush_on_release {
+                            (func_release.borrow_mut())(value, window, cx);
                         }
-                        state.0 = false;
                     });
 
                     ((), if id.is_some() { Some(drag_state) } else { None })

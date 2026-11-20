@@ -7,7 +7,10 @@ use std::{
 use gpui::*;
 use tracing::error;
 
-use crate::ui::{components::textbox::Textbox, theme::Theme};
+use crate::ui::{
+    components::{textbox::Textbox, touch_pan::DoubleTap},
+    theme::Theme,
+};
 
 type ChangeHandler = dyn FnMut(f32, &mut App);
 type ValueFormatter = dyn Fn(f32) -> SharedString;
@@ -183,6 +186,7 @@ impl IntoElement for Knob {
 #[derive(Default)]
 struct KnobState {
     drag: Option<(Pixels, f32, bool)>,
+    double_tap: DoubleTap,
     textbox: Option<Entity<Textbox>>,
     parse_error: Option<Instant>,
     refocus: bool,
@@ -438,11 +442,73 @@ impl Element for Knob {
         window.with_optional_element_state(id, move |v, window| {
             let state: Rc<RefCell<KnobState>> = v.flatten().unwrap_or_default();
 
+            // opens the type-in editor, on a double click or double tap
+            let open_editor: Option<Rc<dyn Fn(&mut Window, &mut App)>> =
+                parse.clone().map(|parse| {
+                    let on_change = on_change.clone();
+                    let state = state.clone();
+                    Rc::new(move |window: &mut Window, cx: &mut App| {
+                        let parse = parse.clone();
+                        let commit_change = on_change.clone();
+                        let commit_state = state.clone();
+                        let textbox = Textbox::new_with_value_submit(
+                            cx,
+                            StyleRefinement::default(),
+                            move |text, cx| match parse(text.trim()) {
+                                Some(value) => {
+                                    (commit_change.borrow_mut())(
+                                        value.clamp(parse_range.0, parse_range.1),
+                                        cx,
+                                    );
+                                    let mut state = commit_state.borrow_mut();
+                                    state.textbox = None;
+                                    state.parse_error = None;
+                                    state.refocus = true;
+                                }
+                                None => {
+                                    commit_state.borrow_mut().parse_error = Some(Instant::now());
+                                    cx.refresh_windows();
+                                }
+                            },
+                        );
+                        textbox.update(cx, |textbox, cx| {
+                            textbox.set_value(cx, (format)(raw_value));
+                            textbox.select_all(cx);
+                        });
+                        let focus = textbox.read(cx).focus_handle();
+                        focus.focus(window, cx);
+                        let mut state = state.borrow_mut();
+                        state.textbox = Some(textbox);
+                        state.parse_error = None;
+                        state.drag = None;
+                        window.refresh();
+                    }) as Rc<dyn Fn(&mut Window, &mut App)>
+                });
+
+            // starting a drag dismisses the type-in editor
+            let start_drag = {
+                let state = state.clone();
+                let restore_focus = restore_focus.clone();
+                Rc::new(
+                    move |y: Pixels, shift: bool, window: &mut Window, cx: &mut App| {
+                        let mut state = state.borrow_mut();
+                        if state.textbox.take().is_some() {
+                            state.parse_error = None;
+                            if let Some(focus) = &restore_focus {
+                                focus.focus(window, cx);
+                            }
+                        }
+                        state.drag = Some((y, position, shift));
+                    },
+                )
+            };
+
             {
                 let state = state.clone();
                 let hitbox = hitbox.clone();
                 let on_change = on_change.clone();
-                let restore_focus = restore_focus.clone();
+                let open_editor = open_editor.clone();
+                let start_drag = start_drag.clone();
                 window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
@@ -457,53 +523,11 @@ impl Element for Knob {
                     cx.stop_propagation();
 
                     match ev.button {
-                        MouseButton::Left if ev.click_count == 2 && parse.is_some() => {
-                            let parse = parse.clone().unwrap();
-                            let commit_change = on_change.clone();
-                            let commit_state = state.clone();
-                            let textbox = Textbox::new_with_value_submit(
-                                cx,
-                                StyleRefinement::default(),
-                                move |text, cx| match parse(text.trim()) {
-                                    Some(value) => {
-                                        (commit_change.borrow_mut())(
-                                            value.clamp(parse_range.0, parse_range.1),
-                                            cx,
-                                        );
-                                        let mut state = commit_state.borrow_mut();
-                                        state.textbox = None;
-                                        state.parse_error = None;
-                                        state.refocus = true;
-                                    }
-                                    None => {
-                                        commit_state.borrow_mut().parse_error =
-                                            Some(Instant::now());
-                                        cx.refresh_windows();
-                                    }
-                                },
-                            );
-                            textbox.update(cx, |textbox, cx| {
-                                textbox.set_value(cx, (format)(raw_value));
-                                textbox.select_all(cx);
-                            });
-                            let focus = textbox.read(cx).focus_handle();
-                            focus.focus(window, cx);
-                            let mut state = state.borrow_mut();
-                            state.textbox = Some(textbox);
-                            state.parse_error = None;
-                            state.drag = None;
-                            window.refresh();
+                        MouseButton::Left if ev.click_count == 2 && open_editor.is_some() => {
+                            (open_editor.as_ref().unwrap())(window, cx);
                         }
                         MouseButton::Left => {
-                            let mut state = state.borrow_mut();
-                            // starting a drag dismisses the type-in editor
-                            if state.textbox.take().is_some() {
-                                state.parse_error = None;
-                                if let Some(focus) = &restore_focus {
-                                    focus.focus(window, cx);
-                                }
-                            }
-                            state.drag = Some((ev.position.y, position, ev.modifiers.shift));
+                            start_drag(ev.position.y, ev.modifiers.shift, window, cx);
                         }
                         MouseButton::Right => {
                             if let Some(default) = default_value {
@@ -511,6 +535,58 @@ impl Element for Knob {
                             }
                         }
                         _ => {}
+                    }
+                });
+            }
+
+            // On touch screens a finger that moves becomes a pan, not mouse moves, so the knob
+            // claims touches that start on it as touch drags. Claimed touches no longer become
+            // taps either, so double taps are spotted here too.
+            {
+                let state = state.clone();
+                let hitbox = hitbox.clone();
+                let on_change = on_change.clone();
+                window.on_mouse_event(move |ev: &TouchDragEvent, phase, window, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    match ev.phase {
+                        TouchPhase::Started => {
+                            if !hitbox.is_hovered(window) {
+                                return;
+                            }
+                            // leave touches on the open editor to the textbox
+                            if state.borrow().textbox.is_some()
+                                && edit_bounds.contains(&ev.start_position)
+                            {
+                                return;
+                            }
+
+                            window.prevent_default();
+                            cx.stop_propagation();
+
+                            let double_tap = state.borrow_mut().double_tap.starts_double_tap(ev);
+                            if double_tap && let Some(open_editor) = &open_editor {
+                                open_editor(window, cx);
+                            } else {
+                                start_drag(ev.start_position.y, false, window, cx);
+                            }
+                        }
+                        TouchPhase::Moved => {
+                            let Some((start_y, start_position, _)) = state.borrow().drag else {
+                                return;
+                            };
+                            let dy: f32 = (start_y - ev.position.y).into();
+                            let position = (start_position + dy / DRAG_PIXELS).clamp(0.0, 1.0);
+                            (on_change.borrow_mut())(position, cx);
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            let mut state = state.borrow_mut();
+                            if state.drag.take().is_none() {
+                                return;
+                            }
+                            state.double_tap.touch_ended(ev);
+                        }
                     }
                 });
             }

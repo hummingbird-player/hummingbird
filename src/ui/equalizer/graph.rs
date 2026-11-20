@@ -11,6 +11,7 @@ use crate::{
     playback::dsp::equalizer::{Biquad, MAX_GAIN_DB, band_response_db, omega},
     settings::equalizer::{EqBandSettings, EqualizerSettings, MAX_EQ_BANDS},
     ui::{
+        components::touch_pan::DoubleTap,
         equalizer::mapping::{
             CURVE_MAX_DB, CURVE_MIN_DB, DB_WINDOW, MAX_FREQ, MIN_FREQ, db_to_y, db_to_y_unclamped,
             format_hz, freq_to_x, scroll_q, spectrum_db_to_y, x_to_freq, y_to_db,
@@ -76,6 +77,7 @@ struct GraphState {
     q_flash: Option<(Instant, usize)>,
     last_add: Option<(Instant, usize)>,
     cache: Option<CurveCache>,
+    double_tap: DoubleTap,
 }
 
 // Bypass ignored so the curve stays visible for editing while the EQ is off
@@ -800,12 +802,152 @@ impl Element for EqGraph {
         window.with_optional_element_state(id, move |v, window| {
             let state: Rc<RefCell<GraphState>> = v.flatten().unwrap_or_default();
 
+            // grabs a band's dot to drag it, on a click or a touch
+            let grab_dot = {
+                let state = state.clone();
+                let config = config.clone();
+                let on_select = on_select.clone();
+                let on_drag_active = on_drag_active.clone();
+                Rc::new(
+                    move |index: usize, position: Point<Pixels>, shift: bool, cx: &mut App| {
+                        if let Some(select) = &on_select {
+                            (select.borrow_mut())(Some(index), cx);
+                        }
+                        if let Some(band) = config.bands.get(index) {
+                            state.borrow_mut().drag = Some(DragState {
+                                index,
+                                start: position,
+                                start_frequency: band.frequency,
+                                start_gain_db: band.gain_db,
+                                shift,
+                                was_selected: selected == Some(index),
+                                moved: false,
+                            });
+                            if let Some(drag_active) = &on_drag_active {
+                                (drag_active.borrow_mut())(true, cx);
+                            }
+                        }
+                    },
+                )
+            };
+
+            // a second click or tap on a dot toggles its band and opens its editor
+            let toggle_dot = {
+                let state = state.clone();
+                let on_select = on_select.clone();
+                Rc::new(move |index: usize, cx: &mut App| {
+                    // the second click of an add lands on the new dot, skip it
+                    let fresh = state
+                        .borrow()
+                        .last_add
+                        .is_some_and(|(at, band)| band == index && at.elapsed().as_millis() < 500);
+                    if !fresh {
+                        if let Some(toggle) = &on_toggle_enabled {
+                            (toggle.borrow_mut())(index, cx);
+                        }
+                        if let Some(select) = &on_select {
+                            (select.borrow_mut())(Some(index), cx);
+                        }
+                    }
+                })
+            };
+
+            // moves the dragged dot with the pointer or finger, returns whether a drag is going
+            let drag_to = {
+                let state = state.clone();
+                let config = config.clone();
+                let on_band_change = on_band_change.clone();
+                let on_drag_active = on_drag_active.clone();
+                Rc::new(
+                    move |position: Point<Pixels>, shift: bool, cx: &mut App| -> bool {
+                        let drag = state.borrow().drag;
+                        let Some(mut drag) = drag else {
+                            return false;
+                        };
+                        let Some(on_change) = &on_band_change else {
+                            return true;
+                        };
+                        let Some(band) = config.bands.get(drag.index) else {
+                            // the band vanished mid-drag, still release the view's drag latch
+                            state.borrow_mut().drag = None;
+                            if let Some(drag_active) = &on_drag_active {
+                                (drag_active.borrow_mut())(false, cx);
+                            }
+                            return true;
+                        };
+                        let scale = if drag.shift { 0.1 } else { 1.0 };
+                        let width: f32 = plot.size.width.into();
+                        let dx: f32 = (position.x - drag.start.x).into();
+                        let dy: f32 = (position.y - drag.start.y).into();
+                        if !drag.moved && dx.abs() + dy.abs() > 3.0 {
+                            drag.moved = true;
+                            state.borrow_mut().drag = Some(drag);
+                        }
+                        if !drag.moved {
+                            return true;
+                        }
+                        // the start frequency can sit off-axis after an arrow-key nudge, map it
+                        // unclamped so the delta stays relative to the real spot
+                        let start_x = ((drag.start_frequency as f32).log10() - MIN_FREQ.log10())
+                            / (MAX_FREQ.log10() - MIN_FREQ.log10())
+                            * width;
+                        let frequency = x_to_freq(start_x + dx * scale, width) as f64;
+                        let gain_db = if band.kind.has_gain() {
+                            let height: f32 = plot.size.height.into();
+                            let db = drag.start_gain_db
+                                - f64::from(dy * scale) * 2.0 * f64::from(DB_WINDOW)
+                                    / f64::from(height);
+                            db.clamp(-MAX_GAIN_DB, MAX_GAIN_DB)
+                        } else {
+                            band.gain_db
+                        };
+                        // a shift toggle would rescale the whole accumulated delta, so rebase
+                        // the drag origin onto the current value and position
+                        if shift != drag.shift {
+                            drag.shift = shift;
+                            drag.start = position;
+                            drag.start_frequency = frequency;
+                            drag.start_gain_db = gain_db;
+                            state.borrow_mut().drag = Some(drag);
+                        }
+                        (on_change.borrow_mut())(drag.index, frequency, gain_db, cx);
+                        true
+                    },
+                )
+            };
+
+            // lets go of the dragged dot
+            let release = {
+                let state = state.clone();
+                let on_drag_active = on_drag_active.clone();
+                let on_select = on_select.clone();
+                Rc::new(move |second_click: bool, cx: &mut App| {
+                    let Some(drag) = state.borrow_mut().drag.take() else {
+                        return;
+                    };
+                    if let Some(drag_active) = &on_drag_active {
+                        (drag_active.borrow_mut())(false, cx);
+                    }
+                    // a click that never moved off the selected dot dismisses it, but a
+                    // double-click's second mouseup must not, it reopens the editor
+                    if !drag.moved
+                        && drag.was_selected
+                        && !second_click
+                        && let Some(select) = &on_select
+                    {
+                        (select.borrow_mut())(None, cx);
+                    }
+                })
+            };
+
             {
                 let state = state.clone();
                 let config = config.clone();
                 let hitbox = hitbox.clone();
                 let on_select = on_select.clone();
                 let on_drag_active = on_drag_active.clone();
+                let grab_dot = grab_dot.clone();
+                let toggle_dot = toggle_dot.clone();
                 window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                         return;
@@ -850,38 +992,10 @@ impl Element for EqGraph {
                             cx.stop_propagation();
                             match ev.button {
                                 MouseButton::Left if ev.click_count == 2 => {
-                                    // the second click of an add lands on the new dot, skip it
-                                    let fresh =
-                                        state.borrow().last_add.is_some_and(|(at, band)| {
-                                            band == index && at.elapsed().as_millis() < 500
-                                        });
-                                    if !fresh {
-                                        if let Some(toggle) = &on_toggle_enabled {
-                                            (toggle.borrow_mut())(index, cx);
-                                        }
-                                        if let Some(select) = &on_select {
-                                            (select.borrow_mut())(Some(index), cx);
-                                        }
-                                    }
+                                    toggle_dot(index, cx);
                                 }
                                 MouseButton::Left => {
-                                    if let Some(select) = &on_select {
-                                        (select.borrow_mut())(Some(index), cx);
-                                    }
-                                    if let Some(band) = config.bands.get(index) {
-                                        state.borrow_mut().drag = Some(DragState {
-                                            index,
-                                            start: ev.position,
-                                            start_frequency: band.frequency,
-                                            start_gain_db: band.gain_db,
-                                            shift: ev.modifiers.shift,
-                                            was_selected: selected == Some(index),
-                                            moved: false,
-                                        });
-                                        if let Some(drag_active) = &on_drag_active {
-                                            (drag_active.borrow_mut())(true, cx);
-                                        }
-                                    }
+                                    grab_dot(index, ev.position, ev.modifiers.shift, cx);
                                 }
                                 MouseButton::Right => {
                                     if let Some(remove) = &on_remove {
@@ -936,62 +1050,13 @@ impl Element for EqGraph {
                 let state = state.clone();
                 let config = config.clone();
                 let hitbox = hitbox.clone();
-                let on_band_change = on_band_change.clone();
-                let on_drag_active = on_drag_active.clone();
+                let drag_to = drag_to.clone();
                 window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
 
-                    let drag = state.borrow().drag;
-                    if let Some(mut drag) = drag {
-                        let Some(on_change) = &on_band_change else {
-                            return;
-                        };
-                        let Some(band) = config.bands.get(drag.index) else {
-                            // the band vanished mid-drag, still release the view's drag latch
-                            state.borrow_mut().drag = None;
-                            if let Some(drag_active) = &on_drag_active {
-                                (drag_active.borrow_mut())(false, cx);
-                            }
-                            return;
-                        };
-                        let scale = if drag.shift { 0.1 } else { 1.0 };
-                        let width: f32 = plot.size.width.into();
-                        let dx: f32 = (ev.position.x - drag.start.x).into();
-                        let dy: f32 = (ev.position.y - drag.start.y).into();
-                        if !drag.moved && dx.abs() + dy.abs() > 3.0 {
-                            drag.moved = true;
-                            state.borrow_mut().drag = Some(drag);
-                        }
-                        if !drag.moved {
-                            return;
-                        }
-                        // the start frequency can sit off-axis after an arrow-key nudge, map it
-                        // unclamped so the delta stays relative to the real spot
-                        let start_x = ((drag.start_frequency as f32).log10() - MIN_FREQ.log10())
-                            / (MAX_FREQ.log10() - MIN_FREQ.log10())
-                            * width;
-                        let frequency = x_to_freq(start_x + dx * scale, width) as f64;
-                        let gain_db = if band.kind.has_gain() {
-                            let height: f32 = plot.size.height.into();
-                            let db = drag.start_gain_db
-                                - f64::from(dy * scale) * 2.0 * f64::from(DB_WINDOW)
-                                    / f64::from(height);
-                            db.clamp(-MAX_GAIN_DB, MAX_GAIN_DB)
-                        } else {
-                            band.gain_db
-                        };
-                        // a shift toggle would rescale the whole accumulated delta, so rebase
-                        // the drag origin onto the current value and position
-                        if ev.modifiers.shift != drag.shift {
-                            drag.shift = ev.modifiers.shift;
-                            drag.start = ev.position;
-                            drag.start_frequency = frequency;
-                            drag.start_gain_db = gain_db;
-                            state.borrow_mut().drag = Some(drag);
-                        }
-                        (on_change.borrow_mut())(drag.index, frequency, gain_db, cx);
+                    if drag_to(ev.position, ev.modifiers.shift, cx) {
                         return;
                     }
 
@@ -1008,27 +1073,53 @@ impl Element for EqGraph {
             }
 
             {
-                let state = state.clone();
-                let on_drag_active = on_drag_active.clone();
-                let on_select = on_select.clone();
+                let release = release.clone();
                 window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        release(ev.click_count > 1, cx);
+                    }
+                });
+            }
+
+            // On touch screens a finger that moves becomes a pan, not mouse moves, so the graph
+            // claims touches that start on a dot as touch drags. Those no longer become taps, so
+            // double taps on dots are spotted here too. Touches elsewhere are left alone, so they
+            // still scroll, and tapping the plot still adds a band.
+            {
+                let state = state.clone();
+                let config = config.clone();
+                let hitbox = hitbox.clone();
+                window.on_mouse_event(move |ev: &TouchDragEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
-                    let Some(drag) = state.borrow_mut().drag.take() else {
-                        return;
-                    };
-                    if let Some(drag_active) = &on_drag_active {
-                        (drag_active.borrow_mut())(false, cx);
-                    }
-                    // a click that never moved off the selected dot dismisses it, but a
-                    // double-click's second mouseup must not, it reopens the editor
-                    if !drag.moved
-                        && drag.was_selected
-                        && ev.click_count <= 1
-                        && let Some(select) = &on_select
-                    {
-                        (select.borrow_mut())(None, cx);
+                    match ev.phase {
+                        TouchPhase::Started => {
+                            if !hitbox.is_hovered(window) || state.borrow().drag.is_some() {
+                                return;
+                            }
+                            let Some(Hover::Dot(index)) =
+                                hit_test(&config, rate, plot, ev.start_position)
+                            else {
+                                return;
+                            };
+                            window.prevent_default();
+                            cx.stop_propagation();
+
+                            let double_tap = state.borrow_mut().double_tap.starts_double_tap(ev);
+                            if double_tap {
+                                toggle_dot(index, cx);
+                            } else {
+                                grab_dot(index, ev.start_position, false, cx);
+                            }
+                        }
+                        TouchPhase::Moved => {
+                            drag_to(ev.position, false, cx);
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            state.borrow_mut().double_tap.touch_ended(ev);
+                            release(false, cx);
+                        }
                     }
                 });
             }

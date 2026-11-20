@@ -15,7 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{App, Axis, Pixels, Point, ScrollEvent, ScrollSource, TouchPhase, Window, px};
+use gpui::{
+    App, Axis, GestureTuning, Pixels, Point, ScrollEvent, ScrollSource, TouchDragEvent, TouchPhase,
+    Window, px,
+};
 
 use crate::settings::SettingsGlobal;
 
@@ -121,6 +124,34 @@ impl Pan {
         }
         let moved = last - first;
         Point::new(f32::from(moved.x) / elapsed, f32::from(moved.y) / elapsed)
+    }
+}
+
+/// Spots double taps among claimed [`TouchDragEvent`]s. A claimed touch never becomes a tap, so
+/// elements that claim touches to drag (sliders, knobs) lose GPUI's tap counting and track it
+/// themselves, with GPUI's own tap tuning.
+#[derive(Default)]
+pub struct DoubleTap {
+    /// When and where the last touch that stayed put (a tap) started.
+    last_tap: Option<(Instant, Point<Pixels>)>,
+}
+
+impl DoubleTap {
+    /// Call when a claimed touch starts: whether it's the second tap of a double tap.
+    pub fn starts_double_tap(&mut self, event: &TouchDragEvent) -> bool {
+        let tuning = GestureTuning::default();
+        self.last_tap.take().is_some_and(|(at, position)| {
+            at.elapsed() <= tuning.multi_tap_interval
+                && (event.start_position - position).magnitude() <= f64::from(tuning.multi_tap_slop)
+        })
+    }
+
+    /// Call when a claimed touch ends or is cancelled.
+    pub fn touch_ended(&mut self, event: &TouchDragEvent) {
+        let stayed_put = event.phase == TouchPhase::Ended
+            && (event.position - event.start_position).magnitude()
+                <= f64::from(GestureTuning::default().touch_slop);
+        self.last_tap = stayed_put.then(|| (Instant::now(), event.start_position));
     }
 }
 
