@@ -355,7 +355,6 @@ pub struct Library {
     right_view: Option<LibraryView>,
     /// `None` in the phone layout, where `BottomBar` handles navigation instead.
     sidebar: Option<Entity<Sidebar>>,
-    show_update_playlist: Entity<bool>,
     update_playlist: Entity<UpdatePlaylist>,
     focus_handle: FocusHandle,
     scroll_state: ScrollStateStorage,
@@ -754,6 +753,15 @@ impl Library {
             .detach();
 
             let show_update_playlist = cx.new(|_| false);
+            App::on_action(cx, {
+                let show_update_playlist = show_update_playlist.clone();
+                move |_: &Import, cx| {
+                    show_update_playlist.update(cx, |v, cx| {
+                        *v = true;
+                        cx.notify();
+                    })
+                }
+            });
 
             let settings = cx.global::<crate::settings::SettingsGlobal>().model.clone();
             cx.observe(&settings, {
@@ -771,8 +779,7 @@ impl Library {
                 view_message: initial_message,
                 left_view: None,
                 right_view: None,
-                update_playlist: UpdatePlaylist::new(cx, show_update_playlist.clone()),
-                show_update_playlist,
+                update_playlist: UpdatePlaylist::new(cx, show_update_playlist),
                 focus_handle,
                 scroll_state,
                 reclaim_focus: true,
@@ -785,6 +792,12 @@ impl Library {
             library.fetch_release_artists(false, cx);
             library
         })
+    }
+
+    /// The playlist import dialog. The main window renders it rather than the library, since the
+    /// library is cached and a modal has to render every frame to keep `ModalActive` set.
+    pub fn update_playlist_dialog(&self) -> AnyView {
+        self.update_playlist.clone().into()
     }
 
     fn take_back_view(&mut self, message: ViewSwitchMessage) -> Option<LibraryView> {
@@ -912,7 +925,6 @@ impl Render for Library {
             self.reclaim_focus = false;
             self.focus_handle.focus(window, cx);
         }
-        let show_update_playlist = self.show_update_playlist.clone();
         let settings = cx
             .global::<crate::settings::SettingsGlobal>()
             .model
@@ -963,13 +975,6 @@ impl Render for Library {
                 )
                 .into_any_element()
         };
-
-        App::on_action(cx, move |_: &Import, cx| {
-            show_update_playlist.update(cx, |v, cx| {
-                *v = true;
-                cx.notify();
-            })
-        });
 
         let content = if mobile_layout() {
             // the phone layout is always a single column, which the back swipe slides aside
@@ -1096,7 +1101,6 @@ impl Render for Library {
                 this.child(sidebar.cached(Sidebar::layout_style(cx).mr_auto()))
             })
             .child(content)
-            .child(self.update_playlist.clone())
     }
 }
 

@@ -238,12 +238,24 @@ impl Render for MainWindow {
                                         .max_w_full()
                                         .max_h_full()
                                         .overflow_hidden()
-                                        .child(self.library.clone())
+                                        // cached so the playback position ticking the
+                                        // controls doesn't re-render the whole library
+                                        .child(
+                                            self.library.clone().cached(
+                                                StyleRefinement::default()
+                                                    .w_full()
+                                                    .h_full()
+                                                    .flex_shrink(1.0)
+                                                    .max_w_full()
+                                                    .max_h_full(),
+                                            ),
+                                        )
                                         .when(show_sidebar, |this| this.child(right_sidebar)),
                                 )
                                 .child(self.header.clone()),
                         )
                         .children(theater_overlay)
+                        .child(self.library.read(cx).update_playlist_dialog())
                         .child(self.search.clone())
                         .child(self.artist_picker.clone())
                         .child(self.palette.clone())

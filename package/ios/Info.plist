@@ -51,6 +51,9 @@
 	<!-- the default theme is dark; the selected theme is applied at runtime (see src/ios.rs) -->
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
+	<!-- without this, iPhones cap the app at 60Hz even on ProMotion displays -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiresFullScreen</key>

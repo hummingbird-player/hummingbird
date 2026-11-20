@@ -103,7 +103,7 @@
   },
   "ACTION_CLOSE_DETAIL_VIEW": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:742",
+    "definedIn": "src/ui/library.rs:741",
     "plural": false,
     "description": null
   },
@@ -121,13 +121,13 @@
   },
   "ACTION_GO_BACK": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:722",
+    "definedIn": "src/ui/library.rs:721",
     "plural": false,
     "description": null
   },
   "ACTION_GO_FORWARD": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:732",
+    "definedIn": "src/ui/library.rs:731",
     "plural": false,
     "description": null
   },
@@ -169,7 +169,7 @@
   },
   "ACTION_IMPORT_PLAYLIST": {
     "context": "library.rs",
-    "definedIn": "src/ui/library.rs:712",
+    "definedIn": "src/ui/library.rs:711",
     "plural": false,
     "description": null
   },
@@ -853,13 +853,13 @@
   },
   "LEGACY_THEME_GUIDE_ACTION": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:699",
+    "definedIn": "src/ui/app.rs:711",
     "plural": false,
     "description": null
   },
   "LEGACY_THEME_REMOVAL_WARNING": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:695",
+    "definedIn": "src/ui/app.rs:707",
     "plural": false,
     "description": null
   },
