@@ -607,7 +607,7 @@
   },
   "EXIT_THEATER_MODE": {
     "context": "theater.rs",
-    "definedIn": "src/ui/theater.rs:599",
+    "definedIn": "src/ui/theater.rs:800",
     "plural": false,
     "description": null
   },
@@ -853,13 +853,13 @@
   },
   "LEGACY_THEME_GUIDE_ACTION": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:664",
+    "definedIn": "src/ui/app.rs:699",
     "plural": false,
     "description": null
   },
   "LEGACY_THEME_REMOVAL_WARNING": {
     "context": "app.rs",
-    "definedIn": "src/ui/app.rs:660",
+    "definedIn": "src/ui/app.rs:695",
     "plural": false,
     "description": null
   },
@@ -1789,7 +1789,7 @@
   },
   "THEATER_ALBUM_ART": {
     "context": "theater.rs",
-    "definedIn": "src/ui/theater.rs:529",
+    "definedIn": "src/ui/theater.rs:696",
     "plural": false,
     "description": null
   },

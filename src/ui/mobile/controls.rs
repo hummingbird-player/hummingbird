@@ -19,6 +19,7 @@ use crate::{
         constants::PANEL_ROUNDING,
         global_actions::{Next, PlayPause},
         models::{Models, PlaybackInfo},
+        theater::enter_theater_mode,
         theme::Theme,
         util::{DurationPadding, format_duration},
     },
@@ -270,10 +271,15 @@ impl Render for NowPlayingRow {
         };
 
         div()
+            .id("mobile-now-playing")
             .flex()
             .items_center()
             .size_full()
             .gap(px(10.0))
+            // tapping the row (but not its buttons, which stop the mouse down from reaching it)
+            // opens theater mode
+            .cursor_pointer()
+            .on_click(|_, _, cx| enter_theater_mode(cx))
             .pl(px(8.0))
             .pr(px(4.0))
             .bg(theme.background_primary)

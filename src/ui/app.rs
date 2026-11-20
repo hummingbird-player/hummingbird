@@ -68,7 +68,7 @@ use super::{
     right_sidebar::RightSidebar,
     search::SearchView,
     settings::close_orphaned_settings_windows,
-    theater::TheaterView,
+    theater::{TheaterState, TheaterView},
     theme::setup_theme,
     util::drop_image_from_app,
 };
@@ -93,6 +93,8 @@ struct MainWindow {
     pub toast_layer: Entity<ToastLayer>,
     pub theater: Entity<TheaterView>,
     pub theater_mode: Entity<bool>,
+    /// Whether theater mode was on screen when it last changed.
+    pub theater_shown: bool,
 }
 
 const NORMAL_MIN_SIZE: Size<Pixels> = size(px(800.0), px(600.0));
@@ -111,7 +113,8 @@ impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
 
-        if *self.theater_mode.read(cx) {
+        let theater_state = self.theater.read(cx).state(window.viewport_size().height);
+        if theater_state == TheaterState::Shown {
             return div()
                 .key_context("app")
                 .size_full()
@@ -127,7 +130,9 @@ impl Render for MainWindow {
                             .child(self.palette.clone())
                             .child(self.toast_layer.clone()),
                     )
-                    .background(self.theater.read(cx).background(cx)),
+                    .background(self.theater.read(cx).background(cx))
+                    // the theater view keeps clear of the safe area itself
+                    .when(mobile_layout(), |this| this.content_padding(px(0.0))),
                 )
                 .into_any_element();
         }
@@ -145,6 +150,28 @@ impl Render for MainWindow {
                 ScanEvent::WaitingForMissingFolderDecision { .. }
             );
         let show_sidebar = *self.show_queue.read(cx) || *self.show_lyrics.read(cx);
+
+        // theater mode opening, closing or being dragged down, over the library
+        let theater_overlay = match theater_state {
+            TheaterState::Moving { offset_y, opacity } => Some(
+                div()
+                    .id("theater-overlay")
+                    .absolute()
+                    .top(offset_y)
+                    .left_0()
+                    .size_full()
+                    .occlude()
+                    .opacity(opacity)
+                    .bg(self.theater.read(cx).background(cx))
+                    // the padding the window chrome gives theater mode when it's shown alone
+                    .when(!mobile_layout(), |this| this.p(px(6.0)))
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .child(self.theater.clone()),
+            ),
+            TheaterState::Hidden | TheaterState::Shown => None,
+        };
 
         div()
             .key_context("app")
@@ -216,6 +243,7 @@ impl Render for MainWindow {
                                 )
                                 .child(self.header.clone()),
                         )
+                        .children(theater_overlay)
                         .child(self.search.clone())
                         .child(self.artist_picker.clone())
                         .child(self.palette.clone())
@@ -379,8 +407,10 @@ fn build_main_window(
         .detach();
 
         let theater = TheaterView::new(cx);
-        cx.observe(&theater, |this: &mut MainWindow, _, cx| {
-            if *this.theater_mode.read(cx) {
+        cx.observe(&theater, |this: &mut MainWindow, theater, cx| {
+            // including the frame where a closing transition ends, so the overlay goes away
+            if *this.theater_mode.read(cx) || theater.read(cx).is_visible() || this.theater_shown {
+                this.theater_shown = theater.read(cx).is_visible();
                 cx.notify();
             }
         })
@@ -389,7 +419,11 @@ fn build_main_window(
         let theater_mode = cx.global::<Models>().theater_mode.clone();
         cx.observe_in(&theater_mode, window, |_, theater_mode, window, cx| {
             // override the minimum size if theater mode is inactive
-            if !*theater_mode.read(cx) && !window.is_maximized() && !window.is_fullscreen() {
+            if !mobile_layout()
+                && !*theater_mode.read(cx)
+                && !window.is_maximized()
+                && !window.is_fullscreen()
+            {
                 let current = window.viewport_size();
                 let target = current.max(&normal_min_size());
                 if target != current {
@@ -422,6 +456,7 @@ fn build_main_window(
             toast_layer,
             theater,
             theater_mode,
+            theater_shown: false,
         }
     })
 }
