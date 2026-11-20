@@ -28,6 +28,9 @@ use super::{ControllerBridge, InitPlaybackController, PlaybackController};
 
 pub struct AppleMediaPlayerController {
     bridge: ControllerBridge,
+    /// Whether playback is playing, for the audio session interruption handler.
+    #[cfg(target_os = "ios")]
+    playing: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppleMediaPlayerController {
@@ -306,6 +309,11 @@ impl PlaybackController for AppleMediaPlayerController {
         &mut self,
         playback_state: PlaybackState,
     ) -> anyhow::Result<()> {
+        #[cfg(target_os = "ios")]
+        self.playing.store(
+            playback_state == PlaybackState::Playing,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         unsafe {
             self.new_playback_state(playback_state);
             Ok(())
@@ -327,7 +335,20 @@ impl InitPlaybackController for AppleMediaPlayerController {
         bridge: ControllerBridge,
         _handle: Option<RawWindowHandle>,
     ) -> anyhow::Result<Box<dyn PlaybackController>> {
-        let mmpc = AppleMediaPlayerController { bridge };
+        #[cfg(target_os = "ios")]
+        let playing = {
+            let playing = std::sync::Arc::default();
+            crate::ios::observe_audio_interruptions(
+                bridge.clone(),
+                std::sync::Arc::clone(&playing),
+            );
+            playing
+        };
+        let mmpc = AppleMediaPlayerController {
+            bridge,
+            #[cfg(target_os = "ios")]
+            playing,
+        };
         unsafe { mmpc.attach_command_handlers() };
         Ok(Box::new(mmpc))
     }

@@ -1,14 +1,28 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    ptr::NonNull,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
+use block2::RcBlock;
 use gpui_ios::{StatusBarContentStyle, ios::set_status_bar_style};
 use objc2::MainThreadMarker;
-use objc2_avf_audio::{AVAudioSession, AVAudioSessionCategoryPlayback};
+use objc2_avf_audio::{
+    AVAudioSession, AVAudioSessionCategoryPlayback, AVAudioSessionInterruptionNotification,
+    AVAudioSessionInterruptionOptionKey, AVAudioSessionInterruptionOptions,
+    AVAudioSessionInterruptionType, AVAudioSessionInterruptionTypeKey,
+};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSNumber, NSString};
 use objc2_ui_kit::{UIApplication, UIUserInterfaceStyle, UIWindowScene};
 use sqlx::SqlitePool;
 use tracing::{info, warn};
 
 use crate::{
     paths::container::{MARKER, container_id, is_container_id, relocate},
+    services::controllers::ControllerBridge,
     ui::theme::Theme,
 };
 
@@ -34,6 +48,82 @@ pub fn configure_audio_session() {
             warn!("Couldn't activate the audio session: {error:?}");
         }
     }
+}
+
+/// Pauses and resumes playback around audio session interruptions (phone calls, Siri, alarms,
+/// another app taking exclusive audio).
+///
+/// When an interruption begins, iOS deactivates the session and stops the output unit without
+/// telling the playback thread, so the app would still think it's playing. Pausing keeps the UI and
+/// lock screen honest. When the interruption ends the session has to be reactivated before output
+/// works again, and playback resumes if it was playing beforehand and iOS says resuming is
+/// appropriate.
+///
+/// `playing` must track whether playback is currently playing.
+pub fn observe_audio_interruptions(bridge: ControllerBridge, playing: Arc<AtomicBool>) {
+    // SAFETY: these are constant NSString statics exported by AVFAudio
+    let (Some(name), Some(type_key), Some(option_key)) = (unsafe {
+        (
+            AVAudioSessionInterruptionNotification,
+            AVAudioSessionInterruptionTypeKey,
+            AVAudioSessionInterruptionOptionKey,
+        )
+    }) else {
+        warn!("AVAudioSession interruption keys are unavailable; interruptions won't be handled");
+        return;
+    };
+
+    let resume_after = AtomicBool::new(false);
+    let block = RcBlock::new(move |notification: NonNull<NSNotification>| {
+        // SAFETY: the notification center passes a valid notification for the block's duration
+        let notification = unsafe { notification.as_ref() };
+        let Some(info) = notification.userInfo() else {
+            return;
+        };
+        let number = |key: &NSString| {
+            info.objectForKey(key)
+                .and_then(|value| value.downcast::<NSNumber>().ok())
+                .map(|value| value.unsignedIntegerValue())
+        };
+        let Some(kind) = number(type_key).map(AVAudioSessionInterruptionType) else {
+            return;
+        };
+
+        if kind == AVAudioSessionInterruptionType::Began {
+            let was_playing = playing.load(Ordering::Relaxed);
+            info!("Audio session interrupted (was playing: {was_playing})");
+            resume_after.store(was_playing, Ordering::Relaxed);
+            if was_playing {
+                bridge.pause();
+            }
+        } else if kind == AVAudioSessionInterruptionType::Ended {
+            let options = AVAudioSessionInterruptionOptions(number(option_key).unwrap_or_default());
+            let should_resume = options.contains(AVAudioSessionInterruptionOptions::ShouldResume);
+            info!("Audio session interruption ended (should resume: {should_resume})");
+
+            // SAFETY: as in configure_audio_session
+            if let Err(error) = unsafe { AVAudioSession::sharedInstance().setActive_error(true) } {
+                warn!("Couldn't reactivate the audio session after an interruption: {error:?}");
+                return;
+            }
+            if resume_after.swap(false, Ordering::Relaxed) && should_resume {
+                bridge.play();
+            }
+        }
+    });
+
+    // SAFETY: the block only touches thread-safe state, so it can run on whichever thread posts
+    // the notification (queue: None)
+    let observer = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(name),
+            None,
+            None,
+            &block,
+        )
+    };
+    // the observer lives for the rest of the process
+    std::mem::forget(observer);
 }
 
 /// Tells UIKit whether the selected theme is light or dark, so the status bar, home indicator and
