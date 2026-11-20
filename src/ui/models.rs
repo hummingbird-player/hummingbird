@@ -109,6 +109,11 @@ pub struct Models {
     pub queue_width: Entity<Pixels>,
     pub show_queue: Entity<bool>,
     pub show_lyrics: Entity<bool>,
+    /// Whether the main window is currently showing the theater/miniplayer view.
+    pub theater_mode: Entity<bool>,
+    /// Queue/lyrics panel visibility while in theater mode (independent of the main sidebar).
+    pub theater_show_queue: Entity<bool>,
+    pub theater_show_lyrics: Entity<bool>,
     pub split_widths: std::collections::HashMap<String, Entity<Pixels>>,
     pub table_settings: Entity<std::collections::HashMap<String, TableSettings>>,
     pub liked_tracks_sort_method: Entity<LikedTrackSortMethod>,
@@ -493,6 +498,9 @@ pub fn build_models(
     });
     let show_queue: Entity<bool> = cx.new(|_| storage_data.show_queue);
     let show_lyrics: Entity<bool> = cx.new(|_| storage_data.show_lyrics);
+    let theater_mode: Entity<bool> = cx.new(|_| false);
+    let theater_show_queue: Entity<bool> = cx.new(|_| false);
+    let theater_show_lyrics: Entity<bool> = cx.new(|_| true);
     let split_widths: std::collections::HashMap<String, Entity<Pixels>> = {
         use crate::settings::storage::SPLIT_FRACTION_KEYS;
         SPLIT_FRACTION_KEYS
@@ -557,6 +565,9 @@ pub fn build_models(
         queue_width,
         show_queue,
         show_lyrics,
+        theater_mode,
+        theater_show_queue,
+        theater_show_lyrics,
         split_widths,
         table_settings,
         liked_tracks_sort_method,

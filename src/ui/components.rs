@@ -6,6 +6,7 @@ pub mod checkbox;
 pub mod context;
 pub mod drag_drop;
 pub mod dropdown;
+pub mod edge_fade;
 pub mod icons;
 pub mod input;
 pub mod knob;

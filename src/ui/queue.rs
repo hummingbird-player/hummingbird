@@ -42,7 +42,8 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 use super::{
     components::button::{ButtonSize, ButtonStyle, button},
-    constants::PANEL_ROUNDING,
+    components::edge_fade::edge_fades,
+    components::styling::{Surface, text_overlay},
     models::{
         HasLikedState, LIKED_SONGS_PLAYLIST_ID, Models, PlaybackInfo, subscribe_liked_updates,
         toggle_like, toggle_like_by_id,
@@ -56,6 +57,10 @@ use super::{
 const QUEUE_LIST_ID: &str = "queue";
 /// Height of each queue item in pixels
 const QUEUE_ITEM_HEIGHT: f32 = 60.0;
+/// Space between the sides of a queue row and its contents.
+pub const QUEUE_ITEM_PADDING_X: f32 = 14.0;
+/// Corner radius of queue rows on a flat surface (theater mode).
+const QUEUE_ITEM_ROUNDING: f32 = 6.0;
 /// Duration of the queue auto-follow animation.
 const QUEUE_FOLLOW_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
@@ -144,6 +149,7 @@ pub struct QueueItem {
     scroll_handle: UniformListScrollHandle,
     selection: Entity<QueueSelection>,
     add_to: Option<Entity<AddToPlaylist>>,
+    surface: Surface,
     show_add_to: Entity<bool>,
     track_id: Option<i64>,
     is_liked: Option<i64>,
@@ -175,6 +181,7 @@ impl QueueItem {
         drag_drop_manager: Entity<DragDropListManager>,
         scroll_handle: UniformListScrollHandle,
         selection: Entity<QueueSelection>,
+        surface: Surface,
     ) -> Entity<Self> {
         cx.new(move |cx| {
             cx.on_release(|m: &mut QueueItem, cx| {
@@ -255,6 +262,7 @@ impl QueueItem {
 
             Self {
                 item,
+                surface,
                 idx,
                 current: queue.read(cx).position,
                 drag_drop_manager,
@@ -291,7 +299,18 @@ impl Render for QueueItem {
             .and_then(|resource| resource.read(cx).ready())
             .map(|data| data.artists.clone());
         let ui_data = data.and_then(|item| item.get_data(cx).read(cx).ready().cloned());
-        let theme = cx.global::<Theme>().clone();
+        let mut theme = cx.global::<Theme>().clone();
+        if self.surface.is_flat() {
+            // the theme's row colors are opaque and tuned for `background_primary`; on a flat
+            // surface use translucent washes so rows read on whatever is behind the queue
+            let transparent = Rgba::default();
+            theme.list_item = transparent;
+            theme.list_item_alternate = transparent;
+            theme.list_item_hover = text_overlay(&theme, 0.08);
+            theme.list_item_active = text_overlay(&theme, 0.14);
+            theme.list_item_current = text_overlay(&theme, 0.10);
+            theme.list_item_selected = text_overlay(&theme, 0.18);
+        }
         let show_add_to = self.show_add_to.clone();
         let is_available = self
             .item
@@ -299,6 +318,7 @@ impl Render for QueueItem {
             .is_some_and(|queue_item| is_track_path_available(cx, queue_item.get_path()));
         let is_selected = self.selection.read(cx).contains(self.idx);
         let focus_pulse = self.focus_pulse.render(theme.list_item_selected, window);
+        let flat = self.surface.is_flat();
 
         if let Some(item) = ui_data.as_ref() {
             let scrollbar_always_visible = {
@@ -367,10 +387,11 @@ impl Render for QueueItem {
                         .overflow_x_hidden()
                         .gap(px(11.0))
                         .h(px(QUEUE_ITEM_HEIGHT))
-                        .px(px(14.0))
+                        .px(px(QUEUE_ITEM_PADDING_X))
                         .py(px(12.0))
                         .bg(theme.list_item)
                         .when(self.idx % 2 == 1, |this| this.bg(theme.list_item_alternate))
+                        .when(flat, |this| this.rounded(px(QUEUE_ITEM_ROUNDING)))
                         // add extra padding when the scrollbar is always drawn
                         // 11px queue item pad + 4px scrollbar + 10px buffer
                         .when(scrollbar_always_visible, |div| div.pr(px(25.0)))
@@ -464,7 +485,9 @@ impl Render for QueueItem {
                                 selection_for_aux.update(cx, |s, cx| s.select(idx, cx));
                             }
                         })
-                        .children(focus_pulse)
+                        .children(focus_pulse.map(|pulse| {
+                            pulse.when(flat, |this| this.rounded(px(QUEUE_ITEM_ROUNDING)))
+                        }))
                         .when_some(self.add_to.clone(), |this, that| this.child(that))
                         .child(DropIndicator::with_state(
                             item_state.is_drop_target_before,
@@ -796,6 +819,7 @@ impl Render for QueueItem {
 
 pub struct Queue {
     views_model: Entity<FxHashMap<usize, Entity<QueueItem>>>,
+    surface: Surface,
     rendered_keys: Entity<Option<Vec<usize>>>,
     show_queue: Entity<bool>,
     scroll_handle: UniformListScrollHandle,
@@ -811,10 +835,16 @@ pub struct Queue {
     scroll_follow: SmoothScrollFollow,
     /// index of whatever item needs to pulse (if there is one)
     pending_pulse: Rc<Cell<Option<usize>>>,
+    /// Background color to fade rows into at the top and bottom edges while they scroll past.
+    edge_fade: Option<Rgba>,
 }
 
 impl Queue {
-    pub fn new(cx: &mut App, show_queue: Entity<bool>) -> Entity<Self> {
+    pub fn set_edge_fade(&mut self, color: Option<Rgba>) {
+        self.edge_fade = color;
+    }
+
+    pub fn new(cx: &mut App, show_queue: Entity<bool>, surface: Surface) -> Entity<Self> {
         cx.new(|cx| {
             let views_model = cx.new(|_| FxHashMap::default());
             let rendered_keys = cx.new(|_| None);
@@ -856,6 +886,7 @@ impl Queue {
 
             Self {
                 views_model,
+                surface,
                 rendered_keys,
                 show_queue,
                 scroll_handle: UniformListScrollHandle::new(),
@@ -868,6 +899,7 @@ impl Queue {
                 force_follow: false,
                 scroll_follow: SmoothScrollFollow::new(QUEUE_FOLLOW_ANIMATION_DURATION),
                 pending_pulse: Rc::new(Cell::new(None)),
+                edge_fade: None,
             }
         })
     }
@@ -893,6 +925,7 @@ impl Render for Queue {
         let item_scroll_handle = scroll_handle.clone();
         let drag_drop_manager = self.drag_drop_manager.clone();
         let selection = self.selection.clone();
+        let surface = self.surface;
         let pending_pulse = self.pending_pulse.clone();
         let reduced_motion = cx
             .global::<SettingsGlobal>()
@@ -927,36 +960,37 @@ impl Render for Queue {
             self.schedule_follow_frame(window, cx);
         }
 
-        div()
+        self.surface
+            .apply(div(), &theme)
             .h_full()
             .w_full()
             .overflow_hidden()
-            .rounded(PANEL_ROUNDING)
-            .bg(theme.background_primary)
             .flex()
             .flex_col()
-            .child(
-                LibraryViewHeader::new(tr!("QUEUE_TITLE", "Queue"))
-                    .without_navigation()
-                    .right(
-                        button()
-                            .style(ButtonStyle::Minimal)
-                            .size(ButtonSize::Large)
-                            .child(icon(TRASH).size(px(14.0)).my_auto())
-                            .child(tr!("CLEAR_QUEUE", "Clear"))
-                            .id("clear-queue")
-                            .on_click(|_, _, cx| {
-                                cx.global::<PlaybackInterface>().clear_queue();
-                            }),
-                    )
-                    .right(
-                        nav_button("close", CROSS)
-                            .on_click(cx.listener(|this: &mut Self, _, _, cx| {
-                                this.show_queue.update(cx, |v, _| *v = !(*v))
-                            }))
-                            .tooltip(build_tooltip(tr!("CLOSE", "Close"))),
-                    ),
-            )
+            .when(!surface.is_flat(), |this| {
+                this.child(
+                    LibraryViewHeader::new(tr!("QUEUE_TITLE", "Queue"))
+                        .without_navigation()
+                        .right(
+                            button()
+                                .style(ButtonStyle::Minimal)
+                                .size(ButtonSize::Large)
+                                .child(icon(TRASH).size(px(14.0)).my_auto())
+                                .child(tr!("CLEAR_QUEUE", "Clear"))
+                                .id("clear-queue")
+                                .on_click(|_, _, cx| {
+                                    cx.global::<PlaybackInterface>().clear_queue();
+                                }),
+                        )
+                        .right(
+                            nav_button("close", CROSS)
+                                .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                                    this.show_queue.update(cx, |v, _| *v = !(*v))
+                                }))
+                                .tooltip(build_tooltip(tr!("CLOSE", "Close"))),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("queue-list-container")
@@ -1242,6 +1276,7 @@ impl Render for Queue {
                                                     drag_drop_manager,
                                                     scroll_handle,
                                                     item_selection,
+                                                    surface,
                                                 )
                                             },
                                             cx,
@@ -1267,6 +1302,12 @@ impl Render for Queue {
                         .flex_col()
                         .track_scroll(&scroll_handle),
                     )
+                    .children(edge_fades(
+                        self.edge_fade,
+                        &ScrollableHandle::UniformList {
+                            handle: scroll_handle.clone(),
+                        },
+                    ))
                     .child(floating_scrollbar("queue_scrollbar", scroll_handle).right(px(4.0)))
                     .when_some(jump_button_above, |this, direction| {
                         this.child(

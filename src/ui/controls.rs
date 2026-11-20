@@ -1,21 +1,16 @@
 mod replaygain;
 
 use crate::{
-    library::db::{artists, playlists, tracks},
-    playback::{
-        events::RepeatState, interface::PlaybackInterface, queue::QueueItemUIData,
-        thread::PlaybackState,
-    },
+    playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
     settings::SettingsGlobal,
     ui::{
         components::{
-            async_resource::AsyncResource,
             context::context,
             icons::{
                 MENU, MICROPHONE, NEXT_TRACK, PAUSE, PLAY, PREV_TRACK, REPEAT, REPEAT_OFF,
                 REPEAT_ONCE, SHUFFLE, STAR, STAR_FILLED, VOLUME, VOLUME_OFF, icon,
             },
-            managed_image::{ManagedImageKey, managed_image},
+            managed_image::managed_image,
             menu::{menu, menu_check_item, menu_item},
             tooltip::build_tooltip,
             volume_tooltip::build_volume_tooltip,
@@ -24,21 +19,16 @@ use crate::{
             info_section::InfoSectionContextMenu, navigate_to_track_album_and_reveal,
             navigate_to_track_artist,
         },
-        models::{
-            CurrentTrack, HasLikedState, LIKED_SONGS_PLAYLIST_ID, subscribe_liked_updates,
-            toggle_like,
-        },
         util::DurationPadding,
     },
 };
 use cntp_i18n::tr;
 use gpui::{InteractiveElement, *};
 use prelude::FluentBuilder;
-use std::{path::PathBuf, rc::Rc, time::Duration};
+use std::time::Duration;
 
 use self::replaygain::ReplayGainButton;
 use super::{
-    app::Pool,
     components::{
         resizable::{ResizeEdge, resizable},
         slider::slider,
@@ -46,10 +36,10 @@ use super::{
     constants::PANEL_ROUNDING,
     global_actions::{Next, PlayPause, Previous, StopAfterCurrent},
     models::{Models, PlaybackInfo},
+    now_playing::NowPlaying,
     theme::Theme,
 };
 
-use crate::library::types::Track;
 use crate::settings::storage::{DEFAULT_CONTROLS_LEFT_WIDTH, DEFAULT_CONTROLS_RIGHT_WIDTH};
 use crate::ui::util::format_duration;
 
@@ -118,242 +108,47 @@ impl Render for Controls {
 }
 
 pub struct InfoSection {
-    track_name: Option<SharedString>,
-    artist_name: Option<SharedString>,
-    playback_info: PlaybackInfo,
+    now_playing: Entity<NowPlaying>,
+    playback_state: Entity<PlaybackState>,
     is_hovering_art: bool,
-    current_track_path: Option<PathBuf>,
-    current_library_track: Option<Rc<Track>>,
-    can_navigate_to_album: bool,
-    can_navigate_to_artist: bool,
-    image_element_key: u64,
-    is_liked: Option<i64>,
-    queue_item_data: Option<
-        Entity<crate::ui::components::async_resource::AsyncResource<PathBuf, QueueItemUIData>>,
-    >,
-    queue_item_subscription: Option<Subscription>,
-    library_track: Entity<AsyncResource<Option<PathBuf>, Option<CurrentLibraryTrackData>>>,
-}
-
-#[derive(Clone)]
-struct CurrentLibraryTrackData {
-    track: Track,
-    has_artist: bool,
-    liked_item_id: Option<i64>,
-}
-
-async fn load_current_library_track(
-    path: Option<PathBuf>,
-    pool: sqlx::SqlitePool,
-) -> anyhow::Result<Option<CurrentLibraryTrackData>> {
-    let Some(path) = path else { return Ok(None) };
-    let Some(track) = tracks().at_path(&path).fetch_optional(&pool).await? else {
-        return Ok(None);
-    };
-    let artist_ids = artists()
-        .related_to_track(track.id)
-        .fetch_ids(&pool)
-        .await?;
-    let liked_item_id = playlists()
-        .by_id(LIKED_SONGS_PLAYLIST_ID)
-        .playlist_item(track.id)
-        .fetch_playlist_item_id(&pool)
-        .await?;
-    Ok(Some(CurrentLibraryTrackData {
-        track,
-        has_artist: !artist_ids.is_empty(),
-        liked_item_id,
-    }))
-}
-
-fn apply_current_library_track(
-    this: &mut InfoSection,
-    data: Option<CurrentLibraryTrackData>,
-    cx: &mut Context<InfoSection>,
-) {
-    let Some(data) = data else {
-        this.current_library_track = None;
-        this.can_navigate_to_album = false;
-        this.can_navigate_to_artist = false;
-        this.is_liked = None;
-        cx.notify();
-        return;
-    };
-    this.can_navigate_to_album = data.track.album_id.is_some();
-    this.can_navigate_to_artist = data.has_artist;
-    this.is_liked = data.liked_item_id;
-    this.current_library_track = Some(Rc::new(data.track));
-    cx.notify();
-}
-
-impl HasLikedState for InfoSection {
-    fn is_liked(&self) -> Option<i64> {
-        self.is_liked
-    }
-    fn set_liked(&mut self, item_id: Option<i64>) {
-        self.is_liked = item_id;
-    }
-}
-
-fn update_track_metadata(this: &mut InfoSection, metadata: &crate::media::metadata::Metadata) {
-    this.track_name = metadata.name.clone().map(SharedString::from);
-    this.artist_name = metadata
-        .artist
-        .clone()
-        .or(metadata.album_artist.clone())
-        .map(SharedString::from);
-}
-
-fn resolve_queue_item_metadata(this: &mut InfoSection, cx: &mut Context<InfoSection>) {
-    if let Some(subscription) = this.queue_item_subscription.take() {
-        subscription.detach();
-    }
-    this.queue_item_data = None;
-
-    let queue = cx.global::<Models>().queue.read(cx);
-    let position = queue.position;
-    let item = queue
-        .data
-        .read()
-        .expect("poisoned queue item data")
-        .get(position)
-        .cloned();
-
-    let Some(item) = item else { return };
-
-    if this
-        .current_track_path
-        .as_ref()
-        .is_none_or(|path| path != item.get_path())
-    {
-        return;
-    }
-
-    let data = item.get_data(cx);
-    this.queue_item_data = Some(data.clone());
-
-    let subscription = cx.observe(&data, |this: &mut InfoSection, data, cx| {
-        let data = data.read(cx).ready().cloned();
-        if let Some(data) = data {
-            if this.track_name.is_none() {
-                this.track_name = data.name;
-            }
-            if this.artist_name.is_none() {
-                this.artist_name = data.artist_name;
-            }
-            cx.notify();
-        }
-    });
-    this.queue_item_subscription = Some(subscription);
-
-    let data = data.read(cx).ready().cloned();
-    if let Some(data) = data {
-        if this.track_name.is_none() {
-            this.track_name = data.name;
-        }
-        if this.artist_name.is_none() {
-            this.artist_name = data.artist_name;
-        }
-        cx.notify();
-    }
 }
 
 impl InfoSection {
-    fn display_track_name(&self) -> SharedString {
-        self.track_name
-            .clone()
-            .or_else(|| {
-                self.current_track_path
-                    .as_deref()
-                    .and_then(|path| path.file_stem())
-                    .map(|name| name.to_string_lossy().into_owned().into())
-            })
-            .unwrap_or_else(|| tr!("UNKNOWN_TRACK", "Unknown Track").into())
-    }
-
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
-            let metadata_model = cx.global::<Models>().metadata.clone();
-            let playback_info = cx.global::<PlaybackInfo>().clone();
-            let current_track_model = playback_info.current_track.clone();
-            let queue_model = cx.global::<Models>().queue.clone();
+            let now_playing = NowPlaying::new(cx);
+            cx.observe(&now_playing, |_, _, cx| cx.notify()).detach();
 
-            cx.observe(&playback_info.playback_state, |_, _, cx| {
-                cx.notify();
-            })
-            .detach();
+            let playback_state = cx.global::<PlaybackInfo>().playback_state.clone();
+            cx.observe(&playback_state, |_, _, cx| cx.notify()).detach();
 
-            cx.observe(&metadata_model, |this: &mut Self, m, cx| {
-                update_track_metadata(this, m.read(cx));
-                cx.notify();
-            })
-            .detach();
+            let theater_mode = cx.global::<Models>().theater_mode.clone();
+            cx.observe(&theater_mode, |_, _, cx| cx.notify()).detach();
 
-            // SongChanged is broadcast before QueuePositionChanged, so re-resolve once the queue
-            // position has caught up with a track switch
-            cx.observe(&queue_model, |this: &mut Self, _, cx| {
-                resolve_queue_item_metadata(this, cx);
-            })
-            .detach();
-
-            cx.observe(
-                &current_track_model,
-                |this: &mut Self, current_track, cx| {
-                    let current_track = current_track.read(cx).clone();
-                    update_current_track_state(this, current_track.as_ref(), cx);
-                    resolve_queue_item_metadata(this, cx);
-                    cx.notify();
-                },
-            )
-            .detach();
-
-            let initial_current_track = current_track_model.read(cx).clone();
-            let current_track_path = initial_current_track
-                .as_ref()
-                .map(|track| track.get_path().clone());
-            let pool = cx.global::<Pool>().0.clone();
-            let library_track = AsyncResource::new(
-                cx,
-                current_track_path.clone(),
-                load_current_library_track(current_track_path.clone(), pool),
-            );
-            cx.observe(&library_track, |this: &mut Self, resource, cx| {
-                let data = resource.read(cx).ready().cloned().flatten();
-                apply_current_library_track(this, data, cx);
-            })
-            .detach();
-            let initial_metadata = metadata_model.read(cx).clone();
-
-            subscribe_liked_updates(cx, |this: &Self| {
-                this.current_library_track.as_ref().map(|t| t.id)
-            });
-
-            let mut info_section = Self {
-                artist_name: None,
-                track_name: None,
-                playback_info,
+            Self {
+                now_playing,
+                playback_state,
                 is_hovering_art: false,
-                current_track_path,
-                current_library_track: None,
-                can_navigate_to_album: false,
-                can_navigate_to_artist: false,
-                image_element_key: 0,
-                is_liked: None,
-                queue_item_data: None,
-                queue_item_subscription: None,
-                library_track,
-            };
-            update_track_metadata(&mut info_section, &initial_metadata);
-            resolve_queue_item_metadata(&mut info_section, cx);
-
-            info_section
+            }
         })
     }
 }
 
 impl Render for InfoSection {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let add_to_state = self.current_library_track.as_ref().map(|track| {
+        let now_playing = self.now_playing.read(cx);
+        let library_track = now_playing.library_track().cloned();
+        let current_track_path = now_playing.current_track_path().cloned();
+        let is_liked = now_playing.liked_item_id();
+        let track_name = now_playing.display_track_name();
+        let artist_name = now_playing.display_artist_name();
+        let image_key = now_playing.image_key();
+        let image_element_key = now_playing.image_generation();
+        let album_navigation_track = now_playing.album_navigation_track();
+        let artist_navigation_track = now_playing.artist_navigation_track();
+        let now_playing_entity = self.now_playing.clone();
+
+        let add_to_state = library_track.as_ref().map(|track| {
             crate::ui::library::context_menus::add_to_playlist_state(
                 "info-section-menu-state",
                 track.id,
@@ -362,28 +157,8 @@ impl Render for InfoSection {
             )
         });
 
-        let image_key = self
-            .current_library_track
-            .as_ref()
-            .map(|track| ManagedImageKey::Track(track.id))
-            .or_else(|| {
-                self.current_track_path
-                    .as_ref()
-                    .map(|p| ManagedImageKey::TrackFile(p.clone()))
-            });
-        let image_element_key = self.image_element_key;
         let theme = cx.global::<Theme>();
-        let state = self.playback_info.playback_state.read(cx);
-
-        let album_navigation_track = self
-            .can_navigate_to_album
-            .then(|| self.current_library_track.clone())
-            .flatten();
-
-        let artist_navigation_track = self
-            .can_navigate_to_artist
-            .then(|| self.current_library_track.clone())
-            .flatten();
+        let state = self.playback_state.read(cx);
 
         let content = div()
             .id("info-section")
@@ -473,9 +248,7 @@ impl Render for InfoSection {
                         )
                     })
                     .when(*state != PlaybackState::Stopped, |e| {
-                        let is_liked = self.is_liked;
-                        let track_id = self.current_library_track.as_ref().map(|t| t.id);
-                        let has_track = track_id.is_some();
+                        let in_library = library_track.is_some();
 
                         e.child(
                             div()
@@ -497,7 +270,7 @@ impl Render for InfoSection {
                                                 navigate_to_track_album_and_reveal(cx, &track);
                                             })
                                         })
-                                        .child(self.display_track_name()),
+                                        .child(track_name),
                                 )
                                 .child(
                                     div()
@@ -512,12 +285,10 @@ impl Render for InfoSection {
                                                 navigate_to_track_artist(cx, &track, ev.position());
                                             })
                                         })
-                                        .child(self.artist_name.clone().unwrap_or_else(|| {
-                                            tr!("UNKNOWN_ARTIST", "Unknown Artist").into()
-                                        })),
+                                        .child(artist_name),
                                 ),
                         )
-                        .when(has_track, |e| {
+                        .when(in_library, |e| {
                             e.child(
                                 div().pb(px(6.0)).h_full().flex().ml_auto().child(
                                     div()
@@ -547,60 +318,33 @@ impl Render for InfoSection {
                                         .when(is_liked.is_none(), |this| {
                                             this.tooltip(build_tooltip(tr!("LIKE", "Like")))
                                         })
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            let Some(track_id) = track_id else { return };
-                                            toggle_like(track_id, cx.entity().clone(), cx);
-                                        })),
+                                        .on_click(move |_, _, cx| {
+                                            NowPlaying::toggle_like(&now_playing_entity, cx);
+                                        }),
                                 ),
                             )
                         })
                     }),
             );
 
-        if self.current_track_path.is_some() || self.current_library_track.is_some() {
-            let show_add_to = add_to_state.as_ref().map(|(s, _)| s.clone());
-            let add_to = add_to_state.map(|(_, a)| a);
+        let show_add_to = add_to_state.as_ref().map(|(s, _)| s.clone());
+        let add_to = add_to_state.map(|(_, a)| a);
 
-            div()
-                .child(
-                    context("info-section-context").with(content).child(
-                        div()
-                            .bg(theme.elevated_background)
-                            .child(InfoSectionContextMenu::new(
-                                self.current_track_path.clone(),
-                                self.current_library_track.clone(),
-                                self.is_liked,
-                                show_add_to,
-                            )),
-                    ),
-                )
-                .when_some(add_to, |d, add_to| d.child(add_to))
-                .into_any_element()
-        } else {
-            // no idea why this works and `content.into_any_element()` doesn't, it's just like this
-            div().child(content).into_any_element()
-        }
+        div()
+            .child(
+                context("info-section-context").with(content).child(
+                    div()
+                        .bg(theme.elevated_background)
+                        .child(InfoSectionContextMenu::new(
+                            current_track_path,
+                            library_track,
+                            is_liked,
+                            show_add_to,
+                        )),
+                ),
+            )
+            .when_some(add_to, |d, add_to| d.child(add_to))
     }
-}
-
-fn update_current_track_state(
-    this: &mut InfoSection,
-    current_track: Option<&CurrentTrack>,
-    cx: &mut Context<InfoSection>,
-) {
-    this.current_track_path = current_track.map(|track| track.get_path().clone());
-    this.track_name = None;
-    this.artist_name = None;
-    this.current_library_track = None;
-    this.can_navigate_to_album = false;
-    this.can_navigate_to_artist = false;
-    this.is_liked = None;
-    let path = this.current_track_path.clone();
-    let pool = cx.global::<Pool>().0.clone();
-    this.library_track.update(cx, |resource, cx| {
-        resource.load(cx, path.clone(), load_current_library_track(path, pool));
-    });
-    this.image_element_key = this.image_element_key.wrapping_add(1);
 }
 
 pub struct PlaybackSection {
@@ -832,30 +576,8 @@ impl Render for PlaybackSection {
                                     cx.stop_propagation();
                                     window.prevent_default();
                                 })
-                                .on_click(move |_, _, cx| match repeating {
-                                    RepeatState::NotRepeating => cx
-                                        .global::<PlaybackInterface>()
-                                        .set_repeat(RepeatState::Repeating),
-                                    RepeatState::Repeating => cx
-                                        .global::<PlaybackInterface>()
-                                        .set_repeat(RepeatState::RepeatingOne),
-                                    RepeatState::RepeatingOne => cx
-                                        .global::<PlaybackInterface>()
-                                        .set_repeat(RepeatState::NotRepeating),
-                                })
-                                .tooltip(build_tooltip(match repeating {
-                                    RepeatState::NotRepeating => {
-                                        tr!("REPEAT")
-                                    }
-                                    RepeatState::Repeating => tr!("REPEAT_ONE"),
-                                    RepeatState::RepeatingOne => {
-                                        if always_repeat {
-                                            tr!("REPEAT")
-                                        } else {
-                                            tr!("STOP_REPEATING", "Stop Repeating")
-                                        }
-                                    }
-                                }))
+                                .on_click(move |_, _, cx| cycle_repeat(repeating, cx))
+                                .tooltip(build_tooltip(repeat_tooltip(repeating, always_repeat)))
                                 .child(
                                     icon(match repeating {
                                         RepeatState::NotRepeating | RepeatState::Repeating => {
@@ -868,42 +590,70 @@ impl Render for PlaybackSection {
                                 ),
                         )
                         .child(
-                            div().bg(theme.elevated_background).child(
-                                menu()
-                                    .when(!always_repeat, |menu| {
-                                        menu.item(menu_item(
-                                            "repeat-not-repeat",
-                                            Some(REPEAT_OFF),
-                                            tr!("REPEAT_OFF", "Off"),
-                                            move |_, _, cx| {
-                                                cx.global::<PlaybackInterface>()
-                                                    .set_repeat(RepeatState::NotRepeating);
-                                            },
-                                        ))
-                                    })
-                                    .item(menu_item(
-                                        "repeat-repeat",
-                                        Some(REPEAT),
-                                        tr!("REPEAT", "Repeat"),
-                                        move |_, _, cx| {
-                                            cx.global::<PlaybackInterface>()
-                                                .set_repeat(RepeatState::Repeating);
-                                        },
-                                    ))
-                                    .item(menu_item(
-                                        "repeat-repeat-one",
-                                        Some(REPEAT_ONCE),
-                                        tr!("REPEAT_ONE", "Repeat One"),
-                                        move |_, _, cx| {
-                                            cx.global::<PlaybackInterface>()
-                                                .set_repeat(RepeatState::RepeatingOne);
-                                        },
-                                    )),
-                            ),
+                            div()
+                                .bg(theme.elevated_background)
+                                .child(repeat_menu(always_repeat)),
                         ),
                 ),
             )
     }
+}
+
+pub(super) fn cycle_repeat(current: RepeatState, cx: &mut App) {
+    let next = match current {
+        RepeatState::NotRepeating => RepeatState::Repeating,
+        RepeatState::Repeating => RepeatState::RepeatingOne,
+        RepeatState::RepeatingOne => RepeatState::NotRepeating,
+    };
+    cx.global::<PlaybackInterface>().set_repeat(next);
+}
+
+pub(super) fn repeat_tooltip(current: RepeatState, always_repeat: bool) -> SharedString {
+    match current {
+        RepeatState::NotRepeating => tr!("REPEAT"),
+        RepeatState::Repeating => tr!("REPEAT_ONE"),
+        RepeatState::RepeatingOne => {
+            if always_repeat {
+                tr!("REPEAT")
+            } else {
+                tr!("STOP_REPEATING", "Stop Repeating")
+            }
+        }
+    }
+    .into()
+}
+
+pub(super) fn repeat_menu(always_repeat: bool) -> impl IntoElement {
+    menu()
+        .when(!always_repeat, |menu| {
+            menu.item(menu_item(
+                "repeat-not-repeat",
+                Some(REPEAT_OFF),
+                tr!("REPEAT_OFF", "Off"),
+                move |_, _, cx| {
+                    cx.global::<PlaybackInterface>()
+                        .set_repeat(RepeatState::NotRepeating);
+                },
+            ))
+        })
+        .item(menu_item(
+            "repeat-repeat",
+            Some(REPEAT),
+            tr!("REPEAT", "Repeat"),
+            move |_, _, cx| {
+                cx.global::<PlaybackInterface>()
+                    .set_repeat(RepeatState::Repeating);
+            },
+        ))
+        .item(menu_item(
+            "repeat-repeat-one",
+            Some(REPEAT_ONCE),
+            tr!("REPEAT_ONE", "Repeat One"),
+            move |_, _, cx| {
+                cx.global::<PlaybackInterface>()
+                    .set_repeat(RepeatState::RepeatingOne);
+            },
+        ))
 }
 
 pub struct Scrubber {

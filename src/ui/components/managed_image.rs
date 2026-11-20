@@ -505,3 +505,137 @@ mod tests {
             .expect("second task did not start after the first decode finished");
     }
 }
+
+/// Decodes a small version of `key`'s artwork and returns its dominant color, if there is art.
+///
+/// Runs on the shared tokio runtime and goes through the regular decode permits, so it's cheap
+/// to call whenever the current track changes.
+pub async fn fetch_dominant_color(
+    key: ManagedImageKey,
+    pool: SqlitePool,
+) -> anyhow::Result<Option<gpui::Rgba>> {
+    let Some(image) = key.retrieve(pool, true, Some(128)).await? else {
+        return Ok(None);
+    };
+    // decoded images are stored as BGRA for the GPU
+    Ok(image
+        .as_bytes(0)
+        .and_then(dominant_color_from_bgra)
+        .map(|(r, g, b)| gpui::Rgba { r, g, b, a: 1.0 }))
+}
+
+const HUE_BUCKETS: usize = 24;
+
+/// Picks a representative color for an image: pixels are grouped by hue, weighted by how
+/// colorful they are, and the heaviest hue group is averaged. Mostly-gray images fall back to a
+/// plain average so they produce a neutral tone instead of amplifying noise.
+fn dominant_color_from_bgra(bytes: &[u8]) -> Option<(f32, f32, f32)> {
+    #[derive(Default, Clone, Copy)]
+    struct Bucket {
+        weight: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+    }
+
+    let mut buckets = [Bucket::default(); HUE_BUCKETS];
+    let mut plain = Bucket::default();
+    let mut colorful_weight = 0.0;
+
+    for px in bytes.as_chunks::<4>().0 {
+        if px[3] < 128 {
+            continue;
+        }
+        let (b, g, r) = (
+            px[0] as f32 / 255.0,
+            px[1] as f32 / 255.0,
+            px[2] as f32 / 255.0,
+        );
+        plain.weight += 1.0;
+        plain.r += r;
+        plain.g += g;
+        plain.b += b;
+
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let chroma = max - min;
+        if chroma < 0.08 {
+            continue;
+        }
+
+        let hue = if max == r {
+            ((g - b) / chroma).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / chroma + 2.0
+        } else {
+            (r - g) / chroma + 4.0
+        } / 6.0;
+
+        // favor saturated mid-tones; near-black and near-white pixels say little about the art
+        let lightness = (max + min) / 2.0;
+        let weight = chroma * (1.0 - (2.0 * lightness - 1.0).abs()).max(0.2);
+        colorful_weight += weight;
+
+        let bucket = &mut buckets[((hue * HUE_BUCKETS as f32) as usize).min(HUE_BUCKETS - 1)];
+        bucket.weight += weight;
+        bucket.r += r * weight;
+        bucket.g += g * weight;
+        bucket.b += b * weight;
+    }
+
+    if plain.weight == 0.0 {
+        return None;
+    }
+
+    // smooth across neighbouring hues so a gradient isn't split between two buckets
+    let best = (0..HUE_BUCKETS)
+        .max_by(|&a, &b| {
+            let around = |i: usize| {
+                buckets[(i + HUE_BUCKETS - 1) % HUE_BUCKETS].weight * 0.5
+                    + buckets[i].weight
+                    + buckets[(i + 1) % HUE_BUCKETS].weight * 0.5
+            };
+            around(a).total_cmp(&around(b))
+        })
+        .map(|i| buckets[i])
+        .filter(|b| b.weight > 0.0);
+
+    match best {
+        Some(b) if colorful_weight / plain.weight > 0.02 => {
+            Some((b.r / b.weight, b.g / b.weight, b.b / b.weight))
+        }
+        _ => Some((
+            plain.r / plain.weight,
+            plain.g / plain.weight,
+            plain.b / plain.weight,
+        )),
+    }
+}
+
+#[cfg(test)]
+mod dominant_color_tests {
+    use super::dominant_color_from_bgra;
+
+    fn bgra(pixels: &[(u8, u8, u8)]) -> Vec<u8> {
+        pixels
+            .iter()
+            .flat_map(|&(r, g, b)| [b, g, r, 255])
+            .collect()
+    }
+
+    #[test]
+    fn picks_majority_hue_over_gray() {
+        let mut pixels = vec![(200, 30, 30); 30];
+        pixels.extend(vec![(128, 128, 128); 60]);
+        pixels.extend(vec![(30, 30, 200); 10]);
+        let (r, g, b) = dominant_color_from_bgra(&bgra(&pixels)).unwrap();
+        assert!(r > 0.7 && g < 0.2 && b < 0.2, "{r} {g} {b}");
+    }
+
+    #[test]
+    fn grayscale_falls_back_to_average() {
+        let pixels = vec![(100, 100, 100); 16];
+        let (r, g, b) = dominant_color_from_bgra(&bgra(&pixels)).unwrap();
+        assert!((r - g).abs() < 0.01 && (g - b).abs() < 0.01);
+    }
+}

@@ -11,6 +11,7 @@ use crate::ui::{
 pub struct WindowChrome {
     content: AnyElement,
     div: Div,
+    background: Option<Hsla>,
 }
 
 impl WindowChrome {
@@ -18,7 +19,13 @@ impl WindowChrome {
         Self {
             content: content.into_any_element(),
             div: div(),
+            background: None,
         }
+    }
+
+    pub fn background(mut self, color: impl Into<Hsla>) -> Self {
+        self.background = Some(color.into());
+        self
     }
 }
 
@@ -149,7 +156,9 @@ impl RenderOnce for WindowChrome {
                         cx.stop_propagation();
                     })
                     .overflow_hidden()
-                    .bg(theme.frame_background)
+                    .bg(self
+                        .background
+                        .unwrap_or_else(|| theme.frame_background.into()))
                     .size_full()
                     .flex()
                     .flex_col()

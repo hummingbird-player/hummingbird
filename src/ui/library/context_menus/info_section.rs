@@ -10,9 +10,10 @@ use crate::{
         availability::is_track_path_available,
         components::{
             icons::{DISC, FOLDER_SEARCH, PLAYLIST_ADD, STAR, STAR_FILLED, USERS},
-            menu::{menu, menu_item, menu_separator},
+            menu::{menu, menu_check_item, menu_item, menu_separator},
         },
-        models::toggle_like_by_id,
+        models::{Models, toggle_like_by_id},
+        theater::exit_theater_mode,
         util::reveal_path_for_file_manager,
     },
 };
@@ -51,6 +52,9 @@ impl RenderOnce for InfoSectionContextMenu {
             .is_some_and(|path| is_track_path_available(cx, path.as_path()));
         let track = self.track;
         let has_library_actions = track.is_some() || self.show_add_to.is_some();
+        let has_track = reveal_path.is_some();
+        let theater_mode = cx.global::<Models>().theater_mode.clone();
+        let theater_mode_active = *theater_mode.read(cx);
 
         menu()
             .when_some(track.clone(), |menu, track_for_artist| {
@@ -59,6 +63,7 @@ impl RenderOnce for InfoSectionContextMenu {
                     Some(USERS),
                     tr!("GO_TO_ARTIST"),
                     move |ev, _, cx| {
+                        exit_theater_mode(cx);
                         navigate_to_track_artist(cx, &track_for_artist, ev.position());
                     },
                 ))
@@ -71,6 +76,7 @@ impl RenderOnce for InfoSectionContextMenu {
                         Some(DISC),
                         tr!("GO_TO_ALBUM"),
                         move |_, _, cx| {
+                            exit_theater_mode(cx);
                             navigate_to_track_album(cx, &track_for_album);
                         },
                     )
@@ -109,18 +115,32 @@ impl RenderOnce for InfoSectionContextMenu {
                 ))
             })
             .when(has_library_actions, |menu| menu.item(menu_separator()))
-            .item(
-                menu_item(
-                    "info_section_show_in_file_manager",
-                    Some(FOLDER_SEARCH),
-                    track_show_in_file_manager_label(),
-                    move |_, _, cx| {
-                        if let Some(path) = reveal_path.as_ref() {
-                            reveal_path_for_file_manager(path, cx);
-                        }
-                    },
+            .when(has_track, |menu| {
+                menu.item(
+                    menu_item(
+                        "info_section_show_in_file_manager",
+                        Some(FOLDER_SEARCH),
+                        track_show_in_file_manager_label(),
+                        move |_, _, cx| {
+                            if let Some(path) = reveal_path.as_ref() {
+                                reveal_path_for_file_manager(path, cx);
+                            }
+                        },
+                    )
+                    .disabled(!can_reveal_track),
                 )
-                .disabled(!can_reveal_track),
-            )
+                .item(menu_separator())
+            })
+            .item(menu_check_item(
+                "info_section_theater_mode",
+                theater_mode_active,
+                tr!("THEATER_MODE", "Theater mode"),
+                move |_, _, cx| {
+                    theater_mode.update(cx, |v, cx| {
+                        *v = !*v;
+                        cx.notify();
+                    });
+                },
+            ))
     }
 }

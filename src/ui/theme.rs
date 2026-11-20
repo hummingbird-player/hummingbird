@@ -217,9 +217,9 @@ impl Default for Theme {
             text_disabled: rgb(0x676771),
             text_link: rgb(0x647ADB),
 
-            nav_button_hover: rgb(0x35353E),
+            nav_button_hover: rgba(0xACACEC20),
             nav_button_hover_border: rgba(0x00000000),
-            nav_button_active: rgb(0x121214),
+            nav_button_active: rgba(0x00000380),
             nav_button_active_border: rgba(0x00000000),
             nav_button_pressed: rgb(0x242425),
             nav_button_pressed_border: rgba(0x00000000),
@@ -233,8 +233,8 @@ impl Default for Theme {
             stop_after_current_indicator: rgb(0xF0A868),
 
             window_button: rgba(0x00000000),
-            window_button_hover: rgb(0x35353E),
-            window_button_active: rgb(0x121214),
+            window_button_hover: rgba(0xACACEC20),
+            window_button_active: rgba(0x00000380),
 
             list_item: rgba(0x00000000),
             list_item_alternate: rgb(0x18181A),

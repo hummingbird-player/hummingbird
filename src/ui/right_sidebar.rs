@@ -4,7 +4,10 @@ use prelude::FluentBuilder;
 use crate::{
     settings::storage::{DEFAULT_LYRICS_FRACTION, DEFAULT_QUEUE_WIDTH},
     ui::{
-        components::resizable::{ResizeEdge, resizable},
+        components::{
+            resizable::{ResizeEdge, resizable},
+            styling::Surface,
+        },
         lyrics::Lyrics,
         models::Models,
         queue::Queue,
@@ -23,8 +26,8 @@ pub struct RightSidebar {
 impl RightSidebar {
     pub fn new(cx: &mut App, show_queue: Entity<bool>, show_lyrics: Entity<bool>) -> Entity<Self> {
         cx.new(|cx| {
-            let queue = Queue::new(cx, show_queue.clone());
-            let lyrics = Lyrics::new(cx);
+            let queue = Queue::new(cx, show_queue.clone(), Surface::Panel);
+            let lyrics = Lyrics::new(cx, Surface::Panel);
 
             let queue_width = cx.global::<Models>().queue_width.clone();
             cx.observe(&queue_width, |_, _, cx| cx.notify()).detach();

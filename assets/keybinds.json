@@ -28,6 +28,7 @@
     { "key": "alt-left", "action": "library::NavigateBack", "context": "Library" },
     { "key": "alt-right", "action": "library::NavigateForward", "context": "Library" },
     { "key": "escape", "action": "library::EscapeBack", "context": "Library" },
+    { "key": "escape", "action": "theater::ExitTheaterMode", "context": "Theater && !TextInput" },
 
     { "key": "secondary-s", "action": "playlist::Export" },
 

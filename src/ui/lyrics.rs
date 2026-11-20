@@ -10,17 +10,18 @@ use crate::{
         app::Pool,
         components::{
             async_resource::AsyncResource,
+            edge_fade::edge_fades,
             icons::{MICROPHONE, icon},
             scrollbar::{ScrollableHandle, floating_scrollbar},
+            styling::Surface,
         },
-        constants::PANEL_ROUNDING,
         models::{Models, PlaybackInfo},
         scroll_follow::{SmoothScrollFollow, ease_out_cubic},
         theme::Theme,
     },
 };
 use cntp_i18n::tr;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -76,10 +77,21 @@ pub struct Lyrics {
     line_emphasis_target_values: Vec<f32>,
     line_emphasis_started_at: Option<Instant>,
     playback_state: Entity<PlaybackState>,
+    /// Width of the lyrics scroll area as of the last frame.
+    measured_width: Pixels,
+    surface: Surface,
+    /// Multiplier for all lyric text (and its spacing); larger in theater mode.
+    text_scale: f32,
+    /// Background color to fade into where lyrics scroll past the top or bottom edge. Only set
+    /// on a flat surface (theater mode), where the color behind the lyrics is known.
+    edge_fade: Option<Rgba>,
+    /// Whether lines are inset from the sides of the pane. Turned off where the lyrics should
+    /// line up with the content around them (theater mode's one-column view).
+    horizontal_padding: bool,
 }
 
 impl Lyrics {
-    pub fn new(cx: &mut App) -> Entity<Self> {
+    pub fn new(cx: &mut App, surface: Surface) -> Entity<Self> {
         cx.new(|cx| {
             let playback_info = cx.global::<PlaybackInfo>().clone();
             let current_track = playback_info.current_track.clone();
@@ -173,6 +185,11 @@ impl Lyrics {
                 line_emphasis_target_values: vec![0.0; initial_line_count],
                 line_emphasis_started_at: None,
                 playback_state,
+                measured_width: px(0.0),
+                surface,
+                text_scale: 1.0,
+                edge_fade: None,
+                horizontal_padding: true,
             }
         })
     }
@@ -192,9 +209,38 @@ impl Lyrics {
     }
 }
 
+impl Lyrics {
+    pub fn set_text_scale(&mut self, scale: f32) {
+        self.text_scale = scale;
+    }
+
+    pub fn set_edge_fade(&mut self, color: Option<Rgba>) {
+        self.edge_fade = color;
+    }
+
+    pub fn set_horizontal_padding(&mut self, padded: bool) {
+        self.horizontal_padding = padded;
+    }
+}
+
 impl Render for Lyrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let queue = cx.global::<Models>().queue_width.read(cx).as_f32();
+        // Lines are laid out against the width of the lyrics pane itself (measured on the
+        // previous frame), so the component works wherever it is placed. Fall back to the
+        // sidebar width before the first layout.
+        let measured_width = f32::from(self.measured_width);
+        let pane_width = if measured_width > 0.0 {
+            measured_width
+        } else {
+            cx.global::<Models>().queue_width.read(cx).as_f32()
+        };
+        cx.on_next_frame(window, |this, _, cx| {
+            let width = this.scroll_handle.bounds().size.width;
+            if width > px(0.0) && (width - this.measured_width).abs() > px(0.5) {
+                this.measured_width = width;
+                cx.notify();
+            }
+        });
         let playback_state = *self.playback_state.read(cx);
         let reduced_motion = cx
             .global::<SettingsGlobal>()
@@ -203,11 +249,11 @@ impl Render for Lyrics {
             .interface
             .reduced_motion;
 
-        let (muted, normal, background_primary) = {
-            let theme = cx.global::<Theme>();
-            (theme.text_secondary, theme.text, theme.background_primary)
-        };
+        let theme = cx.global::<Theme>().clone();
+        let (muted, normal) = (theme.text_secondary, theme.text);
         let lyrics = self.lyrics.read(cx).ready().cloned();
+        let scale = self.text_scale;
+        let padding_x = px(if self.horizontal_padding { 14.0 } else { 0.0 });
 
         if reduced_motion {
             if self.follow_pending || self.scroll_follow.is_active() || self.needs_animation_frame()
@@ -235,8 +281,9 @@ impl Render for Lyrics {
                         .flex()
                         .gap_2()
                         .items_center()
+                        .when(scale != 1.0, |this| this.text_size(rems(scale)))
                         .text_color(muted)
-                        .child(icon(MICROPHONE).size(px(16.0)))
+                        .child(icon(MICROPHONE).size(px(16.0 * scale)))
                         .child(tr!("NO_LYRICS", "No lyrics")),
                 )
                 .into_any_element()
@@ -249,13 +296,14 @@ impl Render for Lyrics {
             let items = parsed.iter().enumerate().map(|(idx, line)| {
                 let time_ms = line.time_ms;
                 if line.text.is_empty() {
-                    div().h(px(16.0)).w_full().into_any_element()
+                    div().h(px(16.0 * scale)).w_full().into_any_element()
                 } else {
                     let emphasis = self.line_emphasis_for(idx);
                     let is_active = emphasis > 0.0 || Some(idx) == active_line;
                     let text_color = lerp_color(muted, normal, emphasis);
-                    let font_size = lerp(LYRICS_BASE_TEXT_SIZE, LYRICS_ACTIVE_TEXT_SIZE, emphasis);
-                    let width = (font_size / LYRICS_ACTIVE_TEXT_SIZE) * queue;
+                    let font_size =
+                        lerp(LYRICS_BASE_TEXT_SIZE, LYRICS_ACTIVE_TEXT_SIZE, emphasis) * scale;
+                    let width = (font_size / (LYRICS_ACTIVE_TEXT_SIZE * scale)) * pane_width;
 
                     div()
                         .id(("lyric", idx))
@@ -267,18 +315,17 @@ impl Render for Lyrics {
                         .cursor_pointer()
                         .max_w(px(width))
                         .overflow_x_hidden()
-                        .px(px(14.0))
+                        .px(padding_x)
                         .py(px(lerp(
                             LYRICS_BASE_VERTICAL_PADDING,
                             LYRICS_ACTIVE_VERTICAL_PADDING,
                             emphasis,
-                        )))
+                        ) * scale))
                         .text_size(px(font_size))
-                        .line_height(rems(lerp(
-                            LYRICS_BASE_LINE_HEIGHT,
-                            LYRICS_ACTIVE_LINE_HEIGHT,
-                            emphasis,
-                        )))
+                        .line_height(rems(
+                            lerp(LYRICS_BASE_LINE_HEIGHT, LYRICS_ACTIVE_LINE_HEIGHT, emphasis)
+                                * scale,
+                        ))
                         .font_weight(if is_active {
                             FontWeight::EXTRA_BOLD
                         } else {
@@ -322,6 +369,10 @@ impl Render for Lyrics {
                         .track_scroll(&scroll_handle)
                         .children(items),
                 )
+                .children(edge_fades(
+                    self.edge_fade,
+                    &ScrollableHandle::Regular(scroll_handle.clone()),
+                ))
                 .child(
                     floating_scrollbar(
                         "lyrics-scrollbar",
@@ -357,14 +408,18 @@ impl Render for Lyrics {
                         .w_full()
                         .overflow_y_scroll()
                         .track_scroll(&scroll_handle)
-                        .px(px(14.0))
+                        .px(padding_x)
                         .py(px(12.0))
-                        .text_size(px(20.0))
-                        .line_height(rems(1.6))
+                        .text_size(px(20.0 * scale))
+                        .line_height(rems(1.6 * scale))
                         .font_weight(FontWeight::BOLD)
                         .text_color(normal)
                         .child(SharedString::from(text)),
                 )
+                .children(edge_fades(
+                    self.edge_fade,
+                    &ScrollableHandle::Regular(scroll_handle.clone()),
+                ))
                 .child(
                     floating_scrollbar(
                         "lyrics-plain-scrollbar",
@@ -375,12 +430,11 @@ impl Render for Lyrics {
                 .into_any_element()
         };
 
-        div()
+        self.surface
+            .apply(div(), &theme)
             .h_full()
             .w_full()
             .overflow_hidden()
-            .rounded(PANEL_ROUNDING)
-            .bg(background_primary)
             .flex()
             .flex_col()
             .child(inner)

@@ -63,6 +63,7 @@ use super::{
     right_sidebar::RightSidebar,
     search::SearchView,
     settings::close_orphaned_settings_windows,
+    theater::TheaterView,
     theme::setup_theme,
     util::drop_image_from_app,
 };
@@ -82,11 +83,37 @@ struct MainWindow {
     pub corrupt_settings_dialog: Entity<CorruptSettingsDialog>,
     pub palette: Entity<CommandPalette>,
     pub toast_layer: Entity<ToastLayer>,
+    pub theater: Entity<TheaterView>,
+    pub theater_mode: Entity<bool>,
 }
+
+const NORMAL_MIN_SIZE: Size<Pixels> = size(px(800.0), px(600.0));
+const THEATER_MIN_SIZE: Size<Pixels> = size(px(320.0), px(240.0));
 
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         cx.global::<ModalActive>().0.store(false, Ordering::Relaxed);
+
+        if *self.theater_mode.read(cx) {
+            return div()
+                .key_context("app")
+                .size_full()
+                .child(
+                    window_chrome(
+                        div()
+                            .cursor(CursorStyle::Arrow)
+                            .overflow_hidden()
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .child(self.theater.clone())
+                            .child(self.palette.clone())
+                            .child(self.toast_layer.clone()),
+                    )
+                    .background(self.theater.read(cx).background(cx)),
+                )
+                .into_any_element();
+        }
 
         let right_sidebar = self.right_sidebar.clone();
         let show_about = *self.show_about.clone().read(cx);
@@ -102,66 +129,70 @@ impl Render for MainWindow {
             );
         let show_sidebar = *self.show_queue.read(cx) || *self.show_lyrics.read(cx);
 
-        div().key_context("app").size_full().child(window_chrome(
-            div()
-                .cursor(CursorStyle::Arrow)
-                .on_drop(|ev: &ExternalPaths, _, cx| {
-                    let items = ev
-                        .paths()
-                        .iter()
-                        .map(|path| QueueItemData::new(cx, path.clone(), None, None))
-                        .collect();
+        div()
+            .key_context("app")
+            .size_full()
+            .child(window_chrome(
+                div()
+                    .cursor(CursorStyle::Arrow)
+                    .on_drop(|ev: &ExternalPaths, _, cx| {
+                        let items = ev
+                            .paths()
+                            .iter()
+                            .map(|path| QueueItemData::new(cx, path.clone(), None, None))
+                            .collect();
 
-                    let playback_interface = cx.global::<PlaybackInterface>();
-                    playback_interface.queue_list(items);
-                })
-                .overflow_hidden()
-                .size_full()
-                .flex()
-                // the whole application has to be flipped upside down otherwise sidebar icons
-                // overlap menu bar menus
-                .flex_col_reverse()
-                .max_w_full()
-                .max_h_full()
-                .child(
-                    AnyView::from(self.controls.clone()).cached(
-                        StyleRefinement::default()
+                        let playback_interface = cx.global::<PlaybackInterface>();
+                        playback_interface.queue_list(items);
+                    })
+                    .overflow_hidden()
+                    .size_full()
+                    .flex()
+                    // the whole application has to be flipped upside down otherwise sidebar icons
+                    // overlap menu bar menus
+                    .flex_col_reverse()
+                    .max_w_full()
+                    .max_h_full()
+                    .child(
+                        AnyView::from(self.controls.clone()).cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .flex()
+                                .flex_shrink_0()
+                                .h(px(60.0)),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .my(PANEL_GAP)
                             .w_full()
+                            .h_full()
                             .flex()
-                            .flex_shrink_0()
-                            .h(px(60.0)),
-                    ),
-                )
-                .child(
-                    div()
-                        .my(PANEL_GAP)
-                        .w_full()
-                        .h_full()
-                        .flex()
-                        .max_w_full()
-                        .max_h_full()
-                        .overflow_hidden()
-                        .child(self.library.clone())
-                        .when(show_sidebar, |this| this.child(right_sidebar)),
-                )
-                .child(self.header.clone())
-                .child(self.search.clone())
-                .child(self.artist_picker.clone())
-                .child(self.palette.clone())
-                .when(show_about, |this| {
-                    this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
-                        let show_about = cx.global::<Models>().show_about.clone();
-                        show_about.write(cx, false);
-                    }))
-                })
-                .when(show_missing_folder_dialog, |this| {
-                    this.child(self.missing_folder_dialog.clone())
-                })
-                .when(show_corrupt_settings_dialog, |this| {
-                    this.child(self.corrupt_settings_dialog.clone())
-                })
-                .child(self.toast_layer.clone()),
-        ))
+                            .max_w_full()
+                            .max_h_full()
+                            .overflow_hidden()
+                            .child(self.library.clone())
+                            .when(show_sidebar, |this| this.child(right_sidebar)),
+                    )
+                    .child(self.header.clone())
+                    .child(self.search.clone())
+                    .child(self.artist_picker.clone())
+                    .child(self.palette.clone())
+                    .when(show_about, |this| {
+                        this.child(about_dialog(self.about_focus.clone(), &|_, cx| {
+                            let show_about = cx.global::<Models>().show_about.clone();
+                            show_about.write(cx, false);
+                        }))
+                    })
+                    .when(show_missing_folder_dialog, |this| {
+                        this.child(self.missing_folder_dialog.clone())
+                    })
+                    .when(show_corrupt_settings_dialog, |this| {
+                        this.child(self.corrupt_settings_dialog.clone())
+                    })
+                    .child(self.toast_layer.clone()),
+            ))
+            .into_any_element()
     }
 }
 
@@ -215,7 +246,13 @@ fn main_window_bounds(cx: &mut App) -> WindowBounds {
         if window_information.maximized {
             WindowBounds::Maximized(Bounds::centered(None, window_information.size, cx))
         } else {
-            WindowBounds::Windowed(Bounds::centered(None, window_information.size, cx))
+            // the window may have been saved at miniplayer size, but we always start in the
+            // regular library view
+            WindowBounds::Windowed(Bounds::centered(
+                None,
+                window_information.size.max(&NORMAL_MIN_SIZE),
+                cx,
+            ))
         }
     } else {
         WindowBounds::Maximized(Bounds::centered(None, size(px(1024.0), px(700.0)), cx))
@@ -230,7 +267,7 @@ fn main_window_options(
         window_bounds: Some(window_bounds),
         window_background,
         window_decorations: Some(WindowDecorations::Client),
-        window_min_size: Some(size(px(800.0), px(600.0))),
+        window_min_size: Some(THEATER_MIN_SIZE),
         titlebar: Some(TitlebarOptions {
             title: Some(tr!("APP_NAME").into()),
             appears_transparent: true,
@@ -294,6 +331,28 @@ fn build_main_window(
         })
         .detach();
 
+        let theater = TheaterView::new(cx);
+        cx.observe(&theater, |this: &mut MainWindow, _, cx| {
+            if *this.theater_mode.read(cx) {
+                cx.notify();
+            }
+        })
+        .detach();
+
+        let theater_mode = cx.global::<Models>().theater_mode.clone();
+        cx.observe_in(&theater_mode, window, |_, theater_mode, window, cx| {
+            // override the minimum size if theater mode is inactive
+            if !*theater_mode.read(cx) && !window.is_maximized() && !window.is_fullscreen() {
+                let current = window.viewport_size();
+                let target = current.max(&NORMAL_MIN_SIZE);
+                if target != current {
+                    window.resize(target);
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+
         MainWindow {
             controls: Controls::new(cx, show_queue.clone(), show_lyrics.clone()),
             right_sidebar: RightSidebar::new(cx, show_queue.clone(), show_lyrics.clone()),
@@ -309,6 +368,8 @@ fn build_main_window(
             corrupt_settings_dialog: CorruptSettingsDialog::new(cx),
             palette,
             toast_layer,
+            theater,
+            theater_mode,
         }
     })
 }

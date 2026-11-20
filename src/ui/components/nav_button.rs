@@ -10,6 +10,7 @@ pub struct NavButton {
     div: Stateful<Div>,
     icon: &'static str,
     enabled: bool,
+    toggled: bool,
 }
 
 impl StatefulInteractiveElement for NavButton {}
@@ -31,6 +32,11 @@ impl NavButton {
         self.enabled = !disabled;
         self
     }
+
+    pub fn toggled(mut self, toggled: bool) -> Self {
+        self.toggled = toggled;
+        self
+    }
 }
 
 impl RenderOnce for NavButton {
@@ -44,6 +50,7 @@ impl RenderOnce for NavButton {
             .rounded_sm()
             .text_sm()
             .border_1()
+            .occlude()
             .when(self.enabled, |this: Stateful<Div>| {
                 this.hover(|style: gpui::StyleRefinement| {
                     style
@@ -58,7 +65,9 @@ impl RenderOnce for NavButton {
                 .cursor_pointer()
             })
             .when(!self.enabled, |this: Stateful<Div>| this.opacity(0.35))
-            .child(icon(self.icon).size(px(16.0)))
+            .child(icon(self.icon).size(px(16.0)).when(self.toggled, |this| {
+                this.text_color(theme.playback_button_toggled)
+            }))
     }
 }
 
@@ -67,5 +76,6 @@ pub fn nav_button(id: impl Into<ElementId>, icon: &'static str) -> NavButton {
         div: div().id(id).size(px(28.0)),
         icon,
         enabled: true,
+        toggled: false,
     }
 }
