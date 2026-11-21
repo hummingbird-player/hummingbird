@@ -56,6 +56,7 @@ use crate::{
     ui::{
         app::Pool,
         library::{NavigationHistory, ViewSwitchMessage},
+        platform::mobile_layout,
     },
 };
 
@@ -500,7 +501,9 @@ pub fn build_models(
     let show_lyrics: Entity<bool> = cx.new(|_| storage_data.show_lyrics);
     let theater_mode: Entity<bool> = cx.new(|_| false);
     let theater_show_queue: Entity<bool> = cx.new(|_| false);
-    let theater_show_lyrics: Entity<bool> = cx.new(|_| true);
+    // wide windows show lyrics beside the art, but the phone layout's single column would open
+    // straight onto them instead of the album art
+    let theater_show_lyrics: Entity<bool> = cx.new(|_| !mobile_layout());
     let split_widths: std::collections::HashMap<String, Entity<Pixels>> = {
         use crate::settings::storage::SPLIT_FRACTION_KEYS;
         SPLIT_FRACTION_KEYS

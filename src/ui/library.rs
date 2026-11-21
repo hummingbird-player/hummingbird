@@ -35,6 +35,10 @@ use crate::{
             update_playlist::UpdatePlaylist,
         },
         platform::mobile_layout,
+        settings::{
+            SettingsSectionKind,
+            mobile::{SettingsMenu, SettingsPage},
+        },
         theme::Theme,
     },
 };
@@ -290,6 +294,7 @@ enum LibrarySection {
     Tracks,
     Files,
     Playlists,
+    Settings,
 }
 
 impl LibrarySection {
@@ -302,6 +307,9 @@ impl LibrarySection {
             ViewSwitchMessage::Artists | ViewSwitchMessage::Artist(_) => Some(Self::Artists),
             ViewSwitchMessage::Files => Some(Self::Files),
             ViewSwitchMessage::Playlist(_) => Some(Self::Playlists),
+            ViewSwitchMessage::Settings | ViewSwitchMessage::SettingsSection(_) => {
+                Some(Self::Settings)
+            }
             // Release can appear under Albums or Artists – keep current section.
             ViewSwitchMessage::Release(_, _) => None,
             ViewSwitchMessage::Back | ViewSwitchMessage::Forward | ViewSwitchMessage::Refresh => {
@@ -320,6 +328,8 @@ enum LibraryView {
     Artists(Entity<ArtistView>),
     ArtistDetail(Entity<ArtistDetailView>),
     Files(Entity<FilesView>),
+    Settings(Entity<SettingsMenu>),
+    SettingsPage(Entity<SettingsPage>),
 }
 
 impl LibraryView {
@@ -332,6 +342,8 @@ impl LibraryView {
             LibraryView::Release(view) => view.read(cx).get_scroll_offset(),
             LibraryView::ArtistDetail(view) => view.read(cx).get_scroll_offset(),
             LibraryView::Playlist(view) => view.read(cx).get_scroll_offset(),
+            LibraryView::Settings(view) => view.read(cx).get_scroll_offset(),
+            LibraryView::SettingsPage(view) => view.read(cx).get_scroll_offset(),
         }
     }
 
@@ -344,6 +356,7 @@ impl LibraryView {
             LibraryView::Release(_) => "albums",
             LibraryView::ArtistDetail(_) => "artists",
             LibraryView::Files(_) => "files",
+            LibraryView::Settings(_) | LibraryView::SettingsPage(_) => "settings",
         }
     }
 }
@@ -378,6 +391,10 @@ pub enum ViewSwitchMessage {
     Release(i64, Option<i64>),
     Artist(i64),
     Playlist(i64),
+    /// The settings menu (phone layout only; see [`crate::ui::settings::mobile`])
+    Settings,
+    /// A settings section's page (phone layout only)
+    SettingsSection(SettingsSectionKind),
     Back,
     Forward,
     Refresh,
@@ -387,7 +404,9 @@ impl ViewSwitchMessage {
     pub fn is_detail_page(&self) -> bool {
         matches!(
             self,
-            ViewSwitchMessage::Release(_, _) | ViewSwitchMessage::Artist(_)
+            ViewSwitchMessage::Release(_, _)
+                | ViewSwitchMessage::Artist(_)
+                | ViewSwitchMessage::SettingsSection(_)
         )
     }
 
@@ -407,6 +426,7 @@ impl ViewSwitchMessage {
                 // ArtistDetail: don't cache – we can't verify the id matches without extra storage
                 | (LibraryView::Artists(_), ViewSwitchMessage::Artists)
                 | (LibraryView::Files(_), ViewSwitchMessage::Files)
+                | (LibraryView::Settings(_), ViewSwitchMessage::Settings)
         )
     }
 }
@@ -462,6 +482,10 @@ fn make_view(
         ViewSwitchMessage::Playlist(id) => {
             LibraryView::Playlist(PlaylistView::new(cx, *id, scroll_offset))
         }
+        ViewSwitchMessage::Settings => LibraryView::Settings(SettingsMenu::new(cx)),
+        ViewSwitchMessage::SettingsSection(section) => {
+            LibraryView::SettingsPage(SettingsPage::new(*section, cx))
+        }
         ViewSwitchMessage::Back => panic!("improper use of make_view (cannot make Back)"),
         ViewSwitchMessage::Forward => panic!("improper use of make_view (cannot make Forward)"),
         ViewSwitchMessage::Refresh => panic!("improper use of make_view (cannot make Refresh)"),
@@ -504,6 +528,7 @@ fn parent_page(
         }
         ViewSwitchMessage::Release(_, _) => ParentPage::Page(ViewSwitchMessage::Albums),
         ViewSwitchMessage::Artist(_) => ParentPage::Page(ViewSwitchMessage::Artists),
+        ViewSwitchMessage::SettingsSection(_) => ParentPage::Page(ViewSwitchMessage::Settings),
         _ => ParentPage::None,
     }
 }
@@ -942,6 +967,8 @@ impl Render for Library {
                 LibraryView::Playlist(v) => AnyView::from(v.clone()),
                 LibraryView::ArtistDetail(v) => AnyView::from(v.clone()),
                 LibraryView::Files(v) => AnyView::from(v.clone()),
+                LibraryView::Settings(v) => AnyView::from(v.clone()),
+                LibraryView::SettingsPage(v) => AnyView::from(v.clone()),
             };
             page.cached(
                 StyleRefinement::default()

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px,
+    Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
         section_header::section_header,
     },
     ui::global_actions::OpenThemeFolder,
+    ui::platform::mobile_layout,
     ui::theme::{Theme, ThemeOption, ThemeOptionsGlobal, resolve_theme_relative_path},
 };
 
@@ -140,7 +141,7 @@ impl Render for InterfaceSettings {
         let language_dropdown = {
             let settings_c = settings.clone();
             let mut dd = dropdown::<String>("language-dropdown")
-                .w(px(250.0))
+                .w(super::control_width())
                 .selected(interface.language.clone())
                 .on_change(move |code, _, cx| {
                     settings_c.update(cx, |s, cx| {
@@ -159,7 +160,7 @@ impl Render for InterfaceSettings {
             let settings_c = settings.clone();
             let resolved = resolve_theme_relative_path(&self.data_dir, interface.theme.as_deref());
             let mut dd = dropdown::<Option<String>>("theme-dropdown")
-                .w(px(250.0))
+                .w(super::control_width())
                 .selected(resolved)
                 .on_change(move |id, _, cx| {
                     settings_c.update(cx, |s, cx| {
@@ -182,7 +183,7 @@ impl Render for InterfaceSettings {
         let startup_view_dropdown = {
             let settings_c = settings.clone();
             dropdown::<StartupLibraryView>("startup-library-view-dropdown")
-                .w(px(250.0))
+                .w(super::control_width())
                 .selected(interface.startup_library_view)
                 .option(StartupLibraryView::Albums, tr!("ALBUMS"))
                 .option(StartupLibraryView::Artists, tr!("ARTISTS"))
@@ -211,6 +212,7 @@ impl Render for InterfaceSettings {
                         language will take effect after restarting the application."
                     ))
                     .w_full()
+                    .stack_on_mobile()
                     .child(language_dropdown),
             )
             .child(
@@ -221,6 +223,7 @@ impl Render for InterfaceSettings {
                         themes folder. Changes apply immediately."
                     ))
                     .w_full()
+                    .stack_on_mobile()
                     .child(
                         div().flex().flex_col().gap(px(8.0)).child(theme_dropdown).child(
                             button()
@@ -246,9 +249,11 @@ impl Render for InterfaceSettings {
                     "Choose which library page opens when Hummingbird launches."
                 ))
                 .w_full()
+                .stack_on_mobile()
                 .child(startup_view_dropdown),
             )
-            .child({
+            // the phone layout is always a single, full-width column
+            .when(!mobile_layout(), |this| this.child({
                 let full_width_label = label(
                     "interface-full-width-library",
                     tr!("INTERFACE_FULL_WIDTH_LIBRARY", "Full-width library"),
@@ -273,8 +278,8 @@ impl Render for InterfaceSettings {
                         });
                     }))
                 }
-            })
-            .child(
+            }))
+            .when(!mobile_layout(), |this| this.child(
                 label(
                     "interface-two-column-library",
                     tr!("INTERFACE_TWO_COLUMN_LIBRARY", "Two-column library"),
@@ -294,7 +299,7 @@ impl Render for InterfaceSettings {
                     "interface-two-column-library-check",
                     interface.two_column_library,
                 )),
-            )
+            ))
             .child(
                 label(
                     "interface-always-show-forward-button",
@@ -330,10 +335,11 @@ impl Render for InterfaceSettings {
                     "Adjusts the minimum width of items in grid view."
                 ))
                 .w_full()
+                .stack_on_mobile()
                 .child(
                     labeled_slider("interface-grid-min-item-width-slider")
                         .slider_id("interface-grid-min-item-width-slider-track")
-                        .w(px(250.0))
+                        .w(super::control_width())
                         .min(MIN_GRID_MIN_ITEM_WIDTH)
                         .max(MAX_GRID_MIN_ITEM_WIDTH)
                         .default_value(DEFAULT_GRID_MIN_ITEM_WIDTH)

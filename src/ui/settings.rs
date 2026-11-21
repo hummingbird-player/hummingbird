@@ -6,6 +6,7 @@ pub mod lastfm;
 mod library;
 #[cfg(feature = "libre-services")]
 pub mod listenbrainz;
+pub mod mobile;
 mod playback;
 mod services;
 #[cfg(feature = "update")]
@@ -13,10 +14,10 @@ mod update;
 
 use cntp_i18n::tr;
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, TitlebarOptions,
-    Window, WindowBounds, WindowDecorations, WindowHandle, WindowKind, WindowOptions, div,
-    prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, Length,
+    ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowHandle, WindowKind,
+    WindowOptions, div, prelude::FluentBuilder, px, relative,
 };
 
 use crate::{
@@ -29,6 +30,7 @@ use crate::{
             window_chrome::window_chrome,
             window_header::header,
         },
+        platform::mobile_layout,
         settings::{
             equalizer::EqualizerSettings, interface::InterfaceSettings, library::LibrarySettings,
             playback::PlaybackSettings, services::ServicesSettings,
@@ -44,6 +46,28 @@ pub fn open_settings_window(cx: &mut App) {
     open_or_focus_settings_window(cx, None);
 }
 
+/// The width of wide controls (dropdowns, sliders) in settings rows. In the phone layout those
+/// rows stack (see [`Label::stack_on_mobile`](crate::ui::components::label::Label)), and the
+/// control spans the row.
+fn control_width() -> Length {
+    if mobile_layout() {
+        relative(1.0).into()
+    } else {
+        px(250.0).into()
+    }
+}
+
+/// Every settings section, in the order they're listed.
+const ALL_SECTIONS: &[SettingsSectionKind] = &[
+    SettingsSectionKind::Interface,
+    SettingsSectionKind::Library,
+    SettingsSectionKind::Playback,
+    SettingsSectionKind::Equalizer,
+    SettingsSectionKind::Services,
+    #[cfg(feature = "update")]
+    SettingsSectionKind::Update,
+];
+
 fn find_settings_window(cx: &App) -> Option<WindowHandle<SettingsWindow>> {
     cx.windows()
         .into_iter()
@@ -55,6 +79,12 @@ pub fn open_settings_window_with_section(cx: &mut App, section: SettingsSectionK
 }
 
 fn open_or_focus_settings_window(cx: &mut App, section: Option<SettingsSectionKind>) {
+    // the phone layout has a single window, so settings are pages in the library instead
+    if mobile_layout() {
+        mobile::open_settings_page(cx, section);
+        return;
+    }
+
     if let Some(window) = find_settings_window(cx) {
         cx.activate(true);
         cx.defer(move |cx| {
@@ -121,7 +151,7 @@ pub(super) fn close_orphaned_settings_windows(cx: &mut App) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SettingsSectionKind {
     Interface,
     Library,
@@ -145,7 +175,7 @@ impl SettingsSectionKind {
         }
     }
 
-    fn icon(self) -> &'static str {
+    pub(crate) fn icon(self) -> &'static str {
         match self {
             Self::Interface => WORLD,
             Self::Library => BOOKS,
@@ -157,7 +187,7 @@ impl SettingsSectionKind {
         }
     }
 
-    fn label(self) -> SharedString {
+    pub(crate) fn label(self) -> SharedString {
         match self {
             Self::Interface => tr!("INTERFACE", "Interface").into(),
             Self::Library => tr!("LIBRARY", "Library").into(),
@@ -263,7 +293,7 @@ impl SettingsWindow {
         &self,
         section: SettingsSectionKind,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         sidebar_item(section.id())
             .icon(section.icon())
             .child(section.label())
@@ -341,14 +371,11 @@ impl Render for SettingsWindow {
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .child(self.render_section_item(SettingsSectionKind::Interface, cx))
-            .child(self.render_section_item(SettingsSectionKind::Library, cx))
-            .child(self.render_section_item(SettingsSectionKind::Playback, cx))
-            .child(self.render_section_item(SettingsSectionKind::Equalizer, cx))
-            .child(self.render_section_item(SettingsSectionKind::Services, cx));
-
-        #[cfg(feature = "update")]
-        let sidebar = sidebar.child(self.render_section_item(SettingsSectionKind::Update, cx));
+            .children(
+                ALL_SECTIONS
+                    .iter()
+                    .map(|section| self.render_section_item(*section, cx)),
+            );
 
         window_chrome(
             div()

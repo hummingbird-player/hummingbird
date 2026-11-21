@@ -8,7 +8,7 @@
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, ClickEvent, Context, Div, ElementId, Entity, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
+    ParentElement, Pixels, Render, RenderOnce, Rgba, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
@@ -17,7 +17,7 @@ use crate::{
     settings::SettingsGlobal,
     ui::{
         components::{
-            icons::{DISC, FOLDER, MUSIC, PLUS, SEARCH, USERS, icon},
+            icons::{DISC, FOLDER, MUSIC, PLUS, SEARCH, SETTINGS, USERS, icon},
             popover::PopoverPosition,
             textbox::Textbox,
         },
@@ -314,6 +314,23 @@ impl BottomBar {
             })
     }
 
+    fn render_settings(
+        &self,
+        view: ViewSwitchMessage,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> BottomBarItem {
+        bottom_bar_item("bottom-bar-settings")
+            .w(Self::destination_width(window))
+            .icon(SETTINGS)
+            .label(tr!("SETTINGS"))
+            .active(matches!(
+                view,
+                ViewSwitchMessage::Settings | ViewSwitchMessage::SettingsSection(_)
+            ))
+            .on_click(Self::navigate(ViewSwitchMessage::Settings, cx))
+    }
+
     fn close_new_playlist(&mut self, cx: &mut Context<Self>) {
         self.popover_open = false;
         cx.notify();
@@ -377,16 +394,16 @@ impl Render for BottomBar {
                     .p(BAR_PADDING)
                     .pt(px(0.0))
                     .child(self.render_destinations(view, window, cx))
-                    .child(
-                        div()
-                            .w(px(1.0))
-                            .my(px(6.0))
-                            .mr(px(6.0))
-                            .flex_shrink_0()
-                            .bg(border),
-                    )
+                    .child(separator(border).mr(px(6.0)))
                     .children(playlist_items)
-                    .child(self.render_new_playlist(cx)),
+                    .child(self.render_new_playlist(cx))
+                    .child(separator(border).ml(px(4.0)))
+                    .child(self.render_settings(view, window, cx)),
             )
     }
+}
+
+/// A thin vertical rule between groups of items.
+fn separator(color: Rgba) -> Div {
+    div().w(px(1.0)).my(px(6.0)).flex_shrink_0().bg(color)
 }

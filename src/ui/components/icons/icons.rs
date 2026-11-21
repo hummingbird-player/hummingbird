@@ -40,6 +40,7 @@ pub const STAR_FILLED: &str = "!bundled:icons/star-filled.svg";
 pub const SIDEBAR: &str = "!bundled:icons/layout-sidebar.svg";
 pub const SIDEBAR_INACTIVE: &str = "!bundled:icons/layout-sidebar-inactive.svg";
 pub const SEARCH: &str = "!bundled:icons/search.svg";
+pub const SETTINGS: &str = "!bundled:icons/settings.svg";
 pub const CHECK: &str = "!bundled:icons/check.svg";
 pub const LOCK: &str = "!bundled:icons/lock.svg";
 pub const BOOKS: &str = "!bundled:icons/books.svg";

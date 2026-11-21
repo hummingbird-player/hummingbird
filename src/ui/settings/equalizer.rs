@@ -1,7 +1,7 @@
 use cntp_i18n::tr;
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 use crate::ui::{
@@ -13,7 +13,9 @@ use crate::ui::{
         section_header::section_header,
         tooltip::build_tooltip,
     },
+    constants::INNER_PANEL_PADDING,
     equalizer::view::EqualizerView,
+    platform::mobile_layout,
 };
 
 pub struct EqualizerSettings {
@@ -44,11 +46,21 @@ impl Render for EqualizerSettings {
             .child(
                 section_header(tr!("EQUALIZER"))
                     .p(px(16.0))
-                    .subtitle(tr!(
-                        "EQ_GRAPH_HINT",
-                        "Click the curve to add a band, drag to move, scroll to change Q. Right \
-                        click deletes."
-                    ))
+                    // line up with the back button in the phone layout's header
+                    .when(mobile_layout(), |this| this.px(INNER_PANEL_PADDING))
+                    .subtitle(if mobile_layout() {
+                        tr!(
+                            "EQ_GRAPH_HINT_TOUCH",
+                            "Tap the curve to add a band, drag to move it, and tap a band to \
+                            edit it. Double tap a band to turn it on or off."
+                        )
+                    } else {
+                        tr!(
+                            "EQ_GRAPH_HINT",
+                            "Click the curve to add a band, drag to move, scroll to change Q. \
+                            Right click deletes."
+                        )
+                    })
                     .child(
                         div()
                             .flex()

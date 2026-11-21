@@ -13,6 +13,7 @@ use crate::{
             textbox::Textbox,
         },
         models::{Models, create_listenbrainz_mmbs},
+        platform::mobile_layout,
     },
 };
 
@@ -67,6 +68,10 @@ pub fn render_settings_row(
     );
 
     match listenbrainz {
+        // a phone is too narrow for the token field beside the description, so it goes below
+        ListenBrainzState::Disconnected { .. } if mobile_layout() => {
+            row.flex_col().child(div().w_full().child(token_input))
+        }
         ListenBrainzState::Disconnected { .. } => row.child(
             div()
                 .my_auto()

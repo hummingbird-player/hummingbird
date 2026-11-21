@@ -2,7 +2,8 @@ use cntp_i18n::tr;
 #[cfg(feature = "libre-services")]
 use gpui::StyleRefinement;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 
 #[cfg(any(feature = "libre-services", feature = "proprietary-services"))]
@@ -187,26 +188,32 @@ impl Render for ServicesSettings {
             }
         }
 
-        body.child(
-            label(
-                "services-discord-rpc",
-                tr!("SERVICES_DISCORD_RPC_TITLE", "Discord Rich Presence"),
-            )
-            .subtext(tr!(
-                "SERVICES_DISCORD_RPC_SUBTEXT",
-                "Shows the current track in your Discord status while music is playing."
-            ))
-            .cursor_pointer()
-            .w_full()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.update_services(cx, |services| {
-                    services.discord_rpc_enabled = !services.discord_rpc_enabled;
-                });
-            }))
-            .child(checkbox(
-                "services-discord-rpc-check",
-                services.discord_rpc_enabled,
-            )),
+        // there is no Discord client to talk to on a phone
+        body.when(
+            !cfg!(any(target_os = "ios", target_os = "android")),
+            |body| {
+                body.child(
+                    label(
+                        "services-discord-rpc",
+                        tr!("SERVICES_DISCORD_RPC_TITLE", "Discord Rich Presence"),
+                    )
+                    .subtext(tr!(
+                        "SERVICES_DISCORD_RPC_SUBTEXT",
+                        "Shows the current track in your Discord status while music is playing."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_services(cx, |services| {
+                            services.discord_rpc_enabled = !services.discord_rpc_enabled;
+                        });
+                    }))
+                    .child(checkbox(
+                        "services-discord-rpc-check",
+                        services.discord_rpc_enabled,
+                    )),
+                )
+            },
         )
     }
 }

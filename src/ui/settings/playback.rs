@@ -173,10 +173,11 @@ impl Render for PlaybackSettings {
                     "Applied when tracks have no ReplayGain data."
                 ))
                 .w_full()
+                .stack_on_mobile()
                 .child(
                     labeled_slider("rg-fallback-preamp")
                         .slider_id("rg-fallback-preamp-track")
-                        .w(px(250.0))
+                        .w(super::control_width())
                         .min(-6.0)
                         .max(6.0)
                         .value(playback.replaygain.fallback_preamp_db as f32)

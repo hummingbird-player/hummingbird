@@ -251,10 +251,11 @@ impl Render for LibrarySettings {
                     unavailable."
                 ))
                 .w_full()
+                .stack_on_mobile()
                 .child({
                     let settings_c = self.settings.clone();
                     dropdown::<MissingFolderPolicy>("missing-folder-policy-dropdown")
-                        .w(px(250.0))
+                        .w(super::control_width())
                         .selected(scanning.missing_folder_policy)
                         .option(
                             MissingFolderPolicy::Ask,
@@ -323,6 +324,32 @@ impl Render for LibrarySettings {
                         });
                     }
                 }),
+            )
+            // also in the menu bar, but the phone layout has none
+            .child(
+                label(
+                    "force-rescan",
+                    tr!("LIBRARY_FORCE_RESCAN"),
+                )
+                .subtext(tr!(
+                    "LIBRARY_FORCE_RESCAN_SUBTEXT",
+                    "Reads every file again, including ones that haven't changed since the last \
+                    scan."
+                ))
+                .w_full()
+                .child(
+                    button()
+                        .id("library-settings-force-rescan")
+                        .style(ButtonStyle::Regular)
+                        .intent(ButtonIntent::Secondary)
+                        .child(tr!("RESCAN", "Rescan"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            // a full rescan applies any pending folder changes too
+                            this.scanning_modified = false;
+                            cx.global::<ScanInterface>().force_scan();
+                            cx.notify();
+                        })),
+                ),
             )
             .when(self.scanning_modified, |this| {
                 this.child(

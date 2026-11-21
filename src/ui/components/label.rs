@@ -5,7 +5,7 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::ui::theme::Theme;
+use crate::ui::{platform::mobile_layout, theme::Theme};
 
 type ClickEvHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -16,6 +16,7 @@ pub struct Label {
     subtext: Option<SharedString>,
     on_click: Option<ClickEvHandler>,
     children: SmallVec<[AnyElement; 2]>,
+    stack_on_mobile: bool,
     div: Div,
 }
 
@@ -30,6 +31,13 @@ impl Label {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(on_click));
+        self
+    }
+
+    /// In the phone layout, puts the children below the text at full width instead of beside
+    /// it. For wide controls (dropdowns, sliders) that would leave the text no room on a phone.
+    pub fn stack_on_mobile(mut self) -> Self {
+        self.stack_on_mobile = true;
         self
     }
 }
@@ -49,12 +57,14 @@ impl ParentElement for Label {
 impl RenderOnce for Label {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        let stacked = self.stack_on_mobile && mobile_layout();
 
         self.div
             .id(self.id)
             .flex()
+            .when(stacked, |this| this.flex_col())
             .overflow_hidden()
-            .gap(px(6.0))
+            .gap(px(if stacked { 8.0 } else { 6.0 }))
             .child(
                 div()
                     .flex()
@@ -73,7 +83,19 @@ impl RenderOnce for Label {
                         )
                     }),
             )
-            .child(div().my_auto().flex().children(self.children))
+            .child(
+                div()
+                    .flex()
+                    // a column stretches its children, so full-width controls fill the row
+                    .map(|this| {
+                        if stacked {
+                            this.w_full().flex_col()
+                        } else {
+                            this.my_auto()
+                        }
+                    })
+                    .children(self.children),
+            )
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
     }
 }
@@ -85,6 +107,7 @@ pub fn label(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Label {
         subtext: None,
         children: SmallVec::new(),
         on_click: None,
+        stack_on_mobile: false,
         div: div(),
     }
 }
