@@ -20,6 +20,7 @@ design standard.
 - Lyrics
 - Discord RPC
 - Graphical parametric equalizer
+- Theater mode
 
 ## Planned Features
 - WASM Extension support:
