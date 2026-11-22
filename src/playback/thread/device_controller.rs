@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use tracing::{error, info, warn};
 
+#[cfg(target_os = "linux")]
+use crate::devices::builtin::alsa::{self, AlsaProvider};
 #[cfg(target_os = "windows")]
 use crate::devices::builtin::wasapi::{self, WasapiProvider};
 use crate::{
@@ -153,6 +155,10 @@ impl DeviceController {
             }
             "dummy" => {
                 self.device_provider = Some(Box::new(DummyDeviceProvider::new()));
+            }
+            #[cfg(target_os = "linux")]
+            alsa::PROVIDER_NAME => {
+                self.device_provider = Some(Box::new(AlsaProvider::default()));
             }
             #[cfg(target_os = "windows")]
             wasapi::PROVIDER_NAME => {
@@ -417,6 +423,11 @@ impl DeviceController {
         if let Some(stream) = &mut self.stream {
             stream.set_conversion_check(enabled);
         }
+    }
+
+    /// See [`OutputStream::valid_bits`].
+    pub fn valid_bits(&self) -> Option<u32> {
+        self.stream.as_ref().and_then(|stream| stream.valid_bits())
     }
 
     /// See [`OutputStream::conversion_exact`].

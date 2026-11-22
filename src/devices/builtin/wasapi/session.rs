@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::Ordering,
         mpsc::{self, RecvTimeoutError, TryRecvError},
     },
     time::{Duration, Instant},
@@ -28,7 +28,10 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-use crate::devices::util::{AtomicF64, GainRamp, read_available};
+use crate::devices::{
+    builtin::exclusive::{AcquireError, Command, Shared},
+    util::{GainRamp, read_available},
+};
 
 use super::{
     com::{ComGuard, enumerator, wide},
@@ -38,21 +41,6 @@ use super::{
 /// How long a paused stream keeps the device locked before handing it back to the system.
 const RELEASE_AFTER: Duration = Duration::from_secs(5);
 
-/// State shared between a stream and its render thread.
-pub(super) struct Shared {
-    pub(super) target_gain: AtomicF64,
-    pub(super) errored: AtomicBool,
-    pub(super) underruns: AtomicU64,
-}
-
-pub(super) enum AcquireError {
-    /// Another application is playing on the device, in either shared or exclusive mode.
-    Busy,
-    /// Exclusive control of the device is disabled in its sound settings.
-    NotAllowed,
-    Other(String),
-}
-
 impl From<windows::core::Error> for AcquireError {
     fn from(error: windows::core::Error) -> Self {
         match error.code() {
@@ -61,14 +49,6 @@ impl From<windows::core::Error> for AcquireError {
             _ => AcquireError::Other(error.to_string()),
         }
     }
-}
-
-pub(super) enum Command {
-    /// Acquire the device if needed and start rendering.
-    Play(mpsc::Sender<Result<(), AcquireError>>),
-    /// Stop rendering, releasing the device after `RELEASE_AFTER`.
-    Pause,
-    Reset(mpsc::Sender<()>),
 }
 
 /// An initialized exclusive-mode client. Holding one locks the device.

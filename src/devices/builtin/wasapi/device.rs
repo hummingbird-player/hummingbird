@@ -23,7 +23,7 @@ use super::{
         ALL_ENCODINGS, Encoding, StreamFormat, WasapiSample, default_channel_mask,
         is_format_supported, parse_wave_format,
     },
-    stream::WasapiStream,
+    stream,
 };
 
 pub(super) const PROBE_RATES: [u32; 10] = [
@@ -157,7 +157,7 @@ impl WasapiDevice {
             .id
             .clone()
             .ok_or_else(|| OpenError::Unknown("device has no ID".into()))?;
-        Ok(Box::new(WasapiStream::<T>::open(device_id, format)?))
+        Ok(Box::new(stream::open::<T>(device_id, format)?))
     }
 }
 

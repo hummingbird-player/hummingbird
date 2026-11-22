@@ -10,8 +10,8 @@ use crate::{
     power::PowerManager,
     settings::{Settings, SettingsGlobal, save_settings},
     ui::components::{
-        checkbox::checkbox, label::label, labeled_slider::labeled_slider,
-        section_header::section_header,
+        callout::callout, checkbox::checkbox, icons::ALERT_CIRCLE, label::label,
+        labeled_slider::labeled_slider, section_header::section_header,
     },
 };
 
@@ -183,6 +183,18 @@ impl Render for PlaybackSettings {
                     }))
                     .child(checkbox("playback-bit-perfect-check", playback.bit_perfect)),
                 )
+                // the sound server has to set the card up again after it's given back
+                .when(cfg!(target_os = "linux") && playback.bit_perfect, |this| {
+                    this.child(
+                        callout(tr!(
+                            "PLAYBACK_BIT_PERFECT_LINUX_DELAY",
+                            "Switching tracks and resuming playback may result in a slight delay, \
+                             which is required to ensure your operating system's audio services \
+                             recognize the device properly."
+                        ))
+                        .icon(ALERT_CIRCLE),
+                    )
+                })
             })
             .child({
                 let settings = self.settings.clone();

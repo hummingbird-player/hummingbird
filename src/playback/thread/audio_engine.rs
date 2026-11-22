@@ -482,6 +482,7 @@ impl AudioEngine {
             return BitPerfectStatus::Altered(match reason {
                 ExclusiveAccessError::DeviceInUse => BitPerfectBlocker::DeviceInUse,
                 ExclusiveAccessError::NotAllowed => BitPerfectBlocker::ExclusiveNotAllowed,
+                ExclusiveAccessError::Sandboxed => BitPerfectBlocker::Sandboxed,
             });
         }
         if self.state == EngineState::Idle {
@@ -508,11 +509,13 @@ impl AudioEngine {
         // whether the samples it receives survive conversion to the device format; the declared
         // format only catches a known-lossy pairing before any audio arrives.
         let device = format.sample_type;
+        // a 32-bit container may only carry 24 significant bits to the hardware
+        let device_bits = self.device.valid_bits().unwrap_or_else(|| device.bits());
         let declared_lossy = self.media.sample_format().is_some_and(|source| {
             if source.is_float() {
                 !(source == SampleFormat::Float32 && device == SampleFormat::Float32)
             } else {
-                device.is_float() || device.bits() < source.bits()
+                device.is_float() || device_bits < source.bits()
             }
         });
         let measured_exact = self.device.conversion_exact();
@@ -560,6 +563,7 @@ impl AudioEngine {
                     name: self.source_name.as_ref().map(|(_, name)| name.clone()),
                     sample_rate: self.media.sample_rate().ok()?,
                     sample_format: self.media.sample_format(),
+                    valid_bits: None,
                     channels: self.media.channels().ok()?.count(),
                 })
             })
@@ -568,6 +572,7 @@ impl AudioEngine {
             name: self.device.device_name(),
             sample_rate: format.sample_rate,
             sample_format: Some(format.sample_type),
+            valid_bits: self.device.valid_bits(),
             channels: format.channels.count(),
         });
 

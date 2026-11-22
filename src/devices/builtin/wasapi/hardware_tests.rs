@@ -11,14 +11,14 @@ use windows::Win32::{
     System::Com::{CLSCTX_ALL, CoTaskMemFree},
 };
 
-use crate::devices::traits::DeviceProvider;
+use crate::devices::{builtin::exclusive::AcquireError, traits::DeviceProvider};
 
 use super::{
     WasapiProvider,
     com::{ComGuard, device_id, enumerator, friendly_name},
     device::{FormatCache, PROBE_RATES, WasapiDevice},
     format::{ALL_ENCODINGS, StreamFormat, is_format_supported},
-    session::{AcquireError, Session},
+    session::Session,
     stream::PAUSE_FADE_WAIT,
 };
 
@@ -86,6 +86,7 @@ fn wasapi_exclusivity_report() {
             let verdict = match &opened {
                 Err(AcquireError::Busy) => "init: device busy".to_string(),
                 Err(AcquireError::NotAllowed) => "init: exclusive not allowed".to_string(),
+                Err(AcquireError::Sandboxed) => "init: sandboxed".to_string(),
                 Err(AcquireError::Other(e)) => format!("init failed: {e}"),
                 Ok(session) => format!(
                     "init ok, {} frames; shared client: {}",

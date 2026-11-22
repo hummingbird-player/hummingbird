@@ -85,4 +85,6 @@ pub enum ExclusiveAccessError {
     DeviceInUse,
     /// The system is configured not to allow exclusive control of this device.
     NotAllowed,
+    /// We don't have permission to access the device, usually because of a sandbox.
+    Sandboxed,
 }

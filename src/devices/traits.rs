@@ -93,6 +93,12 @@ pub trait OutputStream {
         Ok(())
     }
 
+    /// Significant bits per sample, if fewer than the sample format holds (24-in-32). `None` if
+    /// every bit is used or it's unknown.
+    fn valid_bits(&self) -> Option<u32> {
+        None
+    }
+
     /// Off by default. Streams that don't measure conversion ignore it.
     fn set_conversion_check(&mut self, _enabled: bool) {}
 

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use intx::I24;
 use windows::{
     Win32::Media::{
@@ -200,10 +198,6 @@ pub(super) fn is_format_supported(client: &IAudioClient, format: StreamFormat) -
     hr == HRESULT(0)
 }
 
-pub(super) fn frames_for_duration(sample_rate: u32, duration: Duration) -> u32 {
-    ((u64::from(sample_rate) * duration.as_micros() as u64) / 1_000_000).max(1) as u32
-}
-
 pub(super) trait WasapiSample:
     Copy + Scale + SampleFrom<f64> + SampleInto<f64> + Send + 'static
 {
@@ -256,25 +250,6 @@ mod tests {
             assert_eq!(parsed.channels, 2);
             assert_eq!(parsed.channel_mask, 0x3);
         }
-    }
-
-    fn converts_exactly<T: WasapiSample>(value: f64) -> bool {
-        T::sample_from(value).sample_into() == value
-    }
-
-    #[test]
-    fn exact_conversion_detects_lost_bits() {
-        let s16 = f64::from(-12_345i16) / 32_768.0;
-        let s24 = f64::from(1_234_567i32) / 8_388_608.0;
-        assert!(converts_exactly::<i16>(s16));
-        assert!(converts_exactly::<I24>(s16));
-        assert!(converts_exactly::<i32>(s24));
-        assert!(converts_exactly::<I24>(s24));
-        assert!(!converts_exactly::<i16>(s24));
-        assert!(converts_exactly::<f32>(s24));
-        // values produced by resampling or gain
-        assert!(!converts_exactly::<i32>(0.1));
-        assert!(!converts_exactly::<i16>(1.0));
     }
 
     #[test]

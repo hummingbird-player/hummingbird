@@ -1,5 +1,9 @@
+#[cfg(target_os = "linux")]
+pub mod alsa;
 pub mod cpal;
 pub mod dummy;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod exclusive;
 #[cfg(target_os = "windows")]
 pub mod wasapi;
 
@@ -7,5 +11,7 @@ pub mod wasapi;
 /// source's exact format), used for bit-perfect playback.
 #[cfg(target_os = "windows")]
 pub const CONTROLLED_DEVICE_PROVIDER: Option<&str> = Some(wasapi::PROVIDER_NAME);
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub const CONTROLLED_DEVICE_PROVIDER: Option<&str> = Some(alsa::PROVIDER_NAME);
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const CONTROLLED_DEVICE_PROVIDER: Option<&str> = None;

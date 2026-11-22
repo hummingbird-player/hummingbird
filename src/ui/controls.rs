@@ -318,7 +318,7 @@ impl Render for InfoSection {
                         .when(in_library || show_bit_perfect, |e| {
                             e.child(
                                 div()
-                                    .mt(px(6.0))
+                                    .mt(px(4.0))
                                     .pb(px(6.0))
                                     .h_full()
                                     .flex()
@@ -333,7 +333,11 @@ impl Render for InfoSection {
                                             div()
                                                 .id("info-like")
                                                 .rounded_sm()
-                                                .p(px(4.0))
+                                                .when_else(
+                                                    show_bit_perfect,
+                                                    |e| e.p(px(4.0)),
+                                                    |e| e.p(px(6.0)),
+                                                )
                                                 .cursor_pointer()
                                                 .hover(|this| this.bg(theme.button_secondary_hover))
                                                 .active(|this| {

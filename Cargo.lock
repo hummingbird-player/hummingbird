@@ -3386,6 +3386,7 @@ checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 name = "hummingbird"
 version = "0.5.0"
 dependencies = [
+ "alsa",
  "anyhow",
  "async-compression",
  "async-trait",
@@ -3431,6 +3432,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-media-player",
  "open",
+ "pipewire",
  "postcard",
  "rand 0.10.4",
  "raw-window-handle",

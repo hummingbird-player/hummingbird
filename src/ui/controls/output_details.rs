@@ -57,7 +57,7 @@ impl Render for OutputDetailsTooltip {
         let details = self.details.read(cx);
 
         tooltip_container(theme)
-            .max_w(px(300.0))
+            .max_w(px(375.0))
             .p(px(8.0))
             .flex()
             .flex_col()
@@ -84,12 +84,14 @@ impl Render for OutputDetailsTooltip {
                 theme,
                 tr!("OUTPUT_DETAILS_SOURCE", "Source"),
                 details.source.as_ref(),
+                None,
                 tr!("OUTPUT_DETAILS_NO_SOURCE", "Nothing playing"),
             ))
             .child(stream_row(
                 theme,
                 tr!("OUTPUT_DETAILS_DEVICE", "Device"),
                 details.device.as_ref(),
+                padded_from(details),
                 tr!("OUTPUT_DETAILS_NO_DEVICE", "No output open"),
             ))
     }
@@ -99,6 +101,7 @@ fn stream_row(
     theme: &Theme,
     label: impl Into<SharedString>,
     stream: Option<&StreamDetails>,
+    padded_from: Option<u32>,
     empty: impl Into<SharedString>,
 ) -> Div {
     let label = div()
@@ -125,11 +128,28 @@ fn stream_row(
                     .child(SharedString::from(name.to_string())),
             )
         })
-        .child(format_line(stream))
+        .child(format_line(stream, padded_from))
 }
 
-/// "44.1 kHz · 16-bit · Stereo"
-fn format_line(stream: &StreamDetails) -> SharedString {
+/// The source bit depth, if bit-perfect output zero-pads a narrower integer source into a wider
+/// device format.
+fn padded_from(details: &OutputDetails) -> Option<u32> {
+    if details.status != BitPerfectStatus::BitPerfect {
+        return None;
+    }
+    let source = details.source.as_ref()?.sample_format?;
+    let device = details.device.as_ref()?;
+    let device_format = device.sample_format?;
+    if source.is_float() || device_format.is_float() {
+        return None;
+    }
+    let device_bits = device.valid_bits.unwrap_or_else(|| device_format.bits());
+    (source.bits() < device_bits).then(|| source.bits())
+}
+
+/// "44.1 kHz · 16-bit · Stereo". `padded_from` is the narrower source bit depth carried in this
+/// format (see [`padded_from`]).
+fn format_line(stream: &StreamDetails, padded_from: Option<u32>) -> SharedString {
     let rate: SharedString = tr!(
         "OUTPUT_DETAILS_RATE",
         "{{rate}} kHz",
@@ -144,7 +164,27 @@ fn format_line(stream: &StreamDetails) -> SharedString {
             bits = format.bits()
         )
         .into(),
-        Some(format) => tr!("OUTPUT_DETAILS_BITS", "{{bits}}-bit", bits = format.bits()).into(),
+        Some(format) => match stream.valid_bits.filter(|&valid| valid < format.bits()) {
+            // a DAC that only converts the top 24 of 32 bits
+            Some(valid) => tr!(
+                "OUTPUT_DETAILS_BITS_IN_CONTAINER",
+                "{{bits}}-bit ({{container}}-bit container)",
+                bits = valid,
+                container = format.bits()
+            )
+            .into(),
+            None => match padded_from {
+                // 24-bit audio zero-padded for a DAC that only takes 32-bit samples
+                Some(source_bits) => tr!(
+                    "OUTPUT_DETAILS_BITS_PADDED",
+                    "{{bits}}-bit ({{source_bits}}-bit zero-padded)",
+                    bits = format.bits(),
+                    source_bits = source_bits
+                )
+                .into(),
+                None => tr!("OUTPUT_DETAILS_BITS", "{{bits}}-bit", bits = format.bits()).into(),
+            },
+        },
         None => tr!("OUTPUT_DETAILS_BITS_UNKNOWN", "Unknown bit depth").into(),
     };
     let channels: SharedString = match stream.channels {
@@ -174,6 +214,9 @@ fn status_text(status: BitPerfectStatus) -> SharedString {
                 "BIT_PERFECT_EXCLUSIVE_NOT_ALLOWED",
                 "Exclusive mode disabled for device"
             ),
+            BitPerfectBlocker::Sandboxed => {
+                tr!("BIT_PERFECT_SANDBOXED", "No permission to access device")
+            }
             BitPerfectBlocker::DeviceInUse => {
                 tr!("BIT_PERFECT_DEVICE_IN_USE", "Device in use by another app")
             }
@@ -198,16 +241,83 @@ fn status_text(status: BitPerfectStatus) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use super::{SampleFormat, StreamDetails, format_line};
+    use super::{
+        BitPerfectBlocker, BitPerfectStatus, OutputDetails, SampleFormat, StreamDetails,
+        format_line, padded_from,
+    };
 
     fn line(sample_rate: u32, sample_format: Option<SampleFormat>, channels: u16) -> String {
-        format_line(&StreamDetails {
-            name: None,
-            sample_rate,
-            sample_format,
-            channels,
-        })
+        line_with_valid_bits(sample_rate, sample_format, None, channels)
+    }
+
+    fn line_with_valid_bits(
+        sample_rate: u32,
+        sample_format: Option<SampleFormat>,
+        valid_bits: Option<u32>,
+        channels: u16,
+    ) -> String {
+        format_line(
+            &StreamDetails {
+                name: None,
+                sample_rate,
+                sample_format,
+                valid_bits,
+                channels,
+            },
+            None,
+        )
         .to_string()
+    }
+
+    fn stream(sample_format: SampleFormat, valid_bits: Option<u32>) -> StreamDetails {
+        StreamDetails {
+            name: None,
+            sample_rate: 44_100,
+            sample_format: Some(sample_format),
+            valid_bits,
+            channels: 2,
+        }
+    }
+
+    #[test]
+    fn labels_zero_padded_sources() {
+        cntp_i18n::I18N_MANAGER.load_source(cntp_i18n::tr_load!());
+        let details = |status, source, device| OutputDetails {
+            status,
+            source: Some(stream(source, None)),
+            device: Some(device),
+        };
+        let padded = details(
+            BitPerfectStatus::BitPerfect,
+            SampleFormat::Signed24,
+            stream(SampleFormat::Signed32, None),
+        );
+        assert_eq!(padded_from(&padded), Some(24));
+        assert_eq!(
+            format_line(padded.device.as_ref().unwrap(), Some(24)).to_string(),
+            "44.1 kHz · 32-bit (24-bit zero-padded) · Stereo"
+        );
+
+        // only claimed when nothing else changed the samples
+        let resampled = details(
+            BitPerfectStatus::Altered(BitPerfectBlocker::Resampling),
+            SampleFormat::Signed24,
+            stream(SampleFormat::Signed32, None),
+        );
+        assert_eq!(padded_from(&resampled), None);
+        // nothing is padded if the widths match, or for a 24-bit DAC in a 32-bit container
+        let same = details(
+            BitPerfectStatus::BitPerfect,
+            SampleFormat::Signed24,
+            stream(SampleFormat::Signed32, Some(24)),
+        );
+        assert_eq!(padded_from(&same), None);
+        let float = details(
+            BitPerfectStatus::BitPerfect,
+            SampleFormat::Signed16,
+            stream(SampleFormat::Float32, None),
+        );
+        assert_eq!(padded_from(&float), None);
     }
 
     #[test]
@@ -224,6 +334,14 @@ mod tests {
         assert_eq!(
             line(22_050, None, 6),
             "22.05 kHz · Unknown bit depth · 6 channels"
+        );
+        assert_eq!(
+            line_with_valid_bits(96_000, Some(SampleFormat::Signed32), Some(24), 2),
+            "96 kHz · 24-bit (32-bit container) · Stereo"
+        );
+        assert_eq!(
+            line_with_valid_bits(96_000, Some(SampleFormat::Signed32), Some(32), 2),
+            "96 kHz · 32-bit · Stereo"
         );
     }
 }

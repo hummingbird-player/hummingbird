@@ -164,6 +164,8 @@ pub enum BitPerfectBlocker {
     ProviderOverride,
     /// Configuration: the system doesn't allow exclusive control of the device.
     ExclusiveNotAllowed,
+    /// Configuration: no permission to access the device directly.
+    Sandboxed,
     /// Another application is playing on the device, in either shared or exclusive mode.
     DeviceInUse,
     Resampling,
@@ -190,5 +192,7 @@ pub struct StreamDetails {
     pub sample_rate: u32,
     /// `None` when the decoder doesn't report one (most lossy codecs).
     pub sample_format: Option<SampleFormat>,
+    /// Significant bits, if fewer than `sample_format` holds (24-in-32). Only set for devices.
+    pub valid_bits: Option<u32>,
     pub channels: u16,
 }
