@@ -86,7 +86,6 @@ fn wasapi_exclusivity_report() {
             let verdict = match &opened {
                 Err(AcquireError::Busy) => "init: device busy".to_string(),
                 Err(AcquireError::NotAllowed) => "init: exclusive not allowed".to_string(),
-                Err(AcquireError::Sandboxed) => "init: sandboxed".to_string(),
                 Err(AcquireError::Other(e)) => format!("init failed: {e}"),
                 Ok(session) => format!(
                     "init ok, {} frames; shared client: {}",

@@ -77,11 +77,11 @@ fn owned_small_art_reuses_its_original_buffer() {
     DynamicImage::ImageRgb8(image)
         .write_to(&mut encoded, image::ImageFormat::Png)
         .unwrap();
-    let encoded = encoded.into_inner();
+    // box first: shrinking the Vec may move it (it does on Windows)
+    let encoded = encoded.into_inner().into_boxed_slice();
     let original_ptr = encoded.as_ptr();
 
-    let (processed, _) =
-        process_owned_album_art(RawArt::Owned(encoded.into_boxed_slice())).unwrap();
+    let (processed, _) = process_owned_album_art(RawArt::Owned(encoded)).unwrap();
     let ProcessedImage::Owned(processed) = processed else {
         panic!("owned artwork should remain owned");
     };

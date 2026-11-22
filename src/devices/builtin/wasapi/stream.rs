@@ -48,7 +48,7 @@ pub(super) fn open<T: WasapiSample>(
 
 fn report_acquire_error(error: &AcquireError) {
     let message = match error {
-        AcquireError::Busy | AcquireError::Sandboxed => tr!(
+        AcquireError::Busy => tr!(
             "WASAPI_DEVICE_BUSY",
             "Bit-perfect playback couldn't start because another application is using your \
             audio device. Stop playback in the other application and press play again."

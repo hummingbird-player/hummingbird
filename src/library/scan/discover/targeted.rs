@@ -580,10 +580,16 @@ mod tests {
     #[tokio::test]
     async fn reconcile_removes_deleted_windows_style_tree() {
         // Windows locations use backslashes - match those too
-        let (_dir, pool) = create_test_pool("reconcile-test").await;
-        let artist_dir = Utf8PathBuf::from(r"C:\Music\artist");
-        let path1 = Utf8PathBuf::from(r"C:\Music\artist\track1.flac");
-        let path2 = Utf8PathBuf::from(r"C:\Music\artist\album\track2.flac");
+        let (dir, pool) = create_test_pool("reconcile-test").await;
+        // on Windows a fake C:\ path would get canonicalized to \\?\C:\..., so use a real
+        // (already canonical, backslashed) root there instead
+        let artist_dir = if cfg!(windows) {
+            dir.utf8_path().join("artist")
+        } else {
+            Utf8PathBuf::from(r"C:\Music\artist")
+        };
+        let path1 = Utf8PathBuf::from(format!(r"{artist_dir}\track1.flac"));
+        let path2 = Utf8PathBuf::from(format!(r"{artist_dir}\album\track2.flac"));
         insert_track_row(
             &pool,
             &path1,

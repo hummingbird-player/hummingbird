@@ -53,6 +53,7 @@ pub(super) enum AcquireError {
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     NotAllowed,
     /// We don't have permission to access the device directly, usually because of a sandbox.
+    #[cfg(target_os = "linux")]
     Sandboxed,
     Other(String),
 }
@@ -161,7 +162,7 @@ impl<T: ExclusiveSample> ExclusiveStream<T> {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(super) fn underruns(&self) -> u64 {
         self.shared.underruns.load(Ordering::Relaxed)
     }
@@ -276,6 +277,7 @@ impl<T: ExclusiveSample> OutputStream for ExclusiveStream<T> {
         let reason = match &error {
             AcquireError::Busy => ExclusiveAccessError::DeviceInUse,
             AcquireError::NotAllowed => ExclusiveAccessError::NotAllowed,
+            #[cfg(target_os = "linux")]
             AcquireError::Sandboxed => ExclusiveAccessError::Sandboxed,
             AcquireError::Other(message) => return Err(StateError::Unknown(message.clone())),
         };

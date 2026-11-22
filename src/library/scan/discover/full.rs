@@ -535,7 +535,10 @@ mod tests {
             return;
         }
 
-        let deep = std::path::PathBuf::from(format!(r"\\?\{}\dot-dir.", dir.path().display()));
+        // TestDir is canonical, so it may already carry the prefix
+        let base = dir.path().to_str().unwrap();
+        let base = base.strip_prefix(r"\\?\").unwrap_or(base);
+        let deep = std::path::PathBuf::from(format!(r"\\?\{base}\dot-dir."));
         std::fs::create_dir_all(&deep).unwrap();
         let file_verbatim = deep.join("track.flac");
         std::fs::write(&file_verbatim, b"").unwrap();
