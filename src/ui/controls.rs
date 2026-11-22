@@ -1,7 +1,13 @@
+mod output_details;
 mod replaygain;
 
 use crate::{
-    playback::{events::RepeatState, interface::PlaybackInterface, thread::PlaybackState},
+    devices::builtin::CONTROLLED_DEVICE_PROVIDER,
+    playback::{
+        events::{BitPerfectStatus, OutputDetails, RepeatState},
+        interface::PlaybackInterface,
+        thread::PlaybackState,
+    },
     settings::SettingsGlobal,
     ui::{
         components::{
@@ -27,6 +33,7 @@ use gpui::{InteractiveElement, *};
 use prelude::FluentBuilder;
 use std::time::Duration;
 
+use self::output_details::bit_perfect_indicator;
 use self::replaygain::ReplayGainButton;
 use super::{
     components::{
@@ -110,6 +117,7 @@ impl Render for Controls {
 pub struct InfoSection {
     now_playing: Entity<NowPlaying>,
     playback_state: Entity<PlaybackState>,
+    output_details: Entity<OutputDetails>,
     is_hovering_art: bool,
 }
 
@@ -122,12 +130,19 @@ impl InfoSection {
             let playback_state = cx.global::<PlaybackInfo>().playback_state.clone();
             cx.observe(&playback_state, |_, _, cx| cx.notify()).detach();
 
+            let output_details = cx.global::<PlaybackInfo>().output_details.clone();
+            cx.observe(&output_details, |_, _, cx| cx.notify()).detach();
+
+            let settings = cx.global::<SettingsGlobal>().model.clone();
+            cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+
             let theater_mode = cx.global::<Models>().theater_mode.clone();
             cx.observe(&theater_mode, |_, _, cx| cx.notify()).detach();
 
             Self {
                 now_playing,
                 playback_state,
+                output_details,
                 is_hovering_art: false,
             }
         })
@@ -159,6 +174,16 @@ impl Render for InfoSection {
 
         let theme = cx.global::<Theme>();
         let state = self.playback_state.read(cx);
+        let bit_perfect = self.output_details.read(cx).status;
+        // also gated on the setting directly, so the icon hides as soon as it's turned off
+        let show_bit_perfect = CONTROLLED_DEVICE_PROVIDER.is_some()
+            && cx
+                .global::<SettingsGlobal>()
+                .model
+                .read(cx)
+                .playback
+                .bit_perfect
+            && bit_perfect != BitPerfectStatus::Inactive;
 
         let content = div()
             .id("info-section")
@@ -172,7 +197,6 @@ impl Render for InfoSection {
             .child(
                 div()
                     .mx(px(12.0))
-                    .mt(px(12.0))
                     .mb(px(6.0))
                     .gap(px(10.0))
                     .flex()
@@ -180,6 +204,7 @@ impl Render for InfoSection {
                     .overflow_x_hidden()
                     .child(
                         div()
+                            .mt(px(12.0))
                             .id("album-art")
                             .rounded(px(4.0))
                             .bg(theme.album_art_background)
@@ -238,6 +263,7 @@ impl Render for InfoSection {
                                 .flex()
                                 .h_full()
                                 .items_center()
+                                .pt(px(12.0))
                                 .pb(px(6.0))
                                 .child(tr!(
                                     "APP_NAME",
@@ -252,6 +278,7 @@ impl Render for InfoSection {
 
                         e.child(
                             div()
+                                .mt(px(12.0))
                                 .flex()
                                 .flex_col()
                                 .line_height(rems(1.0))
@@ -288,40 +315,66 @@ impl Render for InfoSection {
                                         .child(artist_name),
                                 ),
                         )
-                        .when(in_library, |e| {
+                        .when(in_library || show_bit_perfect, |e| {
                             e.child(
-                                div().pb(px(6.0)).h_full().flex().ml_auto().child(
-                                    div()
-                                        .id("info-like")
-                                        .my_auto()
-                                        .rounded_sm()
-                                        .p(px(4.0))
-                                        .cursor_pointer()
-                                        .hover(|this| this.bg(theme.button_secondary_hover))
-                                        .active(|this| this.bg(theme.button_secondary_active))
-                                        .child(
-                                            icon(if is_liked.is_some() {
-                                                STAR_FILLED
-                                            } else {
-                                                STAR
-                                            })
-                                            .size(px(14.0))
-                                            .text_color(if is_liked.is_some() {
-                                                theme.liked_song
-                                            } else {
-                                                theme.text_secondary
-                                            }),
+                                div()
+                                    .mt(px(6.0))
+                                    .pb(px(6.0))
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .items_center()
+                                    .gap(px(3.0))
+                                    .ml_auto()
+                                    .flex_shrink_0()
+                                    .when(in_library, |this| {
+                                        this.child(
+                                            div()
+                                                .id("info-like")
+                                                .rounded_sm()
+                                                .p(px(4.0))
+                                                .cursor_pointer()
+                                                .hover(|this| this.bg(theme.button_secondary_hover))
+                                                .active(|this| {
+                                                    this.bg(theme.button_secondary_active)
+                                                })
+                                                .child(
+                                                    icon(if is_liked.is_some() {
+                                                        STAR_FILLED
+                                                    } else {
+                                                        STAR
+                                                    })
+                                                    .size(px(14.0))
+                                                    .text_color(if is_liked.is_some() {
+                                                        theme.liked_song
+                                                    } else {
+                                                        theme.text_secondary
+                                                    }),
+                                                )
+                                                .when(is_liked.is_some(), |this| {
+                                                    this.tooltip(build_tooltip(tr!(
+                                                        "UNLIKE", "Unlike"
+                                                    )))
+                                                })
+                                                .when(is_liked.is_none(), |this| {
+                                                    this.tooltip(build_tooltip(tr!("LIKE", "Like")))
+                                                })
+                                                .on_click(move |_, _, cx| {
+                                                    NowPlaying::toggle_like(
+                                                        &now_playing_entity,
+                                                        cx,
+                                                    );
+                                                }),
                                         )
-                                        .when(is_liked.is_some(), |this| {
-                                            this.tooltip(build_tooltip(tr!("UNLIKE", "Unlike")))
-                                        })
-                                        .when(is_liked.is_none(), |this| {
-                                            this.tooltip(build_tooltip(tr!("LIKE", "Like")))
-                                        })
-                                        .on_click(move |_, _, cx| {
-                                            NowPlaying::toggle_like(&now_playing_entity, cx);
-                                        }),
-                                ),
+                                    })
+                                    .when(show_bit_perfect, |this| {
+                                        this.child(bit_perfect_indicator(
+                                            bit_perfect,
+                                            &self.output_details,
+                                            theme,
+                                        ))
+                                    }),
                             )
                         })
                     }),

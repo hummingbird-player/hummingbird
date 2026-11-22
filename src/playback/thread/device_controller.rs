@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use tracing::{error, info, warn};
 
+#[cfg(target_os = "windows")]
+use crate::devices::builtin::wasapi::{self, WasapiProvider};
 use crate::{
     devices::{
-        builtin::{cpal::CpalProvider, dummy::DummyDeviceProvider},
+        builtin::{CONTROLLED_DEVICE_PROVIDER, cpal::CpalProvider, dummy::DummyDeviceProvider},
         errors::{FindError, OpenError, ResetError, StateError, SubmissionError},
-        format::{ChannelSpec, FormatInfo},
+        format::{ChannelSpec, FormatInfo, SampleFormat, choose_sample_format},
         traits::{Device, DeviceProvider, OutputStream},
     },
     media::pipeline::ChannelConsumers,
@@ -89,10 +93,12 @@ pub struct DeviceController {
     device: Option<Box<dyn Device>>,
     stream: Option<Box<dyn OutputStream>>,
     current_format: Option<FormatInfo>,
+    device_name: Option<Arc<str>>,
     /// Sample rate of the device's default format, refreshed whenever a stream is created.
     default_sample_rate: Option<u32>,
     last_volume: f64,
     last_replaygain: f64,
+    conversion_check: bool,
     idle_pause_at: Option<std::time::Instant>,
 }
 
@@ -103,17 +109,27 @@ impl DeviceController {
             device: None,
             stream: None,
             current_format: None,
+            device_name: None,
             default_sample_rate: None,
             last_volume: 1.0,
             last_replaygain: 1.0,
+            conversion_check: false,
             idle_pause_at: None,
         }
     }
 
     /// Initialize the device provider based on the environment or platform defaults.
-    pub fn initialize_provider(&mut self) {
-        let requested_device_provider = std::env::var("DEVICE_PROVIDER")
-            .unwrap_or_else(|_| DEFAULT_DEVICE_PROVIDER.to_string());
+    ///
+    /// `exclusive` selects [`CONTROLLED_DEVICE_PROVIDER`] where the platform has one. An explicit
+    /// `DEVICE_PROVIDER` environment variable always wins.
+    pub fn initialize_provider(&mut self, exclusive: bool) {
+        let requested_device_provider = std::env::var("DEVICE_PROVIDER").unwrap_or_else(|_| {
+            match CONTROLLED_DEVICE_PROVIDER {
+                Some(controlled) if exclusive => controlled,
+                _ => DEFAULT_DEVICE_PROVIDER,
+            }
+            .to_string()
+        });
 
         self.initialize_provider_by_name(&requested_device_provider);
     }
@@ -137,6 +153,10 @@ impl DeviceController {
             }
             "dummy" => {
                 self.device_provider = Some(Box::new(DummyDeviceProvider::new()));
+            }
+            #[cfg(target_os = "windows")]
+            wasapi::PROVIDER_NAME => {
+                self.device_provider = Some(Box::new(WasapiProvider::default()));
             }
             _ => {
                 warn!("Unknown device provider: {}", provider_name);
@@ -176,13 +196,16 @@ impl DeviceController {
 
     /// Create a new stream with the specified channel configuration.
     ///
-    /// Requested channels and sample rate override the device's default format.
+    /// Requested channels and sample rate override the device's default format. On devices that
+    /// require a matching format, `source_format` picks the device sample format that best
+    /// preserves the source (see [`choose_sample_format`]).
     /// If opening the requested format fails, retries with the complete default format.
     /// Returns the format that was actually opened.
     pub fn create_stream(
         &mut self,
         channels: Option<ChannelSpec>,
         sample_rate: Option<u32>,
+        source_format: Option<SampleFormat>,
     ) -> Result<FormatInfo, DeviceError> {
         self.close_stream();
 
@@ -198,13 +221,22 @@ impl DeviceController {
             .map_err(|_| DeviceError::NoDevice)?;
         self.default_sample_rate = Some(default_format.sample_rate);
 
-        let requested = (channels.is_some() || sample_rate.is_some()).then(|| FormatInfo {
-            originating_provider: default_format.originating_provider,
-            sample_type: default_format.sample_type,
-            sample_rate: sample_rate.unwrap_or(default_format.sample_rate),
-            buffer_size: default_format.buffer_size,
-            channels: channels.unwrap_or_else(|| default_format.channels.clone()),
-        });
+        let requested = (channels.is_some() || sample_rate.is_some() || source_format.is_some())
+            .then(|| {
+                let mut format = FormatInfo {
+                    originating_provider: default_format.originating_provider,
+                    sample_type: default_format.sample_type,
+                    sample_rate: sample_rate.unwrap_or(default_format.sample_rate),
+                    buffer_size: default_format.buffer_size,
+                    channels: channels.unwrap_or_else(|| default_format.channels.clone()),
+                };
+                if let Some(sample_type) = matching_sample_format(&*device, &format, source_format)
+                {
+                    format.sample_type = sample_type;
+                }
+                format
+            })
+            .filter(|format| *format != default_format);
 
         let (stream, opened_format) = if let Some(req) = requested {
             match device.open_device(req.clone()) {
@@ -225,11 +257,13 @@ impl DeviceController {
 
         self.stream = Some(stream);
         self.current_format = Some(opened_format.clone());
+        self.device_name = device.get_name().ok().map(Arc::from);
         self.device = Some(device);
 
         if let Some(stream) = &mut self.stream {
             stream.set_volume(self.last_volume).ok();
             stream.set_replaygain(self.last_replaygain).ok();
+            stream.set_conversion_check(self.conversion_check);
         }
 
         info!(
@@ -243,6 +277,28 @@ impl DeviceController {
         Ok(opened_format)
     }
 
+    /// Whether the current stream differs from what `create_stream(None, sample_rate,
+    /// source_format)` would open now. `None` arguments never force a reopen.
+    pub fn needs_reopen(
+        &self,
+        sample_rate: Option<u32>,
+        source_format: Option<SampleFormat>,
+    ) -> bool {
+        let (Some(current), Some(device)) = (&self.current_format, &self.device) else {
+            return false;
+        };
+        if sample_rate.is_some_and(|rate| rate != current.sample_rate) {
+            return true;
+        }
+        source_format.is_some()
+            && matching_sample_format(&**device, current, source_format)
+                .is_some_and(|sample_type| sample_type != current.sample_type)
+    }
+
+    pub fn has_provider(&self) -> bool {
+        self.device_provider.is_some()
+    }
+
     /// Close the current stream.
     pub fn close_stream(&mut self) {
         self.idle_pause_at = None;
@@ -252,6 +308,7 @@ impl DeviceController {
             warn!("Failed to close stream: {:?}", e);
         }
         self.current_format = None;
+        self.device_name = None;
         self.device = None;
     }
 
@@ -347,6 +404,32 @@ impl DeviceController {
         Ok(())
     }
 
+    pub fn volume_is_unity(&self) -> bool {
+        self.last_volume == 1.0
+    }
+
+    pub fn replaygain_is_unity(&self) -> bool {
+        self.last_replaygain == 1.0
+    }
+
+    pub fn set_conversion_check(&mut self, enabled: bool) {
+        self.conversion_check = enabled;
+        if let Some(stream) = &mut self.stream {
+            stream.set_conversion_check(enabled);
+        }
+    }
+
+    /// See [`OutputStream::conversion_exact`].
+    pub fn conversion_exact(&self) -> Option<bool> {
+        self.stream
+            .as_ref()
+            .and_then(|stream| stream.conversion_exact())
+    }
+
+    pub fn device_name(&self) -> Option<Arc<str>> {
+        self.device_name.clone()
+    }
+
     /// Get the current stream format, if a stream is open.
     pub fn current_format(&self) -> Option<&FormatInfo> {
         self.current_format.as_ref()
@@ -356,6 +439,38 @@ impl DeviceController {
     pub fn default_sample_rate(&self) -> Option<u32> {
         self.default_sample_rate
     }
+}
+
+/// For devices that must be fed their exact format, the supported sample format at `format`'s
+/// rate and channel count that best preserves `source_format`.
+fn matching_sample_format(
+    device: &dyn Device,
+    format: &FormatInfo,
+    source_format: Option<SampleFormat>,
+) -> Option<SampleFormat> {
+    if !device.requires_matching_format() {
+        return None;
+    }
+    let supported: Vec<SampleFormat> = device
+        .get_supported_formats()
+        .ok()?
+        .into_iter()
+        .filter(|supported| {
+            (supported.sample_rates.0..=supported.sample_rates.1).contains(&format.sample_rate)
+                && supported.channels.count() == format.channels.count()
+        })
+        .map(|supported| supported.sample_type)
+        .collect();
+    let chosen = choose_sample_format(source_format, &supported);
+    if let (Some(source), Some(chosen)) = (source_format, chosen)
+        && chosen.bits() < source.bits()
+    {
+        warn!(
+            "Device has no lossless format for {source:?} at {} Hz; using {chosen:?}",
+            format.sample_rate
+        );
+    }
+    chosen
 }
 
 impl Default for DeviceController {
@@ -487,7 +602,7 @@ mod tests {
             attempts: attempts.clone(),
         }));
 
-        let opened = controller.create_stream(None, Some(44_100)).unwrap();
+        let opened = controller.create_stream(None, Some(44_100), None).unwrap();
 
         assert_eq!(opened.sample_rate, 48_000);
         assert_eq!(&*attempts.borrow(), &[44_100, 48_000]);

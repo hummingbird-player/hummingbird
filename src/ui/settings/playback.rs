@@ -6,6 +6,7 @@ use gpui::{
 };
 
 use crate::{
+    devices::builtin::CONTROLLED_DEVICE_PROVIDER,
     power::PowerManager,
     settings::{Settings, SettingsGlobal, save_settings},
     ui::components::{
@@ -160,6 +161,27 @@ impl Render for PlaybackSettings {
                         "playback-only-resample-when-necessary-check",
                         playback.only_resample_when_necessary,
                     )),
+                )
+            })
+            .when(CONTROLLED_DEVICE_PROVIDER.is_some(), |this| {
+                this.child(
+                    label(
+                        "playback-bit-perfect",
+                        tr!("PLAYBACK_BIT_PERFECT", "Bit-perfect playback"),
+                    )
+                    .subtext(tr!(
+                        "PLAYBACK_BIT_PERFECT_SUBTEXT",
+                        "Takes full control over the audio device and attempts to play audio \
+                         directly without any conversion or modification when possible."
+                    ))
+                    .cursor_pointer()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_playback(cx, |playback| {
+                            playback.bit_perfect = !playback.bit_perfect;
+                        });
+                    }))
+                    .child(checkbox("playback-bit-perfect-check", playback.bit_perfect)),
                 )
             })
             .child({

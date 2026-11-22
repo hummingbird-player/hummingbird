@@ -62,6 +62,9 @@ pub struct PlaybackSettings {
     #[serde(default)]
     pub only_resample_when_necessary: bool,
 
+    #[serde(default)]
+    pub bit_perfect: bool,
+
     /// When enabled, removes the current track from the queue when it finishes playing.
     ///
     /// Defaults to false.
@@ -80,6 +83,7 @@ impl Default for PlaybackSettings {
             equalizer: EqualizerSettings::default(),
             prevent_idle: false,
             only_resample_when_necessary: false,
+            bit_perfect: false,
             consume: false,
         }
     }

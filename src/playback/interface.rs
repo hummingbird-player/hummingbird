@@ -351,6 +351,14 @@ impl PlaybackInterface {
                                 }
                             })
                         }
+                        PlaybackEvent::OutputDetailsChanged(v) => {
+                            playback_info.output_details.update(cx, |m, cx| {
+                                if *m != v {
+                                    *m = v;
+                                    cx.notify();
+                                }
+                            })
+                        }
                     }
                 }
             }

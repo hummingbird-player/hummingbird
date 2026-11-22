@@ -87,3 +87,110 @@ pub struct SupportedFormat {
     pub buffer_size: BufferSize,
     pub channels: ChannelSpec,
 }
+
+impl SampleFormat {
+    pub fn bits(self) -> u32 {
+        match self {
+            SampleFormat::Float64 => 64,
+            SampleFormat::Float32 | SampleFormat::Signed32 | SampleFormat::Unsigned32 => 32,
+            SampleFormat::Signed24 | SampleFormat::Unsigned24 => 24,
+            SampleFormat::Signed16 | SampleFormat::Unsigned16 => 16,
+            SampleFormat::Signed8 | SampleFormat::Unsigned8 => 8,
+        }
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, SampleFormat::Float32 | SampleFormat::Float64)
+    }
+}
+
+/// Picks the device sample format that best preserves `source`.
+///
+/// For an integer source, this is the narrowest integer format with at least as many bits, so
+/// the samples reach the device unchanged. For a float source, it's 32-bit float. If neither is
+/// available, or the source format is unknown, the widest supported format is used.
+pub fn choose_sample_format(
+    source: Option<SampleFormat>,
+    supported: &[SampleFormat],
+) -> Option<SampleFormat> {
+    let widest = || {
+        supported.iter().copied().max_by_key(|format| {
+            // widest first; at equal width, integer formats keep more mantissa bits than float
+            (format.bits(), !format.is_float())
+        })
+    };
+
+    let Some(source) = source else {
+        return widest();
+    };
+
+    if source.is_float() {
+        return supported
+            .iter()
+            .copied()
+            .find(|format| *format == SampleFormat::Float32)
+            .or_else(widest);
+    }
+
+    supported
+        .iter()
+        .copied()
+        .filter(|format| !format.is_float() && format.bits() >= source.bits())
+        .min_by_key(|format| format.bits())
+        .or_else(widest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SampleFormat::*, choose_sample_format};
+
+    #[test]
+    fn integer_sources_pick_smallest_lossless_container() {
+        let supported = [Signed32, Signed24, Signed16, Float32];
+        assert_eq!(
+            choose_sample_format(Some(Signed16), &supported),
+            Some(Signed16)
+        );
+        assert_eq!(
+            choose_sample_format(Some(Signed24), &supported),
+            Some(Signed24)
+        );
+        assert_eq!(
+            choose_sample_format(Some(Signed32), &supported),
+            Some(Signed32)
+        );
+        assert_eq!(
+            choose_sample_format(Some(Signed16), &[Signed32, Float32]),
+            Some(Signed32)
+        );
+        assert_eq!(
+            choose_sample_format(Some(Unsigned8), &[Signed16, Signed24]),
+            Some(Signed16)
+        );
+    }
+
+    #[test]
+    fn falls_back_to_widest_format() {
+        assert_eq!(
+            choose_sample_format(Some(Signed32), &[Signed16, Float32]),
+            Some(Float32)
+        );
+        assert_eq!(
+            choose_sample_format(None, &[Signed16, Float32, Signed32]),
+            Some(Signed32)
+        );
+        assert_eq!(choose_sample_format(Some(Signed16), &[]), None);
+    }
+
+    #[test]
+    fn float_sources_prefer_float32() {
+        assert_eq!(
+            choose_sample_format(Some(Float32), &[Signed32, Float32]),
+            Some(Float32)
+        );
+        assert_eq!(
+            choose_sample_format(Some(Float64), &[Signed16, Signed24]),
+            Some(Signed24)
+        );
+    }
+}

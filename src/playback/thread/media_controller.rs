@@ -23,7 +23,7 @@ impl Drop for WorkerExit {
 }
 
 use crate::{
-    devices::format::ChannelSpec,
+    devices::format::{ChannelSpec, SampleFormat},
     media::{
         errors::{
             ChannelRetrievalError, FrameDurationError, PlaybackReadError, PlaybackStartError,
@@ -46,6 +46,7 @@ enum Request {
 struct Snapshot {
     info: MediaInfo,
     rate: u32,
+    sample_format: Option<SampleFormat>,
     frame_duration: u64,
     position: Option<u64>,
     metadata: Option<CompleteMetadata>,
@@ -59,6 +60,7 @@ impl Snapshot {
                 duration_ms: decoder.duration_ms(),
             },
             rate: decoder.sample_rate().unwrap_or(44_100),
+            sample_format: decoder.sample_format().ok(),
             frame_duration: decoder.frame_duration().unwrap_or(1024),
             position: decoder.position_ms().ok(),
             metadata: decoder.check_metadata_update(),
@@ -531,6 +533,11 @@ impl MediaController {
             .as_ref()
             .map(|s| s.rate)
             .ok_or(ChannelRetrievalError::NeverStarted)
+    }
+
+    /// The source sample format, when the decoder knows it (lossless codecs usually do).
+    pub fn sample_format(&self) -> Option<SampleFormat> {
+        self.snapshot.as_ref().and_then(|s| s.sample_format)
     }
 
     pub fn frame_duration(&self) -> Result<u64, FrameDurationError> {

@@ -1,5 +1,6 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -8,8 +9,9 @@ use tracing::{debug, error, info, trace_span, warn};
 
 use crate::{
     devices::{
-        errors::OpenError,
-        format::{ChannelSpec, FormatInfo},
+        builtin::CONTROLLED_DEVICE_PROVIDER,
+        errors::{ExclusiveAccessError, OpenError, StateError},
+        format::{ChannelSpec, FormatInfo, SampleFormat},
         mix::{ChannelMixer, MixOptions},
         resample::Resampler,
     },
@@ -22,7 +24,9 @@ use crate::{
             equalizer::EqualizerProcessor,
             spectrum::{SpectrumTap, spectrum_tap},
         },
-        events::PlaybackEvent,
+        events::{
+            BitPerfectBlocker, BitPerfectStatus, OutputDetails, PlaybackEvent, StreamDetails,
+        },
         thread::media_controller::CompleteMetadata,
     },
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
@@ -103,7 +107,8 @@ impl std::error::Error for EngineError {}
 impl From<&DeviceError> for EngineError {
     fn from(error: &DeviceError) -> Self {
         match error {
-            DeviceError::OpenError(OpenError::PersistentError) => Self::ShouldPause,
+            DeviceError::OpenError(OpenError::PersistentError)
+            | DeviceError::StateError(StateError::ExclusiveUnavailable(_)) => Self::ShouldPause,
             error => Self::DeviceError(error.to_string()),
         }
     }
@@ -145,6 +150,13 @@ pub struct AudioEngine {
     /// A persistent device error must not be retried until Play is requested.
     device_retry_blocked: bool,
     only_resample_when_necessary: bool,
+    bit_perfect: bool,
+    /// Why the controlled device last refused exclusive access, until the user retries.
+    exclusive_failure: Option<ExclusiveAccessError>,
+    /// Last output details reported to the UI, events only fire on change.
+    reported_output: OutputDetails,
+    /// File name of the current source, keyed by its path.
+    source_name: Option<(PathBuf, Arc<str>)>,
 }
 
 impl AudioEngine {
@@ -176,6 +188,10 @@ impl AudioEngine {
             device_retry_at: None,
             device_retry_blocked: false,
             only_resample_when_necessary: false,
+            bit_perfect: false,
+            exclusive_failure: None,
+            reported_output: OutputDetails::default(),
+            source_name: None,
         }
     }
 
@@ -183,9 +199,9 @@ impl AudioEngine {
     ///
     /// This should be called once at startup.
     pub fn initialize(&mut self) -> Result<(), EngineError> {
-        self.device.initialize_provider();
+        self.device.initialize_provider(self.bit_perfect);
 
-        if let Err(e) = self.device.create_stream(None, None) {
+        if let Err(e) = self.device.create_stream(None, None, None) {
             if matches!(EngineError::from(&e), EngineError::ShouldPause) {
                 return Err(EngineError::ShouldPause);
             }
@@ -315,16 +331,11 @@ impl AudioEngine {
         let path = self.media.current_path().unwrap();
         info!("AudioEngine: Opening track '{}'", path.display());
 
-        if let Some(sample_rate) = self.desired_device_sample_rate()
-            && self.device.has_stream()
-            && self
-                .device
-                .current_format()
-                .map(|format| format.sample_rate)
-                != Some(sample_rate)
-        {
-            info!("Requesting native source sample rate: {sample_rate} Hz");
-            if let Err(error) = self.device.create_stream(None, Some(sample_rate)) {
+        let sample_rate = self.desired_device_sample_rate();
+        let source_format = self.desired_source_format();
+        if self.device.has_stream() && self.device.needs_reopen(sample_rate, source_format) {
+            info!("Requesting native source format: {sample_rate:?} Hz, {source_format:?}");
+            if let Err(error) = self.device.create_stream(None, sample_rate, source_format) {
                 if matches!(EngineError::from(&error), EngineError::ShouldPause) {
                     self.device_failed(error);
                 } else {
@@ -401,6 +412,7 @@ impl AudioEngine {
             return Ok(());
         }
         self.device_retry_blocked = false;
+        self.exclusive_failure = None;
         self.device_retry_at = None;
         self.state = EngineState::Playing;
         if self.pending_reset && self.device.has_stream() {
@@ -456,9 +468,136 @@ impl AudioEngine {
         if let Err(e) = self.device.poll() {
             self.device_failed(e);
         }
+        self.sync_output_details();
+    }
+
+    /// Whether every stage Hummingbird controls passes the source through unaltered: exclusive
+    /// output, no resampling or channel mixing, a device format that holds every source bit, and
+    /// unity gain with the equalizer off. The driver and hardware can still alter the signal.
+    fn bit_perfect_status(&self) -> BitPerfectStatus {
+        if !self.bit_perfect {
+            return BitPerfectStatus::Inactive;
+        }
+        if let Some(reason) = self.exclusive_failure {
+            return BitPerfectStatus::Altered(match reason {
+                ExclusiveAccessError::DeviceInUse => BitPerfectBlocker::DeviceInUse,
+                ExclusiveAccessError::NotAllowed => BitPerfectBlocker::ExclusiveNotAllowed,
+            });
+        }
+        if self.state == EngineState::Idle {
+            return BitPerfectStatus::Unknown;
+        }
+        let (Some(format), Some(pipeline)) = (self.device.current_format(), self.pipeline.as_ref())
+        else {
+            return BitPerfectStatus::Unknown;
+        };
+        let altered = |blocker| BitPerfectStatus::Altered(blocker);
+
+        if Some(format.originating_provider) != CONTROLLED_DEVICE_PROVIDER {
+            return altered(BitPerfectBlocker::ProviderOverride);
+        }
+        if pipeline.source_rate != pipeline.target_rate || self.resampler.is_some() {
+            return altered(BitPerfectBlocker::Resampling);
+        }
+        if self.mixer.is_some() {
+            return altered(BitPerfectBlocker::ChannelMixing);
+        }
+
+        // The pipeline runs in f64, so the declared source format is only a hint: lossy codecs
+        // don't declare one, and decoders may report it imprecisely. The output stream measures
+        // whether the samples it receives survive conversion to the device format; the declared
+        // format only catches a known-lossy pairing before any audio arrives.
+        let device = format.sample_type;
+        let declared_lossy = self.media.sample_format().is_some_and(|source| {
+            if source.is_float() {
+                !(source == SampleFormat::Float32 && device == SampleFormat::Float32)
+            } else {
+                device.is_float() || device.bits() < source.bits()
+            }
+        });
+        let measured_exact = self.device.conversion_exact();
+        if declared_lossy || measured_exact == Some(false) {
+            return altered(BitPerfectBlocker::FormatConversion);
+        }
+
+        if self.eq.audible() {
+            return altered(BitPerfectBlocker::Equalizer);
+        }
+        if !self.device.replaygain_is_unity() {
+            return altered(BitPerfectBlocker::ReplayGain);
+        }
+        if !self.device.volume_is_unity() {
+            return altered(BitPerfectBlocker::Volume);
+        }
+        if measured_exact.is_none() {
+            // nothing has been submitted since the stream opened or reset
+            return BitPerfectStatus::Unknown;
+        }
+        BitPerfectStatus::BitPerfect
+    }
+
+    fn output_details(&mut self) -> OutputDetails {
+        // cache the file name so polling doesn't allocate
+        let path = self.media.current_path();
+        if self
+            .source_name
+            .as_ref()
+            .map(|(cached, _)| cached.as_path())
+            != path
+        {
+            self.source_name = path.map(|path| {
+                let name = path
+                    .file_name()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy();
+                (path.to_path_buf(), Arc::from(name.as_ref()))
+            });
+        }
+
+        let source = (self.state != EngineState::Idle)
+            .then(|| {
+                Some(StreamDetails {
+                    name: self.source_name.as_ref().map(|(_, name)| name.clone()),
+                    sample_rate: self.media.sample_rate().ok()?,
+                    sample_format: self.media.sample_format(),
+                    channels: self.media.channels().ok()?.count(),
+                })
+            })
+            .flatten();
+        let device = self.device.current_format().map(|format| StreamDetails {
+            name: self.device.device_name(),
+            sample_rate: format.sample_rate,
+            sample_format: Some(format.sample_type),
+            channels: format.channels.count(),
+        });
+
+        OutputDetails {
+            status: self.bit_perfect_status(),
+            source,
+            device,
+        }
+    }
+
+    fn sync_output_details(&mut self) {
+        // the details only feed the bit-perfect indicator, so skip the work while it's off and
+        // just clear what was last reported
+        let details = if self.bit_perfect {
+            self.output_details()
+        } else {
+            OutputDetails::default()
+        };
+        if details != self.reported_output {
+            self.reported_output = details.clone();
+            let _ = self
+                .events_tx
+                .send(PlaybackEvent::OutputDetailsChanged(details));
+        }
     }
 
     fn device_failed(&mut self, error: DeviceError) {
+        if let DeviceError::StateError(StateError::ExclusiveUnavailable(reason)) = &error {
+            self.exclusive_failure = Some(*reason);
+        }
         if matches!(EngineError::from(&error), EngineError::ShouldPause) {
             self.device.close_stream();
             self.device_retry_at = None;
@@ -488,9 +627,10 @@ impl AudioEngine {
         }
 
         let desired_sample_rate = self.desired_device_sample_rate();
+        let source_format = self.desired_source_format();
         let result = self
             .device
-            .create_stream(None, desired_sample_rate)
+            .create_stream(None, desired_sample_rate, source_format)
             .and_then(|format| {
                 if self.state == EngineState::Playing {
                     self.device.play()?;
@@ -553,6 +693,7 @@ impl AudioEngine {
     fn clear_source(&mut self) {
         self.device_retry_at = None;
         self.device_retry_blocked = false;
+        self.exclusive_failure = None;
         self.media.close();
         self.opening = None;
         self.opened = None;
@@ -663,20 +804,68 @@ impl AudioEngine {
             .set_channel_count(format.channels.to_layout().count().max(1));
     }
 
+    fn follows_source_rate(&self) -> bool {
+        self.only_resample_when_necessary || self.bit_perfect
+    }
+
     fn desired_device_sample_rate(&self) -> Option<u32> {
-        if !self.only_resample_when_necessary {
+        if !self.follows_source_rate() {
             return None;
         }
         self.media.sample_rate().ok().filter(|rate| *rate > 0)
+    }
+
+    fn desired_source_format(&self) -> Option<SampleFormat> {
+        if !self.bit_perfect {
+            return None;
+        }
+        self.media.sample_format()
+    }
+
+    /// Reopen the output with the current settings: immediately when idle, otherwise through the
+    /// device retry path, which also re-decodes if the output format changed.
+    fn reopen_device(&mut self) {
+        if self.state == EngineState::Idle {
+            match self.device.create_stream(
+                None,
+                self.desired_device_sample_rate(),
+                self.desired_source_format(),
+            ) {
+                Ok(_) => self.sync_eq_format(),
+                Err(error) => self.device_failed(error),
+            }
+        } else {
+            self.device.close_stream();
+            self.device_retry_blocked = false;
+            self.exclusive_failure = None;
+            self.device_retry_at = Some(Instant::now());
+        }
     }
 
     /// Update settings that affect playback.
     pub fn update_settings(&mut self, settings: &PlaybackSettings) {
         self.eq.set_config(&settings.equalizer);
 
-        let was_enabled = self.only_resample_when_necessary;
+        let followed_source_rate = self.follows_source_rate();
+        let bit_perfect = CONTROLLED_DEVICE_PROVIDER.is_some() && settings.bit_perfect;
+        let provider_changed = bit_perfect != self.bit_perfect;
         self.only_resample_when_necessary = settings.only_resample_when_necessary;
-        if was_enabled == self.only_resample_when_necessary || !self.device.has_stream() {
+        self.bit_perfect = bit_perfect;
+        self.device.set_conversion_check(bit_perfect);
+
+        // before initialize(), which picks the provider from these settings
+        if provider_changed && self.device.has_provider() {
+            info!(
+                "Bit-perfect playback {}",
+                if bit_perfect { "enabled" } else { "disabled" }
+            );
+            self.device.close_stream();
+            self.device.initialize_provider(bit_perfect);
+            self.reopen_device();
+            return;
+        }
+
+        if followed_source_rate == self.follows_source_rate() || !self.device.has_stream() {
             return;
         }
 
@@ -688,7 +877,7 @@ impl AudioEngine {
             return;
         };
 
-        let needs_reopen = if self.only_resample_when_necessary {
+        let needs_reopen = if self.follows_source_rate() {
             self.desired_device_sample_rate()
                 .is_some_and(|rate| rate != current_rate)
         } else {
@@ -701,19 +890,7 @@ impl AudioEngine {
             return;
         }
 
-        if self.state == EngineState::Idle {
-            if let Err(error) = self
-                .device
-                .create_stream(None, self.desired_device_sample_rate())
-            {
-                self.device_failed(error);
-            } else {
-                self.sync_eq_format();
-            }
-        } else {
-            self.device.close_stream();
-            self.device_retry_at = Some(Instant::now());
-        }
+        self.reopen_device();
     }
 
     /// Apply new equalizer settings live.

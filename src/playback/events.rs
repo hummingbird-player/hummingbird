@@ -3,12 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    devices::format::SampleFormat,
     media::metadata::Metadata,
     settings::{equalizer::EqualizerSettings, playback::PlaybackSettings},
 };
 
 use super::{queue::QueueItemData, thread::PlaybackState};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize)]
 pub enum RepeatState {
@@ -137,4 +138,57 @@ pub enum PlaybackEvent {
     StopAfterCurrentChanged(bool),
     /// Indicates that the output stream's sample rate has changed.
     SampleRateChanged(u32),
+    /// Indicates that the source or output format, or the bit-perfect status, has changed.
+    OutputDetailsChanged(OutputDetails),
+}
+
+/// Whether output is bit-perfect as far as the stages Hummingbird controls go. The driver and
+/// hardware can still alter the signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BitPerfectStatus {
+    /// Bit-perfect playback is off.
+    #[default]
+    Inactive,
+    /// Bit-perfect playback is on, but there is nothing to judge yet: nothing is loaded, the
+    /// output isn't open, or no audio has been measured since it opened.
+    Unknown,
+    BitPerfect,
+    /// Bit-perfect playback is on, but this stage alters the samples.
+    Altered(BitPerfectBlocker),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitPerfectBlocker {
+    /// Configuration: the output isn't the controlled provider, e.g. `DEVICE_PROVIDER` forces
+    /// another one.
+    ProviderOverride,
+    /// Configuration: the system doesn't allow exclusive control of the device.
+    ExclusiveNotAllowed,
+    /// Another application is playing on the device, in either shared or exclusive mode.
+    DeviceInUse,
+    Resampling,
+    ChannelMixing,
+    /// The device format can't hold every source sample exactly.
+    FormatConversion,
+    Equalizer,
+    ReplayGain,
+    Volume,
+}
+
+/// What is playing and how it reaches the device, for the playback details tooltip.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OutputDetails {
+    pub status: BitPerfectStatus,
+    pub source: Option<StreamDetails>,
+    pub device: Option<StreamDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamDetails {
+    /// File name for a source, endpoint name for a device.
+    pub name: Option<Arc<str>>,
+    pub sample_rate: u32,
+    /// `None` when the decoder doesn't report one (most lossy codecs).
+    pub sample_format: Option<SampleFormat>,
+    pub channels: u16,
 }

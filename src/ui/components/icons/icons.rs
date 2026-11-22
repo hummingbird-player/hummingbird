@@ -37,6 +37,7 @@ pub const PLAYLIST_ADD: &str = "!bundled:icons/playlist-add.svg";
 pub const PLAYLIST_REMOVE: &str = "!bundled:icons/playlist-x.svg";
 pub const STAR: &str = "!bundled:icons/star.svg";
 pub const STAR_FILLED: &str = "!bundled:icons/star-filled.svg";
+pub const BINARY: &str = "!bundled:icons/binary.svg";
 pub const SIDEBAR: &str = "!bundled:icons/layout-sidebar.svg";
 pub const SIDEBAR_INACTIVE: &str = "!bundled:icons/layout-sidebar-inactive.svg";
 pub const SEARCH: &str = "!bundled:icons/search.svg";

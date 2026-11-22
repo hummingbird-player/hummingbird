@@ -3,7 +3,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::{
-    devices::format::ChannelSpec,
+    devices::format::{ChannelSpec, SampleFormat},
     media::{
         errors::{
             ChannelRetrievalError, FrameDurationError, PlaybackReadError, PlaybackStartError,
@@ -180,6 +180,13 @@ impl Decoder {
             .as_ref()
             .ok_or(ChannelRetrievalError::NeverStarted)?
             .sample_rate()
+    }
+
+    pub fn sample_format(&self) -> Result<SampleFormat, ChannelRetrievalError> {
+        self.media_stream
+            .as_ref()
+            .ok_or(ChannelRetrievalError::NeverStarted)?
+            .sample_format()
     }
 
     pub fn set_looping(&mut self, enabled: bool) {

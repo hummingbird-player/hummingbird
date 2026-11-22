@@ -93,6 +93,16 @@ pub trait OutputStream {
         Ok(())
     }
 
+    /// Off by default. Streams that don't measure conversion ignore it.
+    fn set_conversion_check(&mut self, _enabled: bool) {}
+
+    /// Whether the samples submitted over roughly the last second converted to the device's
+    /// sample format exactly (ReplayGain included, volume excluded). `None` if the stream doesn't
+    /// measure this or has received no audio since opening or the last reset.
+    fn conversion_exact(&self) -> Option<bool> {
+        None
+    }
+
     /// Submit as many whole frames as fit immediately and return the accepted frame count.
     ///
     /// A full device returns zero without consuming input. Implementations must not wait for

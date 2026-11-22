@@ -37,7 +37,7 @@ use crate::{
     },
     media::metadata::Metadata,
     playback::{
-        events::RepeatState,
+        events::{OutputDetails, RepeatState},
         queue::{QueueItemData, QueueItemUIData},
         thread::PlaybackState,
     },
@@ -161,6 +161,7 @@ pub struct PlaybackInfo {
     pub prev_volume: Entity<f64>,
     /// Output stream rate in Hz, 0 until the first stream exists.
     pub sample_rate: Entity<u32>,
+    pub output_details: Entity<OutputDetails>,
 }
 
 impl Global for PlaybackInfo {}
@@ -596,6 +597,7 @@ pub fn build_models(
     let volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let prev_volume: Entity<f64> = cx.new(|_| storage_data.volume);
     let sample_rate: Entity<u32> = cx.new(|_| 0);
+    let output_details: Entity<OutputDetails> = cx.new(|_| OutputDetails::default());
 
     cx.set_global(PlaybackInfo {
         position,
@@ -608,6 +610,7 @@ pub fn build_models(
         volume,
         prev_volume,
         sample_rate,
+        output_details,
     });
 }
 

@@ -66,6 +66,9 @@ pub enum CloseError {
 
 #[derive(PartialEq, Eq, Debug, Clone, Error)]
 pub enum StateError {
+    /// A user-facing error was emitted; playback requires an explicit user retry.
+    #[error("Exclusive access to the device was refused: {0:?}")]
+    ExclusiveUnavailable(ExclusiveAccessError),
     #[error("Unknown stream error: `{0}`")]
     Unknown(String),
 }
@@ -74,4 +77,12 @@ pub enum StateError {
 pub enum ResetError {
     #[error("Unknown stream error: `{0}`")]
     Unknown(String),
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum ExclusiveAccessError {
+    /// Another application is playing on the device, in either shared or exclusive mode.
+    DeviceInUse,
+    /// The system is configured not to allow exclusive control of this device.
+    NotAllowed,
 }
