@@ -2,7 +2,7 @@ name: Ensure RELEASE_CHANNEL is set to `stable` for releases
 
 on:
   workflow_dispatch:
-  pull_request_target:
+  pull_request:
     branches:
       - "release"
   push:

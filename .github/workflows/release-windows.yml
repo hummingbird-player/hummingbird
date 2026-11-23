@@ -47,7 +47,7 @@ jobs:
         run: echo "TARGET_TRIPLE=$((rustc -vV | Select-String 'host:').ToString().Split(' ')[1])" >> $Env:GITHUB_ENV
       - name: Install cntp build tools
         run: |
-          cargo install --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
+          cargo install --locked --git https://github.com/vicr123/contemporary-rs.git cargo-cntp-bundle
       - name: Build
         run: cargo build --verbose --profile release-distro -F update
       - name: Bundle
@@ -57,7 +57,8 @@ jobs:
         run: |
           iscc.exe /Q package\inno\Hummingbird_${{ env.ARCH }}.iss
       - name: Move binary
-        run: mv target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird-${{ env.ARCH }}.exe
+        shell: pwsh
+        run: mv -Force target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird.exe target\bundle\${{ env.TARGET_TRIPLE }}\release-distro\Hummingbird-${{ env.ARCH }}.exe
       - name: Write minisign private key
         shell: pwsh
         env:
@@ -91,3 +92,14 @@ jobs:
             package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe.minisig
           name: ${{ github.event.release.name }}
           tag_name: ${{ github.event.release.tag_name }}
+      - name: Upload release assets to Forgejo
+        shell: pwsh
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          .\.woodpecker\scripts\upload-release.ps1 `
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe `
+            target/bundle/${{ env.TARGET_TRIPLE }}/release-distro/Hummingbird-${{ env.ARCH }}.exe.minisig `
+            package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe `
+            package/inno/Output/HummingbirdSetup_${{ env.ARCH }}.exe.minisig

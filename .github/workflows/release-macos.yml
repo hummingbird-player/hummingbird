@@ -102,3 +102,13 @@ jobs:
             hummingbird-${{ env.ARCH }}.zip.minisig
           name: ${{ github.event.release.name }}
           tag_name: ${{ github.event.release.tag_name }}
+      - name: Upload release assets to Forgejo
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          ./.woodpecker/scripts/upload-release.sh \
+            hummingbird-${{ env.ARCH }}.zip \
+            hummingbird-${{ env.ARCH }}.zip.minisig \
+            hummingbird-${{ env.ARCH }}.dmg \
+            hummingbird-${{ env.ARCH }}.dmg.minisig
