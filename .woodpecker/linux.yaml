@@ -10,6 +10,10 @@ steps:
       CARGO_TERM_COLOR: always
       CARGO_TARGET_DIR: /opt/hummingbird/target
       APPIMAGE_EXTRACT_AND_RUN: 1
+      LASTFM_API_KEY:
+        from_secret: LASTFM_API_KEY
+      LASTFM_API_SECRET:
+        from_secret: LASTFM_API_SECRET
       MINISIGN_PRIV_KEY:
         from_secret: MINISIGN_PRIV_KEY
       FORGEJO_TOKEN:
